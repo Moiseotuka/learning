@@ -1,0 +1,129 @@
+Jusqu'ici, ce parcours bases de données vous a surtout appris à lire. Vous avez appris à décrire un domaine avec des tables, des clés primaires et des clés étrangères, puis à interroger ces tables avec SELECT, des filtres, des jointures et des agrégations. Tout cela est essentiel, mais tout cela est immuable : vos requêtes ne changent rien, elles vous rendent une image du monde stocké. Or une base de données qui ne fait que répondre à des lectures est un annuaire. La vraie vie d'une application commence le jour où l'on écrit dedans : un lecteur s'inscrit, un livre change d'état, une réservation est annulée, un tarif évolue.
+
+Ce quatrième chapitre est donc consacré aux écritures et aux transactions, c'est-à-dire aux deux moitiés d'un même geste. La première moitié, c'est le verbe : modifier physiquement le contenu des tables avec les commandes INSERT, UPDATE et DELETE. La seconde, c'est la discipline : entourer plusieurs verbes d'une frontière pour qu'ils aboutissent ensemble ou pas du tout, ce que l'on appelle une transaction. Sans la première, votre base reste vide ; sans la seconde, elle se remplit d'erreurs silencieuses que personne ne détectera avant qu'un rapport de comptabilité ne s'effondre.
+
+L'exemple fil rouge de la bibliothèque municipale nous accompagne. Des lecteurs s'inscrivent, des exemplaires sont catalogués, des emprunts sont enregistrés, puis des prêts sont restitués. Chaque opération métier se traduit par une ou plusieurs lignes qui apparaissent, changent ou disparaissent dans les tables. Nous prendrons chaque commande une par une, avec sa syntaxe, ses variantes utiles et, surtout, ses pièges. Deux d'entre eux reviendront régulièrement parce qu'ils causent l'essentiel des accidents en production : la mise à jour exécutée sans condition de WHERE, et la transaction qu'on oublie de valider.
+
+Une méthode avant de commencer. Devant toute opération d'écriture, posez-vous deux questions. D'abord : quelles lignes vais-je toucher exactement ? Réponsez avec un SELECT qui porte la même condition que votre écriture. Ensuite : que se passe-t-il si cette écriture échoue en cours de route, ou si je change d'avis ? Réponsez avec une transaction, un BEGIN suivi d'un COMMIT si tout va bien et d'un ROLLBACK sinon. Écrire dans une base, ce n'est pas taper une commande, c'est savoir précisément quel ensemble de lignes vous allez transformer et ce qui restera si le serveur s'arrête à la seconde près. Ce chapitre vous donne les réflexes pour répondre à ces deux questions avant chaque frappe sur la touche Entrée.
+
+## INSERT : ajouter des lignes avec des valeurs explicites
+
+INSERT est la commande qui fait entrer de la donnée dans la base. Sa forme la plus courante prend une table, une liste de colonnes et une liste de valeurs, dans cet ordre exact. La liste de colonnes n'est pas facultative par snobisme : elle documente l'intention, elle protège contre la réorganisation future du schéma, et elle permet d'omettre volontairement les colonnes que l'on souhaite laisser à leur valeur par défaut. Quand vous écrivez explicitement les colonnes que vous renseignez, une colonne ajoutée plus tard dans la table ne casse pas votre insertion, parce que votre requête ne dépend pas de l'ordre physique des colonnes.
+
+Les valeurs respectent quelques règles simples. Le texte est entouré de guillemets simples, les nombres ne le sont pas, les dates respectent le format ISO, à savoir quatre chiffres pour l'année, deux pour le mois, deux pour le jour. Une colonne à laquelle vous n'assignez rien reçoit sa valeur par défaut si la table en définit une, sinon elle accepte NULL si la colonne l'autorise, sinon l'écriture est refusée. Ce dernier cas est le plus fréquent chez le débutant : il oublie une colonne obligatoire et reçoit un message d'erreur qui lui semble obscur, alors qu'il dit simplement qu'une information manquante est requise.
+
+```sql
+INSERT INTO lecteurs (identifiant, nom, prenom, courriel, date_inscription)
+VALUES (1, 'Moreau', 'Claire', 'claire.moreau@example.fr', '2026-01-12');
+
+INSERT INTO exemplaires (identifiant, ouvrage_id, cote, etat)
+VALUES (101, 7, 'ROM-0001', 'neuf'),
+       (102, 7, 'ROM-0002', 'bon'),
+       (103, 9, 'BD-00010', 'usagé');
+```
+
+L'insertion multiple mérite qu'on s'y attarde, parce qu'elle est à la fois plus rapide et plus lisible qu'une série d'appels individuels. Une seule commande porte dix lignes, le serveur traite une fois la vérification de la grammaire, une fois la planification, et les verrous sont pris de manière groupée. Attention toutefois : dans la plupart des moteurs, si la troisième ligne viole une contrainte, toute la commande est rejetée. Il n'existe pas de demi-échec partiel silencieux. C'est précisément ce comportement qui rend l'opération commode à l'intérieur d'une transaction : soit les dix lignes entreront, soit aucune.
+
+Les contraintes sont vos alliées lors de l'insertion. Une clé primaire dupliquée provoque un rejet, ce qui vous évite d'avoir deux fois le même identifiant. Une clé étrangère qui pointe vers un identifiant inexistant est refusée, ce qui vous évite un emprunt rattaché à un lecteur fantôme. Une valeur qui ne correspond pas au type de la colonne, par exemple un texte dans un entier, déclenche une erreur de conversion avant même l'écriture. Ne contournez jamais ces refus avec des astuces : lisez le message, corrigez la donnée ou le schéma, puis réessayez. Une base qui accepte tout est une base qui ne garantit plus rien.
+
+Enfin, certaines colonnes se remplissent toutes seules. Un identifiant auto-incrémenté, une colonne de temporisation par défaut, une colonne calculée : vous les écartez de la liste de colonnes et laissez le moteur faire. Dans PostgreSQL, vous pouvez alors ajouter la clause RETURNING pour obtenir immédiatement l'identifiant attribué, ce qui évite une seconde requête de recherche. C'est le geste le plus économique quand votre application a besoin de l'identifiant de la ligne fraîchement créée pour, par exemple, enregistrer immédiatement un emprunt associé.
+
+## INSERT : sous-requêtes, INSERT ... SELECT et identifiants générés
+
+Au-delà des valeurs écrites à la main, INSERT sait recevoir le résultat d'une requête. La forme INSERT ... SELECT copie en une seule opération l'ensemble des lignes renvoyées par une lecture. On s'en sert pour alimenter une table de reporting à partir d'une table de détail, pour dupliquer un jeu de données vers un autre schéma, ou pour importer des lignes temporaires de travail. L'avantage n'est pas seulement la concision : le serveur lit et écrit dans le même flux, sans passer par l'application, ce qui supprime toute possibilité de divergence entre ce que vous avez lu et ce que vous avez écrit.
+
+```sql
+INSERT INTO emprunts_archivees (identifiant, lecteur_id, date_sortie, date_retour)
+SELECT identifiant, lecteur_id, date_sortie, date_retour
+FROM emprunts
+WHERE date_retour IS NOT NULL AND date_retour < '2025-01-01';
+
+INSERT INTO lecteurs (nom, prenom, courriel, date_inscription)
+SELECT nom, prenom, courriel, '2026-02-01'
+FROM lecteurs_en_attente
+WHERE valide = true;
+```
+
+La sous-requête peut aussi se trouver à l'intérieur de la liste de valeurs, entre parenthèses, pour fournir une valeur unique. C'est typique lorsqu'on souhaite référencer la clé primaire d'une ligne que l'on vient de créer ou que l'on cherche par critère métier. Par exemple, créer un emprunt pour le lecteur dont le courriel est connu consiste à chercher son identifiant avec une sous-requête scalar et à l'utiliser directement dans l'insertion. Si la sous-requête renvoie plus d'une ligne, le moteur refuse l'écriture : une valeur attendue est unique, pas un jeu de résultats.
+
+L'identifiant technique, lui, est presque toujours laissé au moteur. Les séquences et les colonnes d'identité existent précisément pour éviter de calculer vous-même le prochain numéro, ce qui serait faux dès que deux utilisateurs insèrent simultanément. Au lieu de cela, vous omettez la colonne et le serveur attribue un valeur unique, souvent séquentielle. Quand l'application doit connaître cette valeur immédiatement, vous utilisez la clause RETURNING avec PostgreSQL, ou les fonctions spécifiques du moteur avec MySQL et SQL Server. La récupération de l'identifiant se fait donc dans la foulée de l'écriture, jamais par une seconde recherche approximative.
+
+Un cas fréquent en production est la ré-importation d'un jeu de données déjà partiellement présent. Insérer à l'identique une seconde fois provoque une erreur de clé primaire, et l'import s'arrête. Trois stratégies existent. La première consiste à filtrer la source avec une sous-requête NOT EXISTS, ce qui n'insère que les lignes réellement absentes. La deuxième, dans PostgreSQL, utilise la clause ON CONFLICT DO NOTHING ou DO UPDATE, qui transforme le conflit en décision explicite. La troisième, dans MySQL, repose sur INSERT IGNORE ou REPLACE, avec des sémantiques légèrement différentes qu'il faut lire attentivement avant de s'y fier.
+
+Voici un exemple de reprise d'import tolérante aux doublons :
+
+```sql
+INSERT INTO ouvrages (identifiant, titre, auteur, isbn)
+VALUES (7, 'Le Quai aux fleurs', 'A. Nardal', '978-2-1234-5678-9')
+ON CONFLICT (identifiant) DO UPDATE
+SET titre = EXCLUDED.titre,
+    auteur = EXCLUDED.auteur;
+```
+
+Notez que cette variante exécute deux opérations distinctes : une insertion si la ligne est absente, une mise à jour si elle existe. Elle est donc un raccourci pratique, pas un substitut à la compréhension. Préférez-la quand l'intention est réellement de synchroniser, et gardez une insertion simple quand votre intention est d'ajouter.
+
+## UPDATE : la clause SET et le filtre WHERE
+
+UPDATE modifie des lignes existantes. Sa grammaire tient en trois mots clés : la table à toucher, la clause SET qui liste les colonnes et leurs nouvelles valeurs, et la clause WHERE qui désigne les lignes concernées. Le SET décrit le changement, le WHERE décrit son périmètre. Toute mise à jour se lit donc comme une phrase : pour cette table, fixez ces colonnes à ces valeurs, pour les lignes qui vérifient cette condition. Si l'une des parties manque, la phrase cesse d'avoir un sens précis, et c'est là que naissent les accidents.
+
+```sql
+UPDATE exemplaires
+SET etat = 'bon', date_reforme = NULL
+WHERE identifiant = 103;
+
+UPDATE emprunts
+SET date_retour = '2026-02-14'
+WHERE identifiant = 4821
+  AND date_retour IS NULL;
+```
+
+Les expressions de la clause SET peuvent être calculées. On ajoute une remise en multipliant un prix, on incrémente un compteur en additionnant une unité, on concatène deux chaînes. Attention à une subtilité importante : quand vous écrivez montant = montant + 100, le moteur évalue la valeur d'origine de chaque ligne avant application, et non la valeur déjà modifiée de la première ligne. Votre intention est donc correctement servie. En revanche, si vous faites référence à une autre table, la lecture se fait avec l'état de cette table au moment de l'exécution, ce qui impose parfois une sous-requête pour obtenir le résultat attendu.
+
+Le piège capital de UPDATE est l'oubli de la clause WHERE. Sans condition, la commande s'applique à toutes les lignes de la table. Si votre intention était de corriger le tarif d'un abonnement précis et que vous oubliez le filtre, vous venez de modifier l'intégralité de votre fichier d'abonnements. Ce n'est pas une erreur théorique : c'est l'un des gestes les plus souvent exécutés à tort, y compris par des professionnels pressés, et son effet est immédiat, massif et, dans un moteur sans journal de restauration, difficile à inverser. La base, elle, n'a rien à dire : la commande est syntaxiquement parfaite.
+
+La parade est mécanique, et elle doit devenir un réflexe. Avant toute mise à jour, écrivez le SELECT équivalent avec exactement la même condition et regardez le nombre de lignes renvoyées. Ce nombre doit être celui que vous attendez, ni plus, ni moins. Ensuite, enfermez l'écriture dans une transaction, relancez le SELECT avec la nouvelle condition pour vérifier le résultat, et ne validez qu'au moment où tout correspond. Si le compte est surprenant, un simple ROLLBACK vous rend votre base intacte. Cette discipline coûte quinze secondes et supprime la quasi-totalité du risque.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM abonnements WHERE tarif = 'ancien';  -- périmètre attendu
+
+UPDATE abonnements
+SET tarif = 'nouveau'
+WHERE tarif = 'ancien';
+
+SELECT COUNT(*) FROM abonnements WHERE tarif = 'nouveau'; -- vérification
+
+COMMIT;
+```
+
+Enfin, UPDATE peut cibler plusieurs tables à l'aide d'une jointure ou d'une sous-requête. Corriger les états d'exemplaires en fonction des informations d'un ouvrage, ajuster une commission en lisant un barème, sont des opérations courantes. Là encore, la sous-requête doit renvoyer une valeur unique par ligne concernée, sous peine d'erreur. Préférez toujours la forme la plus lisible, et souvenez-vous que l'optimiseur réécrira votre requête si nécessaire : votre rôle est d'exprimer l'intention clairement, pas d'anticiper les choix du moteur.
+
+## DELETE : supprimer sans dégâts
+
+DELETE retire des lignes d'une table. Sa grammaire est la plus courte des trois commandes : DELETE FROM suivi de la table, puis d'une condition WHERE. Et comme pour UPDATE, l'absence de condition supprime l'intégralité de la table. La différence avec UPDATE, c'est l'irréversibilité perçue : on redoute davantage une suppression, on la remarque moins vite, et une table vidée peut rester inaperçue plusieurs jours jusqu'à la prochaine consultation. Supprimer est un geste métier comme un autre, mais il exige la même rigueur que les autres, davantage même.
+
+La méthode en trois temps que nous avons vue pour UPDATE s'applique ici à la lettre. Première étape : reformuler la condition dans un SELECT et compter les lignes. Deuxième étape : exécuter la suppression à l'intérieur d'une transaction. Troisième étape : vérifier le résultat avec un second SELECT, puis valider. Si votre intention était de retirer trois lignes en retard et que le compte vous en annonce quatre mille, vous saurez immédiatement que la condition est mal formulée, avant que quiconque ne s'en aperçoive.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM reservations
+WHERE date_demande < '2025-06-01' AND ouvrage_id IS NULL;
+
+DELETE FROM reservations
+WHERE date_demande < '2025-06-01' AND ouvrage_id IS NULL;
+
+SELECT COUNT(*) FROM reservations
+WHERE date_demande < '2025-06-01';
+
+COMMIT;
+```
+
+Les clés étrangères compliquent la suppression, et c'est voulu. Si un lecteur possède encore des emprunts, sa ligne ne peut pas disparaître : les emprunts resteraient orphelins. Le moteur refuse alors la suppression et vous renvoie une erreur d'intégrité référentielle. Votre réponse correcte est soit de traiter d'abord les lignes filles, soit de modifier la contrainte pour qu'elle propage la suppression, avec la clause ON DELETE CASCADE, soit d'annuler l'opération. Chacune de ces réponses est une décision métier, pas un détail technique : supprimer en cascade un lecteur, c'est effacer aussi son historique de prêts, ce que l'équipe peut considérer comme inacceptable.
+
+Notez que la suppression n'efface pas forcément la mémoire. Une clé étrangère peut être déclarée avec ON DELETE SET NULL, ce qui conserve la ligne mère mais vide la référence, ou avec ON DELETE RESTRICT, ce qui interdit la suppression tant que des enfants existent. Ces politiques se choisissent lors de la conception, dans la foulée de la discussion sur les cardinalités du premier chapitre. Elles transforment une règle écrite en français dans un cahier des charges en une garantie que le moteur fait respecter à chaque écriture.
+
+Une alternative à DELETE existe : TRUNCATE. Cette commande vide la table en une opération rapide, parce qu'elle alloue à nouveau des pages plutôt que de marquer chaque ligne comme supprimée. Elle est idéale pour recharger un jeu de données de test, mais elle comporte trois différences majeures. Elle ne prend pas de condition WHERE, donc on ne peut pas supprimer partiellement. Elle réinitialise souvent les séquences d'identité. Et dans de nombreux moteurs, elle est transactionnelle, mais son effet visible diffère : testez toujours le comportement de votre moteur avant de l'utiliser sur des données réelles.
+
+Enfin, la suppression non committée mérite d'être comprise, parce qu'elle surprend. Tant que la transaction reste ouverte, les lignes supprimées le sont pour votre session et invisible pour les autres, mais elles ne sont pas définitivement perdues. Un ROLLBACK les ramène, y compris leurs anciens identifiants. En revanche, si la connexion se coupe sans COMMIT ni ROLLBACK, la majorité des moteurs annule automatiquement la transaction, et la suppression disparaît. C'est un comportement sûr, mais il peut donner l'impression qu'une opération a réussi alors qu'elle a été perdue : vérifiez toujours le retour d'état de votre bibliothèque de données avant de considérer une écriture comme terminée.

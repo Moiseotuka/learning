@@ -1,0 +1,984 @@
+Bienvenue dans le sixième chapitre du parcours Développement web moderne : celui où votre rapport avec l'interface change de nature. Jusqu'ici, la page de l'atelier de la Médiathèque des Lilas a été construite comme le fait la majorité du web : un fichier HTML décrit la structure, une feuille de style l'habille, et un fichier JavaScript prend la main sur le document pour le modifier quand quelque chose se passe. Dans le chapitre consacré au DOM, vous avez sélectionné des éléments, vous avez écrit du texte à l'intérieur de ces éléments, vous avez branché des boutons avec des gestionnaires d'événements. Ce fonctionnement, dit impératif, décrit pas à pas comment transformer l'écran. React propose un renversement : vous décrivez à quoi l'interface doit ressembler pour un état donné des données, et c'est React qui se charge de mettre l'écran à jour. L'interface devient le résultat d'une fonction dont les données sont l'argument. Cette phrase est la clé de voûte du chapitre, et tout ce qui suit ne fait que la détailler, l'illustrer et la mettre en pratique sur un vrai projet.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, et vous les aurez déjà manipulées dans du code JSX complet. Vous découpererez une page en composants autonomes, chacun responsable d'une région visible que vous connaissez déjà pour l'avoir écrite en HTML : bandeau, programme, carte d'inscription, pied de page. Vous passerez des données d'un composant à l'autre avec les propriétés, souvent appelées props, et vous comprendrez pourquoi ces données descendent toujours de haut en bas dans l'arbre des composants. Vous déclencherez des mises à jour d'écran avec le hook useState, en gardant une règle simple en tête : chaque composant possède son propre état, et l'état qui concerne plusieurs composants remonte vers leur ancêtre commun. Vous afficherez des listes avec map et des clés stables, vous alternerez des contenus selon des conditions, vous traiterez des événements de clic et de saisie, et vous écrirez au moins un composant réutilisable, un bouton paramétrable, que vous emploierez à plusieurs endroits. Le tout sera assemblé dans un mini-projet guidé : le site de l'atelier, réécrit en composants React.
+
+Deux prérequis, avant d'entrer dans le vif du sujet. Le premier est JavaScript lui-même : les fonctions fléchées, la décomposition d'objets, les tableaux et leurs méthodes map et filter, les opérateurs conditionnels, tout cela a été vu dans les chapitres précédents et va servir à chaque exemple. Le deuxième est npm, abordé dans le chapitre cinq : React s'installe comme une dépendance, et le code JSX a besoin d'un outil de transformation pour devenir du JavaScript que le navigateur sait exécuter. Ce point mérite d'être dit franchement, parce qu'il conditionne la manière dont vous allez pratiquer ici : les exemples de cette leçon sont écrits en JSX, la syntaxe que vous utiliserez réellement dans un projet React ; l'exercice pratique, lui, s'exécute dans un environnement qui ne dispose ni de bundler ni d'installateur de paquets, et repose donc sur un squelette en JavaScript classique qui reproduit fidèlement les mêmes mécanismes. Cette différence est annoncée sans détour dans la consigne de l'exercice, et vous verrez que les analogies sont assez précises pour que votre travail de l'exercice reste directement transférable à un vrai projet React.
+
+Une recommandation sur la manière d'aborder ce chapitre, comme pour les précédents : le code s'apprend en l'écrivant soi-même. Recopiez chaque exemple dans votre éditeur, observez ce qu'il affiche, changez une valeur, supprimez une propriété, remettez un état à zéro et regardez ce que l'écran devient. Une interface qui ne se met pas à jour comme prévu n'est pas un échec, c'est une information : elle vous dit exactement où votre donnée ne circule pas. Nous avancerons par étapes, en alternant explications détaillées, exemples commentés et pièges rencontrés en pratique. Le fil rouge reste le site de l'atelier de la Médiathèque des Lilas : chaque section du chapitre y pioche un morceau, et le mini-projet final assemble tout.
+
+## Pourquoi React : l'interface comme fonction de l'état
+
+Repartons d'un besoin que vous avez déjà rencontré : afficher le nombre de places restantes pour l'atelier et le faire baisser quand quelqu'un s'inscrit. En JavaScript classique, la logique s'écrit comme une suite d'ordres. On cherche le nœud du document qui contient le chiffre, on écrit une nouvelle valeur dedans, on branche un bouton qui décrémente une variable, puis on recopie cette variable dans le nœud. L'ordre des opérations compte, chaque étape vise une cible précise du document, et la moindre modification de la structure HTML oblige à relire tout le cheminement.
+
+```html
+<p id="restantes">12 places restantes</p>
+<button id="moins">Retirer une place</button>
+
+<script>
+  let restantes = 12;
+  const zone = document.getElementById("restantes");
+  const bouton = document.getElementById("moins");
+
+  function afficher() {
+    zone.textContent = restantes + " places restantes";
+  }
+
+  bouton.addEventListener("click", function () {
+    if (restantes > 0) {
+      restantes = restantes - 1;
+      afficher();
+    }
+  });
+</script>
+```
+
+Ce code fonctionne, et vous seriez capable de l'écrire seul. Il présente pourtant trois faiblesses qui deviennent pénibles dès que la page grossit. La première : la valeur réelle du compteur est dispersée entre une variable JavaScript et le texte affiché à l'écran, deux endroits qu'il faut garder en cohérence à la main. La deuxième : la logique de mise à jour est émiettée à travers plusieurs fonctions et plusieurs cibles du document ; ajouter un deuxième compteur, par exemple le nombre de places déjà prises, oblige à dupliquer ce cheminement. La troisième : le code décrit des gestes plutôt que le résultat ; il dit comment faire, pas ce que l'on veut obtenir. Si quelqu'un modifie la structure HTML sans toucher au script, le script cesse de trouver ses cibles et se tait, souvent sans message d'erreur explicite.
+
+React inverse complètement la direction. Vous écrivez une fonction qui reçoit les données courantes et renvoie l'apparence de l'interface correspondante. React appelle cette fonction, observe le résultat, compare avec ce qui est déjà affiché et n'applique que les différences. On résume souvent cette approche par une formule : l'interface est une fonction de l'état. Les données passent en entrée, l'image de l'écran sort en sortie, et la mise à jour n'est plus une opération que vous déclenchez, c'est une conséquence que React produit.
+
+```jsx
+function CartePlaces({ restantes }) {
+  return <p>{restantes} places restantes</p>;
+}
+
+function Application() {
+  const [restantes, setRestantes] = useState(12);
+
+  function retirerUnePlace() {
+    if (restantes > 0) {
+      setRestantes(restantes - 1);
+    }
+  }
+
+  return (
+    <div>
+      <CartePlaces restantes={restantes} />
+      <button onClick={retirerUnePlace}>Retirer une place</button>
+    </div>
+  );
+}
+```
+
+Comparez les deux blocs. Le second ne contient aucune recherche dans le document, aucune cible à atteindre, aucune instruction du type insérer du texte ici. Il déclare : voici la carte des places, voici le bouton, voici la valeur actuelle. Quand setRestantes est appelée avec une nouvelle valeur, React relance la fonction de l'application, obtient une nouvelle description, compare et remplace uniquement le chiffre qui a changé. Vous ne gérez plus le document objet, vous gérez des données.
+
+Cette déclaration a des conséquences pratiques qu'il vaut mieux poser dès maintenant. L'état devient la source unique de vérité : il n'y a plus de copie du compteur à synchroniser, parce qu'il n'y a qu'une variable et que l'écran n'est qu'une projection de cette variable. La logique se regroupe au même endroit, dans la fonction du composant, au lieu d'être émiettée entre plusieurs écouteurs. Et la lisibilité s'en trouve transformée : un nouveau lecteur du fichier voit immédiatement quelles données existent et comment elles se traduisent en interface, sans avoir à reconstituer une chaîne d'ordres impératifs.
+
+Soyons précis sur ce que React ne fait pas. Ce n'est pas un langage : vous écrivez du JavaScript, avec ses fonctions, ses tableaux, ses objets. Ce n'est pas non plus une application complète qui imposerent une structure de projet : React se concentre sur la couche d'affichage, et l'on ajoute autour, si besoin, un routeur pour la navigation, un outil de requêtes pour les données distantes, un gestionnaire d'état global pour les cas complexes. Le modèle mental à conserver tient en une phrase : vous donnez des données à un composant, le composant vous rend une description de l'écran, et React se charge de la partie fastidieuse.
+
+- L'approche impérative décrit des gestes sur le document ; l'approche React décrit le résultat attendu.
+- L'état est la source unique de vérité, l'écran n'en est qu'une projection.
+- Quand l'état change, React recalcule la description et n'applique que les différences.
+- Un composant ne modifie jamais directement le document objet.
+- La logique de mise à jour se regroupe dans le composant qui possède l'état.
+- React reste une bibliothèque d'affichage : langage, données et outillage restent à choisir à côté.
+
+## JSX : syntaxe et différences avec le HTML
+
+Le JSX est une extension de syntaxe JavaScript qui permet d'écrire de l'apparence d'interface directement dans du code. Il apparaît dans des fichiers d'extension jsx, ou parfois dans des fichiers JavaScript lorsque l'outil de projet l'accepte. À la lecture, il ressemble à du HTML ; en réalité, il s'agit de JavaScript : chaque morceau de JSX est transformé, avant exécution, en appels de fonctions qui construisent des objets descriptifs. Retenez cette idée, elle lèvera plusieurs malentendus : le JSX n'est pas du texte que l'on colle dans la page, c'est une manière compacte d'écrire des appels de fonctions.
+
+```jsx
+function Bandeau({ titre, sousTitre }) {
+  const date = "samedi 18 octobre";
+  const places = 12;
+
+  return (
+    <header className="bandeau">
+      <h1>{titre}</h1>
+      <p>{sousTitre} — atelier du {date}</p>
+      <p>{places} places ouvertes</p>
+    </header>
+  );
+}
+```
+
+Dans ce bloc, tout ce qui est entre accolades est du JavaScript évalué : une variable, une expression, un appel de fonction. Tout ce qui est en dehors des accolaves est du texte ou une balise décrite. Les accolades ouvrent une fenêtre vers le langage, et cette fenêtre fonctionne partout où une valeur a du sens : dans le contenu d'une balise, dans la valeur d'un attribut, dans le tableau renvoyé par une boucle map. Si vous oubliez les accolades, le texte des accolades s'affiche littéralement, ce qui est l'erreur de débutant la plus fréquente en JSX.
+
+Les différences avec le HTML méritent d'être énumérées sans ambiguïté, car elles sont peu nombreuses mais systématiques. D'abord, certains noms d'attributs changent parce qu'ils entreraient en conflit avec des mots réservés du langage ou parce que la convention JavaScript utilise la casse de type chameau. Ensuite, les balises qui ne contiennent rien doivent être fermées explicitement avec une barre oblique finale. Ensuite, les expressions dynamiques s'écrivent entre accolades, jamais dans des guillemets. Enfin, un morceau de JSX renvoie toujours une seule valeur, comme une fonction JavaScript : quand plusieurs éléments doivent être frères, on les enveloppe dans un conteneur ou dans un fragment.
+
+```table
+| Écriture en HTML | Écriture en JSX | Raison |
+| --- | --- | --- |
+| classe d'un élément | attribut className | classe est un mot réservé du langage |
+| étiquette d'un lien de formulaire | attribut htmlFor | for est un mot réservé du langage |
+| attributs en minuscules | attributs en casse de chameau | tabindex devient tabIndex, http-equiv devient httpEquiv |
+| balise image sans fermeture | balise fermée avec une barre oblique | le JSX décrit des éléments, tous ont une fin |
+| style écrit dans une chaîne | objet JavaScript entre accolades | la mise en forme est donnée comme une donnée |
+| texte entre guillemets pour variable | expression entre accolades | les guillemets décrivent du texte fixe |
+```
+
+
+Trois règles d'écriture complètent ce tableau. La première concerne les chaînes : un attribut dont la valeur ne bouge jamais s'écrit entre guillemets, comme le libellé d'une balise img ou l'adresse d'une balise a. Dès que la valeur dépend d'une donnée, on passe entre accolades. La deuxième concerne les valeurs booléennes : écrire l'attribut sans valeur signifie true, de sorte qu'un attribut de type aria-pressed peut être omis ou présent selon un état. La troisième concerne le style : le JSX accepte un objet dont les noms de propriétés suivent la casse de chameau, parce que la propriété de style en JavaScript n'est pas le nom de la propriété CSS.
+
+```jsx
+const saison = "automne";
+const informations = { salle: "salle 2", duree: "3 heures" };
+
+const apercu = (
+  <section className={"apercu " + saison}>
+    <img src="atelier.jpg" alt="Participants devant un écran" />
+    <p style={{ fontWeight: 700 }}>{informations.salle}</p>
+    <p>Durée : {informations.duree}</p>
+    <button disabled>Complet</button>
+  </section>
+);
+```
+
+Un dernier point rassurant : le JSX échappe automatiquement tout ce qui n'est pas balise. Un texte qui contient des chevrons, une accolade ou une esperluette s'affiche tel quel, sans risque d'être interprété comme du balisage. Cette protection est l'une des raisons pour lesquelles React a rendu les injections de code dans l'interface beaucoup plus rares qu'à l'époque où l'on concaténait des chaînes pour fabriquer du HTML. Écrivez du contenu, il sera traité comme du contenu.
+
+- Le JSX s'écrit dans du JavaScript et est transformé en appels de fonctions avant exécution.
+- Les accolades ouvrent une expression JavaScript ; sans elles, le texte s'affiche littéralement.
+- Utilisez className pour la classe et htmlFor pour l'étiquette d'un lien de formulaire.
+- Fermez chaque balise vide avec une barre oblique.
+- Un morceau de JSX a un seul élément racine : un conteneur ou un fragment.
+- Les guillemets portent une valeur fixe, les accolades portent une valeur calculée.
+- Le JSX échappe le contenu textuel : il n'est pas interprété comme du balisage.
+
+## Composants fonctionnels
+
+Le composant est l'unité de base d'une interface React : un morceau d'écran que l'on nomme, que l'on réutilise et que l'on peut raisonner séparément du reste. Sa forme la plus simple est une fonction JavaScript qui renvoie du JSX. Rien de plus : pas de classe obligatoire, pas de méthode spéciale, pas de configuration. La fonction reçoit des données, elle renvoie une description de l'apparence correspondante.
+
+```jsx
+function Bandeau() {
+  return (
+    <header>
+      <h1>Médiathèque des Lilas</h1>
+      <p>Ateliers gratuits, sur inscription</p>
+    </header>
+  );
+}
+
+function PiedDePage() {
+  return <footer>© 2026 Médiathèque des Lilas</footer>;
+}
+
+function Application() {
+  return (
+    <div>
+      <Bandeau />
+      <PiedDePage />
+    </div>
+  );
+}
+```
+
+Trois conventions se dégagent de cet exemple et tiennent à elles seules une bonne partie de la lisibilité d'un projet React. La première : le nom d'un composant commence par une majuscule. Cette capitale n'est pas décorative, elle distingue un composant d'une balise HTML ordinaire dans la syntaxe du JSX. Écrivez bandeau en minuscules et le JSX cherchera une balise nommée bandeau ; écrivez Bandeau et il cherchera la fonction correspondante. La deuxième convention : un composant occupe une zone cohérente de l'écran, en général une région que vous auriez déjà isolée en HTML, comme un en-tête, une liste de séances ou une carte d'inscription. La troisième : le composant est nommé d'après ce qu'il représente, jamais d'après ce qu'il est censé faire au passage, ce qui vous évite des noms du type BlocMilieuBas.
+
+Le rendu, lui, suit un mécanisme simple à décrire : pour afficher un composant, React appelle la fonction, récupère le JSX qu'elle renvoie, le transforme en éléments de l'écran et les place à la bonne position. Si l'état ou les propriétés du composant changent, React l'appelle une deuxième fois, compare avec ce qui s'affichait et applique la différence. Chaque appel de fonction produit donc une image complète de ce que ce composant doit montrer à cet instant. Cette idée explique pourquoi il ne faut jamais chercher à modifier l'écran en cours de route depuis l'intérieur du composant : la fonction doit rester un portrait fidèle des données, pas un lieu d'ordres données à la volée.
+
+```jsx
+function Séance({ heure, titre, intervenant }) {
+  return (
+    <li className="seance">
+      <strong>{heure}</strong> — {titre}
+      <span> {intervenant}</span>
+    </li>
+  );
+}
+
+function Programme({ titre, seances }) {
+  return (
+    <section>
+      <h2>{titre}</h2>
+      <ul>
+        {seances.map((seance) => (
+          <Séance
+            key={seance.id}
+            heure={seance.heure}
+            titre={seance.titre}
+            intervenant={seance.intervenant}
+          />
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+Cette définition permet une distinction fondamentale entre deux notions que l'on confond souvent. Un composant est une description, une recette, un modèle écrit une seule fois dans le fichier. Une instance est l'un de ses emplois concrets à l'écran. Le même composant Séance peut apparaître cinq fois dans la page, avec cinq jeux de données différents ; chaque apparition reçoit ses propres propriétés et, s'il en possède, son propre état. Quand vous modifiez la fonction, toutes les instances se mettent à jour ensemble, parce qu'elles ne sont que cinq lectures de la même recette.
+
+L'organisation d'un projet React suit une pente naturelle issue de cette définition : un composant par fichier, le nom du fichier reprenant le nom du composant, et un export nommé ou par défaut qui rend le composant accessible aux autres fichiers. Cette convention n'a rien d'obligatoire, mais elle transforme la navigation dans le code : chercher Bandeau revient à chercher le fichier bandeau.jsx. Elle facilite aussi le travail en équipe, puisque deux personnes peuvent modifier deux composants différents sans jamais ouvrir les mêmes fichiers.
+
+Enfin, retenez que les composants s'imbriquent pour former un arbre. L'application est la racine, ses enfants sont les grandes régions, et chacune de ces régions a ses propres enfants. Cet arbre n'est pas qu'une métaphore : il décrit à la fois la structure de l'écran, le chemin emprunté par les données, qui descendent toujours, et le chemin empronté par les événements, qui remontent. Toute la suite du chapitre se lit à la lumière de cette image.
+
+- Un composant est une fonction JavaScript qui renvoie du JSX.
+- Le nom d'un composant commence par une majuscule, ce qui le distingue d'une balise.
+- Une instance est un emploi concret du composant ; le fichier n'en décrit qu'un seul modèle.
+- React appelle la fonction à chaque mise à jour et n'applique que la différence.
+- Un composant doit décrire les données qu'on lui donne, pas modifier l'écran lui-même.
+- Un fichier par composant, nommé d'après lui, rend le projet navigable.
+- Les composants imbriqués forment un arbre : données vers le bas, événements vers le haut.
+
+## Props : les données en entrée
+
+Si un composant est une fonction, ses données d'entrée sont ses paramètres. En React, ces paramètres sont rassemblés dans un objet unique appelé propriétés, ou props dans le vocabulaire courant. On les transmet en écrivant le nom de la propriété suivi d'un signe égal et d'une valeur, exactement comme on écrit un attribut dans une balise, mais avec des accolades dès que la valeur est dynamique. Le composant reçoit l'objet complet et lit ce dont il a besoin.
+
+```jsx
+function CarteEvenement({ titre, date, lieu, places }) {
+  const complet = places <= 0;
+
+  return (
+    <article className="carte">
+      <h3>{titre}</h3>
+      <p>{date} — {lieu}</p>
+      <p>{complet ? "Complet" : places + " places disponibles"}</p>
+    </article>
+  );
+}
+
+function Application() {
+  return (
+    <CarteEvenement
+      titre="Atelier React"
+      date="Samedi 18 octobre, 14 h"
+      lieu="Salle 2, Médiathèque des Lilas"
+      places={12}
+    />
+  );
+}
+```
+
+La première règle des props, celle qui gouverne tout le reste, est qu'elles sont en lecture seule. Un composant reçoit ses données, les utilise pour fabriquer un rendu, mais ne les modifie jamais. Cette contrainte peut sembler restrictive, elle est en fait libératrice : puisque personne ne modifie les données en les traversant, vous pouvez lire n'importe quel composant et savoir qu'il n'altère rien de ce qu'il reçoit. Si une donnée doit changer, c'est l'état de celui qui possède cette donnée qui change, et la nouvelle valeur redescend par les props. On parle de flux descendant.
+
+La décomposition d'objet, vue dans les chapitres précédents, est la forme habituelle de réception. Elle offre deux avantages : le nom de chaque paramètre devient explicite dans la signature, et l'ordre des propriétés à l'appel n'a plus aucune importance. C'est aussi le moment d'installer des valeurs par défaut, non pas avec un mécanisme particulier au JSX, mais avec la fonctionnalité native des paramètres de fonction : une propriété non fournie prend alors la valeur indiquée après le signe égal.
+
+```jsx
+function Séance({ heure, titre, intervenant = "Animateur de l'atelier" }) {
+  return (
+    <li>
+      <b>{heure}</b> {titre} — {intervenant}
+    </li>
+  );
+}
+
+function Bandeau({ titre, children }) {
+  return (
+    <header className="bandeau">
+      <h1>{titre}</h1>
+      {children}
+    </header>
+  );
+}
+
+function Application() {
+  return (
+    <div>
+      <Bandeau titre="Atelier du samedi">
+        <p>Inscription obligatoire, entrée gratuite.</p>
+        <nav>Accueil — Programme — Inscription</nav>
+      </Bandeau>
+      <Séance heure="14 h" titre="Composants et props" />
+    </div>
+  );
+}
+```
+
+La propriété enfants mérite une section à part tant elle est centrale. Elle contient tout ce qui s'écrit entre la balise d'ouverture et la balise de fermeture du composant, sous forme de valeurs transmit à l'appel. Concrètement, elle transforme un composant en conteneur : Bandeau décrit l'ossature d'un en-tête, et chaque emploi de Bandeau décide du contenu qui ira dedans. C'est le mécanisme qui permet de réutiliser une structure sans la figer, et vous y reviendrez dans la section sur les composants réutilisables.
+
+Les props ne se limitent pas au texte. Un nombre s'écrit entre accolades, un tableau ou un objet également, un booléen peut s'écrire par simple présence de l'attribut, et surtout une fonction peut être transmise comme n'importe quelle donnée. Cette dernière possibilité est ce qui permet à un composant enfant d'informer son parent qu'un événement s'est produit, sans jamais toucher aux données de ce parent : l'enfant appelle la fonction reçue, le parent décide de la suite. Vous verrez ce mécanisme en détail dans la section sur la remontée des événements.
+
+Une habitude professionnelle, pour finir : nommez les props d'après ce qu'elles représentent dans le monde de l'application, pas d'après leur apparence. Une prop nommée couleurTexteGras oblige à changer le nom dès que le style évolue, alors que primaire ou secondaire décrit une intention qui traverse les changements de design. Quand un composant reçoit un nombre important de propriétés, c'est souvent le signe qu'il en fait trop et qu'il serait plus clair de le découper en deux composants plus petits, chacun avec un contrat de données lisible en une ligne.
+
+- Les props sont l'objet des paramètres d'un composant, transmis à l'appel.
+- Elles sont en lecture seule : on les utilise, on ne les modifie pas.
+- Les données descendent : du parent vers l'enfant, jamais l'inverse.
+- La décomposition d'objet rend l'ordre indifférent et le nom explicite.
+- Les valeurs par défaut s'écrivent comme des paramètres de fonction.
+- La propriété enfants accueille le contenu écrit entre les balises du composant.
+- Une fonction transmise en prop permet à un enfant d'informer son parent.
+
+## Décomposer une page en composants : l'exemple de l'atelier
+
+Le découpage n'est pas un geste arbitraire : c'est la transposition, en React, d'une compétence que vous possédez déjà. Dans le premier chapitre du parcours, vous avez appris à décrire une page avec header, nav, main, section, article, aside et footer. Chacune de ces régions désignait un rôle, une frontière visible, une partie que l'on pouvait nommer. La décomposition en composants demande exactement le même réflexe, avec une question supplémentaire : est-ce que cette région a des données qui lui sont propres, ou est-elle réutilisable ailleurs ? Si la réponse est oui à l'une des deux questions, elle mérite son composant.
+
+Observons la page de l'atelier telle que vous l'avez écrite en HTML. Elle contient un bandeau d'identification, une zone de navigation, un article qui présente l'événement, une liste de séances, une fiche d'inscription avec un compteur de places, un encart d'informations pratiques et un pied de page. Chacun de ces blocs correspond à un composant parfaitement naturel. Le fil conducteur du découpage tient en trois questions à poser, dans cet ordre. Premièrement : quelles données ce bloc affiche-t-il ? Deuxièmement : est-ce que ces données changent au cours de la vie de la page ? Troisièmement : ce bloc apparaît-il plusieurs fois, ou pourrait-il apparaître dans un autre écran ?
+
+```text
+Application
+|-- Bandeau
+|-- Navigation
+|-- Programme
+|   |-- Séance (14 h)
+|   |-- Séance (14 h 30)
+|   +-- Séance (16 h 30)
+|-- CarteInscription
+|   +-- Bouton
++-- PiedDePage
+```
+
+Cet arbre, écrit en texte brut, est la première chose qu'il vaut la peine de produire avant d'ouvrir l'éditeur. Il fixe les noms, les hiérarchies et les frontières, et il vous évite la dérive la plus courante : commencer à coder un composant avant de savoir où il se loge. Notez que les feuilles, les séances, sont elles-mêmes des composants, et non des fragments de texte dupliqués. Notez aussi que la carte d'inscription contient un bouton, qui sera lui-même un composant réutilisé plus bas dans la page. Un bon arbre montre ces deux phénomènes : la répétition d'un même composant et son imbriquation dans un autre.
+
+La deuxième étape consiste à faire l'inventaire des données, indépendamment de l'affichage. Listez ce qui est fixe, comme le titre de l'atelier, la date et le nom de la salle ; ce qui est variable, comme le nombre de places restantes ; et ce qui provient de l'utilisateur, comme les champs du formulaire d'inscription. Cette liste détermine immédiatement l'emplacement de chaque donnée. Les données fixes s'écrivent directement là où elles servent, ou mieux, dans un fichier de données que plusieurs composants importent. Les données variables deviennent de l'état, et l'état se place dans le composant le plus bas qui les utilise toutes. Les données saisies par l'utilisateur appartiennent au formulaire, jusqu'au moment où un autre composant en a besoin.
+
+```jsx
+function Application() {
+  const seances = [
+    { id: "s1", heure: "14 h", titre: "Composants et props" },
+    { id: "s2", heure: "14 h 30", titre: "État et événements" },
+    { id: "s3", heure: "16 h 30", titre: "Listes et conditions" },
+  ];
+
+  return (
+    <div className="page">
+      <Bandeau titre="Atelier React du samedi" />
+      <Navigation liens={["Accueil", "Programme", "Inscription"]} />
+      <main>
+        <Programme titre="Programme de la journée" seances={seances} />
+        <CarteInscription places={12} />
+        <Encart titre="Informations pratiques" />
+      </main>
+      <PiedDePage />
+    </div>
+  );
+}
+```
+
+Le composant Application ne contient aucune logique : il assemble. Il déclare le tableau de données, le transmet au composant Programme, et laisse chacun des enfants produire sa part d'écran. Cette séparation des rôles est précieuse. Le parent orchestre, les enfants décrivent. Si le titre de l'atelier change, une seule ligne bouge ; si la présentation d'une séance change, un seul fichier change. Si demain vous remplacez la carte d'inscription par un formulaire complet, aucun autre composant n'a à en savoir quoi que ce soit, à condition de respecter le contrat de props que vous avez défini.
+
+Trois habitudes rendent ce travail durable. La première consiste à nommer les composants avant de les implémenter : si vous peinez à trouver un nom, c'est souvent que le bloc est trop large ou qu'il mélange deux responsabilités. La deuxième consiste à refuser les propriétés qui duplient une donnée : si le titre affiché dans le bandeau et le titre de la page sont la même information, elle n'existe qu'une fois et elle redescend par les props. La troisième consiste à garder les composants courts : un composant qui dépasse une centaine de lignes devient difficile à lire, et presque toujours, une extraction de sous-composant allège les deux fichiers qui en résultent.
+
+- Décomposez d'abord en regions nommées, comme vous l'avez fait en HTML.
+- Posez trois questions : quelles données, données fixes ou variables, réutilisable ou unique.
+- Produisez l'arbre des composants avant d'écrire le moindre JSX.
+- L'état vit dans le composant le plus bas qui utilise toutes ces données.
+- Le parent assemble et transmet ; les enfants décrivent et n'imposent rien.
+- Refusez toute prop qui duplique une donnée existante ailleurs.
+- Un nom impossible à trouver annonce un découpage à revoir.
+
+## État local avec useState
+
+Certaines données d'une interface bougent : un compteur décroît, un champ se remplit, un menu s'ouvre, un message d'erreur apparaît. En React, cette donnée qui vit et qui déclenche un affichage s'appelle l'état, et on le déclare avec une fonction nommée useState, fournie par la bibliothèque. Cette fonction s'appelle hook, ce qui se traduit par crochet : un point d'accrochage qui permet à une fonction de composant d'utiliser une capacité particulière de React, ici la mémoire persistante et la capacité de déclencher un rendu.
+
+```jsx
+import { useState } from "react";
+
+function CarteInscription({ placesInitiales }) {
+  const [restantes, setRestantes] = useState(placesInitiales);
+
+  function retirer() {
+    if (restantes > 0) {
+      setRestantes(restantes - 1);
+    }
+  }
+
+  function ajouter() {
+    if (restantes < placesInitiales) {
+      setRestantes(restantes + 1);
+    }
+  }
+
+  return (
+    <section className="inscription">
+      <p>{restantes} places restantes</p>
+      <button onClick={retirer}>Retirer une place</button>
+      <button onClick={ajouter}>Remettre une place</button>
+    </section>
+  );
+}
+```
+
+L'appel useState renvoie un tableau de deux éléments, et cette écriture en décomposition n'est pas un ornement : le premier élément est la valeur courante de l'état, le second est la fonction qui demande une nouvelle valeur. Le nom que vous donnez à ces deux éléments est libre, à condition qu'il décrive bien la donnée. On écrit couramment un nom singulier pour la valeur et le même nom précédé de l'impératif ou du verbe set pour le mutateur, par exemple compteur et setCompteur, ou bien ouvert et setOuvert.
+
+Le fonctionnement de la fonction de mise à jour mérite d'être compris précisément, parce qu'il explique la moitié des bugs de débutant. Appeler setRestantes ne modifie pas la variable restantes devant vous : cette variable appartient au rendu en cours et reste figée. L'appel indique à React qu'une nouvelle valeur existe pour le prochain rendu, puis React relance la fonction du composant avec cette nouvelle valeur. C'est pourquoi la ligne suivante, dans la même fonction, lit encore l'ancienne valeur. Si vous appelez le mutateur deux fois dans la même exécution avec la même valeur de base, vous obtiendrez deux fois le même résultat, et non une double incrémentation.
+
+Quand la nouvelle valeur dépend de l'ancienne, React propose une seconde écriture, dans laquelle vous recevez la valeur la plus récente et vous renvoyez la suivante. Cette forme est indispensable dès que deux mises à jour peuvent être enchaînées rapidement, par exemple lors d'un double-clic ou d'un événement répété.
+
+```jsx
+function CompteurClics() {
+  const [clics, setClics] = useState(0);
+
+  function doubler() {
+    setClics((valeurPrecedente) => valeurPrecedente + 1);
+    setClics((valeurPrecedente) => valeurPrecedente + 1);
+  }
+
+  return <button onClick={doubler}>{clics} clics</button>;
+}
+```
+
+Quatre règles gouvernent l'usage de l'état, et il est préférable de les apprendre par cœur dès maintenant. Première règle : l'état appartient à l'instance du composant, pas au fichier ; si le même composant apparaît trois fois à l'écran, il possède trois états indépendants. Deuxième règle : on ne modifie jamais l'objet ou le tableau de l'état directement, on demande une nouvelle valeur, sinon React ne détecte aucun changement. Troisième règle : la déclaration de useState se fait toujours au début du corps du composant, jamais dans une condition ni dans une boucle, parce que l'ordre des appels doit rester identique à chaque rendu. Quatrième règle : l'état doit servir à décrire, pas à recopier ; si une valeur se déduit d'autres données, elle n'a pas besoin d'être un état, il suffit de la calculer dans le corps du composant.
+
+Un cas d'école utile, parce qu'il revient dans presque chaque application : l'état vide. Le compteur des places peut atteindre zéro, et l'interface doit alors dire autre chose que zéro place restantes si vous le souhaitez, ou désactiver un bouton, ou afficher un message d'inscription close. Ce n'est pas une propriété du composant, c'est une conséquence de l'état, et on l'exprime avec une condition. Vous verrez dans la section consacrée aux éléments conditionnels plusieurs manières de l'écrire proprement ; l'important est d'ores et déjà le principe : l'état change, le rendu change avec lui, sans aucune instruction d'actualisation écrite à la main.
+
+- useState déclare une donnée qui déclenche un rendu quand elle change.
+- Il renvoie un couple valeur et fonction de mise à jour, par décomposition.
+- Appeler le mutateur ne change pas la variable courante, elle prépare le prochain rendu.
+- Pour une mise à jour dépendante de la précédente, utilisez la forme fonctionnelle.
+- L'état est propre à chaque instance du composant.
+- Ne modifiez jamais directement l'objet ou le tableau stocké dans l'état.
+- Déclarez l'état toujours au même endroit, en haut du corps du composant.
+
+## État contre props et remontée des événements
+
+Vous savez faire descendre des données et vous savez déclencher une mise à jour. La question qui se pose maintenant est celle de la frontière : quelle donnée doit être une prop et quelle donnée doit être un état ? La confusion est fréquente, et une distinction nette évite la majorité des architectures bancales.
+
+```table
+| Critère | Propriétés transmises | État local déclaré |
+| --- | --- | --- |
+| Propriétaire | le parent, qui les fournit | le composant lui-même, qui les déclare |
+| Mutabilité | lecture seule pour l'enfant | modifiable par l'enfant avec son mutateur |
+| Durée de vie | aussi longtemps que le parent les fournit | conservé entre deux rendus du composant |
+| Portée | visible par l'enfant qui les reçoit | invisible du reste de l'arbre |
+| Cas d'usage | titre, date, tableau de séances, rappel d'action | compteur de places, champ en cours de saisie, ouverture d'un menu |
+| Source de vérité | une, chez le parent | une, dans le composant qui la déclare |
+```
+
+
+La règle tient en une phrase : les propriétés descendent, les événements remontent. Un enfant reçoit ce dont il a besoin pour peindre son écran, et informe son parent quand quelque chose se passe, sans jamais toucher aux données de ce parent. Si l'enfant avait laissé son état à zéro alors que le parent croyait à douze, vous auriez deux vérités concurrentes, c'est-à-dire exactement le problème que React était censé résoudre.
+
+```jsx
+function CarteInscription({ restantes, placesTotales, onRetirer, onAjouter }) {
+  const complet = restantes <= 0;
+
+  return (
+    <section>
+      <p>{complet ? "Atelier complet" : restantes + " places restantes"}</p>
+      <Bouton libelle="Retirer une place" desactive={complet} onClick={onRetirer} />
+      <Bouton libelle="Remettre une place" onClick={onAjouter} />
+      <p>Total ouvert : {placesTotales} places</p>
+    </section>
+  );
+}
+
+function Application() {
+  const [restantes, setRestantes] = useState(12);
+  const placesTotales = 12;
+
+  function retirer() {
+    setRestantes((valeur) => (valeur > 0 ? valeur - 1 : 0));
+  }
+
+  function ajouter() {
+    setRestantes((valeur) => (valeur < placesTotales ? valeur + 1 : valeur));
+  }
+
+  return (
+    <CarteInscription
+      restantes={restantes}
+      placesTotales={placesTotales}
+      onRetirer={retirer}
+      onAjouter={ajouter}
+    />
+  );
+}
+```
+
+Le composant Application possède l'état parce qu'il est l'ancêtre commun de tout ce qui en a besoin : la carte affiche le nombre, le bouton doit être désactivé quand le compteur arrive à zéro, et un futur encart de récapitulatif demandera le même chiffre. On dit que l'état a été remonté. Ce mouvement, la remontée d'état, n'est pas un arrangement d'urgence : c'est la conséquence logique du flux descendant. Quand deux composants frères doivent connaître la même donnée variable, cette donnée monte jusqu'à leur ancêtre commun, et redescend vers chacun sous forme de propriétés.
+
+La conséquence la plus utile de ce principe est la suivante : ne copiez jamais l'état dans des propriétés. Une valeur qui se déduit de l'état, comme le pourcentage de places prises ou le libellé complet ou complet, se calcule dans le corps du composant, à chaque rendu, avec une simple constante. Créer un second état pour la recopier, puis penser à le synchroniser à chaque mise à jour, c'est réintroduire manuellement la double source de vérité que l'on essaie précisément d'éviter.
+
+Les rappels d'action, ces fonctions transmises en propriétés, suivent une convention de nommage qui vaut la peine d'être installée tout de suite. On les nomme avec la préposition on suivie du verbe qui correspond à l'événement : onValider, onSupprimer, onChanger. Ce nom se lit comme une intention depuis le point de vue de l'enfant : le parent m'a dit de le valider. À l'intérieur, la fonction reçue est simplement appelée, sans arguments si l'enfant n'a rien à préciser, ou avec des informations utiles comme la valeur d'un champ. L'enfant ignore comment le parent traite l'information : il l'annonce, c'est tout.
+
+Une dernière précision sur la profondeur. Remonter l'état a un coût de lisibilité si l'on s'y prend au hasard : plus les propriétés transitent loin, plus la liste des attributs s'allonge, et plus il devient difficile de suivre une donnée. Le réflexe professionnel consiste à déclarer l'état au point le plus bas qui regroupe tous les utilisateurs concernés, et à ne pas hésiter à remonter d'un cran quand un nouveau composant réclame la même information. Le découpage idéal tient dans un équilibre : assez haut pour que la donnée soit unique, assez bas pour que la transmission reste courte.
+
+- Les propriétés descendent, les événements remontent : c'est tout le contrat.
+- L'état vit dans l'ancêtre commun de tous les composants qui en ont besoin.
+- On ne recopie jamais une donnée dérivée dans un second état.
+- Une fonction reçue en propriété et appelée par l'enfant informe le parent sans le modifier.
+- Nommez les rappels avec la préposition on suivie du verbe d'action.
+- L'enfant ignore comment le parent utilise l'information qu'il lui transmet.
+- Déclarez l'état au point le plus bas qui regroupe ses utilisateurs.
+
+## Rendus, clés et listes
+
+La plupart des interfaces réelles sont des listes : un programme de séances, une galerie, un panier, un journal d'activités. En JSX, une liste s'obtient en transformant un tableau de données en un tableau d'éléments avec la méthode map, qui retourne un nouvel tableau sans modifier l'original. Chaque entrée devient un composant, et le JSX se contente d'insérer le résultat entre accolades.
+
+```jsx
+function Programme({ seances }) {
+  return (
+    <section>
+      <h2>Programme de la journée</h2>
+      <ul>
+        {seances.map((seance) => (
+          <li key={seance.id} className="seance">
+            <b>{seance.heure}</b> — {seance.titre}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+const seances = [
+  { id: "s1", heure: "14 h", titre: "Composants et props" },
+  { id: "s2", heure: "14 h 30", titre: "État et événements" },
+  { id: "s3", heure: "16 h 30", titre: "Listes et conditions" },
+];
+```
+
+La propriété key attire l'attention dès le premier énoncé de liste, et elle n'est pas décorative. Quand une liste change, React doit associer chaque élément du nouveau rendu avec celui du rendu précédent, exactement comme on met à jour un tableau en conservant les lignes existantes. La clé est cette identité. Sans elle, React se fie à la position : la première ligne de l'ancien rendu correspond à la première du nouveau. Cela fonctionne tant que l'ordre ne bouge jamais, et provoque des comportements étranges dès qu'on insère, supprime ou réordonne, parce que l'état local de chaque ligne suit la position et non la donnée.
+
+Le choix d'une clé suit deux règles simples. Première règle : la clé doit être stable, unique et idéale à la source des données, l'identifiant de la séance par exemple, un identifiant de base de données ou une référence. Deuxième règle : l'index du tableau, obtenu avec le deuxième paramètre de map, n'est acceptable que pour une liste strictement statique qui ne sera jamais réordonnée ni filtrée. Si vous filtrez une liste de séances en supprimant la deuxième entrée, chaque clé d'index désignera désormais une séance différente, et React conservera l'état visuel de l'ancienne entrée sur la nouvelle.
+
+```jsx
+function Programme({ seances, onSupprimer }) {
+  if (seances.length === 0) {
+    return <p>Aucune séance programmée pour l'instant.</p>;
+  }
+
+  return (
+    <ul>
+      {seances.map((seance, position) => (
+        <li key={seance.id}>
+          {seance.heure} — {seance.titre}
+          <button onClick={() => onSupprimer(seance.id)}>
+            Retirer la séance n° {position + 1}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+La clé n'optimise rien : elle identifie. C'est une confusion répandue de croire qu'ajouter des clés accélère l'affichage. Ce qu'elle garantit, c'est la cohérence entre données et écran, et surtout la conservation de l'état local de chaque élément, ce qui devient critique dès qu'une ligne contient un champ de saisie, un menu ouvert ou une case cochée.
+
+Il reste une habitude d'écriture à prendre, celle de ne jamais muter le tableau de l'état. Pour ajouter une séance, vous créez un nouveau tableau qui contient l'ancien plus la nouvelle entrée ; pour en retirer une, vous filtrez. La méthode push à l'intérieur du tableau d'état modifie bien le même objet, mais React compare par référence : elle verrait le même tableau et ne déclencherait aucun rendu. La création d'un nouveau tableau n'est donc pas un gaspillage, c'est le signal même du changement.
+
+- Transformez les données en éléments avec map, puis insérez le tableau entre accolades.
+- La clé identifie une entrée entre deux rendus ; elle ne sert pas à l'affichage.
+- Préférez toujours l'identifiant fourni par la donnée à la position dans le tableau.
+- L'index n'est toléré que pour une liste qui ne sera jamais filtrée ni réordonnée.
+- Une liste vide se traite par une condition placée avant le retour, avec un message explicite.
+- Ne modifiez jamais le tableau de l'état : créez-en un nouveau à chaque mise à jour.
+- Ajouter ou retirer une entrée se fait par concatenation ou filtrage, jamais par push.
+
+## Éléments conditionnels
+
+Une interface change de forme selon la situation : un bouton se désactive quand plus rien n'est disponible, un message remplace une liste vide, un formulaire affiche ses erreurs une fois validé. Le JSX ne contient pas de structure conditionnelle, parce qu'il n'est qu'une expression : on ne peut pas écrire une instruction de condition à l'intérieur d'une description. La condition s'écrit donc en dehors, ou avec les opérateurs de forme expression que JavaScript fournit déjà.
+
+```jsx
+function CarteInscription({ restantes, ouvert }) {
+  const complet = restantes <= 0;
+
+  if (!ouvert) {
+    return <p>Les inscriptions sont closes.</p>;
+  }
+
+  return (
+    <section>
+      <h2>Inscription</h2>
+      {complet ? (
+        <p>L'atelier est complet, inscrivez-vous à la liste d'attente.</p>
+      ) : (
+        <p>{restantes} places encore disponibles.</p>
+      )}
+      <button disabled={complet}>Confirmer ma place</button>
+      {!complet && <a href="#form">Aller au formulaire</a>}
+    </section>
+  );
+}
+```
+
+Trois formes se partagent l'essentiel des usages. L'opérateur ternaire convient quand il y a deux branches alternatives, une à afficher et l'autre non, et il a l'avantage d'être une expression complète, ce qui permet de l'utiliser directement à l'intérieur du JSX. L'opérateur logique de conjonction convient pour un rendu facultatif : si la condition est vraie, on affiche le bloc, sinon rien n'est rendu du tout. Enfin, la sortie anticipée, placée avant le mot return, convient aux cas où toute une branche de l'interface n'a aucun sens tant qu'une condition n'est pas remplie, par exemple un formulaire d'inscription quand les inscriptions sont closes.
+
+Le piège le plus classique de la conjonction concerne les valeurs numériques. L'opérateur logique renvoie l'une de ses deux valeurs, pas forcément un booléen : si la condition est fausse, il renvoie l'opérande de droite, et si elle est vraie, l'opérande de gauche. Quand vous écrivez une expression qui peut valoir zéro, le JSX affichera réellement ce zéro à l'écran, parce que zéro est une valeur rendable. La parade consiste soit à faire précéder la valeur d'une opération de comparaison, soit à envelopper le tout dans un ternaire avec une branche vide.
+
+```jsx
+function ListeSeances({ seances }) {
+  const vide = seances.length === 0;
+
+  return (
+    <div>
+      {vide && <p>Aucune séance pour le moment.</p>}
+
+      {!vide && (
+        <ul>
+          {seances.map((seance) => (
+            <li key={seance.id}>{seance.titre}</li>
+          ))}
+        </ul>
+      )}
+
+      {seances.length > 0 ? (
+        <p>{seances.length} séances au programme</p>
+      ) : null}
+    </div>
+  );
+}
+```
+
+Au-delà de la syntaxe, une discipline rend le code plus lisible. Déplacez les conditions un peu longues juste avant le return, dans des constantes nommées qui racontent l'intention : complet, inscriptionsOuvertes, aucuneInscription. Le JSX reste alors court et se lit comme une phrase, tandis que la logique se lit en haut, là où on l'attend. Une condition qui commence à faire plusieurs lignes à l'intérieur du JSX est presque toujours le signal de l'extraire.
+
+- Toute condition est une expression : pas d'instruction de condition dans le JSX.
+- Le ternaire gère deux branches ; la conjonction gère un bloc facultatif.
+- La sortie anticipée convient quand une branche entière n'a aucun sens.
+- Attention aux valeurs numériques : zéro s'affiche réellement si on le rend.
+- Nommez les conditions dans des constantes placées avant le retour.
+- Une condition trop longue se déplace hors du JSX, pour rester testable.
+- Alternez message de vide et liste pour que chaque état soit explicite.
+
+## Événements React
+
+Un bouton qui ne fait rien est un rectangle. Toute la valeur interactive d'une interface vient des événements : clic, frappe, soumission, survol. Le JSX attache un gestionnaire à une balise en utilisant un nom d'attribut en casse de chameau, préfixé par on suivi du nom de l'événement. Cette convention est la même partout dans la bibliothèque, ce qui rend la lecture d'un composant immédiatement prévisible : en voyant onClick, vous savez qu'un clic est attendu ; en voyant onChange, vous savez qu'une saisie est observée.
+
+```jsx
+function FormulaireInscription({ places, onInscrire }) {
+  const [nom, setNom] = useState("");
+  const [courriel, setCourriel] = useState("");
+  const [erreur, setErreur] = useState("");
+
+  function envoyer(evenement) {
+    evenement.preventDefault();
+    if (nom.trim() === "" || !courriel.includes("@")) {
+      setErreur("Renseignez un nom et une adresse électronique valides.");
+      return;
+    }
+    setErreur("");
+    onInscrire({ nom, courriel });
+    setNom("");
+    setCourriel("");
+  }
+
+  return (
+    <form onSubmit={envoyer}>
+      <label htmlFor="nom">Nom complet</label>
+      <input id="nom" value={nom} onChange={(e) => setNom(e.target.value)} />
+
+      <label htmlFor="courriel">Adresse électronique</label>
+      <input
+        id="courriel"
+        value={courriel}
+        onChange={(e) => setCourriel(e.target.value)}
+      />
+
+      {erreur && <p role="alert">{erreur}</p>}
+      <button type="submit" disabled={places <= 0}>
+        Confirmer ma place
+      </button>
+    </form>
+  );
+}
+```
+
+Trois règles d'écriture gouvernent ce type de code. La première, et la plus fréquente à enfreindre, concerne la référence à la fonction : on transmet le nom du gestionnaire, sans parenthèses. Écrire le nom suivi de parenthèses revient à appeler la fonction pendant le rendu et à passer son résultat comme gestionnaire, ce qui déclenche l'action à l'affichage au lieu de l'attendre. Quand la fonction doit recevoir un argument, on enveloppe l'appel dans une fonction fléchée, qui sera appelée à son tour au bon moment.
+
+La deuxième règle concerne l'objet événement. React normalise les différences entre navigateurs et vous fournit un objet unique avec les informations utiles : la cible qui a déclenché, la valeur courante d'un champ, la méthode qui empêche le comportement par défaut. Dans le formulaire ci-dessus, preventDefault évite le rechargement de la page à la soumission, exactement comme vous le faisiez en JavaScript classique, à cette différence près que la soumission est annoncée par un attribut onSubmit et non par un écouteur branché après coup.
+
+La troisième règle concerne les champs contrôlés. Un champ contrôlé puise sa valeur dans l'état : value vient de l'état, onChange écrit dans l'état. L'avantage est la source unique de vérité déjà évoquée, et un bénéfice pratique immédiat : vous pouvez à tout moment lire, valider, formater ou limiter la saisie, puisque la valeur réelle du champ est dans une variable, pas dans le document. L'inverse existe, un champ non contrôlé qui lit le DOM au moment de la soumission, mais il perd cet avantage et se justifie seulement pour des formulaires très simples.
+
+Les gestionnaires en ligne sont acceptés et même pratiques quand ils doivent recevoir des données de contexte, comme l'identifiant de la ligne qu'on retire. Gardez-les courts : une expression d'un seul appel se lit bien sur place, plusieurs lignes de logique se nomment en haut du composant et se transmettent par référence. Le critère de décision tient en une question : est-ce que ce gestionnaire sert à un seul endroit ? S'il ne sert qu'à un seul appel, il peut vivre sur place ; s'il porte une logique réutilisable ou testable, il mérite son nom.
+
+- Les gestionnaires s'écrivent en casse de chameau, avec le préfixe `on`.
+- Transmettez la fonction par référence, sans parenthèses.
+- Pour passer un argument, enveloppez l'appel dans une fonction fléchée.
+- Appelez preventDefault dans un gestionnaire de soumission de formulaire.
+- Un champ contrôlé lit son value dans l'état et écrit avec onChange.
+- L'objet événement normalisé donne la cible et la valeur courante.
+- Nommez les gestionnaires qui portent une logique, gardez en ligne l'essentiel.
+
+## Un composant qui se réutilise : bouton, carte, formulaire
+
+La promesse de React tient dans ce chapitre : écrire une fois, employer plusieurs fois. Un composant réutilisable n'est pas un composant complexe, c'est un composant dont le contrat de données est assez net pour survivre à des contextes différents. Le bouton est l'exemple le plus pédagogique parce qu'il paraît trivial, jusqu'au moment où l'on en crée le sixième et où l'on copie-colle pour la sixième fois la même classe, le même état désactivé et le même gestionnaire.
+
+```jsx
+function Bouton({ libelle, variante = "primaire", desactive = false, onClick }) {
+  const classe = "bouton bouton-" + variante;
+
+  return (
+    <button className={classe} disabled={desactive} onClick={onClick} type="button">
+      {libelle}
+    </button>
+  );
+}
+
+function CarteInscription({ restantes, onRetirer, onAjouter }) {
+  const complet = restantes <= 0;
+
+  return (
+    <article className="carte-inscription">
+      <h2>Inscription à l'atelier</h2>
+      {complet ? <p>L'atelier est complet.</p> : <p>{restantes} places restantes</p>}
+      <Bouton libelle="Retirer une place" desactive={complet} onClick={onRetirer} />
+      <Bouton libelle="Remettre une place" variante="secondaire" onClick={onAjouter} />
+    </article>
+  );
+}
+```
+
+Trois décisions de conception méritent d'être commentées. D'abord, les valeurs par défaut : le bouton a une variante et un état désactivé qui prennent des valeurs raisonnables, de sorte que l'appel le plus fréquent reste bref. Ensuite, la responsabilité unique : le composant Bouton ne sait rien de l'atelier, des places ni des inscriptions ; il sait afficher un bouton stylé, désactivé si on le lui demande, et annoncer un clic. Cette ignorance volontaire est ce qui lui permettra de servir dans la navigation, dans le formulaire et dans l'encart de récapitulatif. Enfin, le nom du rappel reçu : onClick est un contrat général, pas un nom propre à un écran.
+
+Quand la configuration se multiplie, le JSX ouvre une porte que la configuration ne donne pas : la composition. Plutôt que d'ajouter des propriétés pour décrire des variantes de contenu, on laisse le contenu être transmis. La propriété enfants, déjà rencontrée, en est la forme la plus simple, et un nommage explicite, pour des emplacements multiples, en est la variante avancée.
+
+```jsx
+function Carte({ titre, children, actions }) {
+  return (
+    <article className="carte">
+      <h3>{titre}</h3>
+      <div className="carte-contenu">{children}</div>
+      <div className="carte-actions">{actions}</div>
+    </article>
+  );
+}
+
+function Page({ children }) {
+  return (
+    <div className="page">
+      <Bandeau titre="Atelier de la Médiathèque des Lilas" />
+      <main>{children}</main>
+      <PiedDePage />
+    </div>
+  );
+}
+
+function Application() {
+  return (
+    <Page>
+      <Carte
+        titre="Informations pratiques"
+        actions={<Bouton libelle="Voir le plan" variante="secondaire" />}
+      >
+        <p>Samedi 18 octobre, de 14 h à 17 h, salle 2.</p>
+        <p>Entrée gratuite, sur inscription.</p>
+      </Carte>
+    </Page>
+  );
+}
+```
+
+Le composant Carte décrit une structure répétée, avec un titre, un corps et une zone d'actions, et laisse à chaque emploi le soin de remplir ces emplacements. Le composant Page impose l'ossature commune de l'écran, bandeau et pied de page, et accepte n'importe quel contenu pour sa partie centrale : la page d'accueil, la page de programme et la page de résultat passeront toutes par là sans dupliquer la structure. Ces deux exemples illustrent une règle de conception devenue classique : préférez la composition à la configuration quand une propriété ne ferait que choisir parmi des variantes de structure.
+
+Un avertissement, toutefois, contre l'excès inverse. Un composant qui accepte quinze propriétés, dont certaines ne servent que rarement, devient plus coûteux à comprendre qu'à coder. Le test est simple : décrivez le contrat à voix haute. Si la phrase contient plusieurs et, ou des tournures du type sauf quand, le composant mélange probablement deux responsabilités. Un formulaire réutilisable, par exemple, doit recevoir des champs et un rappel de soumission, pas la logique métier de validation d'un atelier précis.
+
+- Un composant réutilisable ignore le contexte dans lequel on l'emploie.
+- Les valeurs par défaut rendent l'appel courant aussi bref que possible.
+- La responsabilité unique se vérifie en décrivant le contrat à voix haute.
+- La propriété enfants transforme un composant en conteneur générique.
+- Des emplacements nommés conviennent aux structures à plusieurs zones.
+- Préférez la composition à la configuration pour les variantes de structure.
+- Refusez les composants à quinze propriétés : découpez-les en deux.
+
+## Composer et imbriquer : l'arbre de composants
+
+Vous avez désormais tous les gestes : un composant, des propriétés, un état, des événements, des listes et des conditions. La question qui reste est celle de l'assemblage, et elle se résout en observant la forme de votre application comme un arbre, avec à chaque nœud une règle de circulation. Les données descendent d'un nœud vers ses enfants, les événements remontent d'un nœud vers son parent, et personne ne saute d'une branche à l'autre sans passer par l'ancêtre commun.
+
+```jsx
+function Application() {
+  const [restantes, setRestantes] = useState(12);
+  const [seances, setSeances] = useState(SEANCES);
+
+  function retirer() {
+    setRestantes((v) => (v > 0 ? v - 1 : 0));
+  }
+
+  function ajouter() {
+    setRestantes((v) => Math.min(v + 1, 12));
+  }
+
+  function retirerSeance(id) {
+    setSeances((liste) => liste.filter((seance) => seance.id !== id));
+  }
+
+  return (
+    <Page>
+      <Programme seances={seances} onSupprimer={retirerSeance} />
+      <CarteInscription restantes={restantes} onRetirer={retirer} onAjouter={ajouter} />
+      <EncartRestantes restantes={restantes} />
+    </Page>
+  );
+}
+```
+
+Dans cet arbre, l'état des places est déclaré au plus haut niveau parce que trois composants différents en dépendent : la carte qui l'affiche, le bouton qui doit se désactiver, l'encart qui le rappelle. Aucun de ces trois n'a besoin de posséder la donnée, et aucun ne doit la recopier. Le même raisonnement s'applique à la liste des séances : elle est nécessaire au programme et au compteur de séances affiché sous la liste, donc elle remonte au composant qui les deux contient. On déplace une donnée vers le haut chaque fois qu'un deuxième consommateur apparaît, et on la redescend vers le bas chaque fois qu'un seul composant en est responsable.
+
+Le second apprentissage de cette section est la manière de découper un grand écran en pages composées. Plutôt que de dupliquer le bandeau et le pied de page dans chaque écran, on crée un composant de mise en page qui les contient une fois, et on lui transmet le contenu variable par la propriété enfants. C'est exactement le rôle du composant Page vu dans la section précédente. Ce patron se généralise : un conteneur de mise en page, des conteneurs de section, puis des composants de contenu, chacun ne connaissant que son niveau.
+
+Trois signes indiquent qu'un découpage mérite d'être revu. Le premier est une liste de propriétés qui s'allonge sans fin entre deux composants : la donnée circule, mais lisible elle ne l'est plus, et il vaut mieux déplacer le composant qui les reçoit vers le haut. Le deuxième est un composant qui reçoit une fonction et la transmet tel quel à un enfant, sans rien y ajouter : c'est un tuyau inutile, le composant intermédiaire peut être supprimé. Le troisième est un fichier qui contient deux régions visibles distinctes : presque toujours, une extraction en deux composants rend les deux plus courts et plus faciles à tester.
+
+```text
+Page
+|-- Bandeau
+|-- main
+|   |-- Programme
+|   |   +-- Séance (répété n fois)
+|   |-- CarteInscription
+|   |   +-- Bouton (répété deux fois)
+|   +-- EncartRestantes
++-- PiedDePage
+```
+
+Cet arbre final se lit comme le plan d'une maison. Chaque ligne est une pièce, chaque indentation est une porte. Quand vous reviendrez sur le projet dans trois semaines, ce schéma, que vous pouvez noter dans un commentaire en tête de fichier, vous rendra la main bien plus vite que la lecture du code complet.
+
+- Les données descendent, les événements remontent, personne ne saute de branche.
+- Une donnée consommée par plusieurs frères est déclarée chez leur ancêtre commun.
+- Un composant de mise en page reçoit la variable par la propriété enfants.
+- Un composant qui ne fait que relayer des propriétés est supprimable.
+- Deux régions visibles dans un même fichier annoncent un découpage à faire.
+- Notez l'arbre des composants en tête de fichier : il reste lisible des mois durant.
+
+## Mini-projet guidé : refaire l'atelier en composants
+
+Il est temps d'assembler toutes les pièces. Le projet reprend la page de l'atelier que vous avez construite en HTML, en CSS et en JavaScript dans les chapitres précédents, mais réécrite en composants React. Les données sont les mêmes : le titre de l'atelier, la date, le lieu, trois séances au programme, un compteur de places et un pied de page. Ce qui change, c'est la façon de les traiter : plus une ligne de manipulation du document, seulement des composants, des propriétés et un état.
+
+La première étape est un travail d'écriture, pas de code : reprenez l'arbre du début du chapitre et listez les données à côté de chaque feuille. Le titre et la date sont fixes ; le tableau des séances est fixe ici, mais il peut être animé plus tard ; le nombre de places est variable et modifiable par l'utilisateur ; les liens de navigation sont fixes. Cette colonne de données est le cahier des charges de votre application, et chaque ligne deviendra soit une constante, soit une propriété, soit un état.
+
+```jsx
+const SEANCES = [
+  { id: "s1", heure: "14 h", titre: "Composants et props" },
+  { id: "s2", heure: "14 h 30", titre: "État et événements" },
+  { id: "s3", heure: "16 h 30", titre: "Listes et conditions" },
+];
+
+function Bandeau({ titre, sousTitre }) {
+  return (
+    <header className="bandeau">
+      <h1>{titre}</h1>
+      <p>{sousTitre}</p>
+    </header>
+  );
+}
+
+function Programme({ seances }) {
+  if (seances.length === 0) {
+    return (
+      <section>
+        <h2>Programme</h2>
+        <p>Le programme sera publié prochainement.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <h2>Programme</h2>
+      <ul>
+        {seances.map((seance) => (
+          <li key={seance.id}>
+            <b>{seance.heure}</b> — {seance.titre}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PiedDePage() {
+  return <footer>© 2026 Médiathèque des Lilas</footer>;
+}
+```
+
+La deuxième étape introduit l'état de l'application. La carte d'inscription possède le compteur des places, avec les deux boutons d'ajustement et la gestion du cas limite : quand le compteur arrive à zéro, le bouton de retrait se désactive et l'interface annonce que l'atelier est complet. Quand il remonte jusqu'à la jauge initiale, l'ajout se bloque. Ces deux garde-fous sont des conditions sur l'état, écrites une fois, appliquées à chaque rendu.
+
+```jsx
+function CarteInscription({ placesTotales }) {
+  const [restantes, setRestantes] = useState(placesTotales);
+
+  const complet = restantes <= 0;
+  const plein = restantes >= placesTotales;
+
+  function retirer() {
+    if (restantes > 0) {
+      setRestantes(restantes - 1);
+    }
+  }
+
+  function ajouter() {
+    if (restantes < placesTotales) {
+      setRestantes(restantes + 1);
+    }
+  }
+
+  return (
+    <article className="carte-inscription">
+      <h2>Inscription</h2>
+      {complet ? (
+        <p role="status">Atelier complet, liste d'attente ouverte.</p>
+      ) : (
+        <p>{restantes} places restantes sur {placesTotales}</p>
+      )}
+
+      <Bouton libelle="Retirer une place" desactive={complet} onClick={retirer} />
+      <Bouton libelle="Ajouter une place" desactive={plein} onClick={ajouter} />
+    </article>
+  );
+}
+```
+
+La troisième étape fournit le bouton réutilisable que ce composant appelle deux fois, puis l'assemblage final. Notez le rôle du composant Application : il ne contient aucune logique métier, seulement la déclaration des données et l'enchaînement des composants. C'est volontaire : l'endroit où l'on décide des valeurs n'est pas l'endroit où l'on décrit les écrans.
+
+```jsx
+function Bouton({ libelle, desactive = false, onClick }) {
+  return (
+    <button className="bouton" disabled={desactive} onClick={onClick} type="button">
+      {libelle}
+    </button>
+  );
+}
+
+function Application() {
+  return (
+    <div className="page">
+      <Bandeau
+        titre="Atelier React du samedi"
+        sousTitre="Médiathèque des Lilas — gratuit, sur inscription"
+      />
+      <main>
+        <Programme seances={SEANCES} />
+        <CarteInscription placesTotales={12} />
+        <Encart titre="Informations pratiques" />
+      </main>
+      <PiedDePage />
+    </div>
+  );
+}
+```
+
+Avant de considérer le projet comme terminé, exécutez la liste de contrôle suivante. Changez une donnée en haut de l'arbre et vérifiez qu'elle se répercute partout où elle est affichée. Retirez toutes les places jusqu'à zéro : le message de complet doit apparaître et le bouton doit se griser. Remettez douze : le blocage doit céder. Supprimez une séance du tableau et confirmez que les autres lignes restent stables et que la clé ne bouge pas. Remplacez le tableau des séances par un tableau vide et vérifiez que le message de programme à venir prend le relais sans erreur. Enfin, relisez chaque composant à part, en vous demandant quelles données il reçoit et ce qu'il annonce : si la réponse tient en une phrase, le découpage est bon.
+
+- Listez les données avant d'écrire le moindre composant.
+- Les valeurs fixes deviennent des constantes, les valeurs variables deviennent de l'état.
+- Encadrez le compteur avec deux conditions : vide et complet.
+- Le bouton réutilisable ignore tout de l'atelier, il affiche et il annonce.
+- Application assemble et ne décide de rien d'autre que de l'assemblage.
+- Testez les cas limites : zéro, maximum, liste vide, liste normale.
+- Relisez chaque composant isolément et formulez son contrat en une phrase.
+
+## À retenir
+
+- Un composant est une fonction JavaScript qui renvoie du `JSX`.
+- Le nom d'un composant commence par une majuscule, ce qui le distingue d'une balise.
+- Le `JSX` ressemble au `HTML` mais s'écrit dans du `JavaScript` et se transforme avant exécution.
+- Les accolades ouvrent une expression ; sans elles, le texte s'affiche littéralement.
+- Utilisez `className` et `htmlFor`, et fermez chaque balise vide avec une barre oblique.
+- Les propriétés sont l'objet des paramètres d'un composant et elles sont en lecture seule.
+- Les données descendent par les propriétés, les événements remontent par les fonctions reçues.
+- La propriété enfants contient tout ce qui s'écrit entre les balises d'un composant.
+- L'hook `useState` déclare l'état local et déclenche un rendu quand il change.
+- Appeler un mutateur prépare le prochain rendu, il ne modifie pas la variable courante.
+- Une mise à jour dépendante de la précédente s'écrit avec la forme fonctionnelle.
+- L'état appartient à l'instance : trois emplois d'un composant signifient trois états.
+- L'état partagé se déclare chez l'ancêtre commun et redescend sous forme de propriétés.
+- On ne recopie jamais une valeur dérivée dans un second état.
+- Une liste se construit avec `map`, et sa clé identifie une entrée entre deux rendus.
+- La clé provient de la donnée, jamais de la position dans le tableau.
+- Ne modifiez jamais le tableau ou l'objet de l'état : créez-en un nouveau.
+- Les conditions sont des expressions : ternaire, conjonction ou sortie anticipée.
+- Les gestionnaires s'écrivent en casse de chameau et se transmettent sans parenthèses.
+- Un champ contrôlé lit sa valeur dans l'état et l'écrit avec `onChange`.
+- Préférez la composition à la configuration quand une propriété décrit une structure.
+
+## Erreurs fréquentes
+
+- Piège : écrire le nom d'un composant en minuscules et se demander pourquoi rien ne s'affiche → Correction : une majuscule initiale signale au JSX qu'il s'agit d'un composant et non d'une balise.
+- Piège : oublier les accolades autour d'une expression, ou au contraire entourer un texte fixe → Correction : les accolades portent une valeur calculée, tout le reste est du texte affiché tel quel.
+- Piège : modifier directement une propriété reçue en params → Correction : les propriétés sont en lecture seule ; demandez au parent une nouvelle valeur par un rappel.
+- Piège : appeler un mutateur puis lire la variable dans la même fonction en s'attendant à la nouvelle valeur → Correction : la variable appartient au rendu courant ; utilisez la forme fonctionnelle pour enchaîner.
+- Piège : déclarer useState dans une condition ou après un return → Correction : déclarez tous les états en tête de composant, dans le même ordre à chaque rendu.
+- Piège : stocker dans l'état une valeur qui se déduit d'autres données → Correction : calculez-la dans le corps du composant, une simple constante suffit.
+- Piège : donner la position comme clé dans une liste filtrée ou réordonnable → Correction : utilisez un identifiant stable de la donnée.
+- Piège : pousser un élément dans le tableau de l'état et ne voir aucun changement → Correction : créez un nouveau tableau par concaténation ou filtrage.
+- Piège : écrire des parenthèses après le nom d'un gestionnaire transmis → Correction : transmettez la référence, enveloppez l'appel dans une fonction fléchée si un argument est nécessaire.
+- Piège : afficher zéro à l'écran avec une conjonction sur un compteur → Correction : utilisez un ternaire ou forcez la conversion en booléen avant de rendre.
+- Piège : duplier une donnée variable dans deux composants frères → Correction : remontez l'état chez l'ancêtre commun et redescendez-le par les propriétés.
+- Piège : construire une chaîne de caractères pour fabriquer du balisage → Correction : décrivez la structure en JSX, le contenu textuel est échappé automatiquement.
+
+## Pour aller plus loin
+
+La documentation officielle de React est aujourd'hui la meilleure porte d'entrée, et elle se lit dans un ordre particulièrement bien pensé pour qui vient de terminer ce chapitre. Commencez par https://react.dev/learn, qui organise les notions autour d'articles courts et d'exemples exécutables : votre première composant, la lecture du JSX, la pensée par composants, puis la gestion de l'état. Chaque page se suffit à elle-même et contient un banc d'essai où l'on peut modifier le code en ligne, ce qui convient parfaitement à l'habitude que nous prônons depuis le début du parcours : changer une valeur et observer la conséquence. Revenez ensuite à https://react.dev/reference/react/useState pour la référence complète du hook que vous avez utilisé dans ce chapitre : y sont détaillées la forme fonctionnelle de mise à jour, l'initialisation paresseuse et les comportements de comparaison que l'on rencontre en pratique.
+
+Un second bloc de lecture complète utilement le tableau. Les fonctions fléchées et la décomposition d'objets, largement employées dans tous les exemples, sont décrites avec précision sur https://developer.mozilla.org/docs/Web/JavaScript, la référence de Mozilla qui reste la plus fiable pour le langage lui-même. Le modèle du document objet, que React épargne d'écrire mais qu'il utilise en coulisses, se trouve sur https://developer.mozilla.org/docs/Web/API/Document_Object_Model : savoir comment un navigateur organise sa représentation d'une page vous aidera à comprendre ce que fait exactement React quand il met l'écran à jour. Prenez le temps de feuilleter ces pages plutôt que de les lire d'un bout à l'autre, et revenez-y au moment où une question précise se pose.
+
+## Et maintenant : les prochaines étapes
+
+Vous disposez à présent du vocabulaire complet des fondations : découper une interface en composants nommés, faire descendre les données par les propriétés, faire remonter les événements par les rappels, déclarer un état local, afficher des listes avec des clés stables, alterner des contenus selon des conditions et écrire des composants réutilisables. L'exercice pratique qui suit cette leçon vous fait réécrire seul le site de l'atelier sous cette forme, en partant du squelette fourni et en respectant la consigne : le compteur de places doit être piloté par un état, les boutons d'ajustement doivent fonctionner dans les deux sens, et le cas d'un compteur vide doit être géré explicitement. Le quiz de quatre questions qui accompagne le chapitre vérifie en quelques minutes les notions qui reviennent le plus souvent.
+
+Passé cet exercice, la suite du parcours attaque les cas qui font d'une démonstration une application : la navigation entre plusieurs écrans, les formulaires entièrement contrôlés et la récupération de données distantes avec fetch, que vous connaissez déjà et que vous remettrez au service de React. Vous constaterez alors que la discipline apprise ici, une source unique de vérité et un flux de données descendant, n'était pas une contrainte d'introduction mais le principe qui rend ces sujets avancés gérables. Conservez le fichier de l'atelier : vous le ferez évoluer à chaque chapitre restant, et la comparaison entre sa forme d'aujourd'hui et sa forme finale mesurera tout le chemin parcouru.

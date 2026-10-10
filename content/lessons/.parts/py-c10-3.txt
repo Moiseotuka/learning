@@ -1,0 +1,112 @@
+## Isolez le monde : monkeypatch et mock
+
+Jusqu'ici, vos tests ne vérifiaient que des fonctions pures : on donne des valeurs, on compare un résultat. C'est le cas le plus confortable, mais il ne couvre qu'une partie du projet. Le module cli, lui, lit sys.argv, décide d'un chemin par défaut, ouvre un fichier, écrit un rapport et termine avec un code de retour. Le module chargement, lui, dépend du contenu réel d'un disque. Tester ces modules en laissant le monde tel quel obligerait vos tests à lire vos fichiers personnels, à dépendre du dossier d'où vous lancez la commande, à produire des fichiers qui traînent et, pire, à échouer sur une machine autre que la vôtre. Il faut donc pouvoir dire au test, pour sa durée très courte : dans ce monde précis, cette partie-là du réel ne fonctionnera pas comme d'habitude.
+
+Deux outils répondent à ce besoin, et ils n'ont pas le même niveau d'intervention. monkeypatch est un fixture de pytest qui remplace temporairement un objet, puis remet tout en état automatiquement à la fin du test : aucun nettoyage à la main, aucun risque de fuite vers le test suivant. mock, issu de la bibliothèque standard unittest.mock, fabrique quant à lui un objet factice qui enregistre tout ce qu'on lui demande, ce qui permet de vérifier non seulement un résultat, mais aussi le comportement : cette fonction a-t-elle été appelée, avec quels arguments, et combien de fois ? Les deux se combinent, mais chacun a son terrain.
+
+```python
+import sys
+from analyse_notes import cli
+
+
+def test_chemin_par_defaut(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["analyse-notes"])
+    (tmp_path / "notes.csv").write_text("nom;note\nDupont;15\n", encoding="utf-8")
+
+    code = cli.main()
+
+    assert code == 0
+    assert "Dupont" in capsys.readouterr().out
+```
+
+Ce test illustre la force de monkeypatch : les trois modifications sont déclarées, bornées et annulées dès que le test se termine. Changer de répertoire courant avec chdir permet de simuler l'exécution depuis un dossier vierge, où l'analyseur doit retrouver notes.csv par défaut. Remplacer sys.argv évite de passer par le terminal tout en testant exactement la branche par défaut du parseur. Et capsys capture l'affichage pour le comparer à une chaîne, sans rien écrire sur la console pendant la suite. Aucun de ces gestes ne modifie durablement votre environnement : c'est ce qui distingue un remplacement propre d'un réglage manuel qu'on oublie de défaire.
+
+La règle d'or du remplacement tient en une phrase : on ne remplace que ce qui empêche le test d'être rapide, isolé et déterministe. L'horloge du système, le générateur de nombres aléatoires, la variable d'environnement qui porte un jeton, la fonction qui contacte un service externe, le répertoire courant : voilà les frontières légitimes, parce qu'elles sont hors de votre contrôle. En revanche, remplacer moyenne() pour tester la mention revient à vérifier votre code avec votre propre code : le test passera même si la moyenne est fausse, et vous aurez fabriqué le faux positif le plus coûteux de tous. Avant de mocker, posez la question : est-ce que cette dépendance est réellement le sujet de mon test, ou seulement son décor ?
+
+```python
+from unittest.mock import patch
+
+
+def test_cli_delegue_le_chargement():
+    donnees = [{"nom": "Dupont", "note": 15.0}]
+    with patch("analyse_notes.cli.charger_notes", return_value=donnees) as faux:
+        code = cli.traiter("ailleurs.csv")
+
+    assert code == 0
+    faux.assert_called_once_with("ailleurs.csv")
+```
+
+Le mock apporte ce que monkeypatch ne donne pas : la mémoire de l'appel. On remplit le retour attendu, on exécute le code réel, puis on interroge l'objet factice pour savoir s'il a été sollicité une fois et avec le bon chemin. Cette capacité devient précieuse pour vérifier une orchestration : le cli a-t-il bien demandé le chargement du fichier indiqué, a-t-il bien transmis le chemin au module de rendu, n'a-t-il pas écrit le rapport quand les données étaient invalides ? Trois contrats de collaboration, vérifiables sans créer aucun fichier, en quelques lignes.
+
+La tentation, évidemment, est de mocker de plus en plus, jusqu'à ce que le test ne vérifie plus que la qualité de vos objets factices. Les signes sont faciles à repérer : le corps du test contient plus de lignes de configuration que de code testé, l'objet factice doit être reconfiguré à chaque modification du code réel, ou le test casse parce qu'une signature a changé alors que le comportement reste correct. Face à ce tableau, reculez d'un cran. La hiérarchie la plus saine est la suivante : rendez le code testable, c'est-à-dire déplacez la dépendance en paramètre ; si la dépendance est un fichier ou une chaîne, fabriquez-la en mémoire, par exemple avec io.StringIO ou un dossier temporaire ; utilisez monkeypatch pour une frontière simple ; recours au mock complet seulement pour une collaboration que vous ne pouvez pas simuler plus simplement. Et conservez la signature réelle avec l'option autospec de patch, sinon votre factice acceptera n'importe quel appel et cessera de vous signaler les dérives.
+
+Avant même de recourir à ces outils, examinez si la difficulté vient de votre code plutôt que du test. Une fonction qui ouvre elle-même un fichier, appelle la bibliothèque datetime et écrit sur le disque est difficile à tester parce qu'elle empile trois dépendances dans un seul corps. Séparez-les : la fonction reçoit le texte à analyser en paramètre, une autre reçoit la date du jour, une troisième reçoit la destination de l'écriture. Le test peut alors fournir une chaîne, une date figée et une cible en mémoire, sans rien remplacer du tout. C'est la forme la plus noble de testabilité, celle qui disparaît de la vue une fois en place : plus aucune configuration, plus aucun mock, seulement des valeurs. Les outils de remplacement restent alors ce qu'ils doivent être, une exception maîtrisée pour les frontières que le design ne peut pas absorber.
+
+## La couverture : une jauge, pas un objectif
+
+La couverture mesure une chose et une seule : quelles lignes de votre code ont été exécutées pendant la suite de tests. Elle s'obtient avec le plugin pytest-cov, qui s'installe avec votre lot dev et s'active par une simple option. Le rapport term-missing est celui qui vous intéresse, car il liste à la fois le pourcentage global et les fichiers, puis les numéros de lignes que aucun test n'a traversées. Cette information est utile, parfois même précieuse : elle révèle souvent une branche d'erreur écrite depuis six mois et jamais exercée, donc probablement fausse.
+
+```bash
+pytest --cov=analyse_notes --cov-report=term-missing
+```
+
+Le piège commence au moment où le pourcentage devient un objectif affiché. Une couverture de cent pour cent ne dit rien de la qualité de vos assertions : on peut couvrir toutes les lignes avec des tests qui ne comparent jamais de résultat, en se contentant d'appeler les fonctions pour voir si elles plantent. À l'inverse, une couverture modeste accompagnée d'assertions exigeantes sur les cas critiques vaut bien mieux. La couverture répond à la question « quel code n'a jamais été exécuté pendant un test ? » ; elle ne répond jamais à la question « ce code fait-il ce qu'on attend ? ». Confondre les deux conduit à poursuivre un chiffre au lieu d'un comportement, et c'est précisément le type d'erreur que vous éviterez en lisant le rapport comme un indice, pas comme un tableau de bord.
+
+```toml
+[tool.coverage.run]
+source = ["src/analyse_notes"]
+branch = true
+omit = ["*/cli.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+```
+
+Trois réglages de cette configuration méritent votre attention. L'option branch remplace la mesure des lignes par la mesure des branches : un if dont la condition est toujours vraie n'est plus compté comme couvert tant que son else n'a jamais été pris, ce qui est exactement la distinction que vous voulez voir sur un module de gestion d'erreurs. L'option source restreint la mesure à votre paquet, pour que les pourcentages ne soient pas dilués par la bibliothèque standard. Enfin, fail_under transforme le seuil en condition d'échec : en dessous, la commande retourne un code non nul et l'intégration continue s'arrête. Fixez une valeur atteignable et réelle, pas l'inverse : un seuil de 80 que vous contournez pendant des mois vaut moins qu'un seuil de 60 que vous dépassez régulièrement.
+
+```table
+Observation dans le rapport | Ce qu'elle signifie réellement | Ce qu'elle ne signifie pas
+Une ligne verte | Elle a été exécutée au moins une fois | Elle produit le bon résultat dans tous les cas
+Une ligne rouge dans un except | Ce cas d'erreur n'est jamais survenu en test | Ce chemin est mort ou faux
+Un pourcentage qui monte | Vous avez ajouté des exécutions | Vous avez gagné en confiance
+Un pourcentage stable à 100 | Rien de neuf n'a été touché | Votre code est sans défaut
+```
+
+La bonne méthode de travail consiste à utiliser la couverture comme un détecteur de zones d'ombre, jamais comme une to-do list. Vous exécutez le rapport, vous repérez un bloc rouge : la branche qui gère un fichier en lecture seule, la conversion d'une note hors bornes, le message d'erreur affiché quand l'en-tête est incomplet. Vous vous demandez alors ce qui se passerait en production sur ce chemin. Si la réponse est « personne ne le sait », écrivez le test qui lève le voile, non pas pour faire monter le chiffre, mais parce que cette inconnue est exactement ce qui vous coûtera une nuit blanche. Si la réponse est « ce code ne sert plus à rien », supprimez-le : du code non couvert parce qu'il est inutile n'a aucune raison d'exister.
+
+Un dernier conseil pratique : surveillez la couverture des fichiers de gestion d'erreur en priorité. Les chemins nominaux se testent presque tout seuls, ce sont les messages d'exception et les codes de retour qui restent rouges quand on les néglige, et ce sont pourtant eux que l'utilisateur verra le premier jour où quelque chose se passe mal.
+
+## Ruff : le linter et le formateur en une seule brique
+
+Reprenez votre analyseur et regardez ce que contiennent réellement les questions de style : l'ordre des imports, la longueur des lignes, les espaces autour des opérateurs, les espaces dans les parenthèses, le nom d'une variable non utilisée, un import mort hérité d'un refactoring, une comparaison écrite à l'envers. Aucune de ces questions n'appartient au métier de votre programme, toutes consomment du temps de revue, et plusieurs sont de véritables défauts silencieux. Un import inutilisé ne casse rien aujourd'hui, mais il ralentit l'import, il ment sur les dépendances et il masque parfois une fonctionnalité abandonnée à moitié. La réponse professionnelle est de ne jamais régler ces questions à la main : on choisit un outil, on l'écrit dans le pyproject, et on l'exécute.
+
+La distinction entre linter et formateur est essentielle pour comprendre ce que fait chaque commande. Un linter analyse le code et signale ce qui est discutable, sans le modifier : variable inutilisée, import manquant, exception trop large, complexité excessive, style qui s'écarte de la convention. Un formateur, lui, ne discute pas : il réécrit le fichier selon des règles fixes et vérifiables, en conservant strictement le comportement. Le linter émet des avis que l'humain tranche ; le formateur applique une décision déjà prise. Ruff fournit les deux, dans le même outil, avec la même configuration, ce qui supprime une classe entière de problèmes d'installation et de versions divergentes entre les outils.
+
+```bash
+ruff check .            # analyse et signale
+ruff check --fix .      # corrige ce qui est corrigeable sans risque
+ruff format .           # réécrit le style de tous les fichiers
+ruff format --check .   # vérifie sans rien écrire, idéal pour l'intégration continue
+```
+
+Les règles les plus utiles pour votre projet portent sur des défauts que l'œil humain finit toujours par laisser passer. Les règles F de pyflakes détectent les variables et imports inutilisés, les noms utilisés avant d'être définis et les exceptions attrapées sans être lues. Les règles E de pycodestyle signalent les lignes trop longues et les espaces aberrants. Les règles I imposent un ordre d'imports stable, bibliothèque standard d'abord, puis paquets tiers, puis vos modules, ce qui rend les diffs de fusion illisibles autrement. Les règles B de bugbear attrapent des pièges concrets, comme un argument mutable utilisé comme valeur par défaut. Les règles UP modernisent l'écriture vers la version de Python que vous déclarez. Ensemble, elles transforment la relecture en un exercice de fond plutôt qu'en chasse aux coquilles.
+
+```toml
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+```
+
+La configuration ci-dessus mérite d'être lue lentement. Le champ src indique à ruff où se trouvent vos modules, condition de l'analyse des imports de premier niveau. Le champ select est une liste blanche : seules les familles citées s'appliquent, ce qui vous évite le fatras historique d'options contradictoires héritées de plusieurs outils. Enfin, per-file-ignores permet de désactiver une règle précise pour un dossier précis, par exemple une règle qui aurait du sens dans src mais qui se heurte à la nature déclarative des fichiers de test. L'exception doit rester étroite et justifiée : désactiver une règle pour tout le projet parce qu'elle gêne une fois, c'est supprimer le contrôle plutôt que le cas.
+
+Le formateur, lui, ne demande aucune décision : il applique. Dès lors, un principe s'impose dans l'équipe, et vous devez le défendre en revue : le style n'est jamais un sujet de discussion, parce qu'il n'est plus une décision. Plus personne ne relit la position d'une virgule, l'ordre alphabétique des imports ou la longueur d'une ligne, et la revue de code peut consacrer son temps au seul sujet qui compte, la logique et les cas limites. Deux bonnes habitudes complètent cette automatisation. D'abord, ne lancez jamais le formateur au milieu d'une revue en cours : il mélange ses réécritures avec vos changements de fond et rend le diff illisible ; formatez juste avant de commiter. Ensuite, réservez ruff check aux défauts qui demandent un jugement, et ne combinez pas deux formateurs : ruff format et black produisent des résultats proches mais différents, et les faire cohabiter revient à annuler les bénéfices de l'un et de l'autre.
+
+La vitesse de ruff change concrètement la manière de travailler. Écrit en Rust, il analyse en une fraction de seconde des dizaines de fichiers, si bien que rien ne vous empêche de l'exécuter à chaque enregistrement, via l'intégration de votre éditeur, et à chaque commit, via le fichier de configuration que la section suivante met en place. Le bénéfice n'est pas seulement du temps gagné, c'est un effet de seuil : un contrôle qui prend une seconde est fait systématiquement, un contrôle qui prend trente secondes est reporté, et un contrôle reporté finit par être abandonné. C'est exactement la même logique qui a fait le succès des tests rapides, appliquée au style.

@@ -1,0 +1,154 @@
+## L'évaluation temporelle : couper sans tricher
+
+Vous savez valider un modèle : mélanger les observations, en réserver un quart au test, comparer les prédictions aux valeurs réellement connues. Cette méthode, excellente ailleurs, devient un piège mortel dès qu'une série temporelle est en jeu, pour une raison simple : en mélangeant, vous laissez le futur entrer dans l'entraînement. Le modèle apprend alors avec des informations qui, au moment de la prédiction, n'existaient pas encore, et son score mesure moins sa capacité que votre fuite de données. Le symptôme est facile à reconnaître : des performances extraordinaires, un modèle qui semble avoir deviné, et une mise en production qui s'effondre dès la première semaine réelle.
+
+Le principe du découpage temporel tient en une phrase : on entraîne sur le passé et on teste sur le futur, sans jamais retourner l'ordre. Concrètement, vous choisissez une date de coupure — les deux premières années pour l'entraînement, les trois dernières semaines pour le test — et vous n'y touchez plus. Aucune ligne du test ne doit avoir servi à estimer un paramètre, une moyenne, un écart-type, une saisonnalité ou une normalisation. Cette contrainte a une conséquence libératrice : le résultat que vous obtenez sur ce test est une estimation honnête de ce que le système donnera demain, ce que le mélange aléatoire ne peut jamais promettre.
+
+Une seule coupure reste fragile, parce que le hasard des semaines choisies peut vous avantager ou vous pénaliser. On utilise alors des coupures multiples et séquentielles : on commence par un entraînement court, on teste sur la période suivante, on agrège la période testée à l'entraînement, on teste la suivante, et ainsi de suite. Chaque test reste strictement futur par rapport à l'entraînement correspondant, et l'on agrège les erreurs sur toutes les fenêtres. scikit-learn fournit ce découpage sous le nom de TimeSeriesSplit, que le bloc ci-dessous utilise ; statsmodels propose des équivalents pour les modèles de state space. Cette validation glissante donne une moyenne d'erreur et une dispersion, ce qui est bien plus honnête qu'un unique score.
+
+La question des dérivées mérite une attention particulière, car c'est là que fuient les données. Si vous créez une colonne moyenne_mobile_30 calculée sur toute la série, la valeur de cette colonne à la date de coupure contient déjà les vingt-neuf jours qui suivent, puisque la fenêtre est centrée ou traverse la frontière. De même, une normalisation dont la moyenne et l'écart-type sont estimés sur l'ensemble du fichier attribue au test une connaissance du test lui-même. La règle est stricte : tout objet statistique — moyenne, écart-type, quantiles, coefficients de décomposition, vocabulaire de catégories — s'ajuste sur la partie d'entraînement, puis s'applique au test sans jamais être recalculé.
+
+Le code suivant illustre les deux découpages, l'un naïf et l'autre correct, et affiche la frontière de chaque volet.
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
+
+n = len(serie)
+coupe = int(n * 0.8)
+
+entrainement, test = serie.iloc[:coupe], serie.iloc[coupe:]
+print("entrainement :", entrainement.index.min().date(),
+      "->", entrainement.index.max().date())
+print("test         :", test.index.min().date(),
+      "->", test.index.max().date())
+
+tscv = TimeSeriesSplit(n_splits=4)
+for k, (app, val) in enumerate(tscv.split(serie), start=1):
+    print(f"volet {k} : {len(app)} jours d'entrainement,",
+          f"{len(val)} jours de test,",
+          f"frontiere le {serie.index[val[0]].date()}")
+```
+
+Le tableau suivant met face à face les deux philosophies de découpage : l'une que vous ne utiliserez plus jamais sur une série, l'autre qui devient votre réflexe.
+
+| Critère | Découpage aléatoire | Découpage temporel |
+| --- | --- | --- |
+| Ordre des observations | Mélangé | Respecté à l'identique |
+| Information du futur | Fuit dans l'entraînement | Jamais accessible |
+| Score obtenu | Optimiste, non représentatif | Estimation honnête du futur proche |
+| Répétition possible | K fois au hasard | Coupures successives ou glissantes |
+| Cas d'emploi | Données indépendantes | Toute série temporelle |
+
+Un dernier réflexe complète le découpage : gardez un vrai lot de recette. Les semaines de test servent à choisir entre deux modèles, ce qui les rend, au fil des itérations, un jeu de validation déguisé. Réservez donc en fin de parcours une période que personne n'a le droit d'ouvrir avant la décision finale, et ne la consultez qu'une fois. Ce garde-fou, qui coûte trois semaines d'historique, est ce qui sépare un modèle réglé sur le test d'un modèle évalué une seule fois.
+
+## MAE, RMSE, MAPE : lire ses erreurs
+
+Une erreur de prévision se décline en plusieurs métriques, et chacune raconte une histoire différente. Choisissez-la en fonction de la question métier, jamais par habitude, car deux métriques peuvent classer diamétralement à l'opposé deux modèles sur la même série. Commencez par la plus lisible : l'erreur absolue moyenne, ou MAE, qui prend l'écart entre prévision et réalisé, en ignore le signe, puis en fait la moyenne. Elle reste dans l'unité de votre série — des euros, des kilowattheures — ce qui la rend immédiatement compréhensible en réunion : prévoir en moyenne dix-huit euros d'écart sur un chiffre d'affaires quotidien, cela se juge.
+
+L'erreur quadratique moyenne, ou RMSE, calcule les mêmes écarts mais les met au carré avant d'en calculer la moyenne, ce qui lui donne une sensibilité particulière aux grosses erreurs. Un écart double pèse quatre fois plus, si bien qu'un seul jour mal prévu peut dominer entièrement le score. C'est un défaut quand la série contient des événements exceptionnels que personne ne pouvait anticiper, et c'est une qualité quand votre responsabilité consiste précisément à éviter les catastrophes. La règle empirique est simple : si la RMSE dépasse nettement la MAE, votre modèle rate rarement mais rate fort, et c'est sur ces ratés rares qu'il faut travailler en premier.
+
+L'erreur en pourcentage, ou MAPE, divise l'erreur absolue par la valeur réelle et la moyenne en pourcentage. Elle a l'immense avantage de se lire sans contexte : huit pour cent d'erreur, cela se compare d'une série à l'autre, d'un mois à l'autre, d'un magasin à l'autre. Ses limites sont tout aussi nettes. Elle explose quand la valeur réelle s'approche de zéro — un jour de fermeture où le chiffre d'affaires est nul la rend inutilisable —, elle est biaisée parce qu'elle pénalise plus les sous-estimations que les surestimations, et elle suppose une échelle strictement positive. Utilisez-la sur des séries qui ne s'annulent jamais, et associez-la toujours à une métrique en unités.
+
+```python
+import numpy as np
+
+def metriques(reel, prevu):
+    reel, prevu = np.asarray(reel, float), np.asarray(prevu, float)
+    ecart = reel - prevu
+    mae = np.mean(np.abs(ecart))
+    rmse = np.sqrt(np.mean(ecart ** 2))
+    valides = reel != 0
+    mape = np.mean(np.abs(ecart[valides] / reel[valides])) * 100
+    return {"MAE": round(mae, 2), "RMSE": round(rmse, 2),
+            "MAPE": round(mape, 1)}
+
+reel = np.array([118, 132, 141, 109, 127, 160, 151])
+prevu = np.array([120, 128, 137, 115, 124, 152, 149])
+print(metriques(reel, prevu))
+
+naif = np.array([116, 118, 132, 141, 109, 127, 160])
+print("persistance :", metriques(reel, naif))
+```
+
+Pour comparer un modèle à une baseline, une métrique d'échelle fait merveille : le rapport d'erreur moyenne par rapport au modèle naïf, souvent noté MASE, divise votre erreur par celle de la persistance. Un résultat inférieur à un signifie que vous battez le plus simple des modèles ; un résultat de zéro virgule six indique une réduction d'erreur de quarante pour cent. Ce chiffre unique répond à la seule question qui compte en pratique — avons-nous gagné quelque chose par rapport à ne rien faire — et il protège des débats de spécialiste où chacun défend sa métrique préférée.
+
+Le tableau suivant récapitule les métriques courantes, leur sensibilité et leur moment d'emploi.
+
+| Métrique | Ce qu'elle mesure | Sensibilité | Quand l'utiliser |
+| --- | --- | --- | --- |
+| MAE | Écart moyen en unités de la série | Robuste aux gros écarts | Lecture métier, budget, stock |
+| RMSE | Écart moyen pondéré par le carré | Très sensible aux catastrophes | Quand un gros raté coûte cher |
+| MAPE | Écart relatif moyen en pourcentage | Infinie près de zéro | Séries strictement positives, comparaisons |
+| MASE | Erreur rapportée au modèle naïf | Relative à la baseline | Décider si le modèle apporte quelque chose |
+
+Reste la métrique que personne n'écrit dans un cahier des charges et qui décide pourtant de la vie d'un projet : celle du coût réel de l'erreur. Manquer de stock un samedi de forte affluence coûte bien plus cher que de le surstocker d'un jour, parce que le client perdu ne revient pas. Dans ce cas, la moyenne des erreurs n'est pas la bonne cible : pondérez chaque erreur par son coût, ou fixez un seuil d'alerte que le modèle doit respecter — détecter au moins quatre-vingt-quinze pour cent des jours critiques — et optimisez contre ce critère. Une erreur moyenne plus faible qui rate systématiquement les jours importants est un modèle moins bon, quand bien même son tableau de bord brille.
+
+## Détecter les anomalies : seuils, écart-type, contexte
+
+La détection d'anomalies commence par une définition, sans laquelle tout le reste dérive. Une anomalie n'est pas une valeur élevée, c'est une valeur inattendue au regard du contexte. Douze cents euros de chiffre d'affaires sont extraordinaires un mardi de février et parfaitement normaux le 24 décembre. À l'inverse, un samedi après-midi où la caisse tombe à deux cents euros est bien plus suspect que le même chiffre relevé pendant des travaux de voirie annoncés. La détection consiste donc à formaliser l'attendu — niveau, saison, tendance — puis à mesurer l'écart par rapport à cet attendu, et non par rapport à la série entière confondue.
+
+La méthode la plus courte est le seuil fixe, entièrement dicté par le métier. Si la consommation électrique du café dépasse quatre-vingts kilowattheures par jour, un appareil tourne probablement hors horaires ; si la caisse de la veille est inférieure à la moitié du minimum historique, quelque chose s'est passé. Le seuil fixe a deux qualités décisives : il est compréhensible par tous, y compris par ceux qui n'ont jamais ouvert un notebook, et il ne dépend d'aucune hypothèse statistique. Sa faiblesse est tout aussi évidente : il ignore le niveau courant de la série, si bien qu'un seuil adapté au printemps devient intolérablement laxiste après six mois de croissance, ou inversement.
+
+La deuxième méthode remplace le seuil arbitraire par un multiple d'écart-type : on calcule la moyenne et la dispersion de la série, puis on déclenche au-delà de trois écarts-types. Ce score, appelé z-score, exprime la distance en unités de variabilité naturelle, ce qui donne un vocabulaire commun à des séries très différentes. Deux réserves s'imposent. La première est que la moyenne et l'écart-type sont eux-mêmes déformés par les valeurs extrêmes qu'on cherche à trouver : une anomalie repoussée dans le passé élargit sa propre tolérance. La seconde est que la règle suppose une distribution à peu près symétrique, rarement vraie sur des données de compteur ou de caisse.
+
+C'est la troisième famille qui règle le problème du niveau changeant : la fenêtre glissante. On recalcule la moyenne et l'écart-type sur les vingt-huit derniers jours, puis on compare la valeur courante à cette référence locale. Le seuil suit donc la tendance et la saisonnalité au jour le jour, ce qui convient parfaitement à une série qui évolue. Attention cependant à la fenêtre : trop courte, elle intégrera l'anomalie elle-même dans sa propre tolérance et l'absorbera ; trop longue, elle intégrera des périodes de régime différent et multipliera les fausses alertes. Vingt-huit jours, soit quatre semaines, reste un bon point de départ pour une série journalière.
+
+```python
+import pandas as pd
+
+def zscore_roulant(series, fenetre=28, k=3.0):
+    moy = series.rolling(fenetre, min_periods=10).mean()
+    sigma = series.rolling(fenetre, min_periods=10).std()
+    score = (series - moy) / sigma
+    return moy, score, score.abs() > k
+
+moy, score, alarme = zscore_roulant(serie, fenetre=28, k=3.0)
+print("nombre de jours en alarme :", int(alarme.sum()))
+print(pd.DataFrame({"kwh": serie.round(1),
+                    "attendu": moy.round(1),
+                    "score": score.round(2)}).loc[alarme])
+
+mediane = serie.median()
+mad = (serie - mediane).abs().median()
+robuste = (serie - mediane).abs() / (1.4826 * mad)
+print("anomalies selon MAD :", int((robuste > 3).sum()))
+```
+
+```text
+Reference rapide — quatre familles de détection
+
+seuil fixe        alerte si valeur < 200 EUR ou > 80 kWh
+                  + simple, explicable, immediat
+                  - ignore l'evolution du niveau
+
+z-score global    alerte si |valeur - moyenne| / ecart-type > 3
+                  + comparable d'une serie a l'autre
+                  - la moyenne est polluee par les anomalies
+
+fenetre glissante alerte si |valeur - moyenne(28 j)| / sigma(28 j) > 3
+                  + suit la tendance et la saisonnalite
+                  - la fenetre absorbe parfois l'anomalie
+
+regle des quartiles  alerte si valeur < Q1 - 1.5*IQR ou > Q3 + 1.5*IQR
+                  + robuste, aucune hypothese de forme
+                  - un seul mode, pas de calendrier
+```
+
+Le vrai sujet n'est pas le déclenchement, c'est le faux positif. Une alerte fausse coûte du temps, use la confiance et finit par être ignorée — la fameuse fatigue d'alerte que tout système de surveillance rencontre tôt ou tard. Trois correctifs agissent ensemble. Le premier est contextuel : excluez les jours connus d'avance, fériés, fermetures de vacances, promotions annoncées, travaux sur la rue. Le second est structurel : exigez deux périodes consécutives hors tolérance avant d'alerter, ce qui élimine les pointes isolées sans jamais manquer une dérive. Le troisième est statistique : évaluez votre détecteur sur une période annotée à la main et comptez séparément les vrais positifs, les faux positifs et les anomalies manquées.
+
+Le tableau suivant donne les ordres de grandeur utiles avant de présenter ces réglages à votre gérant.
+
+| Réglage | Fausses alertes typiques | Anomalies manquées | Conséquence métier |
+| --- | --- | --- | --- |
+| Seuil fixe, 2 écarts-types | Très nombreuses après une forte saison | Beaucoup | L'alerte devient un bruit de fond |
+| Fenêtre glissante, 3 écarts-types | Quelques-unes par mois | Rares | Exploitable au quotidien |
+| Idem, confirmation sur 2 jours | Très peu | Légèrement plus | Bon compromis de terrain |
+| Score robuste MAD, 3,5 | Peu | Très peu | Recommandé si la série a des extrêmes |
+
+- Découpez dans le temps : entraînez sur le passé, testez sur le futur, sans jamais mélanger les lignes.
+- Tout ce qui se calcule sur les données — moyennes, décomposition, normalisation — s'ajuste sur l'entraînement seul.
+- La MAE parle en unités, la RMSE pénalise les catastrophes, la MAPE se compare mais se brise près de zéro ; la baseline, elle, donne l'échelle.
+- Une anomalie se définit par rapport au contexte attendu, pas par rapport à la série entière.
+- Combinez un seuil de niveau, une fenêtre glissante et une confirmation de deux jours pour réduire les faux positifs.

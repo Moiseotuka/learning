@@ -1,0 +1,158 @@
+## Le GIL, sans la légende
+
+Le GIL, ou Global Interpreter Lock, est un verrou unique présent dans l'interpréteur CPython classique, celui que tout le monde télécharge quand il installe Python. Sa fonction est étroite : protéger l'état interne de l'interpréteur, compteur de références, tables de symboles, mémoire de l'interpréteur lui-même, contre les accès simultanés de plusieurs fils d'exécution. Sa conséquence est massive : dans un même processus Python, un seul fil exécute du bytecode à la fois. Ce verrou n'a pas été inventé pour vous empêcher de travailler, il simplifie la gestion mémoire et l'intégration des extensions écrites en C, qui autrement devraient chacune se protéger contre tous les autres.
+
+De cette définition, on tire d'abord ce que le GIL n'interdit pas. Il ne dit pas que Python ne peut pas faire deux choses à la fois, ni que les fils d'exécution sont inutiles. Pendant une opération d'entrée-sortie, une attente réseau, une lecture disque, le verrou est relâché : deux fils peuvent donc attendre réellement en même temps, et c'est pour cette raison que le multithreading Python reste excellent pour tout ce qui attend. La formule à retenir tient en une phrase : le GIL empêche deux fils de calculer simultanément, pas deux fils d'attendre simultanément.
+
+Ce qui est empêché, en revanche, c'est le calcul concurrent dans un même processus. Prenez quatre fils qui doivent redimensionner chacun un lot de cinquante photographies : si le pilotage est écrit en Python et que la bibliothèque appelée ne libère pas le verrou, les fils se relaient au lieu de coopérer. Le temps total reste voisin de la somme des durées, parfois supérieur à l'exécution séquentielle à cause des passages de relais. Un débutant qui chronomètre cette expérience conclut souvent que les fils Python sont cassés ; il a en réalité constaté le fonctionnement normal du verrou, appliqué à un type de travail pour lequel il n'est pas fait.
+
+Une nuance importante complique le tableau, et elle explique pourquoi il ne faut jamais trancher sans mesurer. Les bibliothèques écrites en C, telles que NumPy, Pillow ou les moteurs d'expression régulière, effectuent leur gros travail dans leur propre code compilé et y relâchent volontairement le GIL pendant l'opération. Deux fils qui manipulent de grands tableaux NumPy peuvent ainsi gagner réellement du temps, parce que le verrou n'est plus tenu pendant le calcul C. La frontière n'est donc pas entre Python et les bibliothèques, elle est entre la partie du travail qui tient le verrou et celle qui le relâche : c'est le profil de votre tâche qui décide, pas la réputation d'un outil.
+
+L'histoire récente du GIL mérite d'être connue pour ne pas répéter des arguments périmés. Depuis Python 3.13, une version expérimentale de l'interpréteur, dite sans GIL, peut être construite et installée : elle permet enfin à plusieurs fils de calculer en même temps, au prix d'une surconsommation de mémoire et d'une compatibilité partielle avec certaines bibliothèques tierces. Cette version n'est pas encore la distribution standard, et la majorité des serveurs de production continue d'utiliser l'interpréteur traditionnel. Concevez donc vos programmes pour le GIL existant, et considérez la disparition éventuelle de celui-ci comme une amélioration future, pas comme une solution à laquelle vous pouvez vous fier aujourd'hui.
+
+Le tableau suivant résume l'effet du verrou selon la nature du travail.
+
+| Nature du travail | Ce que fait le GIL | Conséquence pour vous |
+|---|---|---|
+| Attente réseau ou disque | Relâché pendant l'attente | Fils et asyncio fonctionnent très bien |
+| Boucle de bytecode pure | Retenu la plupart du temps | Aucun gain à superposer des fils |
+| Appel à du code C lourd | Souvent relâché pendant l'appel | Gain possible, à mesurer sur vos données |
+| Plusieurs processus | Un verrou par processus | Parallélisme réel disponible |
+
+Ces quatre lignes suffisent à guider vos choix du début à la fin du chapitre. La suite commence par la voie des fils, qui reste la plus utile dès que l'une de vos bibliothèques est synchrone et bloque.
+
+## Les fils quand la bibliothèque bloque
+
+Le module threading offre le point d'entrée le plus direct : on crée un objet Thread, on lui confie une fonction et ses arguments, puis on le démarre. Le nouveau fil s'exécute alors en parallèle du fil principal, jusqu'à ce que sa fonction se termine. La méthode join attend la fin d'un fil, ce qui permet de récupérer ses effets avant de poursuivre. Cette mécanique est suffisante pour un cas isolé, mais elle devient pénible dès qu'il faut gérer dix, cinquante ou cent travaux : créer et détruire des fils coûte, et personne n'a envie d'écrire soi-même la file d'attente qui les distribue.
+
+C'est exactement le rôle de concurrent.futures, dont le module ThreadPoolExecutor gère pour vous un réservoir de fils réutilisés. Vous soumettez des appels avec submit, vous récupérez des objets Future, et vous les attendez par result() ou par as_completed. La même interface sert pour les processus, ce qui vous permettra plus tard de changer d'outil en modifiant une seule ligne. Avantage supplémentaire, appréciable en production : le pool a une taille bornée, ce qui vous évite de lancer mille fils pour mille requêtes et de découvrir que la machine ne suit plus.
+
+Le choix de la taille du pool suit une règle simple et expérimentale. Pour du travail qui attend, un pool plus grand que le nombre de cœurs est bienvenu, puisque les fils dorment la plupart du temps : dix, vingt, parfois cinquante workers selon la latence visée. Pour du travail qui calcule, un pool plus grand que le nombre de cœurs ne sert à rien, car le verrou n'autorise qu'un calcul à la fois. En pratique, commencez par le nombre de cœurs multiplié par deux pour de l'entrée-sortie, mesurez, puis ajustez : un réglage deviné tient rarement face à des serveurs qui ralentissent le midi.
+
+Les exceptions demandent une règle précise. Une erreur survenue dans un worker n'apparaît pas au moment de l'appel, elle est stockée dans le futur, puis vous est soulevée quand vous lisez result(). Si vous n'appelez jamais result, vous ne verrez jamais la panne : votre programme terminera en affirmant un succès qu'il n'a pas obtenu. Lisez donc systématiquement le résultat de chaque futur, même quand vous vous contentez d'un acquittement. Le gestionnaire de contexte du pool, lui, attend la fin de tous les travaux à sa sortie, ce qui évite qu'un programme se termine en laissant des fils en route.
+
+Notez enfin une interaction avec la partie précédente : asyncio.to_thread s'appuie exactement sur ce mécanisme, avec un pool de fils interne. Un appel synchrone délégué ainsi s'exécute dans un fil hors de la boucle, sans bloquer les coroutines, et ses exceptions vous reviennent par await. Vous disposez ainsi de deux échelons : la boucle pour ce qui attend sans bloquer, le pool de fils pour ce qui bloque mais ne calcule pas. Le bloc suivant illustre le second échelon sur un travail d'attente simulé.
+
+```python
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def charger(url):
+    time.sleep(0.4)
+    return url, len(url)
+
+def principal():
+    urls = ["https://exemple.fr/%d" % n for n in range(1, 9)]
+    debut = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(charger, url) for url in urls]
+        for futur in as_completed(futures):
+            url, taille = futur.result()
+            print("recu", url, taille)
+    print("duree : %.2f s" % (time.perf_counter() - debut))
+
+principal()
+```
+
+Huit appels de quatre cents millisecondes en huit fils donnent un temps total voisin de la latence d'un seul appel. Le programme reste pourtant entièrement synchrone : aucune coroutine, aucun await, aucune réécriture en profondeur. C'est ce qui fait des fils l'outil de dépannage le plus rapide quand une bibliothèque tierce refuse toute autre coopération.
+
+## L'état partagé, le vrai danger
+
+Contrairement aux coroutines, qui partagent la même mémoire mais se relaient uniquement à des points d'attente explicites, les fils partagent tout : les variables globales, les listes, les dictionnaires, les fichiers ouverts, les attributs d'objets. C'est cette communauté de mémoire qui rend les fils simples à connecter à votre programme existant, et c'est elle qui en fait le principal risque de corruption. Ajouter chacun un élément à une liste commune reste généralement supporté ; lire, modifier puis réécrire la même variable est un accident en sursis.
+
+Le mécanisme de l'accident est plus subtil qu'on ne le croit, car le verrou global de l'interpréteur ne vous protège pas. L'instruction compteur += 1 n'est pas une opération unique : elle se décompose en lecture de la variable, addition, puis écriture du résultat. Rien ne garantit que l'interpréteur reste figé entre ces trois temps. Un appel de fonction, une lecture sur disque, une réponse réseau peut survenir au milieu, le fil cède la main, un autre lit à son tour la valeur ancienne, puis les deux écrivent : l'écriture la plus ancienne efface la plus récente. Le résultat est une incrémentation perdue, invisible à la lecture du code, non déterministe à l'exécution, et d'autant plus fréquente que la boucle est longue et les fils nombreux. Le GIL ne vous sauve pas de ce défaut : il protège l'interpréteur, pas vos variables.
+
+L'outil de protection s'appelle un verrou au sens propre, threading.Lock. Un fil qui souhaite entrer dans la section critique appelle le verrou, attend s'il est déjà pris, exécute son travail, puis libère. L'écriture idiomatique utilise le gestionnaire de contexte : avec verrou, le verrou est acquis à l'entrée et rendu à la sortie, même si une exception traverse le bloc. Deux précautions de conception s'imposent : gardez la section critique aussi courte que possible, car elle annule tout bénéfice de la concurrence, et acquérez toujours les verrous dans le même ordre, sous peine de deadlock où deux fils attendent chacun le verrou de l'autre.
+
+La meilleure protection reste cependant d'éviter le partage. Confiez à chaque fils sa propre donnée, faites-lui renvoyer son résultat, et laissez un seul fil agréger : l'accès concurrent disparaît avec la donnée partagée. Le module queue.Queue matérialise ce dessin, c'est le patron producteur-consommateur : les producteurs y déposent des travaux, les consommateurs les retirent, et la file gère elle-même la synchronisation. Vous verrez ce patron en détail dans la partie suivante. Pour les fichiers, la même logique s'applique : un fichier par fils, ou un seul fil d'écriture que les autres alimentent.
+
+Le tableau ci-dessous distingue ce qui est sûr de ce qui ne l'est pas.
+
+| Opération sur une donnée partagée | Risque | Réponse |
+|---|---|---|
+| Ajouter un élément à une liste | Faible, opération rapide | Acceptable pour des listes simples |
+| Lecture puis écriture d'une même variable | Élevé : l'interruption peut survenir au milieu | Verrou couvrant la lecture et l'écriture |
+| Lire puis écrire selon une condition | Élevé, décision basée sur une valeur périmée | Verrou couvrant la décision et l'écriture |
+| Écrire chacun dans son propre fichier | Aucun | Préférer cette forme quand elle est possible |
+| Parcourir une liste pendant qu'un autre fil la modifie | Élevé, exception possible au milieu du parcours | Copier la liste ou attendre la fin du fil |
+
+Le code suivant reproduit l'accident puis le corrige, sur le même scénario : quatre fils, quatre-vingt mille incréments, un résultat attendu connu d'avance. Le time.sleep(0) placé entre la lecture et l'écriture tient lieu d'interruption : dans un vrai programme, ce serait un appel de fonction, une lecture sur disque, une réponse réseau ou un await, mais le principe est identique, puisque l'écriture se fait alors à partir d'une valeur déjà périmée.
+
+```python
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+compteur = 0
+verrou = threading.Lock()
+
+def incrementer(fois, protege):
+    global compteur
+    for _ in range(fois):
+        if protege:
+            with verrou:
+                lu = compteur
+                time.sleep(0)
+                compteur = lu + 1
+        else:
+            lu = compteur
+            time.sleep(0)
+            compteur = lu + 1
+
+def essai(protege):
+    global compteur
+    compteur = 0
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for _ in range(4):
+            pool.submit(incrementer, 20000, protege)
+    return compteur
+
+print("sans verrou :", essai(False), "attendu 80000")
+print("avec verrou :", essai(True), "attendu 80000")
+```
+
+Sans verrou, le total affiché s'écarte largement de quatre-vingt mille et change d'un lancement à l'autre : des incréments entiers ont disparu, remplacés par une écriture plus ancienne. Avec le verrou, le total est exactement celui attendu, au prix d'une durée sensiblement supérieure, parce que la section critique tient plus longtemps qu'il ne le faudrait dans un vrai code : le verrou doit couvrir l'opération complète, rien de plus. Retirez enfin le time.sleep(0) et la perte devient aléatoire, parfois nulle sur un lancement : c'est ce qui rend ce défaut si dangereux, un programme qui passe cent essais de suite pour céder au cent premier.
+
+## Les processus, quand le calcul domine
+
+Lorsque le verrou de l'interpréteur vous empêche d'exploiter les cœurs disponibles, la parade consiste à ne pas partager le même interpréteur. Le module multiprocessing crée un processus complet, avec son propre interpréteur, son propre GIL et sa propre mémoire : deux processus calculent donc réellement en même temps, chacun occupant un cœur. Le prix à payer est réel également. Chaque processus consomme de la mémoire, coûte une fraction de seconde au démarrage, et ne voit rien de ce que fait son voisin sans communication explicite. On change de modèle : on ne partage plus une variable, on échange des valeurs.
+
+L'interface la plus commode est concurrent.futures.ProcessPoolExecutor, jumeau de son collègue de fils. Vous appelez submit, map et as_completed exactement de la même manière, vous lisez les résultats avec result(), et vous gérez les exceptions au même endroit. Un programme de calcul peut donc passer du pool de fils au pool de processus en modifiant une seule ligne, ce qui vous permet de tester les deux sans réécrire votre logique. Le nombre de workers se règle par le paramètre max_workers, et le choix naturel est le nombre de cœurs disponibles, sans grand chose de plus.
+
+La contrainte propre aux processus est la sérialisation. Arguments et résultats traversent la frontière entre les processus sous forme sérialisée : toute donnée échangée doit pouvoir être convertie en octets puis reconstituée, et c'est ce que Python appelle le piquage. Les listes, dictionnaires, chaînes, nombres et objets simples y passent sans mal. Les verrous, les sockets, les fichiers ouverts, les lambdas et les fonctions définies à l'intérieur d'une autre fonction, eux, ne franchissent pas la frontière. Résultat pratique : les fonctions de travail doivent vivre au niveau d'un module, et les résultats doivent rester modestes, sinon le coût du transport annule le gain du parallélisme.
+
+Un second écueil concerne le démarrage, et il relie directement ce chapitre au précédent. Sous Windows, et sous macOS, les processus sont créés par ré-importation du module principal : l'enfant rejoue votre fichier depuis le haut. Sans la protection du garde if __name__ == "__main__":, chaque nouvel enfant relancerait lui-même la création de processus, et la machine se retrouverait à engendrer des processus en cascade jusqu'à épuisement de la mémoire. Ce défaut, spectaculaire, est toujours le même depuis quinze ans : la boucle de création de processus sans garde. Le chapitre 7 vous a appris ce garde pour des raisons de lisibilité ; ici, il est une condition de survie.
+
+Enfin, gardez à l'esprit ce que le parallélisme ne résout pas. Découper un travail en tranches trop fines coûte plus cher que le traitement lui-même : si chaque unité ne vaut que quelques millisecondes, la sérialisation et la communication dominent. L'idéal consiste à fabriquer un nombre raisonnable de blocs, voisin de quelques fois le nombre de cœurs, puis à laisser le pool les distribuer. Et souvenez-vous de la règle d'or du chapitre : si votre tâche attend plus qu'elle ne calcule, les processus vous feront perdre de la place en mémoire pour rien, tandis que la boucle d'événements ou un pool de fils vous fera gagner des minutes.
+
+```python
+import hashlib
+import os
+import statistics
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+def hacher(bloc):
+    empreinte = hashlib.sha256(bloc).digest()
+    for _ in range(50000):
+        empreinte = hashlib.sha256(empreinte).digest()
+    return empreinte.hex()[:16]
+
+def chronometre(fonction, essais=3):
+    durees = []
+    for _ in range(essais):
+        debut = time.perf_counter()
+        fonction()
+        durees.append(time.perf_counter() - debut)
+    return statistics.median(durees)
+
+if __name__ == "__main__":
+    donnees = [os.urandom(64) for _ in range(8)]
+    seul = chronometre(lambda: [hacher(b) for b in donnees])
+    print("sequentiel : %.2f s" % seul)
+    with ProcessPoolExecutor(max_workers=os.cpu_count()) as pool:
+        ensemble = chronometre(lambda: list(pool.map(hacher, donnees)))
+    print("processus  : %.2f s (facteur %.2f)" % (ensemble, seul / ensemble))
+```
+
+Chaque travail autonome, sans attente ni donnée partagée, correspond au cas d'école idéal du pool de processus. Trois détails de la mesure méritent votre attention. Le pool est créé avant le chronométrage, car son démarrage, souvent proche d'une seconde sous Windows, ruinerait la comparaison. On retient la médiane de trois essais pour écarter les à-coups de la machine. Enfin, le facteur affiché dépend du nombre de cœurs réels : un portable à deux cœurs physiques ne dépassera jamais un gain voisin de deux, quel que soit le nombre de workers, tandis qu'un poste à huit cœurs donnera un chiffre bien plus flatteur. Ce qui ne change jamais, en revanche, c'est le contraste avec les fils : sur ce type de travail, ils ne font rien gagner du tout. Appliquez ce schéma à vos deux cents photographies avec Pillow, à votre analyse de gros fichiers de journal, ou à vos calculs de statistiques sur d'énormes tableaux, et vous obtiendrez le parallélisme réel que les fils ne pouvaient pas vous donner.

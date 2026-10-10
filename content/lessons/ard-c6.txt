@@ -1,0 +1,491 @@
+Bienvenue dans le sixième et dernier chapitre du parcours Arduino/ESP32 embarqué. Les cinq chapitres précédents vous ont appris à faire clignoter une LED, à lire un capteur analogique, à piloter un afficheur sur un bus, à écrire une machine à états avec interruptions, puis à connecter l'ESP32 en Wi-Fi et à publier des messages MQTT. Chacun de ces chapitres était délibérément clos sur lui-même : un exercice, une notion, un résultat visible sur l'établi. Ce dernier chapitre change d'échelle. Il ne vous apprend pas une nouvelle fonction de la bibliothèque Arduino, il vous apprend à assembler, à fiabiliser et à superviser : c'est-à-dire à transformer une accumulation de modules de démonstration en un système qui tourne pendant des semaines, seul, sans vous, et dont on peut lire les mesures depuis un tableau de bord. C'est la différence entre un prototype qui a marché une fois et un objet connecté réellement déployé.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, et vous les aurez déjà manipulées dans un exemple complet. Vous rédigerez un cahier des charges court mais réel : besoins, contraintes, interfaces, critères d'acceptation mesurables. Vous dessinerez l'architecture matérielle : composants, bus, pins, alimentation, protection, boîtier. Vous découperez le firmware en modules indépendants reliés par une structure de mesure unique, au lieu d'un fichier monolithique de deux mille lignes. Vous construirez la chaîne complète du flux de données : acquisition fiabilisée par échantillonnage et filtrage, publication sur des topics MQTT normalisés, stockage dans une base orientée temps, restitution sur un tableau de bord avec alertes. Vous ajouterez les mécanismes qui font la différence en production : watchdog matériel, reconnexion avec back-off exponentiel, journalisation, mise à jour à distance. Et vous verrez comment tout cela se vérifie : tests, banc d'essai, recette, puis mise en service et maintenance.
+
+Le fil rouge de ce chapitre est une station météo connectée nommée, par commodité, Station. Elle mesure la température, l'humidité relative et la pression atmosphérique depuis un capteur I2C unique, affiche les valeurs sur un écran local, les enregistre dans un fichier CSV sur carte SD, les publie en MQTT vers un broker local, et les verse dans une base temporelle alimentant un tableau de bord. Un bouton force le publication immédiate, une LED signale l'état de la liaison, un watchdog surveille que la boucle principale tourne bien. Ce périmètre est volontairement modeste : il est réalisable en une semaine avec le matériel du parcours, mais il contient, à l'identique, tous les problèmes d'un projet professionnel. Vous pourrez ensuite élargir le champ : plus de capteurs, plus de stations, boîtier imprimé 3D, alimentation solaire. L'architecture que vous apprenez ici ne change pas quand le projet grossit ; seule la quantité de code augmente.
+
+## Rappel : ce que les cinq chapitres précédents vous ont donné
+
+Le premier chapitre vous a appris le niveau bas : une broche numérique sortant un signal, une LED qui s'allume, un bouton dont le contact rebondit pendant quelques millisecondes et qu'il fallait débouncer pour lire une valeur stable. Ce détail, en apparence anecdotique, se retrouve partout dans un projet connecté : tout ce qui vient du monde physique est bruyant, mécanique, imprévisible. Le second chapitre a ajouté la mesure : entrée analogique convertie par un convertisseur analogique-numérique, rapport de conversion en tension, fonction de transfert d'un capteur, puis modulation de largeur d'impulsion pour commander un actionneur sans variation de tension. Vous y avez aussi découvert le moniteur série, premier outil de diagnostic d'un firmware.
+
+Le troisième chapitre vous a fait franchir la frontière des bus de communication. Plutôt que de dédier une broche à chaque périphérique, on interroge plusieurs composants sur le même fil d'horloge et le même fil de données, en adressant chacun par une adresse fixée par fabricant. Ce déplacement conceptuel est essentiel : dans un projet connecté, le nombre de capteurs dépasse vite le nombre de broches disponibles, et l'extensibilité passe par des bus, pas par des câbles supplémentaires. Le quatrième chapitre a traité du temps : la machine à états qui découpe une tâche complexe en transitions, les interruptions qui réagissent à un événement sans interroger en permanence, et les temporisations non bloquantes qui évitent le piège de la fonction d'attente pendant laquelle le reste du programme s'arrête.
+
+Le cinquième chapitre a enfin ouvert la porte au réseau : association à un point d'accès, requête DHCP, serveur web intégré répondant à un navigateur, puis protocole MQTT où un objet publie un message sur un topic et laisse un broker s'occuper de le distribuer à qui s'y est abonné. Ces deux modèles, requête-réponse et publication-diffusion, coexistent dans tout objet connecté : on interroge l'objet pour le piloter, il diffuse ses mesures pour les supervisionner. Ce qui manque maintenant, c'est l'assemblage. Aucun de ces chapitres n'a répondu à ces questions : comment choisir les composants sans se tromper, comment structurer vingt fichiers sources au lieu d'un seul, comment garantir que la station reparte toute seule après une coupure de réseau, comment stocker des mois de mesures et les relire utilement, comment savoir qu'un seuil est dépassé avant qu'un utilisateur ne se plaigne. C'est exactement le programme des pages qui suivent.
+
+Voici les objectifs de ce chapitre, formulés comme des résultats vérifiables plutôt que comme des notions. Vous saurez rédiger un cahier des charges dont chaque exigence est mesurable. Vous saurez justifier le choix de chaque composant et de chaque broche, et produire un schéma de câblage lisible par quelqu'un d'autre. Vous saurez découper un firmware en modules avec des en-têtes explicites et une structure de mesure partagée. Vous saurez définir un schéma de topics MQTT et un format de message qui tiennent dans le temps. Vous saurez choisir une fréquence d'échantillonnage et une stratégie de filtrage adaptées à la grandeur mesurée. Vous saurez brancher un tableau de bord qui affiche l'état réel du système, pas des valeurs figées. Vous saurez écrire la procédure de mise à jour à distance et la tester. Et vous saurez écrire le court rapport de recette qui prouve que tout cela fonctionne selon les critères décidés au départ.
+
+## Cadrer : pourquoi un cahier des charges avant le moindre code
+
+La première étape d'un projet connecté n'est pas technique, elle est administrative, et c'est précisément pour cela qu'on la néglige. Un cahier des charges, parfois appelé cahier des fonctions, est le document qui fixe d'accord entre vous et la personne qui vous commande, ou entre le vous d'aujourd'hui et le vous dans six mois, sur ce que le système doit faire et sur la manière dont on saura qu'il le fait bien. Il tient en quelques pages. Il ne contient aucune ligne de code, aucun schéma de câblage, aucun nom de bibliothèque. Il contient des besoins, des contraintes, des interfaces et des critères d'acceptation. Sa valeur n'est pas dans le document lui-même mais dans les décisions qu'il vous évite de prendre trois fois : chaque question à laquelle vous répondez une fois, à l'avance, est une question que vous ne rallumerez pas au milieu de la nuit.
+
+Distinguez soigneusement les quatre catégories, car elles ne se remplissent pas de la même manière. Les besoins décrivent ce que l'utilisateur veut obtenir : connaître la température d'une pièce à distance, être alerté si un seuil est franchi, consulter l'historique d'une semaine. Les contraintes décrivent dans quelles limites le système doit vivre : tension d'alimentation, enveloppe physique, budget, autonomie, plage de température ambiante, norme d'étanchéité. Les interfaces décrivent les points de contact avec le reste du monde : le bus et les adresses des capteurs, les broches occupées, le format des messages publiés, le protocole et les ports utilisés, le format des fichiers produits. Les critères d'acceptation décrivent comment vous vérifierez, objectivement et à un instant donné, que tout le reste est respecté : une mesure de température à moins d'un demi-degré près, une reconnexion en moins de trente secondes, trente jours de journal sans un seul enregistrement manquant.
+
+La règle d'or des critères d'acceptation est qu'ils doivent être mesurables, pas séduisants. Écrire « le système doit être fiable » ne permet pas de conclure. Écrire « sur une période de trente jours, le journal local contient 99,5 pour cent des échantillons attendus et le tableau de bord affiche une valeur datée de moins de deux minutes » permet de conclure, de signer, et de savoir quelle partie réparer quand ce n'est pas atteint. Prenez l'habitude, dès ce chapitre, de formuler chaque exigence avec un nombre, une unité et une durée. Le tableau suivant montre un extrait de cahier des charges où chaque ligne suit ce principe.
+
+```table
+| Exigence | Mesure | Critère d'acceptation |
+| --- | --- | --- |
+| Précision de température | Comparaison avec un étalon étalonné | Écart inférieur à 0,5 °C entre -10 °C et +50 °C |
+| Continuité de la publication | Messages reçus par le broker sur 30 jours | Plus de 99,5 pour cent des échantillons attendus |
+| Temps de reconnexion | Débranchement puis rétablissement du point d'accès | Retour de la publication en moins de 30 secondes |
+| Tenue de la boucle | Compteur de passages de la boucle principale | Zéro redémarrage non désiré sur 7 jours |
+| Lisibilité locale | Afficheur pendant une coupure réseau | Dernière mesure visible et datée en moins de 2 secondes |
+```
+
+
+Notez au passage ce que ce tableau fait : il transforme des vagues aspirations en tests. Chaque ligne devient une manipulabilité vérifiable sur l'établi. C'est aussi ce tableau qui vous protège de la dérive de périmètre, ce fléau des projets connectés : au bout de deux semaines, quelqu'un, souvent vous, trouve qu'il serait sympathique d'ajouter un détecteur de pluie, une horloge à temps réel, une reconnaissance vocale et un écran tactile. Sans cahier des charges, chaque idée est discutée à chaud et finit dans le code. Avec un cahier des charges, vous demandez simplement laquelle des exigences existantes cette idée sert, et si elle n'en sert aucune, elle part dans la liste des évolutions possibles, pas dans le sprint en cours.
+
+## Poser le périmètre du projet fil rouge
+
+Notre station météo, elle, commence par une phrase de cahier des charges qu'on peut écrire en une ligne : mesurer en continu la température, l'humidité et la pression d'un local, les afficher sur place, les enregistrer localement, les publier vers un broker, et alerter au-delà de seuils réglables, le tout en survivant à une coupure réseau sans intervention. Cette phrase fixe le périmètre. Tout ce qui n'y figure pas est hors sujet pour la version une : pas de contrôle de chauffage, pas d'application mobile, pas d'interface graphique riche sur l'écran, pas de multi-zones. Un périmètre étroit livré et documenté vaut infiniment plus qu'un périmètre large abandonné au troisième module.
+
+Les fonctions attendues se déclinent ensuite en une liste courte. Acquisition à cadence fixe de trois grandeurs issues d'un capteur I2C unique, avec détection d'erreur de bus et valeur sentinelle plutôt qu'une mesure fausse. Affichage local des trois valeurs avec horodatage et état de la liaison. Journalisation horodatée sur carte mémoire au format texte, avec un fichier par jour pour limiter la taille des lectures. Publication MQTT d'un message JSON par échantillon sur un topic dont le nom encode l'identifiant de la station et la nature de la mesure. Réception des commandes à distance sur un topic dédié, permettant au moins de relire un seuil sans reflasher. Et publication de l'état de la station elle-même, de sorte qu'un tableau de bord puisse distinguer « la température est de vingt degrés » de « la station ne répond plus depuis vingt minutes ».
+
+Les contraintes se formulent avec la même précision. Alimentation sur une source 5 volts stable, avec une consommation moyenne inférieure à cinq cents milliampères pour laisser la place à une extension sur batterie. Plage de fonctionnement de zéro à quarante degrés en intérieur, sans prétention extérieure pour cette version. Boîtier fermé ventilé, sans revendication d'étanchéité que nous ne pourrions pas mesurer. Budget matériel plafonné, en privilégiant des composants déjà présents dans le parcours afin de ne pas ajouter de délai d'approvisionnement. Et temps de réalisation borné : une semaine de travail effectif pour la version un, ce qui interdit d'emblée tout ce qui demanderait d'apprendre un nouveau framework de bout en bout.
+
+Les interfaces, enfin, se figent par écrit avant le premier fichier source. Bus I2C pour le capteur, avec adresses lues à l'exécution et affichées au démarrage pour éviter les mauvaises surprises de soudure. Broches SPI pour la carte mémoire, avec un numéro de sélection d'esclave conservé dans la configuration. Port série pour le diagnostic, à un débit fixe documenté. Compteur de publications et compteur d'erreurs dans chaque message, pour que la supervision sache elle-même si elle est bien informée. Le format du message, ses noms de champs et leur unité sont écrits dans le cahier des charges eux aussi : c'est un contrat, et un contrat se respecte même quand on est seul.
+
+```text
+Extrait du cahier des charges - Station meteo v1
+
+1. Besoins
+   B1  Mesurer T, HR, P toutes les 10 secondes
+   B2  Afficher les valeurs sur place avec horodatage
+   B3  Journaliser sur carte SD, un fichier par jour
+   B4  Publier en MQTT un JSON par echantillon
+   B5  Alerter au-dela de trois seuils reglables
+
+2. Contraintes
+   C1  Alimentation 5 V, consommation moyenne < 500 mA
+   C2  Budget materiel < 40 EUR
+   C3  Redemarrage automatique apres panne reseau
+   C4  Aucune intervention humaine attendue sur 30 jours
+
+3. Interfaces
+   I1  I2C  : capteur T/HR/P       (adresse lue au demarrage)
+   I2  SPI  : carte microSD        (CS = 5)
+   I3  UART : diagnostic           (115200 bauds)
+   I4  MQTT : meteo/<id>/data      (publication)
+   I5  MQTT : meteo/<id>/cmd       (commandes)
+
+4. Criteres d'acceptation
+   A1  Ecart T < 0.5 degre cote a cote avec etalon
+   A2  > 99.5 % des echantillons recus sur 30 jours
+   A3  Retour de publication < 30 s apres coupure WiFi
+   A4  Zero redemarrage non desire sur 7 jours
+```
+
+Ce bloc de texte vaut à lui seul plusieurs heures de discussion ultérieures. Il est court, il est daté, il est versionné comme tout le reste du projet. Quand, au bout de la troisième journée, vous hésiterez sur l'utilité d'un écran couleur, vous le relirez et vous aurez votre réponse sans débat. Une dernière recommandation sur ce sujet avant de passer au matériel : écrivez ce document dans le dépôt du projet, à côté du code, et acceptez de le modifier par écrit quand le besoin évolue. Un cahier des charges vivant mais à jour vaut mieux qu'un cahier des charges parfait qu'on n'a jamais ouvert après le premier jour.
+
+## Architecture matérielle : choisir, câbler, protéger
+
+Un projet connecté se joue autant sur l'établi que dans l'éditeur. Le firmware le plus soigné du monde ne sauvera pas une station dont l'alimentation tombe en dessous de la tension de seuil dès que le module radio émet, ou dont le bus de données montre une ligne haute paresseuse faute de résistance de traction. L'architecture matérielle, c'est l'ensemble des décisions physiques : quels composants, sur quels bus, alimentés comment, protégés comment, rangés où. Elle se décide sur le papier, avant l'achat, à partir du cahier des charges que vous venez d'écrire. Chaque composant retenu doit répondre à une exigence identifiable ; tout composant qui n'y répond pas est du poids, de la consommation et de surface de panne.
+
+Notre station utilise un seul capteur intégré pour les trois grandeurs principales, ce qui est un choix d'architecture en soi : un composant unique sur un seul bus, une seule source d'horodatage, une seule procédure de lecture, une seule calibration. Le modèle courant pour ce rôle est un capteur combiné température, humidité et pression, interrogeable en I2C et consommant quelques milliamperes en fonctionnement. Au lieu de répartir trois mesures sur trois composants de trois fabricants, on gagne en cohérence : les trois valeurs partagent le même instant de prélèvement, ce qui simplifie la construction du message publié et évite les décalages artificiels entre grandeurs affichées côte à côte. La contrepartie, un point de défaillance unique, est acceptée et documentée : le cahier des charges annonce que la perte du capteur met la station hors service, et la logiciel signale l'erreur au lieu d'afficher des zéros trompeurs.
+
+Le choix des broches suit trois règles simples. D'abord, respecter les broches dont la fonction est fixée par le silicium : certaines entrées sorties du microcontrôleur sont particulièrement adaptées aux communications série matérielles, d'autres servent au démarrage du processeur, d'autres encore sont reliées à un régulateur interne. Les datasheets des cartes de développement indiquent quelles broches éviter pour l'usage courant, et il est plus sage de les écarter même quand on ne les compte pas utiliser. Ensuite, limiter le nombre de points de configuration : un capteur I2C partagé, une carte mémoire sur SPI, un écran sur le même I2C, une LED et un bouton sur deux broches simples. Enfin, regrouper physiquement : garder les fils de bus courts, l'alimentation et la masse ensemble, et réserver une broche pour la diagnostique série afin de ne jamais se retrouver sans voix pour parler du firmware qui ne répond plus.
+
+La question de l'alimentation mérite un paragraphe entière parce qu'elle cause la majorité des comportements inexpliqués en laboratoire. Une carte de développement se nourrit en général par une tension de cinq ou de trois volts trois, fournie par le câble de programmation ou par un régulateur externe. Le module radio de l'ESP32, lui, émet des pointes de courant brèves mais importantes lors de chaque connexion ou de chaque émission ; si l'alimentation ou le câble ne suit pas, la tension redescend, le processeur réinitialise silencieusement, et votre station redémarre en boucle sans jamais afficher la moindre erreur. Les remèdes sont connus : alimentation dimensionnée avec une marge généreuse, condensateur de découplage placé près de la carte, câble court et de bonne section, et mesure réelle de la tension avec un multimètre pendant une session de publication en rafale plutôt qu'au repos. Un banc de test d'alimentation coûte moins cher qu'une semaine de doute.
+
+La protection mécanique et environnementale se pense aussi dès le départ, même pour une station destinée à rester sur une étagère. Prévoir des trous de fixation alignés avec le boîtier, un passage de câble avec presse-étoupe si le boîtier sort, un accès au bouton de remise à niveau et au connecteur de programmation sans démontage complet, et une ventilation qui évite la condensation sans laisser courir la poussière sur les pistes. Si la station doit finir à l'extérieur, la contrainte d'étanchéité devient un vrai sujet avec un indice IP, des joints et un test d'immersion ; pour cette version, nous l'évitons explicitement et le cahier des charges le dit, ce qui est préférable à promettre une résistance à la pluie qu'aucun de nous ne mesurera.
+
+```table
+| Rôle | Broche ou bus | Justification |
+| --- | --- | --- |
+| Capteur T, HR, P | Bus I2C, SDA et SCL dédiées | Deux fils pour plusieurs capteurs, adressage par fabricant |
+| Carte mémoire | Bus SPI, sélection sur broche 5 | Débit élevé pour l'écriture de journaux continus |
+| Écran local | Sur le même bus I2C | Adresse distincte, aucun câble supplémentaire |
+| État de liaison | Une broche numérique | Diode pilotée en écriture, visible de loin |
+| Commande manuelle | Une broche numérique avec tirage interne | Bouton vers la masse, lecture sans résistance externe |
+| Diagnostic | Port série matériel | Journal horodaté consultable depuis un ordinateur |
+```
+
+
+Le schéma de câblage qui en résulte tient dans un diagramme ASCII lisible par n'importe qui, y compris par la personne qui reprendra le projet dans six mois. Prenez l'habitude de le produire avant le câblage, puis de le corriger après, pour qu'il reste exactement fidèle à l'établi : un schéma faux est pire que pas de schéma du tout, car il inspire une confiance que la réalité ne justifie pas.
+
+```text
+                        +----------------------+
+   5 V  +---------------|  Carte ESP32         |
+        |   condensateur |                      |
+        +---||-----------|  SDA --------+-------+---- SDA  [ Capteur T/HR/P ]
+                        |  SCL --------|-------+---- SCL  |
+        masse ----------+--------------+-------+-------- masse
+                        |                      |
+                        |  broche 5  ----------+---- CS   [ carte microSD ]
+                        |  MOSI/MISO/SCK  -----+---- SPI bus
+                        |                      |
+                        |  broche 21 ----------+---- SDA  [ ecran local ]
+                        |  broche 22  ----------+---- SCL  (partage bus I2C)
+                        |                      |
+                        |  broche 2   ---------|---- LED etat liaison
+                        |  broche 0   ---------|---- bouton manuel
+                        |                      |
+                        |  TX/RX --------------|---- port serie diagnostic
+                        +----------------------+
+```
+
+## Architecture logicielle : découper en modules
+
+La seconde architecture, celle du code, décide de tout ce qui arrivera après la première semaine. Deux façons de structurer un firmware Arduino s'offrent à vous. La première consiste à tout écrire dans le fichier principal, en empilant des variables globales et des appels dans la fonction de boucle, jusqu'à ce que le fichier devienne illisible et que la moindre modification casse un détail situé mille lignes plus haut. La seconde consiste à découper par responsabilité : un fichier d'en-tête et un fichier d'implémentation par rôle, avec des interfaces explicites, des responsabilités étroites et une circulation de données par une structure unique. Le second format demande vingt minutes d'effort supplémentaire au début, puis vous fait gagner des heures chaque semaine suivante. Pour un projet qui vit au-delà du banc de test, il n'y a pas d'hésitation.
+
+Nos modules répondent chacun à une question précise. Le module de configuration rassemble les constantes : identifiant de station, adresses de bus, numéros de broches, cadence d'échantillonnage, seuils d'alerte, débit du port série, nom d'hôte réseau. Aucune autre partie du programme ne doit contenir de littéral numérique magique ; si vous changez un numéro de broche, vous ne modifiez qu'une ligne, et elle est au même endroit pour toutes les broches. Le module de mesure sait lire le capteur et retourner une structure d'échantillon complète, ou signaler un échec. Le module de liaison réseau maintient la connexion et sait publier un message préconstruit. Le module de stockage sait ouvrir le journal du jour et y ajouter une ligne. Le module d'affichage sait rendre les valeurs sur l'écran. Et le superviseur, seul détenteur de la boucle, décide de l'ordre des opérations et du moment où chaque action a lieu.
+
+```text
+station-meteo/
+|-- platformio.ini          dependances, carte cible, options de build
+|-- include/
+|   |-- config.h             pins, adresses, seuils, identifiant
+|   |-- echantillon.h        structure de mesure partagee
+|   `-- versions.h           chaine de version du firmware
+|-- src/
+|   |-- main.cpp             setup() et loop() : l'orchestration seule
+|   |-- mesures.cpp/.h       lecture capteur, filtrage, detection d'erreur
+|   |-- liaison.cpp/.h       WiFi, MQTT, reconnexion, publication
+|   |-- journal.cpp/.h       carte SD, rotation quotidienne, ecriture
+|   |-- affichage.cpp/.h     rendu de l'ecran local
+|   `-- veille.cpp/.h        watchdog, cadencement, compteurs d'etat
+`-- test/
+    `-- test_filtre/         tests unitaires du filtrage et des seuils
+```
+
+La pièce la plus importante de cette structure n'est pas un module mais une donnée : la structure d'échantillon qui circule d'un bout à l'autre du système. Elle contient l'horodatage, les trois mesures, l'état du capteur, un compteur de séquence et le drapeau d'erreur. Chaque module la reçoit ou la produit, mais aucun ne la reconstruit à sa façon. Cette discipline a trois effets immédiats. Le message publié, la ligne du journal et la chaîne affichée sur l'écran proviennent de la même source, donc ne peuvent pas divergir. L'ajout d'une quatrième grandeur se fait en ajoutant un champ à la structure et en l'affichant, sans rouvrir chaque fichier. Et les tests unitaires peuvent fabriquer un échantillon factice en trois lignes pour vérifier un seuil sans jamais toucher au matériel.
+
+Une convention de nommage cohérente complète le découpage. Les fonctions publiques d'un module portent le nom du module devant l'action, de sorte qu'en lisant un appel dans le fichier principal, vous savez immédiatement quel fichier ouvrir. Les variables de configuration sont en majuscules ou en constantes, les états variables en minuscules. Les erreurs sont retournées sous forme d'un code ou d'un booléen explicite, jamais signalées par un affichage dispersé dans les profondeurs d'un module : c'est au superviseur de décider ce qu'on fait d'une erreur, car c'est lui qui connaît le contexte global. Aucun module n'affiche, n'envoie ni n'efface quoi que ce soit en silence.
+
+## La boucle de mesure : échantillonner, filtrer, tolérer l'erreur
+
+Vient maintenant le cœur fonctionnel : le passage de la mesure brute à une valeur publiée digne de confiance. Trois questions se posent, dans cet ordre. À quelle fréquence lire ? Que faire des lectures aberrantes ? Que faire quand la lecture échoue ? La fréquence dépend de la grandeur et de l'usage : la température d'un local varie lentement, et lire dix fois par seconde ne produit que de la redondance, voire de la chaleur dégagée par le capteur lui-même si on le force en fréquence. Une cadence de dix secondes est largement suffisante pour un usage domestique et laisse du temps au reste des tâches. Le cahier des charges la fixe, et le code la respecte sans exception : une cadence décidée à l'écrit, pas au hasard d'une boucle trop rapide.
+
+La question des valeurs aberrantes est plus subtile. Un bus I2C perturbé, une lecture prise pendant une transition d'alimentation ou une valeur retournée en virgule signée peuvent produire un échantillon complètement déraisonnable : moins quatre-vingts degrés dans un salon, ou une humidité de neuf cents pour cent. Publier une telle valeur, c'est empoisonner la base de données et le tableau de bord pendant des heures, car une moyenne glissante débordera longtemps après que la cause aura disparu. Deux défenses complémentaires s'appliquent. La première est la validation de domaine : toute valeur hors plage physiquement plausible est rejetée avant même d'être considérée. La seconde est la limitation de variation : un saut trop brutal d'un échantillon au suivant est traité comme suspect, car aucune grandeur thermique réelle ne décroche de vingt degrés en dix secondes.
+
+Le filtrage lui-même se limite, pour ce projet, à une moyenne glissante pondérée : le nouvel échantillon pèse dans la valeur publiée, l'ancien s'efface progressivement, sans stocker d'historique long. Le paramètre de lissage se règle selon la réactivité souhaitée : un lissage fort donne une courbe calme mais retarde la perception d'un événement réel ; un lissage faible suit l'instant mais laisse passer les pic. Pour une station domestique, un facteur autour d'un dixième donne un bon compromis, et il est écrit dans la configuration pour pouvoir être essayé sans rouvrir le code. Surtout, le lissage s'applique à la valeur affichée et publiée, jamais à la détection d'erreur : c'est la valeur brute qui décide si le capteur répond.
+
+L'échec, enfin, est un cas normal et non une exception à masquer. Quand la lecture échoue, la structure d'échantillon part quand même, avec son drapeau d'erreur posé et ses mesures conservées à leur dernière valeur connue ou marquées invalides selon ce que dit le cahier des charges. Le module de liaison peut alors publier un message dont le champ d'état indique la panne, le journal inscrit une ligne d'incident, et l'écran affiche une mention explicite. C'est la différence entre un système honnête et un système qui affiche trente-neuf degrés pendant que le capteur est débranché. La station reste en place, continue de tourner, continue d'alerter sur son propre dysfonctionnement, et se rétablit d'elle-même si le capteur revient.
+
+```cpp
+// Noyau de la boucle : cadencement, acquisition, publication.
+// Les fonctions de module sont volontairement absentes de cet apercu.
+
+void loop() {
+  veilleAlimenter();                    // arrose le watchdog materiel
+
+  if (!cadenceAtteinte(millis())) return;  // rien a faire avant la prochaine fenetre
+
+  Echantillon e = lireCapteur();        // lecture + validation de domaine
+
+  if (e.valide) {
+    e.valeurFiltree = lisser(e.valeurFiltree, e.bruit, FACTEUR_LISSAGE);
+    journalAjouter(e);                  // ecriture locale, priorite haute
+    liaisonPublier(e);                  // publication MQTT en best effort
+    ecranAfficher(e);
+    seuilsVerifier(e);                  // alerte si depassement
+    etatPublications++;
+  } else {
+    etatErreurs++;
+    ecranAfficherErreur(e.cause);
+    journalIncident(e.cause);
+  }
+
+  prochaineFenetre += CADENCE_MS;       // cadence fixe, pas de derive
+}
+```
+
+Notez deux détails de cette boucle, tous deux issus de l'expérience plutôt que de la théorie. Le premier est que la cadence est calculée par addition d'une constante à un compteur, et non par un délai relatif : ainsi, même si une itération prend plus de temps que prévu, la station rattrape son retard par paliers au lieu de dériver lentement et d'afficher des intervalles de plus en plus irréguliers dans le journal. Le second est que les compteurs d'erreurs et de publications sont incrémentés dans la boucle eux aussi : ils deviennent les données d'entrée du tableau de bord, et c'est par eux que vous saurez, plus tard, si la station fonctionne réellement plutôt que de simplement publier.
+
+Il reste une erreur classique à éviter à ce stade : la tentation de l'attente bloquante. Une fonction qui suspend l'exécution pendant une seconde paraît inoffensive, mais pendant cette seconde, le bouton n'est pas lu, l'écran n'est pas rafraîchi, la connexion n'est pas entretenue, et le watchdog, s'il est configuré en dessous de cette durée, redémarre la carte. La cadence doit toujours être gérée par comparaison d'horodatage, comme ci-dessus, jamais par pause. Ce réflexe, acquis au chapitre sur les automates, est ici décisif : la boucle doit rester courte, prévisible et toujours disponible pour réagir à ce qui arrive entre deux mesures.
+
+## Publier : MQTT, topics et formats de message
+
+La donnée de capteur n'a de valeur que si elle quitte la pièce. Le chapitre précédent vous a présenté MQTT : un objet qui publie un message sur un topic, un broker qui le reçoit, et un ou plusieurs abonnés qui le récupèrent sans que l'émetteur ne sache ni qui ils sont, ni même s'il y en a. Ce modèle est parfaitement adapté à notre station, qui n'a rien à demander à personne et qui produit simplement un flux régulier. Reste à prendre les décisions qui, elles, engagent les années qui viennent : le nommage des topics, la forme du message, la qualité de service, et le comportement quand le broker n'est pas là.
+
+Le nommage des topics est un sujet de gouvernance, pas de syntaxe. Un topic est une chaîne hiérarchique, séparée par des barres obliques, et sa structure dit comment on pourra s'y abonner plus tard. Écrire meteo/data revient à jeter tout sur une seule piste, ce qui devient vite intenable dès qu'une seconde station apparaît, car aucun abonné ne peut alors isoler une station sans filtrer le débit complet. Préférer une arborescence où le premier niveau décrit l'application, le second l'identifiant de la station et le troisième la nature du message laisse à chaque consommateur le choix de sa portée : s'abonner à tout pour un tableau de bord global, à une seule station pour le dépannage, ou à une seule catégorie pour une alerte. L'identifiant de station lui-même se dérive d'un identifiant matériel stable de la puce, afin qu'il ne dépende pas de la personne qui a flashé le dernier firmware.
+
+```text
+Arborescence des topics retenue pour le projet
+
+meteo/
+|-- <station>/data           echantillons periodiques (JSON)
+|-- <station>/state          etat de la station (toutes les 60 s)
+|-- <station>/cmd            commandes recues (JSON)
+`-- <station>/alert          alertes de seuil (JSON, QoS 1)
+
+Le stockeur s'abonne a  meteo/+/data     (toutes les stations)
+L'operateur  s'abonne a  meteo/+/alert   (toutes les alertes)
+Le debogueur s'abonne a  meteo/station-a/data  (une seule station)
+
+Identifiant de station : derive de l'adresse MAC, lisible et stable.
+Exemple : station-a3f2c1  (ne change jamais sans reflash intentionnel)
+```
+
+Le format du message lui-même oppose deux familles. Le format clé-valeur compact, séparateur fixe, tient en quelques octets et se parse en deux lignes de code, au prix d'une ambiguïté immédiate dès qu'un champ contient le séparateur. Le format structuré, type JavaScript Object Notation, s'auto-documente, porte ses unités dans les noms de champs, supporte les valeurs nulles et les champs supplémentaires sans casser les anciens abonnés. Pour un tableau de bord moderne, le second choix s'impose : la surcharge de quelques dizaines d'octets par message est dérisoire face au gain en robustesse. La règle à retenir n'est pas le format en soi, mais le fait qu'il soit écrit dans le cahier des charges et qu'il ne change jamais sans version, car c'est lui qui relie le firmware à tout le reste de l'écosystème.
+
+```json
+{
+  "station": "station-a3f2c1",
+  "seq": 48213,
+  "ts": 1770000000,
+  "mesures": { "t_c": 21.4, "hr_pct": 48.2, "p_hpa": 1013.6 },
+  "filtre": { "t_lisse": 21.3 },
+  "etat": { "capteur": "ok", "sd": "ok", "rssi_dbm": -61, "uptime_s": 92418 },
+  "erreur": null
+}
+```
+
+Lisez ce message comme un contrat. Chaque champ porte une unité dans son nom, ce qui supprime toute interprétation ultérieure. Le compteur de séquence permet au stockeur de détecter un trou dans la série, même en l'absence d'horodatage précis. L'état de la carte mémoire et le niveau de signal font partie de l'échantillon lui-même : la supervision doit pouvoir répondre à la question « la mesure est-elle fiable » sans croiser trois sources. Et le champ d'erreur, au format nul quand tout va bien, laisse la place à une cause explicite quand quelque chose ne va pas. Un message de ce type se relit dans un an sans documentation, ce qui est exactement le test qu'un format doit passer.
+
+La qualité de service se choisit par intention. Au niveau zéro, le message est envoyé une fois, sans accusé de réception : c'est le choix par défaut pour un flux régulier où le message suivant répare le précédent, ce qui est le cas d'une mesure relevée toutes les dix secondes. Au niveau un, le broker confirme la réception et l'émetteur renvoie en cas d'absence de réponse, au prix d'un doublon possible que le stockeur doit savoir éliminer grâce au compteur de séquence. Au niveau deux, la garantie absolue existe mais le coût est disproportionné pour nos besoins. En pratique : mesures continues en niveau zéro, alertes et commandes en niveau un, jamais de niveau deux sur ce type de projet. Ajoutez à cela le testament MQTT, ce message de dernière volonté que le broker publie de lui-même quand la station cesse de répondre : c'est lui qui transforme un silence en information exploitable.
+
+La reconnexion constitue le dernier point, et le plus important en termes de comportement réel. Quand le réseau tombe, une boucle naïve tente de se reconnecter en boucle serrée, ce qui sature la pile réseau, épuise l'alimentation et, dans le pire des cas, empêche physiquement le retour du service une fois le réseau rétabli. La stratégie correcte est un délai progressif : quelques secondes la première fois, puis un doublement, plafonné à une minute ou deux, avec une petite variation aléatoire pour éviter que toutes les stations du site ne reviennent à la même seconde et ne provoquent une tempête de connexions. Ce back-off, appliqué identiquement au Wi-Fi et à MQTT, est la différence entre un parc de stations qui se relève tout seul et un parc qui doit être relevé un par un.
+
+## Stocker : base temporelle, rétention et honnêteté des séries
+
+Recevoir des messages ne suffit pas : il faut les conserver de manière à pouvoir les relire utilement. La question de stockage revient vite dans tout projet connecté, et la réponse dépend de la question posée aux données. Pour une recherche ponctuelle d'un événement précis, un fichier texte journalisé est parfait. Pour répondre à « quelle était la moyenne des quinze dernières minutes sur les trois stations » en quelques millisecondes, il faut un index temporel. Pour conserver dix ans de mesures sans que le disque ne cède, il faut de la compression et une politique de rétention. Une base de données orientée séries temporelles fait exactement cela : chaque point est identifié par un nom de mesure, un ensemble d'étiquettes et un horodatage, et les lectures se font par tranches de temps plutôt que par balayage complet.
+
+L'étiquetage mérite attention, car c'est lui qui rend la donnée multi-stations exploitable. Chaque série est identifiée par son nom, par exemple meteo_temperature, et par des paires clé-valeur : la station, la pièce, l'unité, la version du firmware. Une bonne étiquette est stable et à faible cardinalité ; une mauvaise étiquette est un identifiant unique par mesure, ce qui multiplie le nombre de séries, explose la mémoire d'index et ralentit toutes les requêtes. On étiquette donc ce qui se répète : la station et son emplacement. On ne met jamais en étiquette ce qui varie à chaque point : la valeur, le compteur, l'horodatage. C'est une erreur classique qui se paie en performance au bout de quelques semaines.
+
+```text
+Chemin complet d'une mesure, de la salle a l'ecran
+
+ [ capteur I2C ] --10 s--> [ firmware ]
+                             |-- journal local (CSV, secours terrain)
+                             `-- MQTT meteo/<id>/data
+                                     |
+                               [ broker ]
+                                     |
+                          +----------+-----------+
+                          |                      |
+                    [ stockeur ]            [ alerteur ]
+                   ecrit dans la         publie vers le
+                   base temporelle       canal d'alerte
+                          |
+                    [ base temps ]
+                          |
+                    [ tableau de bord ] --> [ regles d'alerte ]
+```
+
+La politique de rétention se décrit en deux temps : la durée de conservation des données brutes, puis la durée des agrégats. Garder chaque échantillon brut pendant quelques semaines permet les investigations fines ; au-delà, on remplace les séries par des moyennes horaires ou quotidiennes qui occupent une fraction de l'espace et suffisent à l'historique long. La plupart des bases temporelles gèrent cette rétention automatiquement, à condition de l'avoir configurée : une base sans rétention croît jusqu'à l'épuisement du disque, et la panne qui s'ensuit fait perdre l'intégralité des mesures, y compris celles que l'on croyait archivées. Trois jours de configuration valent mieux que trois mois de données perdues.
+
+L'honnêteté des séries est une exigence de supervision autant que de stockage. Si le stockeur cesse d'écrire pendant une heure, que se passe-t-il-t-il sur le tableau de bord ? Les courbes se figent, et un observateur distrait conclura que la température est restée stable. La parade consiste à distinguer, dans le tableau de bord, l'absence de point et la valeur nulle, et à afficher l'état de la station à côté des mesures. Le testament MQTT mentionné plus haut alimente exactement cette information : dès que le broker détecte la disparition de la station, il publie l'état hors-ligne, et le tableau de bord peut afficher une mention explicite plutôt qu'un silence trompeur. Un système de mesure qui ne dit pas quand il est aveugle est plus dangereux qu'un système qui s'arrête.
+
+En complément du stockage distant, le journal local garde une place défendue : c'est la source qui fonctionne quand le réseau est absent, et la seule accessible sur place sans aucun équipement. Le format texte horodaté, un fichier par jour, avec une ligne d'en-tête portant les unités, se relit dans n'importe quel tableur et se récupère sur une carte mémoire sortie de la station. La rotation quotidienne évite un fichier unique devenu illisible, et une durée de rétention locale de quelques semaines évite l'encodage des cartes. Le journal local ne remplace pas la base : il couvre le scénario inverse, celui où la base est injoignable et où quelqu'un doit comprendre ce qui s'est passé en se tenant devant l'appareil.
+
+## Superviser : tableau de bord et alertes
+
+Le tableau de bord est la promesse faite à l'utilisateur final : une page qui répond, en moins de quelques secondes, aux questions « ça marche », « qu'est-ce que ça mesure » et « est-ce que ça a changé ». Un bon tableau de bord commence par l'état, pas par les courbes. En haut, la station, sa dernière mesure datée, son état de liaison, le nombre de publications depuis le dernier redémarrage et le nombre d'erreurs. Puis viennent les valeurs instantanées avec tendance, puis l'historique glissant, puis les alertes récentes. Cette hiérarchie n'est pas esthétique : elle suit l'ordre dans lequel un opérateur pose réellement ses questions lorsqu'il ouvre la page parce que quelque chose lui semble bizarre.
+
+Trois courbes suffisent largement à la version un : la température sur vingt-quatre heures, l'humidité sur la même fenêtre, et la pression sur sept jours, car la pression est la seule des trois grandeurs qui apporte une information intéressante sur une durée longue. Ajoutez un graphique des compteurs internes, publications et erreurs, qui est la courbe la plus révélatrice de toutes : une mesure stable avec un compteur d'erreurs qui grimpe décrit un système en train de défaillir bien avant que la température n'affiche quoi que ce soit d'anormal. Les tableaux de bord les plus utiles sont rarement les plus fournis ; ils sont ceux dont chaque panneau répond à une question qu'on se pose vraiment.
+
+```table
+| Panneau | Question à laquelle il répond | Source |
+| --- | --- | --- |
+| État de la station | La station répond-elle et depuis quand ? | Testament MQTT et dernier message d'état |
+| Dernières valeurs | Que mesure-t-on à cet instant ? | Champ mesures du dernier échantillon |
+| Tendance 24 heures | Comment évoluent les grandeurs ? | Série temporelle agrégée par minute |
+| Publications et erreurs | Le flux est-il complet ? | Compteurs embarqués publiés avec l'échantillon |
+| Alertes récentes | Un seuil a-t-il été franchi ? | Messages du topic d'alerte |
+```
+
+
+Les alertes se distinguent des affichages. Un affichage montre une valeur ; une alerte déclenche une action quand une condition est réunie, et elle doit être encadrée par trois réglages : le seuil, la durée pendant laquelle la condition doit rester vraie, et la destination. La durée, souvent oubliée, évite les alertes fantômes : un pic d'une seconde au moment d'ouvrir la fenêtre ne doit pas envoyer un message. La destination, enfin, doit être en double pour tout ce qui compte : un canal instantané pour le traitement rapide et un canal différé, comme un récapitulatif quotidien, pour ne rien laisser passer. Une alerte qui ne peut être ni acquittée ni historisée finit par être ignorée, et une alerte ignorée est pire que pas d'alerte du tout.
+
+```json
+{
+  "station": "station-a3f2c1",
+  "regle": "hr_haute",
+  "mesure": "hr_pct",
+  "valeur": 91.4,
+  "seuil": 90.0,
+  "persistance_s": 120,
+  "canal": "alerte-meteo",
+  "ts": 1770000360
+}
+```
+
+Ce message d'alerte reprend l'identifiant de station et l'horodatage du flux normal, ce qui permet de le remettre en série avec les mesures et de savoir exactement à quel instant la condition est devenue vraie. Les trois champs essentiels sont la valeur mesurée, le seuil et la durée de persistance : ensemble, ils suffisent à comprendre l'événement sans rouvrir le firmware, et à répondre à la question que se pose toujours l'opérateur, à savoir si l'alerte décrit une situation nouvelle ou une situation déjà connue. Le nom de règle, enfin, identifie la règle plutôt que la destination, car une même règle peut être routée vers plusieurs canaux sans jamais changer de signification.
+
+La boucle de rétroaction complète le tableau : depuis la page, l'opérateur doit pouvoir au moins relire un seuil ou forcer une publication sans reflasher. C'est là que le topic de commande entre en jeu, avec la même exigence de sécurité pragmatique que le reste : la station n'accepte que des commandes dont la structure est valide, ignore poliment le reste, journalise ce qu'elle applique, et ne change jamais rien qui ne soit pas réversible. Pour une station domestique, un mot de passe partagé sur le broker et une liste blanche de champs modifiables suffisent ; l'important est d'avoir décidé la règle plutôt que d'avoir laissé la porte grande ouverte par défaut. La supervision n'est alors plus une vitrine, mais un vrai outil de conduite du système.
+
+## Tenir : watchdog, reconnexion et mise à jour à distance
+
+La phase de démonstration prouve que le système peut marcher ; la phase de maintien prouve qu'il continuera. Entre les deux, il y a les pannes réelles : le point d'accès redémarré pendant une mise à jour du routeur, le broker redémarré, la carte mémoire saturée, la boucle bloquée par une lecture réseau qui n'est jamais revenue, l'utilisateur qui a coupé l'alimentation au milieu d'une écriture. Un projet connecté se juge à sa manière de se relever, pas à sa manière de démarrer. Quatre mécanismes couvrent l'essentiel : le watchdog, la reconnexion progressive, le journal d'incidents et la mise à jour à distance. Aucun n'est exotique, tous sont intégrés au chapitre précédent ; leur mise en œuvre simultanée est le travail du présent.
+
+Le watchdog matériel est une minuterie interne au processeur que le logiciel doit réarmer régulièrement. Si la boucle cesse de le réarmer, c'est qu'elle est bloquée ou morte : le compteur expire, le processeur est réinitialisé, et la station redémarre sans intervention. C'est la défense ultime contre les blocages réseau, les lectures de bus qui ne répondent plus et les débordements de pile. Deux précautions rendent ce mécanisme réellement utile. D'abord, le temps de déclenchement doit être nettement supérieur à la pire durée légitime de la boucle, sinon le watchdog redémarrera la carte pendant une simple écriture de journal un peu lente. Ensuite, l'événement doit laisser une trace : un compteur de redémarrages conservé en mémoire non volatile, affiché et publié, afin de distinguer un redémarrage planifié d'une chute en boucle. Un système qui redémarre parfois sans le dire est un système qu'on ne peut pas diagnostiquer.
+
+La reconnexion combine Wi-Fi puis MQTT, avec le même principe de délai progressif appliqué aux deux étages. Le premier essai part après quelques secondes, puis le délai double à chaque échec jusqu'à un plafond, avec une composante aléatoire qui évite qu'un réseau ne soit subitement noyé par toutes les stations se reconnectant à la même fraction de seconde. Ce comportement est d'autant plus nécessaire que l'échec de connexion est souvent la cause de la surchauffe : une attente active qui tourne en boucle serrée consomme du courant, empêche la pile réseau de respirer et retarde mécaniquement le retour du service une fois la coupure terminée.
+
+```cpp
+// Retard exponentiel plafonne, identique pour WiFi et MQTT.
+// Chaque etape attend plutot qu'elle ne tourne en boucle.
+
+static uint32_t delaiMs = DELAI_INITIAL_MS;
+
+bool tenterConnexion() {
+  if (liaisonEtablie()) { delaiMs = DELAI_INITIAL_MS; return true; }
+
+  if (millis() - dernierEssai < delaiMs) return false;
+
+  dernierEssai = millis();
+  bool ok = etablirLiaison();                 // WiFi puis MQTT
+
+  if (!ok) {
+    delaiMs = min(delaiMs * 2, DELAI_PLAFOND_MS);
+    delaiMs += random(0, DELAI_JITTER_MS);    // evite l'effet de meute
+    journalIncident("liaison absente, nouvel essai dans " + String(delaiMs));
+  }
+  return ok;
+}
+```
+
+Deux détails de cette fonction méritent d'être soulignés parce qu'ils distinguent une implémentation naïve d'une implémentation éprouvée. Le plafond empêche la croissance infinie du délai, qui finirait par retarder indéfiniment le retour au service. La variation aléatoire, elle, répond à un problème de parc : quand un coupure de courant rend toutes les stations du site en même temps, des délais identiques provoquent une vague de connexions simultanées que le routeur et le broker absorbent mal. Le journalisation de chaque incident, enfin, transforme un comportement invisible en donnée exploitable lors du diagnostic suivant.
+
+Le journal d'incidents complète le journal de mesures. Il ne contient pas des valeurs mais des événements : démarrage, identifiant et version du firmware, adresse IP obtenue, nombre de redémarrages depuis l'alimentation, perte de liaison, retour de liaison, erreur de carte mémoire, lecture de capteur échouée, commande appliquée. Ce fichier est le premier endroit où regarder quand quelqu'un annonce que la station fait n'importe quoi, et il est d'autant plus précieux qu'il subsiste quand le réseau est absent. La discipline à acquérir est de journaliser les transitions d'état, pas les boucles : mille messages identiques à la minute noient l'information dans le bruit, alors qu'un message par changement d'état se lit en trente secondes.
+
+La mise à jour à distance ferme la boucle de maintien. Plutôt que de déplacer la station et de la rebrancher en USB pour chaque correction, on téléverse le nouveau firmware par le réseau. Deux stratégies coexistent : le téléversement direct, simple mais qui laisse la station indisponible pendant l'écriture et la rend inutilisable si l'interruption survient, et le téléversement vers une partition d'attente avec basculement, où l'ancien firmware reste intact jusqu'à ce que le nouveau prouve qu'il démarre. Pour un projet qui doit tenir, la seconde approche est la bonne : elle transforme une mise à jour risquée en opération réversible. Quel que soit le choix, deux règles s'imposent : la mise à jour ne se déclenche jamais pendant une écriture de journal, et le succès de la nouvelle version se vérifie par un critère objectif, par exemple la publication de plusieurs échantillons consécutifs, avant de considérer l'opération terminée.
+
+```text
+Procedure de mise a jour a distance - deroule type
+
+1. Preparation
+   - Recuperer le binaire et sa somme de controle depuis le serveur
+   - Verifier l'espace libre en memoire et sur la partition cible
+   - Forcer un dernier echantillon et une derniere ligne de journal
+
+2. Televersement
+   - Transfert vers la partition d'attente, avec progression publiee
+   - Si interruption : l'ancien firmware reste actif, rien n'est perdu
+
+3. Bascule et vigilance
+   - Redemarrage sur la nouvelle version
+   - Le nouveau firmware doit publier N echantillons valides en 120 s
+   - Sinon : retour automatique sur la partition precedente
+
+4. Constat
+   - Version, duree de l'operation et resultat inscrits au journal
+   - Le tableau de bord affiche la nouvelle version
+```
+
+Le dernier point du maintien est humain : la documentation d'exploitation. Un fichier court, daté, indiquant comment alimenter la station, comment la remettre à niveau, comment lire le journal, quels codes d'erreur signifient quoi et quelle est la marche à suivre pour une carte mémoire pleine. Ce document coûte une heure et en fait gagner une demi-journée à la première personne qui devra intervenir sur une station déjà installée, y compris vous. Dans tout projet connecté, la mémoire de l'auteur est le premier composant qui tombe en panne.
+
+## Vérifier : tests, recette et mise en production
+
+La recette est l'acte qui sépare un prototype d'un système livré. Elle consiste à confronter, point par point, le comportement réel au cahier des charges rédigé au début, et à consigner les résultats dans un rapport court. Ce n'est pas une formalité administrative : c'est le moment où l'on découvre que la reconnexion met quarante-cinq secondes au lieu de trente, que le journal perd une ligne par changement de jour, ou que l'erreur de température atteint un degré près du capteur. Chacune de ces découvertes vaut mieux ici qu'au bout du premier mois de fonctionnement. Le travail se décompose en tests unitaires, tests d'intégration et tests de tenue, dans cet ordre, car chacun prépare le suivant.
+
+Les tests unitaires portent sur ce qui peut être vérifié sans matériel : le filtrage, la validation de domaine, le calcul du retard progressif, le formatage du message, la rotation des fichiers. On les écrit avec un cadre de test léger intégré à l'outil de compilation du projet, on les exécute sur la machine de développement, et on les rend automatiques : à chaque modification du dépôt, une tâche de vérification compile et les lance. Le bénéfice dépasse largement le coût initial : ces tests détectent en secondes des régressions que la lecture attentive du code ne verrait pas, et ils documentent par la même occasion le comportement attendu de chaque fonction.
+
+```cpp
+// Exemple : le validateur de domaine doit rejeter l'impossible.
+// Exécution sur la machine de développement, sans aucun capteur.
+
+void test_rejet_temperature_impossible(void) {
+  Echantillon e = { .t = -80.0, .hr = 48.0, .p = 1013.0 };
+  TEST_ASSERT_FALSE(validerDomaine(e));
+}
+
+void test_rejet_saut_brutal(void) {
+  Echantillon precedent = { .t = 21.0 };
+  Echantillon courant   = { .t = 45.0 };
+  TEST_ASSERT_FALSE(limiteVariation(precedent, courant, 5.0));
+}
+
+void test_publication_format_stable(void) {
+  Echantillon e = echantillonDeTest();
+  const char* json = formaterMessage(e);
+  TEST_ASSERT_TRUE(contientCle(json, "\"station\""));
+  TEST_ASSERT_TRUE(contientCle(json, "\"t_c\""));
+  TEST_ASSERT_TRUE(contientCle(json, "\"seq\""));
+}
+```
+
+Les tests d'intégration réunissent plusieurs modules sur le vrai matériel : le capteur réellement branché, la carte mémoire réellement insérée, un broker réellement accessible. On y vérifie les interactions, c'est-à-dire exactement ce que les tests unitaires ne couvrent pas : la cohabitation du port série et du Wi-Fi, le comportement du journal pendant une coupure, la réception d'une commande pendant qu'une publication est en cours. Un test d'intégration réussi répond à une question unique et écrite à l'avance ; un scénario qui en pose quinze à la fois ne dit rien de précis quand il échoue.
+
+Le test de tenue, ou test de durée, est celui qui fait la différence entre un banc qui a marché un après-midi et un système déployé. Il laisse la station tourner pendant plusieurs jours consécutifs, avec des coupures de réseau provoquées à intervalles irréguliers, une carte mémoire presque pleine, et un relevé quotidien des compteurs. On y cherche deux choses : l'absence de redémarrage non désiré et la stabilité du taux de publications. Un test de tenue réussi ne prouve pas que le système ne tombera jamais en panne, mais il élimine les causes de panne les plus fréquentes, qui sont toujours d'ordre temporel : fuites de mémoire, compteurs qui débordent, fichiers qui grossissent, attentes qui s'accumulent.
+
+```table
+| Étape de recette | Méthode | Preuve à conserver |
+| --- | --- | --- |
+| Précision des mesures | Comparaison côte à côte avec un étalon | Courbe d'écart sur la plage utile |
+| Continuité du flux | Compteur de séquences côté stockeur | Taux de complétude sur 72 heures |
+| Tenue de la reconnexion | Coupures provoquées toutes les heures | Durée médiane de retour en service |
+| Stabilité | Journal des redémarrages sur 7 jours | Zéro redémarrage non planifié |
+| Espace de stockage | Rotation et rétention vérifiées | Taille du journal stable en fin de période |
+| Lisibilité opérateur | Relecture du tableau de bord | Chaque panneau répond à sa question |
+```
+
+
+La mise en service elle-même suit une check-list courte : alimenter et vérifier la tension sous charge, relever l'adresse obtenue, confirmer les premiers messages sur le broker, vérifier la première écriture de journal, forcer une coupure de réseau et mesurer le retour, déclencher une alerte artificiellement pour valider la chaîne d'notification, puis enfin laisser la station et revenir vingt-quatre heures plus tard comparer les compteurs. Ce dernier passage, le retour différé, est souvent omis et c'est lui qui révèle les problèmes de cadence et de fuite. Une fois la recette signée, la station entre en service avec deux documents à portée de main : le rapport de recette et la note d'exploitation. Toute la rigueur des sections précédentes trouve là sa justification.
+
+## Exemple pas à pas : assembler le chemin complet
+
+Il reste à relier toutes les pièces dans un ordre de démarrage cohérent, car la séquence d'initialisation compte autant que le code lui-même. Le principe est d'aller du plus fiable au plus fragile : d'abord ce qui fonctionne sans rien d'autre, ensuite ce qui dépend du réseau. On initialise le port série et on affiche la version, puis on lit la configuration, puis on monte le stockage local, puis on démarre le capteur et on effectue une première lecture de contrôle, et seulement ensuite on tente la connexion réseau. Si le réseau est absent, la station reste utile localement ; si le capteur est absent, le défaut est annoncé immédiatement ; si la carte mémoire manque, le système continue en publiant sans journal. Chaque dépendance manquante dégrade une fonction, jamais l'ensemble.
+
+```cpp
+void setup() {
+  Serial.begin(115200);
+  afficherBanner();                 // version, identifiant, compteur de demarrages
+
+  configCharger();                  // pins, seuils, cadence depuis la configuration
+  journalDemarrer();                // carte SD : degrade proprement si absente
+  capteurDemarrer();                // premiere lecture de controle
+  veilleDemarrer(30000);            // watchdog a 30 s, superieur au pire cas
+
+  ecranAfficherEtat("mise en route");
+  liaisonDemarrer();                // WiFi puis MQTT, avec retard progressif
+
+  journalIncident("demarrage OK, version " VERSION);
+}
+
+void loop() {
+  veilleAlimenter();
+  if (!cadenceAtteinte(millis())) return;
+
+  liaisonMaintenir();               // reconnexion si necessaire, sans bloquer
+  Echantillon e = lireCapteur();
+  traiterEtPublier(e);
+}
+```
+
+Le chemin d'un échantillon, de la broche du capteur au pixel affiché, se résume ainsi : la boucle détecte l'arrivée de la fenêtre de cadence, interroge le capteur, valide le domaine, limite la variation, lisse, horodate, puis fait trois choses en ordre de priorité décroissante. Le journal local d'abord, car il est réversible et rapide. L'affichage ensuite, car il sert l'observateur sur place. La publication en dernier, car c'est l'opération la plus lente et la plus susceptible d'échouer sans remettre en cause l'intégrité de la mesure. Ce classement des priorités n'est pas arbitraire : il place l'écriture la plus fiable la première, de sorte qu'une coupure de réseau au milieu du traitement laisse toujours une trace locale.
+
+```text
+Sequence de demarrage - ordre et degradations acceptees
+
+  port serie        --> toujours disponible
+        |
+  configuration     --> valeurs par defaut si absente
+        |
+  stockage local    --> sans journal si carte absente
+        |
+  capteur           --> etat d'erreur publie si reponse fausse
+        |
+  afficheur local   --> derniere valeur connue si geler
+        |
+  reseau + broker   --> mode autonomie si inaccessible
+        |
+  veille (watchdog) --> redemarrage si la boucle se fige
+
+Regle : une etape qui echoue degrade une fonction, jamais le systeme.
+```
+
+La dernière pièce d'assemblage est le tableau de bord lui-même, que l'on branche sur la base une fois les premiers messages reçus. Commencez par un unique panneau montrant la dernière valeur et l'état de la station : il vous servira de test de bout en bout dès la première minute. Ajoutez ensuite, un par un, les panneaux d'historique, puis les compteurs, puis les alertes, en vérifiant à chaque ajout qu'il répond à une question précise. Un tableau de bord se construit dans l'ordre des questions, pas dans l'ordre des disponibilités du logiciel de supervision. Quand chaque panneau a sa justification écrite, la supervision est terminée : il ne reste qu'à la regarder fonctionner.
+
+## À retenir
+
+Un projet connecté se juge à sa capacité à tenir dans la durée sans intervention, pas à la brillance de sa démonstration. Le cahier des charges précède le code, et chaque exigence s'exprime avec un chiffre, une unité et une durée : c'est ce qui rend la recette possible et les désaccords rares. Le matériel se décide à partir de ce document, avec une alimentation dimensionnée pour les pointes du module radio, des bus plutôt que des fils multiples, et un schéma tenu à jour. Le logiciel se découpe en modules à responsabilité unique, reliés par une seule structure d'échantillon, de sorte que la valeur affichée, écrite et publiée ne peut pas diverger. La mesure passe par la validation de domaine et la limitation de variation avant tout filtrage, et un échec de lecture se publie comme un échec plutôt que d'être masqué par une valeur plausible.
+
+Les topics MQTT suivent une arborescence stable qui permet de s'abonner à une station, à une catégorie ou à l'ensemble, et le format du message est un contrat versionné, avec unités dans les noms de champs et compteur de séquence pour détecter les trous. Le stockage temporel exige une étiquetage sobre et une rétention configurée, tandis que le journal local reste le secours qui fonctionne quand le réseau est absent. La supervision commence par l'état du système, pas par les courbes, et distingue l'absence de donnée de la donnée nulle. Le watchdog, le retard progressif de reconnexion, le journal d'incidents et la mise à jour réversible forment l'armature de maintien ; les tests unitaires automatiques, les tests d'intégration, le test de durée et le rapport de recette forment la preuve que tout cela fonctionne.
+
+## Erreurs fréquentes
+
+La première erreur consiste à écrire du code avant d'avoir écrit les critères d'acceptation : le projet avance vite deux semaines, puis se perd dans des discussions sans fin sur ce qui est prioritaire, faute de référence commune. La seconde est de négliger l'alimentation, ce qui se traduit par des redémarrages en pleine publication que l'on met des jours à relier aux pointes de courant du module radio. La troisième est d'afficher ou de publier une valeur sans validation de domaine, ce qui empoisonne les séries avec des lectures impossibles qui faussent les moyennes pendant des heures. La quatrième est d'attendre de manière bloquante dans la boucle, ce qui fige l'affichage, empêche l'entretien de la liaison et déclenche le watchdog.
+
+On voit ensuite des topics écrits sans structure, qui deviennent ingérables dès qu'une seconde station rejoint le site, et des formats de message modifiés sans version, cassant silencieusement le stockeur. La base de données sans rétention finit par saturer le disque et emporte avec elle les mesures que l'on croyait sauves. Le tableau de bord affiche des courbes mais jamais l'état de la liaison, de sorte qu'un système mort ressemble à un système stable. Enfin, les mises à jour à distance sont lancées pendant une écriture de journal ou sans mécanisme de retour arrière, et un simple coup de réseau transforme une correction en brique. La liste est courte : chacune de ces fautes se corrige en une heure si elle est identifiée tôt, et en une journée si elle ne l'est pas.
+
+## Pour aller plus loin
+
+Pour consolider, le meilleur exercice reste d'étendre le périmètre existant plutôt que de recommencer un nouveau projet : ajoutez un quatrième capteur sur le même bus, ce qui vous forcera à réviser la structure d'échantillon et le schéma de câblage ; ajoutez une deuxième station, ce qui validera l'arborescence des topics et l'étiquetage de la base ; ajoutez une alerte avec durée de persistance, ce qui vous fera toucher du doigt la différence entre seuil instantané et condition maintenue. Chaque extension est une vérification d'architecture : si elle demande de toucher à dix fichiers, le découpage est mauvais.
+
+Les documents officiels restent les meilleures sources pour aller au fond : le guide du protocole MQTT explique les qualités de service et les testaments avec une précision qu'aucun tutoriel ne remplace, la documentation du fournisseur de votre base temporelle détaille l'étiquetage et les politiques de rétention, et la fiche technique de votre carte de développement contient les broches à éviter et le schématique d'alimentation. Côté méthode, lisez sur le cycle en V, sur les tests embarqués automatisés et sur les pratiques d'intégration continue : ce sont les mêmes principes que ceux appliqués ici, formulés de manière réutilisable pour tout projet. Enfin, la meilleure progression à ce stade est le dépôt versionné : apprenez à documenter, à taguer une version, à écrire un journal de modification, car c'est ce qui vous permettra, dans un an, de reprendre ce projet sans douleur.
+
+## Et maintenant : votre premier déploiement
+
+Vous avez maintenant un projet complet : capteurs lus, décisions prises, sorties pilotées et interface accessible. Avant de le laisser tourner seul, parcourez la checklist du déploiement : alimentation protégée, broches non utilisées définies, valeurs par défaut si un capteur répond mal, et retries sur les lectures instables. L'exercice pratique vous demande de livrer ce travail sous forme de dépôt documenté : un README avec le schéma de câblage, le fichier de configuration et une section dédiée au dépannage. Un projet qu'un autre peut relancer sans vous vaut mieux qu'un projet qui ne tourne que sur votre bureau.

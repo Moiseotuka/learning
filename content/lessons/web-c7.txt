@@ -1,0 +1,933 @@
+Bienvenue dans le septième chapitre du parcours Développement web moderne, le chapitre où votre site de l'atelier cesse d'être une collection de fichiers pour devenir une véritable application. Jusqu'ici, chaque page que vous avez écrite vivait de manière indépendante : le navigateur demandait un fichier, recevait un document complet, l'affichait, puis l'oubliait dès que l'utilisateur cliquait sur un autre lien. Cette architecture, dite multi-pages, a fait ses preuves pendant vingt ans et reste parfaitement valide, mais elle impose un rechargement à chaque déplacement et perd systématiquement ce que l'utilisateur avait en cours. React propose une autre lecture du problème : un seul document reste chargé dans le navigateur, et c'est un routeur, une partie du code chargée de lire l'adresse, qui décide quel composant afficher à la place du précédent. L'URL ne désigne plus un fichier, elle désigne un écran. Cette inversion est le sujet du chapitre, et elle commande tout le reste : la navigation, les formulaires et le chargement des données distantes.
+
+À la fin de cette leçon, vous saurez faire trois groupes de choses très concrètes, que vous aurez déjà manipulées dans du code complet. Vous saurez structurer une navigation avec un routeur : déclarer une table de routes, créer des liens qui ne rechargent pas la page, lire un paramètre d'URL, afficher une page 404, imbriquer des routes dans un composant de disposition commun et signaler le lien actif à la fois visuellement et pour les technologies d'assistance. Vous saurez lier un formulaire à l'état du composant : maintenir chaque saisie dans une variable d'état, la refléter dans le champ, valider une adresse électronique avant l'envoi, relier un message d'erreur au champ qui l'a provoqué, gérer les états envoyé, en erreur et confirmé, puis réinitialiser proprement. Vous saurez enfin charger des données au montage d'un composant avec useEffect : déclarer un effet qui se déclenche une fois, comprendre le tableau des dépendances, écrire la fonction asynchronesans provoquer de race condition, annuler un effet qui ne doit plus parler, et faire varier l'affichage entre chargement, erreur, liste vide et succès. Le tout sera rassemblé dans un mini-projet guidé : le formulaire d'inscription de l'atelier relié à la liste des inscrits.
+
+La manière d'aborder ce chapitre mérite une recommandation, comme au début du premier. React s'apprend comme apprend tout le reste du parcours : en recopiant les exemples, en les cassant, en observant ce qui se passe. Rien ne remplace le geste d'ouvrir un éditeur, de coller un composant, d'enregistrer et de regarder le navigateur. Une route qui affiche une page vide n'est pas un échec, c'est une information : elle vous dit que le chemin déclaré et le chemin cliqué ne sont pas écrits de la même façon. Nous avancerons par étapes, en alternant explications, exemples commentés et mises en garde issues de pratique, et le fil rouge restera le même depuis le début du parcours : le site de l'atelier de la Médiathèque des Lilas. Chaque notion sera d'abord montrée dans un composant isolé, puis réutilisée dans le mini-projet de la fin, de sorte que vous puissiez le relire seul et comprendre chaque ligne.
+
+## Structurer une application multi-pages
+
+Le premier réflexe, quand on quitte les pages statiques, consiste à garder la logique ancienne et à l'habiller de composants : un fichier par écran, un lien par fichier, et React qui s'exécute au milieu. Cela fonctionne, mais vous perdez l'essentiel, puisque le navigateur rechargera le document à chaque clic et repartira donc de zéro : le composant est démonté, l'état est effacé, la mémoire vidée. Une application React structurée inverse la hiérarchie. Le document HTML unique, celui que le serveur renvoie une seule fois, contient un point d'ancrage, généralement une balise d'ancrage avec un identifiant que le script occupera, et c'est un routeur, monté à cet endroit, qui reçoit la responsabilité d'afficher le bon composant en fonction de l'adresse courante. Le document n'est plus rechargé ; seuls les composants changent.
+
+Cette différence se comprend mieux avec une image simple. Dans le modèle multi-pages, l'adresse postale désigne une maison : le facteur va d'une maison à l'autre, et chaque déplacement est un voyage. Dans le modèle applicatif, une seule maison est habitée en permanence, et l'adresse désigne la pièce où l'on se trouve : changer de pièce ne fait pas déménager. Concrètement, cela signifie que l'en-tête du site, la navigation, les préférences de l'utilisateur et les données déjà chargées survivent au déplacement. L'utilisateur peut revenir en arrière avec la touche dédiée, rafraîchir la page, copier l'adresse dans un message : dans les trois cas, il retrouve exactement le même écran, parce que l'adresse est restée la source de vérité. Une application qui décide de l'affichage sans passer par l'URL casse cette promesse et punit l'utilisateur dès qu'il partage un lien.
+
+Le choix de l'adresse se fait en deux familles, et il faut trancher tôt parce qu'il conditionne le déploiement. La première famille écrit des chemins réels : slash programme, slash inscription. C'est la forme la plus propre, mais elle exige que le serveur soit configuré pour renvoyer, vers n'importe quel chemin inconnu, le même document de départ ; sans cette configuration, un rafraîchissement sur slash inscription renvoie une erreur quatre cent quatre. La deuxième famille écrit le chemin après une almohadille : almohadille slash programme. Le navigateur n'envoie rien au serveur au-delà du document principal, l'adresse est lue par le script, et le rafraîchissement fonctionne partout, y compris ouvert depuis un simple fichier local. Pour un projet sans outil de compilation, c'est cette seconde forme que nous utiliserons tout au long du chapitre.
+
+```text
+index.html  (chargé une seule fois)
+  |
+  +-- script: le routeur lit location.hash
+  |
+  +-- #/            -> page Accueil
+  +-- #/programme   -> page Programme
+  +-- #/inscription -> page Inscription (formulaire)
+  +-- n'importe quoi d'autre -> page Introuvable
+```
+
+L'organisation des fichiers suit la même logique que les adresses. On crée un dossier pour les écrans, un dossier pour les composants partagés et un fichier unique pour la table des routes. Chaque écran devient un composant, chaque composant tient dans un fichier, et le nom du fichier ressemble au chemin qu'il sert : programme point jsx pour la route slash programme. Cette symétrie n'est pas une règle de la bibliothèque, c'est une règle de lisibilité : quand un bug se produit sur une adresse, votre recherche dans l'arborescence doit aboutir en une seconde. Évitez surtout le piège inverse, qui consiste à écrire un composant géant avec une condition par adresse : vous obtenez alors un fichier illisible qui reproduit ce que le routeur fait déjà pour vous.
+
+La dernière décision de structure porte sur ce qui est commun à tous les écrans. Le bandeau, la navigation et le pied de page ne doivent pas être réécrits dans chaque page : ils sont déclarés une fois, dans un composant de disposition, et l'écran courant vient s'y insérer à un emplacement réservé. Le routeur matérialise cet emplacement avec un composant prévu à cet effet, souvent nommé Outlet, que vous placerez entre la navigation et le pied de page. Le résultat est exactement celui d'un gabarit de document : la structure ne bouge pas, seul le contenu central change. C'est ce qui rend la navigation instantanée : le navigateur ne reconstruit pas le bandeau, il le conserve et ne remplace qu'un sous-arbre.
+
+- Une application React garde un seul document chargé ; le routeur choisit l'écran d'après l'URL.
+- L'URL reste la source de vérité : rafraîchir, partager et revenir en arrière doivent donner le même écran.
+- Le chemin après l'almohadille fonctionne sans serveur configuré ni outil de compilation.
+- Un écran par fichier, un nom de fichier qui ressemble au chemin qu'il sert.
+- Le bandeau, la navigation et le pied de page vivent dans un composant de disposition unique.
+- L'emplacement réservé au contenu courant est marqué par le composant de gabarit du routeur.
+
+## Le routeur : routes, liens, paramètres d'URL et page 404
+
+Un routeur se décrit comme une table : à gauche une adresse, à droite le composant à afficher. Vous la déclarez une fois, au sommet de l'application, puis vous n'y pensez plus. Les bibliothèques de routes de l'écosystème React se ressemblent toutes sur ce point : elles exposent un composant racine qui reçoit la table, un composant de lien qui ne déclenche aucun rechargement, et des fonctions de secours pour lire l'adresse courante. Attention à un détail de packaging qui embroule souvent les débutants : le nom du paquet dépend de la version. Les versions historiques s'importaient depuis un paquet dédié, tandis que les versions récentes regroupent tout dans un paquet unique. Vérifiez toujours le nom indiqué par la documentation officielle avant de coller un exemple trouvé ailleurs, car un import faux ne produit pas d'erreur pédagogique, seulement un écran blanc.
+
+```jsx
+import { Routes, Route, Link } from "react-router";
+import Accueil from "./pages/Accueil";
+import Programme from "./pages/Programme";
+import Inscription from "./pages/Inscription";
+import Introuvable from "./pages/Introuvable";
+
+export default function Application() {
+  return (
+    <div>
+      <nav>
+        <Link to="/">Accueil</Link>
+        <Link to="/programme">Programme</Link>
+        <Link to="/inscription">Inscription</Link>
+      </div>
+      <main>
+        <Routes>
+          <Route path="/" element={<Accueil />} />
+          <Route path="/programme" element={<Programme />} />
+          <Route path="/inscription" element={<Inscription />} />
+          <Route path="*" element={<Introuvable />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+```
+
+Trois éléments de ce tableau méritent d'être lus lentement. Le premier est la racine : le chemin slash désigne l'écran d'accueil, et il est obligatoire d'en déclarer un, sinon l'application s'ouvre sur une page vide. Le deuxième est le composant de lien. Contrairement à l'ancre classique, il ne demande pas au navigateur de charger un nouveau document ; il intercepte le clic, modifie l'adresse, déclenche le routeur et laisse le reste de la page intacte. Le troisième est la ligne réservée aux adresses inconnues : le chemin étoile attrape tout ce qui n'a pas été déclaré ailleurs et y affiche la page quatre cent quatre. Sans cette ligne, une faute de frappe dans l'adresse ne produit rien du tout, ni erreur ni écran, et l'utilisateur croit à une panne.
+
+Les paramètres d'URL permettent d'aller plus loin : une route peut porter un segment variable, écrit avec deux-points suivi d'un nom, qui accepte n'importe quelle valeur. C'est le mécanisme des fiches individuelles, des profils ou des articles : l'adresse slash atelier slash deux points identifiant désigne la même page pour tous les identifiants, et c'est le composant qui lit la valeur pour charger la bonne fiche. La lecture se fait avec une fonction de secours fournie par le routeur, qui renvoie un objet contenant tous les paramètres de l'adresse courante. Cette séparation est essentielle : le routeur décide quel écran afficher, l'écran décide quoi faire du segment qu'on lui a donné.
+
+```jsx
+<Route path="/atelier/:identifiant" element={<FicheAtelier />} />
+
+function FicheAtelier() {
+  const { identifiant } = useParams();
+  return <p>Fiche numéro : {identifiant}</p>;
+}
+```
+
+L'adresse peut aussi porter une question, c'est-à-dire une suite de paires nom et valeur après le point d'interrogation. Les paramètres de chemin sont obligatoires et participent à l'identité de la ressource ; les paramètres de requête sont facultatifs et décrivent un réglage, comme une page, un tri ou un mot recherché. On les lit avec la même famille de fonctions, ou directement avec l'objet URLSearchParams du navigateur, qui fonctionne également hors de React. Gardez cette distinction en tête : mettre un identifiant dans la question revient à cacher la ressource que l'on affiche, et le partage d'adresse devient alors faux.
+
+La page quatre cent quatre mérite enfin qu'on la traite comme un écran à part entière, pas comme un simple message d'erreur. Elle doit dire ce qui s'est passé, proposer un lien de retour vers l'accueil et, si c'est utile, suggérer les écrans les plus proches. Côté code, elle est un composant ordinaire ; côté route, elle est la ligne qui attrape tout. Pensez-y dès la première ligne de votre table de routes : prévenir l'inconnu coûte une ligne et protège l'ensemble de l'expérience.
+
+```jsx
+function Introuvable() {
+  const navigate = useNavigate();
+  return (
+    <section>
+      <h1>Page introuvable</h1>
+      <p>L'adresse demandée n'existe pas ou plus.</p>
+      <button onClick={() => navigate("/")}>Revenir à l'accueil</button>
+    </section>
+  );
+}
+```
+
+Pour les déplacements qui ne naissent pas d'un clic sur un lien, comme après une validation réussie ou un bouton annuler, le routeur fournit une fonction de programmation. Elle reçoit la destination et déclenche le même changement d'adresse qu'un lien. Deux précautions d'usage : ne l'appelez pas directement pendant le rendu du composant, mais dans un gestionnaire d'événement ou un effet, sinon vous demandez au routeur de changer de page au milieu du dessin de l'écran ; et préférez le chemin relatif quand vous restez dans la même branche, par exemple programme, plutôt que de réécrire la racine complète à chaque fois.
+
+- Déclarez la table des routes une seule fois, au sommet de l'application.
+- Le composant de lien intercepte le clic : aucun document n'est rechargé.
+- Le chemin étoile capture les adresses inconnues et les renvoie vers la page quatre cent quatre.
+- Un segment variable, écrit avec deux-points, porte l'identifiant ; l'écran le lit avec la fonction de paramètres.
+- Le paramètre de chemin identifie une ressource ; la question décrit un réglage facultatif.
+- Les déplacements programmatiques s'appellent depuis un gestionnaire ou un effet, jamais pendant le rendu.
+
+## Navigation imbriquée, mise en forme des liens actifs
+
+Les vraies applications n'ont pas trois routes égales : elles ont un gabarit commun et, à l'intérieur de celui-ci, des branches entières qui possèdent leur propre sous-navigation. Prenons le site de l'atelier : le bandeau et le menu principal sont constants, la section inscription contient elle-même trois étapes, et chacune de ces étapes devrait pouvoir être atteinte par une adresse directe. Le routeur gère ce cas avec l'imbrication : une route parente désigne un composant de disposition, et ses routes filles sont déclarées à l'intérieur. Quand l'adresse correspond à une fille, le routeur monte le parent, puis place la fille dans l'emplacement réservé que le parent a laissé libre.
+
+```jsx
+<Routes>
+  <Route element={<Disposition />}>
+    <Route path="/" element={<Accueil />} />
+    <Route path="/programme" element={<Programme />} />
+    <Route path="/inscription" element={<Inscription />}>
+      <Route index element={<FormulaireInscription />} />
+      <Route path="confirmation" element={<Confirmation />} />
+      <Route path="liste" element={<ListeInscrits />} />
+    </Route>
+    <Route path="*" element={<Introuvable />} />
+  </Route>
+</Routes>
+```
+
+Lisez attentivement la route d'inscription : elle ne porte pas de composant propre, seulement une disposition, et ses filles viennent s'y greffer. La route sans chemin, marquée par l'index, désigne l'écran affiché quand on atteint le parent exactement, ici slash inscription sans rien après. Ses sœurs ajoutent un segment : slash inscription slash confirmation, slash inscription slash liste. Le résultat est une arborescence d'adresses qui reflète l'arborescence des écrans, ce qui rend le code prévisible et les adresses compréhensibles par un humain qui les lit dans la barre du navigateur.
+
+La deuxième tâche de cette section est visuelle : dire à l'utilisateur où il se trouve. Un menu de trois liens dont aucun ne se distingue laisse la personne deviner. Le composant de lien amélioré du routeur, dit lien de correspondance, compare sa destination à l'adresse courante et applique automatiquement une classe quand elles correspondent. Cette comparaison gère par défaut le cas des adresses imbriquées : sur la page slash inscription slash liste, le lien vers slash inscription reste marqué comme actif, parce qu'il décrit effectivement la branche courante. Sans ce comportement, un menu imbriqué s'éteint dès qu'on entre dans une sous-page, et l'utilisateur perd la notion de section.
+
+```jsx
+<NavLink
+  to="/programme"
+  className={({ isActive }) => (isActive ? "lien-actif" : "lien")}
+  end
+>
+  Programme
+</NavLink>
+```
+
+L'attribut de précision, marqué end dans l'exemple, sert à un cas subtil : sans lui, le lien vers la racine correspond à toutes les adresses, puisque toutes commencent par la racine. On l'ajoute donc sur les liens qui doivent correspondre exactement, et on l'oublie sur les liens de branche. Une erreur fréquente consiste à penser que la classe suffit : si votre style repose uniquement sur la couleur, une personne qui ne distingue pas les teintes, ou qui lit la page au lecteur d'écran, ne profite pas de l'information. Ajoutez donc un attribut d'état sémantique lorsque la bibliothèque ne l'ajoute pas elle-même, et complétez par une différence d'apparence durable, comme une bordure ou un gras.
+
+```table
+Outil | Quand l'utiliser | Ce qu'il apporte
+| --- | --- |
+Lien simple | Destination statique connue à l'avance | Navigue sans recharger le document
+Lien de correspondance | Élément de menu principal | Marque automatiquement la branche active
+Fonction de déplacement | Après une action, un envoi, une annulation | Déplace depuis le code
+Ancre classique | Saut vers une cible de la même page | Défile jusqu'à l'identifiant visé
+```
+
+La navigation au clavier impose une dernière discipline. Après un changement d'écran, le focus, c'est-à-dire la position de la tabulation, reste souvent sur l'élément qui a disparu, et l'utilisateur se retrouve sans rien pouvoir faire sans y penser. Deux réflexes corrigent le défaut : donner un titre de niveau un unique à chaque écran, et déplacer le focus sur le conteneur principal lors du changement de route. Cette seconde opération peut se faire dans un effet qui observe l'adresse : à chaque changement, on rend la zone de contenu focalisable et on y place le focus. Vingt lignes de code, une différence considérable pour toute personne qui pilote la page sans souris.
+
+- Une route parente porte un composant de disposition ; ses filles viennent s'y insérer.
+- La route sans chemin désigne l'écran par défaut d'une branche.
+- Le lien de correspondance applique automatiquement une classe à la branche active.
+- La précision exacte sert surtout pour le lien vers la racine du site.
+- Un état actif doit se voir et s'entendre, pas seulement se colorier.
+- Après chaque changement d'écran, renvoyez le focus sur le contenu principal.
+
+## Formulaires contrôlés : une valeur, un état
+
+Un formulaire React repose sur un renversement complet de responsabilité. Dans un formulaire ordinaire, le navigateur détient la valeur de chaque champ et la rend sur demande ; dans un formulaire contrôlé, c'est votre état qui détient la valeur, et le champ ne fait que l'afficher. Chaque saisie devient un événement, chaque événement met à jour une variable d'état, chaque mise à jour déclenche un nouveau rendu, et le nouveau rendu écrit la valeur dans le champ. La boucle est fermée : ce que l'utilisateur tape arrive dans l'état, ce que contient l'état revient dans le champ. Tant que cette boucle est intacte, le champ et l'application ne peuvent pas diverger.
+
+```jsx
+function FormulaireAccueil() {
+  const [courriel, setCourriel] = useState("");
+
+  function changerCourriel(evenement) {
+    setCourriel(evenement.target.value);
+  }
+
+  return (
+    <form>
+      <label htmlFor="courriel">Adresse électronique</label>
+      <input
+        id="courriel"
+        type="email"
+        value={courriel}
+        onChange={changerCourriel}
+      />
+      <p>Valeur actuelle : {courriel}</p>
+    </form>
+  );
+}
+```
+
+Les trois pièces de ce composant sont strictement nécessaires et chacune a son rôle. La variable d'état est la mémoire unique du champ. L'attribut de valeur donne au champ son contenu à l'écran : si vous l'omettez, le champ redevient libre, l'application n'apprend plus rien et le formulaire n'est plus contrôlé. L'attribut de changement est l'oreille du composant : il reçoit chaque frappe, en extrait la chaîne de caractères et l'enregistre. Notez que l'événement n'est utilisable que pendant l'appel : le routeur du navigateur le recycle immédiatement après le gestionnaire, si bien que toute tentative de le conserver pour plus tard échoue silencieusement. Copiez ce dont vous avez besoin, tout de suite.
+
+Pour un formulaire à plusieurs champs, la tentation est d'ouvrir une variable d'état par champ, et elle fonctionne tant que le formulaire tient dans trois lignes. Dès que les champs se multiplient, ou qu'ils partagent un sort commun lors de la validation et de la remise à zéro, préférez un objet unique : un nom par champ dans l'objet, une fonction de mise à jour qui recopie l'objet précédent en écrasant la seule clé modifiée. L'écriture utilise pour cela la forme fonctionnelle de la mise à jour, celle qui reçoit l'état précédent, parce que vous ne disposez pas forcément de la valeur courante au moment de l'appel. Cette discipline a un effet secondaire précieux : la remise à zéro devient un seul appel qui restaure l'objet de départ.
+
+```jsx
+const valeursInitiales = { nom: "", courriel: "", places: "1" };
+const [valeurs, setValeurs] = useState(valeursInitiales);
+
+function changer(champ, evenement) {
+  const valeur = evenement.target.value;
+  setValeurs((etatPrecedent) => ({ ...etatPrecedent, [champ]: valeur }));
+}
+
+function reinitialiser() {
+  setValeurs(valeursInitiales);
+}
+```
+
+On objecte souvent que le formulaire contrôlé est plus verbeux que son équivalent libre. C'est vrai, et ce coût est volontaire : il est le prix de la maîtrise. Parce que la valeur passe par votre état, vous pouvez la vérifier à chaque frappe, bloquer un caractère interdit, normaliser la casse, proposer une auto-complétion, calculer un total, activer ou désactiver un bouton d'envoi, ou encore conserver les valeurs saisies quand l'écran change puis revient. Aucune de ces possibilités n'existe tant que le navigateur est seul propriétaire du champ. Le formulaire contrôlé n'est pas une mode : c'est la condition de tout ce que la suite du chapitre va construire.
+
+- La valeur de chaque champ vit dans l'état du composant, pas seulement dans le navigateur.
+- Sans attribut de valeur, le champ redevient libre et l'application cesse d'apprendre.
+- L'événement de changement n'est valide que pendant l'appel : extrayez-en la valeur immédiatement.
+- Un objet unique pour tous les champs simplifie la validation et la remise à zéro.
+- Mettez à jour avec la forme fonctionnelle pour lire l'état précédent sans le figer.
+- Le formulaire contrôlé coûte quelques lignes de plus et achète toute la maîtrise de la saisie.
+
+## Validation : un message par champ, relié à ce qu'il explique
+
+La validation n'est pas une couche supplémentaire posée sur le formulaire : dans un formulaire contrôlé, elle découle mécaniquement de l'état. Puisque vous possédez déjà la valeur de chaque champ, vous pouvez dériver de ces valeurs une collection d'erreurs, la même façon dont une facture découle d'une liste d'articles. L'important est de choisir un endroit unique où cette dérivation a lieu. Deux écoles s'affrontent. La première valide à chaque frappe et affiche l'erreur dès que la deuxième lettre est tapée ; la seconde attend la soumission, puis maintient la vérification active tant que le formulaire reste invalide. La deuxième est préférable dans la plupart des cas : elle évite d'aggreser l'utilisateur qui compose lentement une adresse et qui, en route, passe obligatoirement par un état incomplet.
+
+```jsx
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function valider(valeurs) {
+  const erreurs = {};
+  if (valeurs.nom.trim().length < 2) {
+    erreurs.nom = "Indiquez au moins deux caractères pour le nom.";
+  }
+  if (!EMAIL.test(valeurs.courriel)) {
+    erreurs.courriel = "Saisissez une adresse électronique valide, par exemple prenom@domaine.fr.";
+  }
+  if (Number(valeurs.places) < 1 || Number(valeurs.places) > 4) {
+    erreurs.places = "Entre une et quatre places par inscription.";
+  }
+  return erreurs;
+}
+```
+
+Cette fonction est volontairement pure : elle ne modifie rien, elle prend des valeurs et renvoie un objet dont les clés correspondent aux noms des champs. Cette propriété change tout, parce qu'elle vous permet de l'appeler à trois moments différents sans jamais désynchroniser l'affichage : au moment de la soumission pour décider d'envoyer ou non, après la soumission pour décider s'il faut continuer à afficher les erreurs, et pendant le rendu pour savoir si le champ doit porter un message. Une seule source de vérité, trois usages, aucune contradiction possible entre ce que vous affichez et ce que vous envoyez.
+
+L'adresse électronique mérite une mise en garde particulière. La vérification par expression régulière reste un modèle simple, suffisant pour filtrer les fautes de frappe, mais elle ne peut pas prouver qu'une adresse existe : elle vérifie la forme, jamais la boîte aux lettres. Ne cherchez donc pas la perfection, cherchez la clarté. Toute expression régulière un peu sophistiquée finit par rejeter des adresses parfaitement valides au profit d'une fausse sécurité. Le champ de saisie est également de type courriel, ce qui donne au navigateur et au clavier mobile leur propre vérification : la validation native et votre validation se complètent, elles ne se remplacent pas.
+
+Afficher le message est une question d'accessibilité autant que d'apparence. Trois attributs font toute la différence sur le champ fautif. Le premier, d'état invalide, signale au lecteur d'écran que le champ est en erreur. Le second relie le champ au message par une référence à l'identifiant du paragraphe d'erreur : l'outil de lecture annonce alors automatiquement l'explication quand le champ prend le focus. Le troisième porte sur le message lui-même et lui donne un rôle d'alerte, de sorte qu'il soit annoncé dès qu'il apparaît, sans que la personne ait besoin de chercher. Sans ces trois liens, votre message reste un carré rouge que seuls les utilisateurs voyants perçoivent.
+
+```jsx
+<label htmlFor="courriel">Adresse électronique</label>
+<input
+  id="courriel"
+  type="email"
+  value={valeurs.courriel}
+  onChange={(e) => changer("courriel", e)}
+  aria-invalid={Boolean(erreurs.courriel) || undefined}
+  aria-describedby={erreurs.courriel ? "erreur-courriel" : undefined}
+/>
+{erreurs.courriel && (
+  <p id="erreur-courriel" role="alert">
+    {erreurs.courriel}
+  </p>
+)}
+```
+
+Reste la question du bouton d'envoi. L'instinct veut le désactiver tant que le formulaire est invalide, et l'exemple est partout. Le problème est pédagogique autant que technique : un bouton muet ne dit pas pourquoi il ne répond pas, la personne clique, il ne se passe rien, et elle abandonne. Préférez un bouton toujours actif qui, au clic, valide, affiche les messages et déplace le focus sur le premier champ fautif. Une exception justifie le désactivation : pendant l'envoi réel, où empêcher un double clic protège à la fois de la duplication des inscriptions et des réponses qui s'entrecroisent. Désactiver pendant l'envoi, pas avant la saisie.
+
+- Validez à chaque soumission, puis gardez la vérification active tant que le formulaire reste invalide.
+- Écrivez une fonction de validation pure, appelable autant de fois que nécessaire sans effet de bord.
+- Vérifiez la forme d'une adresse, jamais son existence réelle : méfiezsez des expressions régulières trop clever.
+- Reliez le champ à son message avec l'attribut d'état invalide et celui qui référence le message.
+- Donnez au message un rôle d'alerte pour qu'il soit annoncé dès son apparition.
+- Gardez le bouton actif et expliquez l'erreur ; désactivez-le seulement pendant l'envoi.
+
+## Soumission : les états envoyé, en erreur et confirmé
+
+La soumission est le moment où un formulaire cesse d'être local. Tant que l'utilisateur tape, tout se passe dans le composant ; au clic, l'application contacte un autre système, une base, un service, un fichier, et ce système peut répondre de trois manières : vite et bien, lentement, ou mal. Un formulaire professionnel décrit ces trois issues explicitement, et pour cela il porte un état supplémentaire, distinct des valeurs saisies, que l'on peut voir comme la position du formulaire dans un petit automate à trois ou quatre positions. Tant que rien n'a été tenté, le formulaire est au repos. Pendant l'envoi, il est occupé. Puis il bascule soit vers la confirmation, soit vers l'échec.
+
+```jsx
+const [statut, setStatut] = useState("repos"); // repos | envoi | succes | echec
+const [message, setMessage] = useState("");
+
+async function soumettre(evenement) {
+  evenement.preventDefault();
+  const erreurs = valider(valeurs);
+  setErreurs(erreurs);
+  if (Object.keys(erreurs).length > 0) {
+    setStatut("echec");
+    setMessage("Le formulaire comporte des champs à corriger.");
+    return;
+  }
+
+  setStatut("envoi");
+  setMessage("Envoi de votre inscription…");
+  try {
+    await envoyerInscription(valeurs);
+    setStatut("succes");
+    setMessage("Votre inscription est enregistrée.");
+    setValeurs(valeursInitiales);
+    setErreurs({});
+  } catch (erreur) {
+    setStatut("echec");
+    setMessage("L'envoi a échoué. Vos données sont conservées, réessayez.");
+  }
+}
+```
+
+Quatre détails de cet exemple méritent d'être relevés. Le premier est la toute première ligne : la soumission par défaut du navigateur recharge la page et efface tout. Interceptar cet événement est la condition de survie du formulaire, et l'oublier produit l'erreur la plus déroutante du débutant, un écran qui clignote et revient à la même page. Le deuxième est l'ordre des états : on passe à l'état occupé avant l'appel asynchrone, jamais après, sinon il existe une fenêtre pendant laquelle l'utilisateur croit que rien ne se passe et réclique. Le troisième est la remise à zéro, réalisée uniquement dans le succès : en cas d'échec, les saisies sont précieuses, les conserver évite à la personne de tout retaper. Le quatrième est le message d'échec, qui promet exactement ce qui est vrai, à savoir que les données sont toujours là.
+
+L'erreur et le succès ne se traitent pas de la même façon, et la différence est humaine plus que technique. L'échec doit être réparable : il indique ce qui s'est passé, il conserve la saisie, il propose un bouton pour réessayer, et il ne blâme pas l'utilisateur. La confirmation, elle, doit marquer une coupure : le formulaire peut disparaître au profit d'un récapitulatif, ou se vider et revenir au repos avec un message explicite. Dans les deux cas, déplacez le focus sur le message affiché, sinon une personne qui navigue au clavier reste sur un bouton dont le sens vient de changer. Enfin, si l'envoi peut échouer deux fois de suite, évitez les messages vagues comme une erreur est survenue : nommez l'étape, par exemple l'envoi vers le service d'inscription, et la reprise devient imaginable.
+
+Il existe une dernière catégorie d'erreur, souvent négligée : celle qui survient pendant que le formulaire est affiché mais avant tout clic, par exemple une connexion qui tombe. Attendre le clic pour la découvrir est légitime, à condition de réagir avec le même soin. Et si l'utilisateur change d'avis en plein envoi, proposez un bouton d'annulation qui déclenche l'annulation de l'appel, ce que la section sur les effets va vous apprendre à faire proprement. Un formulaire qui sait dire non, attendre, échouer et réussir est un formulaire terminé ; un formulaire qui ne sait que réussir est une démonstration.
+
+```table
+Statut | Ce que dit l'écran | Ce que doit faire l'utilisateur
+| --- | --- |
+repos | Champs vierges, bouton prêt | Saisir puis envoyer |
+envoi | Bouton inactif, message d'attente | Patienter sans récliquer |
+echec | Message expliquant l'échec, saisie conservée | Corriger ou réessayer |
+succes | Confirmation, formulaire vidé ou remplacé | Poursuivre vers la suite |
+```
+
+- Interceptez la soumission par défaut : sinon la page se recharge et tout est perdu.
+- Passez à l'état occupé avant l'appel, pas après.
+- Ne videz les champs que lorsque l'envoi a réellement réussi.
+- En cas d'échec, conservez la saisie et proposez un bouton de réessai.
+- Déplacez le focus sur le message affiché après chaque changement de statut.
+- Décrivez l'étape qui a échoué, jamais une genericité qui décourage.
+
+## Charger des données au montage avec useEffect
+
+Jusqu'ici, les composants affichaient ce qu'on leur donnait. Une application réelle doit aussi demander ses données elle-même, au moment où un écran apparaît. C'est le rôle d'un effet : une fonction qui dit à React, une fois le rendu terminé, de faire quelque chose qui dépasse le dessin du composant — mettre le focus, abonner un écouteur, lire le local stockage, ou encore aller chercher une liste. Le mot est important : un rendu décrit l'état d'un instant, un effet observe ce qui se passe autour. Conflit n'existe donc pas tant que chaque responsabilité reste chez elle.
+
+L'effet s'exprime avec une fonction que vous passez à useEffect. Elle s'exécute après le rendu, jamais pendant, et retourne éventuellement une autre fonction chargée du nettoyage. La particularité qui nous occupe ici est le tableau de dépendances : deuxième argument de l'appel, il liste les valeurs extérieures dont l'effet se sert. Un tableau vide signifie que l'effet ne dépend de rien qui puisse changer, donc qu'il ne doit se déclencher qu'une fois, à l'apparition du composant. C'est précisément la définition du chargement au montage.
+
+```jsx
+function ListeInscrits() {
+  const [inscrits, setInscrits] = useState([]);
+
+  useEffect(() => {
+    chargerInscrits().then((liste) => setInscrits(liste));
+  }, []);
+
+  return (
+    <ul>
+      {inscrits.map((personne) => (
+        <li key={personne.id}>{personne.nom}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Cet extrait tient en peu de lignes, mais chacune compte. L'état démarre avec une liste vide, si bien que le premier rendu montre un écran sans contenu, ce que nous corrigerons dans la section suivante avec un état de chargement. La promesse est résolue dans un gestionnaire qui met à jour l'état, ce qui déclenche un second rendu avec les données. Et l'identifiant fourni par la bibliothèque, placé sur chaque élément de liste, ne sert pas au style : il dit à React quel nœud réutiliser quand la liste change, et son absence provoque des avertissements puis des comportements erratiques lors du tri ou du filtrage. Un identifiant doit être stable et unique, jamais l'index dans le tableau si celui-ci peut être réordonné.
+
+Un effet ne doit jamais tenter de modifier l'état pendant le rendu. La raison est structurelle : pendant le rendu, React prépare le prochain affichage, et une mise à jour inattendue l'obligerait à recommencer, parfois indéfiniment. C'est d'ailleurs l'origine de l'erreur la plus célèbre de l'effet, celle où une mise à jour déclenche l'effet qui redéclenche une mise à jour, à l'infini. Le tableau de dépendances vide est souvent la cause de ce cycle, soit parce qu'une valeur qui change a été oubliée, soit parce que l'effet met à jour une valeur qui fait partie de sa propre dépendance. Quand vous voyez cette erreur, comptez les étapes : la boucle est presque toujours dans votre code, pas dans la bibliothèque.
+
+Trois usages du montage complètent le chargement et méritent d'être connus. Le premier est la mise en forme initiale : placer le focus sur le premier champ quand un formulaire s'ouvre, ou faire défiler vers un titre quand une fenêtre modale apparaît. Le deuxième est l'abonnement : enregistrer un écouteur d'événement globale, comme le changement d'adresse ou la taille de fenêtre, et le retirer au démontage pour ne pas accumuler des écouteurs fantômes. Le troisième est la lecture d'une préférence, par exemple le thème choisi lors de la visite précédente, à appliquer avant que l'utilisateur ne perçoive un clignotement. Dans les trois cas, la logique est la même : observer le monde extérieur après le rendu, puis revenir à l'état.
+
+```text
+Cycle de vie d'un effet
+
+montage du composant
+   |
+   v
+rendu (React dessine l'arbre)
+   |
+   v
+effet : la fonction du useEffect s'exécute
+   |
+   +--> elle déclenche une mise a jour d'etat
+   |         |
+   |         v
+   |    re-rendu (sans rappeler l'effet : le tableau est vide)
+   |
+   v
+démontage (l'utilisateur quitte l'écran)
+   |
+   v
+nettoyage : la fonction renvoyée par l'effet s'exécute
+```
+
+- Un effet s'exécute après le rendu et retourne éventuellement une fonction de nettoyage.
+- Un tableau de dépendances vide signifie : une seule fois, au montage du composant.
+- Jamais de mise à jour d'état pendant le rendu : c'est la porte des boucles infinies.
+- Chaque élément de liste porte un identifiant stable fourni par la donnée.
+- Le montage sert aussi au focus, aux abonnements et à la lecture des préférences.
+- Un effet ne décrit pas l'affichage ; il observe ce qui entoure l'affichage.
+
+## Dépendances de l'effet et fonctions asynchrones
+
+Le tableau des dépendances est la pièce la plus délicate de useEffect, et la source de la quasi-totalité des bugs liés aux effets. Sa règle tient en une phrase : tout ce qui provient de l'extérieur de l'effet et qui peut changer doit figurer dans le tableau. Une constante locale écrite au-dessus de l'appel n'a pas à y être, une valeur d'état ou de props s'y trouve, une fonction définie dans le composant aussi, puisqu'elle est recréée à chaque rendu. Si vous vous fiez à votre mémoire, vous oublierez des dépendances ; c'est pourquoi les outils de lint intègrent une règle d'exhaustivité qui signale toute valeur omise, et il faut l'activer dès le premier projet plutôt que de la subir en fin de développement.
+
+```jsx
+function RechercheInscrits({ atelierId }) {
+  const [mot, setMot] = useState("");
+  const [resultats, setResultats] = useState([]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function chercher() {
+      const liste = await chargerInscrits(atelierId);
+      if (!ignore) {
+        setResultats(liste.filter((p) => p.nom.includes(mot)));
+      }
+    }
+    chercher();
+    return () => {
+      ignore = true;
+    };
+  }, [atelierId, mot]);
+
+  return <p>{resultats.length} résultat(s)</p>;
+}
+```
+
+Cet exemple contient trois enseignements. Le premier : l'effet dépend de deux valeurs, l'identifiant de l'atelier et le mot recherché, et se relance dès que l'une ou l'autre change. Le deuxième : la variable ignore est la protection contre une réponse tardive. Si l'utilisateur tape trois lettres en une seconde, trois appels partent en parallèle et peuvent rentrer dans le désordre ; le premier lancé, qui arrive le dernier, écrirait un résultat obsolète. La variable, mise à jour par le nettoyage, dit à chaque réponse qu'elle est devenue caduque. Le troisième : la fonction de nettoyage est rendue immédiatement après le lancement, ce qui garantit qu'elle s'exécutera avant le prochain tour, quel que soit le motif du redémarrage.
+
+La question des fonctions asynchrones appelle une précision indispensable : une fonction d'effet ne peut pas elle-même être asynchrone. Si vous marquez la fonction comme asynchrone, elle renvoie immédiatement une promesse, que React prend pour une fonction de nettoyage, et le nettoyage devient inutilisable. La forme correcte définit une fonction asynchrone à l'intérieur de l'effet, puis l'appelle. Cette fonction interne peut utiliser await tranquillement, attraper ses erreurs avec un bloc try catch, et son échec n'empêche pas le reste de l'application de vivre. L'erreur attrapée doit d'ailleurs se transformer en état d'erreur visible, jamais laissée silencieuse dans la console.
+
+```jsx
+useEffect(() => {
+  let ignore = false;
+
+  async function charger() {
+    setStatut("chargement");
+    try {
+      const liste = await chargerInscrits();
+      if (!ignore) {
+        setInscrits(liste);
+        setStatut("succes");
+      }
+    } catch (erreur) {
+      if (!ignore) {
+        setStatut("erreur");
+      }
+    }
+  }
+
+  charger();
+  return () => {
+    ignore = true;
+  };
+}, []);
+```
+
+L'ordre des affectations d'état à l'intérieur de cette fonction n'est pas anodis. L'état de chargement est posé avant l'appel, pour que l'écran change immédiatement ; les états de succès ou d'erreur ne sont posés qu'après la résolution, et uniquement si l'effet est toujours d'actif. Cette discipline élimine une classe entière de bugs, celle où un écran qui a été quitté continue d'écrire dans des états qui n'appartiennent plus à personne. Si vous préférez l'annulation formelle à la simple variable de drapeau, la section suivante montre comment annuler l'appel lui-même avec l'objet d'annulation fourni par l'API de fetch.
+
+Un mot enfin sur la tentation d'empiler les effets. Quand un composant doit charger A, puis avec A charger B, la réponse n'est presque jamais d'écrire un second effet qui dépend de A : elle consiste à faire la séquence dans un seul effet, ou à extraire la logique dans une fonction appelée par ce seul effet. Chaque effet supplémentaire ajoute un ordre d'exécution à coordonner et multiplie les occasions de réponse tardive. Gardez un effet par responsabilité réelle, mais ne morcelez pas une seule logique en plusieurs effets qui doivent se parler.
+
+- Tout ce qui peut changer et qui sert à l'effet figure dans le tableau des dépendances.
+- Activez la règle d'exhaustivité des dépendances dans vos outils de lint dès le début.
+- Une fonction d'effet ne peut pas être asynchrone : définissez la fonction asynchrone à l'intérieur, puis appelez-la.
+- Attrapez les erreurs à l'intérieur de cette fonction et transformez-les en état d'erreur visible.
+- Protégez chaque réponse avec un drapeau d'ignoré ou avec une annulation réelle.
+- Une seule logique, un seul effet : ne morcelez pas une séquence en effets qui se parlent.
+
+## Annuler un effet et éviter les fuites
+
+Une fuite se produit quand quelque chose que vous avez créé continue d'exister alors que plus personne ne s'en sert : un écouteur jamais retiré, un minuteur qui met encore à jour un écran parti, une requête qui revient déposer ses données dans un composant démonté. Le symptôme est discret — un avertissement en développement, parfois un comportement bizarre quelques secondes après un changement d'écran rapide — mais la cause est toujours la même : vous avez commencé quelque chose dans un effet sans prévoir comment l'arrêter. La fonction renvoyée par l'effet est exactement ce plan de sortie, et elle doit être écrite en même temps que le départ, pas réfléchie après le bug.
+
+Le moment où le nettoyage s'exécute est fixé par une règle simple : avant chaque nouvelle exécution de l'effet, et au démontage du composant. Concrètement, si l'effet démarre un minuteur et rend une fonction qui l'éteint, alors chaque changement de dépendance éteint l'ancien minuteur avant d'en allumer un nouveau, et le départ de l'écran éteint le dernier. Sans cette fonction, chaque passage laisse derrière lui un minuteur qui continue de courir : au bout de dix passages, dix minuteurs s'affolent en parallèle, et le composant, lui, n'est plus là pour les arrêter. Ce phénomène, c'est la fuite, et la fonction de nettoyage la transforme en simple interruption.
+
+```jsx
+useEffect(() => {
+  const minuteur = setInterval(() => {
+    setSecondes((s) => s + 1);
+  }, 1000);
+
+  return () => clearInterval(minuteur);
+}, []);
+```
+
+Pour les appels réseau, l'annulation se fait avec un contrôleur d'annulation, objet fourni par la plateforme et compris par l'API de fetch. On le crée au début de l'effet, on le transmet à l'appel via l'option prévue à cet effet, et on l'annule dans la fonction de nettoyage. La requête annulée ne produit pas une erreur à signaler : elle se termine par un rejet spécial que l'on distingue, en l'attrapant et en vérifiant que l'annulation était bien intentionnelle. C'est la forme professionnelle du chargement, celle qui garantit qu'aucune réponse ne peut plus jamais écrire dans un écran disparu.
+
+```jsx
+useEffect(() => {
+  const controleur = new AbortController();
+
+  async function charger() {
+    try {
+      const reponse = await fetch("/api/inscrits", {
+        signal: controleur.signal,
+      });
+      const donnees = await reponse.json();
+      setInscrits(donnees);
+    } catch (erreur) {
+      if (erreur.name !== "AbortError") {
+        setErreur("Impossible de charger la liste des inscrits.");
+      }
+    }
+  }
+
+  charger();
+  return () => controleur.abort();
+}, []);
+```
+
+Quand la source de données est locale, comme la fonction asynchrone `chargerInscriptions()` posée dans le chapitre sur les promesses, qui résout une valeur après un délai avec `resolveApres()`, le contrôleur ne sert à rien puisqu'aucun appel réseau n'est émis. Le drapeau d'ignoré suffit alors : il ne peut pas annuler le délai en cours, mais il décide que son résultat n'aura plus le droit d'écrire. Les deux approches répondent à la même question, à savoir que faire d'une réponse qui arrive trop tard, et vous choisirez selon la nature de la source. Retenez la logique, pas la syntaxe : chaque départ d'effet possède son retour, et chaque retour ferme la porte que l'effet vient d'ouvrir.
+
+```text
+Effet avec annulation, chronologie
+
+t0  rendu avec atelierId = "a1"
+t1  effet : controleur cree, appel lance
+t2  l'utilisateur change de filtre
+t3  nettoyage : controleur.annule(), la reponse est refusee
+t4  effet : nouveau controleur, nouvel appel
+t5  la reponse de t4 arrive, elle est acceptee
+
+si le composant disparait entre t4 et t5 :
+t6  demontage -> nettoyage -> la reponse est refusee
+```
+
+Un dernier réflexe complète ces mécanismes : ne conservez jamais une référence vers un composant démonté. Cela signifie qu'un écouteur global enregistré au montage doit être retiré au démontage, qu'un abonnement à un flux doit être fermé, et qu'une promesse en attente doit être signalée comme caduque. Vérifiez-le en simulant le pire scénario : cliquez trois fois de suite sur un lien qui charge une page, puis revenez en arrière. Si l'écran final montre les données de la première tentative, votre protection est incomplète. Ce test d'abus coûte dix secondes et détecte la majorité des fuites bien avant la mise en production.
+
+- La fonction rendue par l'effet s'exécute avant chaque nouvelle exécution et au démontage.
+- Chaque minuteur, écouteur ou abonnement créé dans un effet est détruit dans sa fonction de nettoyage.
+- Une requête réseau s'annule avec le contrôleur d'annulation transmis à fetch.
+- Une annulation n'est pas une erreur : attrapez-la et distinguez-la des vrais échecs.
+- Pour une source locale, un drapeau d'ignoré suffit à invalider la réponse tardive.
+- Testez en cliquant vite et en revenant en arrière : les données affichées doivent être les dernières.
+
+## Gérer les états de la donnée : chargement, erreur, vide, succès
+
+Une liste qui arrive d'un système distant peut se présenter de quatre manières, et un écran qui n'en décrit que deux est un écran incomplet. Pendant que la donnée voyage, elle n'existe pas encore : afficher un tableau vide à cet instant laisse l'utilisateur croire que l'atelier n'a inscrit personne. Si le système distant tombe, l'absence de donnée ressemble exactement à l'absence de résultat, alors que les deux situations appellent des réactions opposées. Et même quand tout se passe bien, une liste réellement vide n'est pas une erreur : c'est un cas normal qui mérite son message et, souvent, son appel à l'action. La solution consiste à ne plus considérer la donnée comme existante ou inexistante, mais à donner au composant un état d'affichage qui décrit la situation courante.
+
+```text
+Etats possibles d'un ecran qui affiche une liste
+
+        +--> [chargement] --+
+        |                   |
+[repos] |                   v
+        |               [succes avec liste]
+        |                   |
+        |                   +--> [succes, liste vide]
+        |
+        +--> [erreur] -----> [chargement]  (apres le bouton reessayer)
+```
+
+L'implémentation utilise un seul état de statut, dont la valeur désigne la branche courante, complété par les données proprement dites. L'avantage d'un statut unique est qu'il rend les combinaisons impossibles : on ne peut pas être à la fois en erreur et en chargement, puisque la variable ne porte qu'une valeur. À l'inverse, trois booléens séparés, en chargement, en erreur, réussi, produisent des combinaisons absurdes que rien ne vous empêche d'écrire. Le rendu se lit alors comme une ramification : chaque statut renvoie à son affichage, et le cas non prévu tombe sur un état par défaut sûr plutôt que sur du vide.
+
+```jsx
+function PageInscrits() {
+  const [statut, setStatut] = useState("chargement");
+  const [inscrits, setInscrits] = useState([]);
+  const [erreur, setErreur] = useState(null);
+
+  useEffect(() => {
+    let ignore = false;
+    async function charger() {
+      setStatut("chargement");
+      try {
+        const liste = await chargerInscrits();
+        if (!ignore) {
+          setInscrits(liste);
+          setStatut(liste.length === 0 ? "vide" : "succes");
+        }
+      } catch (e) {
+        if (!ignore) {
+          setErreur(e);
+          setStatut("erreur");
+        }
+      }
+    }
+    charger();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  if (statut === "chargement") return <p>Chargement des inscrits…</p>;
+  if (statut === "erreur")
+    return (
+      <div>
+        <p role="alert">La liste n'a pas pu être chargée.</p>
+        <button onClick={reessayer}>Réessayer</button>
+      </div>
+    );
+  if (statut === "vide")
+    return <p>Aucune inscription pour le moment. Soyez le premier.</p>;
+  return (
+    <ul>
+      {inscrits.map((p) => (
+        <li key={p.id}>{p.nom}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+L'état vide mérite qu'on s'y attarde, parce qu'il est celui qu'on oublie toujours. Dire qu'il n'y a rien, c'est utile ; dire quoi faire ensuite, c'est mieux. Sur le site de l'atelier, une liste d'inscrits vide appelle un lien vers le formulaire d'inscription ; une liste de recherches vide appelle un conseil de reformulation ; une liste vide parce que le filtre est trop restrictif appelle un bouton pour réinitialiser le filtre. Chaque écran vide devrait répondre à la question que le visiteur se pose, à savoir que faire ici. Le bouton de réessai, lui, appartient à l'état d'erreur et pas au vide : réessayer une requête qui a réussi n'a aucun sens.
+
+```table
+Statut | Ce que voit l'utilisateur | Ce que fait le composant
+| --- | --- |
+chargement | Message d'attente ou squelette | Effet lancé, données absentes |
+erreur | Explication + bouton réessayer | Nouveau tour de l'effet |
+vide | Message et action de relance | Liste présente mais sans élément |
+succes | Liste complète | Rendu normal depuis l'état |
+```
+
+Une dernière discipline porte sur la conservation des données d'un affichage précédent. Si l'utilisateur change de filtre pendant que la nouvelle réponse voyage, vous pouvez choisir d'effacer l'ancienne liste, au prix d'un écran qui clignote, ou de la conserver et de signaler la mise à jour, au prix d'un écran momentanément périmé. La seconde option est souvent préférable quand les données sont longues à venir : conservez l'ancien contenu, affichez un indicateur discret de rafraîchissement, puis remplacez le contenu quand la réponse arrive. Quelle que soit la décision, elle doit être prise consciemment et appliquée partout de la même façon.
+
+- Donnez à l'écran un statut unique : chargement, erreur, vide ou succès.
+- Un statut unique interdit les combinaisons impossibles que trois booléens autorisent.
+- Le vide n'est pas une erreur : il propose une action de relance.
+- L'erreur propose un bouton réessayer qui relance réellement l'effet.
+- Prévoyez un rendu par défaut pour le cas non prévu plutôt qu'un écran noir.
+- Conservez ou effacez l'ancien contenu pendant le rafraîchissement, mais choisissez-le une fois pour toutes.
+
+## Un mini-client REST : GET et POST avec fetch
+
+Passer du chargement local à l'appel d'un vrai service ne change presque rien si vous acceptez une seule idée : la fonction que vous appelez depuis vos composants ne doit pas être fetch elle-même. fetch est un outil brut : elle ne connaît ni vos adresses, ni vos formats d'erreur, ni vos en-têtes, et elle ne rejette pas quand le serveur répond par un code d'échec. Enfermez-la dans un petit module qui expose, pour chaque opération métier, une fonction nommée d'après ce qu'elle fait. Le composant demande à inscrire quelqu'un, la fonction s'occupe du reste, et si le format du service change un jour, une seule ligne se retrouve à modifier.
+
+```javascript
+// mini-client.js — la seule porte d'entrée vers le réseau
+export async function getInscrits() {
+  const reponse = await fetch("/api/inscrits");
+  if (!reponse.ok) {
+    throw new Error("Requête refusée : " + reponse.status);
+  }
+  return reponse.json();
+}
+
+export async function ajouterInscription(donnees) {
+  const reponse = await fetch("/api/inscrits", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(donnees),
+  });
+  if (!reponse.ok) {
+    throw new Error("Envoi refusé : " + reponse.status);
+  }
+  return reponse.json();
+}
+```
+
+Trois détails de ce module sont professionnels. Le premier est le contrôle du code de réponse : contrairement à ce que laisse croire le nom, l'appel se résout aussi bien quand le serveur répond avec un code quatre cent quatre ou cinq cents ; seul le reseau en panne provoque un rejet. Sans ce contrôle, un formulaire afficherait un succès à partir d'une page d'erreur. Le deuxième est la conversion automatique en objet JavaScript, à appeler explicitement puisque la réponse est d'abord un flux d'octets. Le troisième est la sérialisation du corps : les données partent en texte structuré, accompagnées de l'en-tête qui annonce ce format au serveur.
+
+Le POST comporte une contrainte supplémentaire : le serveur peut refuser la demande parce que les données sont invalides, en renvoyant par exemple un code quatre cent deux avec la liste des champs fautifs. Cette erreur est précieuse : elle vous dispense de deviner la règle métier. Attrapez-la, lisez le corps de la réponse, affichez les messages renvoyés champ par champ, et laissez les autres échecs, réseau ou serveur indisponible, dans votre état d'erreur général. Distinguer ainsi l'erreur de saisie de l'erreur de système est ce qui sépare un formulaire qui culpabilise d'un formulaire qui aide.
+
+Le chapitre sur les fonctions asynchrones a posé une fonction locale, `chargerInscriptions()`, qui résout une promesse après un court délai grâce à `resolveApres()` et qui possède exactement la même forme que ces deux méthodes. Elle tient lieu de service pendant tout le parcours : l'exercice qui suit cette leçon lui donne le nom `getInscrits()` et conserve le même contrat, une promesse, un délai, des valeurs raisonnables et aucune adresse réseau. Cette substitution est possible parce que le composant ignore toujours la source : il attend une promesse, il reçoit une promesse. Vous pouvez donc développer toute l'interface, navigation, validation et états d'affichage, avant même d'avoir un serveur, puis basculer sur le mini-client réel en changeant l'import d'un seul fichier.
+
+```javascript
+// Version locale utilisée pendant tout le parcours, sans réseau.
+const base = [{ id: 1, nom: "Amina", courriel: "amina@exemple.fr" }];
+
+function attendre(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function getInscrits() {
+  await attendre(400);
+  return [...base];
+}
+
+export async function ajouterInscription(donnees) {
+  await attendre(300);
+  if (!donnees.courriel.includes("@")) {
+    throw new Error("Adresse invalide refusée par le service.");
+  }
+  const inscription = { id: base.length + 1, ...donnees };
+  base.push(inscription);
+  return inscription;
+}
+```
+
+Notez le soin apporté à la copie du tableau : renvoyer le tableau interne directement laisserait le composant modifier l'état du mini-client sans en informer personne, et les prochains chargements verraient une liste altérée. Copiez toujours ce que vous partagez, renvoyez des nouvelles instances à chaque appel, et gardez la source intacte. C'est la même discipline que la règle d'or des mises à jour d'état, appliquée cette fois à la frontière entre deux modules.
+
+- Enfermez fetch dans un module qui expose des fonctions nommées d'après le métier.
+- Vérifiez le code de réponse : l'appel se résout aussi quand le serveur refuse.
+- Annoncez le format JSON dans l'en-tête de la requête envoyée.
+- Distinguez l'erreur de saisie, renvoyée par le service, des pannes de système.
+- Remplacez la source locale par le mini-client réel en changeant un seul import.
+- Copiez les listes que vous partagez : ne rendez jamais votre état interne modifiable de l'extérieur.
+
+## Récapitulatif des états d'une page
+
+Assemblons maintenant la vue d'ensemble. Une page qui reçoit ses données d'ailleurs traverse une trajectoire que l'on peut dessiner en entier, et la connaître évite d'écrire des rendus au cas par cas découverts en cours de route. La page démarre, son effet part, elle affiche l'attente, puis elle bascule vers l'une des trois issues. Deux d'entre elles, erreur et vide, appellent une action ; la troisième, la liste remplie, laisse la place à l'interaction proprement dite. Quand l'utilisateur agit, par exemple en validant le formulaire d'inscription, la page revient au chargement avant de repartir vers le succès. Ce cycle, répété, constitue la totalité de la vie d'un écran applicatif.
+
+Ce récapitulatif a une utilité pratique : il sert de grille de relecture. Parcourez votre composant et demandez-vous, pour chaque état, qui l'affiche, qui en sort, et ce que l'utilisateur peut faire à ce moment-là. Si une réponse manque, il manque un rendu. Les trous les plus fréquents sont l'absence de message pendant l'attente, l'absence de bouton après un échec, et l'absence de retour à l'accueil depuis la page quatre cent quatre. Chacun se comble en quelques lignes, mais chacun se remarque aussi au premier test avec une connexion lente ou un service coupé.
+
+```jsx
+function Affichage({ statut, inscrits, erreur, onReessayer, onSinscrire }) {
+  switch (statut) {
+    case "chargement":
+      return <p role="status">Chargement en cours…</p>;
+    case "erreur":
+      return (
+        <div>
+          <p role="alert">{erreur.message}</p>
+          <button onClick={onReessayer}>Réessayer</button>
+        </div>
+      );
+    case "vide":
+      return (
+        <div>
+          <p>Aucune inscription pour le moment.</p>
+          <button onClick={onSinscrire}>S'inscrire à l'atelier</button>
+        </div>
+      );
+    default:
+      return (
+        <ul>
+          {inscrits.map((personne) => (
+            <li key={personne.id}>{personne.nom}</li>
+          ))}
+        </ul>
+      );
+  }
+}
+```
+
+Ce composant présente une propriété qui vaut la peine d'être nommée : il ne décide de rien. Il reçoit le statut et des rappels, et il transforme en affichage la décision prise ailleurs. Cette séparation vous permet de tester chaque branche sans simuler de réseau, de modifier les textes sans toucher à la logique, et de réutiliser le même affichage dans plusieurs pages. Elle correspond exactement à la frontière que tout le chapitre cherche à tracer : d'un côté, la logique qui décide, de l'autre, le rendu qui montre.
+
+- Dessinez la trajectoire complète d'un écran avant d'écrire son rendu.
+- Chaque statut possède un affichage, une sortie et une action proposée.
+- Séparez le composant qui décide du composant qui affiche.
+- Relisez chaque composant avec la grille : qui affiche, qui sort, que peut faire l'utilisateur ?
+- Les trous se voient surtout avec une connexion lente ou un service coupé.
+
+## Mini-projet guidé : inscription et liste des inscrits
+
+Il est temps d'assembler le chapitre dans une application unique, qui prolonge le site de l'atelier de la Médiathèque des Lilas. L'écran d'accueil présente l'événement, l'écran programme détaille le déroulement, l'écran inscription contient le formulaire contrôlé validé, et l'écran liste affiche les inscrits avec leurs quatre états. Toutes les routes sont écrites après une almohadille, si bien que le fichier fonctionne ouvert depuis un simple dossier, sans serveur ni compilation. Nous procéderons dans l'ordre habituel : d'abord le squelette de navigation, puis le formulaire, ensuite la liste, enfin la couture entre les deux.
+
+```jsx
+export default function Application() {
+  return (
+    <HashRouter>
+      <header>
+        <h1>Atelier de la Médiathèque des Lilas</h1>
+        <nav>
+          <NavLink to="/">Accueil</NavLink>
+          <NavLink to="/programme">Programme</NavLink>
+          <NavLink to="/inscription">Inscription</NavLink>
+          <NavLink to="/liste">Liste des inscrits</NavLink>
+        </nav>
+      </header>
+      <main>
+        <Routes>
+          <Route path="/" element={<Accueil />} />
+          <Route path="/programme" element={<Programme />} />
+          <Route path="/inscription" element={<Inscription />} />
+          <Route path="/liste" element={<ListeInscrits />} />
+          <Route path="*" element={<Introuvable />} />
+        </Routes>
+      </main>
+      <footer>Atelier du samedi 18 octobre — Médiathèque des Lilas</footer>
+    </HashRouter>
+  );
+}
+```
+
+La navigation est déclarée une fois, le lien de correspondance marque la branche active, et la route étoile ferme la porte des adresses inconnues. Vérifiez immédiatement les trois gestes qui détectent les erreurs de base : cliquez sur chaque lien, l'adresse change sans rechargement et l'écran avec ; rafraîchissez la page, vous restez sur le même écran ; tapez une adresse absente, la page quatre cent quatre apparaît avec un chemin de retour. Si l'un des trois échoue, le problème est dans la table des routes, jamais dans les composants.
+
+Le formulaire constitue la pièce centrale. Il combine l'objet de valeurs, la fonction de validation, l'état de statut d'envoi et l'affichage relié par les attributs d'accessibilité. Écrivez-le entièrement, puis testez-le dans l'ordre : d'abord l'envoi avec un champ vide, le message doit apparaître et le focus doit partir dessus ; ensuite une adresse mal formée, le même parcours ; enfin une saisie correcte, qui doit déclencher l'état d'envoi puis la confirmation, sans jamais recharger la page.
+
+```jsx
+function Inscription() {
+  const [valeurs, setValeurs] = useState(valeursInitiales);
+  const [erreurs, setErreurs] = useState({});
+  const [statut, setStatut] = useState("repos");
+  const navigate = useNavigate();
+
+  function changer(champ, evenement) {
+    const valeur = evenement.target.value;
+    setValeurs((etatPrecedent) => ({ ...etatPrecedent, [champ]: valeur }));
+    if (statut === "echec") {
+      setErreurs(valider({ ...valeurs, [champ]: valeur }));
+    }
+  }
+
+  async function soumettre(evenement) {
+    evenement.preventDefault();
+    const trouvees = valider(valeurs);
+    setErreurs(trouvees);
+    if (Object.keys(trouvees).length > 0) {
+      setStatut("echec");
+      return;
+    }
+    setStatut("envoi");
+    try {
+      await ajouterInscription(valeurs);
+      setStatut("succes");
+      setValeurs(valeursInitiales);
+      setTimeout(() => navigate("/liste"), 600);
+    } catch (e) {
+      setStatut("echec");
+      setErreurs({ global: e.message });
+    }
+  }
+
+  return (
+    <form onSubmit={soumettre} noValidate>
+      {erreurs.global && <p role="alert">{erreurs.global}</p>}
+      <label htmlFor="nom">Nom complet</label>
+      <input
+        id="nom"
+        value={valeurs.nom}
+        onChange={(e) => changer("nom", e)}
+        aria-invalid={Boolean(erreurs.nom) || undefined}
+        aria-describedby={erreurs.nom ? "erreur-nom" : undefined}
+      />
+      {erreurs.nom && <p id="erreur-nom" role="alert">{erreurs.nom}</p>}
+
+      <label htmlFor="courriel">Adresse électronique</label>
+      <input
+        id="courriel"
+        type="email"
+        value={valeurs.courriel}
+        onChange={(e) => changer("courriel", e)}
+        aria-invalid={Boolean(erreurs.courriel) || undefined}
+        aria-describedby={erreurs.courriel ? "erreur-courriel" : undefined}
+      />
+      {erreurs.courriel && (
+        <p id="erreur-courriel" role="alert">{erreurs.courriel}</p>
+      )}
+
+      <button type="submit" disabled={statut === "envoi"}>
+        {statut === "envoi" ? "Envoi en cours…" : "Envoyer mon inscription"}
+      </button>
+      {statut === "succes" && <p role="status">Inscription enregistrée.</p>}
+    </form>
+  );
+}
+```
+
+La liste referme le cycle. Son effet se déclenche au montage, protège ses réponses avec un drapeau d'ignoré, distingue les quatre états et propose le bouton de réessai dans le seul cas qui le justifie. Notez que le rechargement se fait aussi après un envoi réussi : l'écran liste se relance à chaque arrivée, ce qui suffit ici ; si la liste devait se rafraîchir sans quitter l'écran, vous extrairiez une fonction de reprise appelée par le bouton et par l'effet de montage, plutôt que de dupliquer le code.
+
+```jsx
+function ListeInscrits() {
+  const [statut, setStatut] = useState("chargement");
+  const [inscrits, setInscrits] = useState([]);
+
+  useEffect(() => {
+    let ignore = false;
+    async function charger() {
+      setStatut("chargement");
+      try {
+        const liste = await getInscrits();
+        if (!ignore) {
+          setInscrits(liste);
+          setStatut(liste.length === 0 ? "vide" : "succes");
+        }
+      } catch (e) {
+        if (!ignore) setStatut("erreur");
+      }
+    }
+    charger();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  if (statut === "chargement") return <p role="status">Chargement…</p>;
+  if (statut === "erreur")
+    return (
+      <div>
+        <p role="alert">La liste n'a pas pu être chargée.</p>
+        <button onClick={() => setStatut("chargement")}>Réessayer</button>
+      </div>
+    );
+  if (statut === "vide") return <p>Aucune inscription pour le moment.</p>;
+  return (
+    <ul>
+      {inscrits.map((p) => (
+        <li key={p.id}>
+          {p.nom} — {p.courriel}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Voici la liste de contrôle à exécuter avant de considérer le projet comme terminé. Frappez chaque adresse à la main dans la barre du navigateur, y compris une fausse : les quatre cas doivent donner un écran. Soumettez le formulaire vide, puis mal formé, puis correct, et confirmez que la page ne se recharge jamais. Chargez la liste avec une source qui échoue, par exemple en modifiant la fonction locale pour qu'elle rejette, et vérifiez que le message et le bouton réessai apparaissent. Parcourez enfin toute l'application au clavier : les liens actifs se distinguent, les messages d'erreur sont annoncés, et le focus reste utilisable après chaque changement d'écran.
+
+- Assemblez d'abord la table des routes et testez les quatre cas d'adresse.
+- Écrivez le formulaire avec l'objet de valeurs, la validation pure et l'état d'envoi.
+- Reliez chaque message à son champ par l'attribut de description associée.
+- Protégez le chargement de la liste avec un drapeau d'ignoré et un bouton réessai.
+- Testez le pire cas, une source qui échoue, avant de tester le meilleur.
+- Parcourez l'ensemble au clavier avant de déclarer le projet fini.
+
+## À retenir
+
+- Une application React garde un seul document chargé ; le routeur décide de l'écran d'après l'URL.
+- L'URL reste la source de vérité : partager, rafraîchir et revenir en arrière donnent le même écran.
+- Le chemin après l'almohadille fonctionne sans serveur configuré ni outil de compilation.
+- La table des routes se déclare une fois ; le chemin étoile absorbe les adresses inconnues.
+- Un segment variable porte l'identifiant ; l'écran le lit avec la fonction de paramètres.
+- Une route parente porte un composant de disposition et accueille ses routes filles.
+- Le lien de correspondance marque la branche active, visuellement et pour les technologies d'assistance.
+- Un formulaire contrôlé range chaque valeur dans l'état, la reflète dans le champ et la reçoit par l'événement de changement.
+- Un objet unique pour toutes les valeurs simplifie validation, comparaison et remise à zéro.
+- La validation est une fonction pure, appelable à la soumission, après la soumission et pendant le rendu.
+- Un champ en erreur porte l'état invalide, référence son message et lui donne un rôle d'alerte.
+- Le bouton reste actif pour expliquer, et se désactive seulement pendant l'envoi réel.
+- La soumission commence par intercepter le rechargement par défaut, puis bascule dans l'état occupé.
+- Les données ne sont vidées qu'après un envoi réussi ; un échec conserve la saisie.
+- Un effet s'exécute après le rendu, avec un tableau de dépendances vide au montage.
+- Une fonction d'effet ne peut pas être asynchrone : on définit la fonction asynchrone à l'intérieur puis on l'appelle.
+- Chaque effet rend une fonction de nettoyage qui s'exécute avant le tour suivant et au démontage.
+- Une réponse tardive est annulée par un contrôleur d'annulation ou invalide par un drapeau d'ignoré.
+- Un écran décrit quatre états : chargement, erreur, vide, succès, chacun avec son affichage et son action.
+- fetch ne rejette pas quand le serveur refuse : vérifiez le code de réponse avant de convertir le corps.
+- Enfermez le réseau dans un mini-client aux fonctions nommées d'après le métier, remplaçable sans toucher aux écrans.
+
+## Erreurs fréquentes
+
+- Piège : écrire des liens qui pointent vers des fichiers séparés et recharger la page à chaque clic → Correction : utilisez le composant de lien du routeur, qui change l'adresse sans recharger le document.
+- Piège : oublier la route étoile et obtenir un écran blanc sur une adresse fautive → Correction : ajoutez la route qui attrape tout et renvoie vers la page quatre cent quatre.
+- Piège : oublier l'écran d'accueil dans la table des routes → Correction : déclarez explicitement le chemin racine, sinon l'application s'ouvre sur rien.
+- Piège : appeler la fonction de déplacement pendant le rendu du composant → Correction : appelez-la depuis un gestionnaire d'événement ou un effet.
+- Piège : laisser un champ sans attribut de valeur et croire que le formulaire est contrôlé → Correction : la valeur vient toujours de l'état, l'événement ne fait que la rapporter.
+- Piège : conserver l'événement de changement pour l'utiliser plus tard → Correction : extrayez la valeur immédiatement, l'événement est recyclé après l'appel.
+- Piège : désactiver le bouton d'envoi tant que le formulaire est invalide → Correction : gardez-le actif, validez au clic et affichez les messages reliés aux champs.
+- Piège : marquer la fonction d'effet comme asynchrone → Correction : définissez une fonction asynchrone à l'intérieur de l'effet et appelez-la.
+- Piège : oublier une dépendance dans le tableau et observer un rendu périmé → Correction : listez toute valeur extérieure qui peut changer et activez la règle d'exhaustivité.
+- Piège : laisser un minuteur ou un écouteur tourner après le départ de l'écran → Correction : rendez une fonction de nettoyage qui détruit tout ce que l'effet a créé.
+- Piège : laisser une réponse réseau écrire dans un composant démonté → Correction : annulez la requête avec le contrôleur d'annulation ou invalidez la réponse avec un drapeau.
+- Piège : traiter le vide comme une erreur ou afficher du vide pendant le chargement → Correction : distinguez les quatre états et donnez à chacun son message et son action.
+- Piège : faire confiance à la promesse de fetch sans regarder le code de réponse → Correction : vérifiez le code, puis convertissez le corps en objet.
+- Piège : renvoyer un état interne partagé et laisser le composant le modifier → Correction : copiez les listes renvoyées et mettez toujours à jour l'état par recopie.
+
+## Pour aller plus loin
+
+La documentation du routeur est la première adresse à conserver. Elle décrit la table des routes, les liens de correspondance, les paramètres d'URL, la navigation programmatique et le chargement de données, avec pour chaque page un exemple exécutable et les points d'attention d'accessibilité. Commencez par https://reactrouter.com et suivez le guide de démarrage avant de plonger dans les pages de référence : la lecture sera bien plus efficace si vous avez d'abord écrit une application complète avec les notions du chapitre.
+
+La documentation officielle de React reste la seconde pièce maîtresse. Les pages consacrées aux effets décrivent le tableau des dépendances, la fonction de nettoyage, la façon de synchroniser un composant avec un système externe et les pièges à éviter ; les pages sur les formulaires montrent la gestion de l'état, la remise à zéro et la validation. On les trouve sur https://react.dev, avec en particulier la section des guides et la référence des hooks, qui signale systématiquement les cas où un effet n'est pas la bonne solution. Relisez cette référence au moins une fois après avoir écrit votre premier effet : beaucoup de détails n'ont de sens qu'après coup.
+
+Enfin, le réseau mérite sa documentation propre. L'API de fetch, ses promesses, son contrôleur d'annulation et la notion de réponse exploitable seulement après vérification du code sont détaillées sur https://developer.mozilla.org, dans la rubrique des références du Web. Prenez aussi quelques minutes pour lire la page consacrée à la gestion des adresses et des paramètres d'URL, qui vous sera utile dès que votre application devra conserver un filtre ou une page dans l'adresse. Comme pour les chapitres précédents, gardez ces adresses sous la main et revenez-y au moment où une question précise se pose, plutôt que de les parcourir d'un bout à l'autre.
+
+## Et maintenant : les prochaines étapes
+
+Vous disposez maintenant du trio qui fait fonctionner une application : une navigation déclarée et testable, des formulaires reliés à l'état et validés avant l'envoi, des données chargées au montage puis protégées contre les réponses tardives. L'exercice qui accompagne ce chapitre vous demande de réécrire cette application sans outil de compilation, avec un routeur de fragments d'adresse, un état global et des fonctions de rendu : les commentaires du squelette relèvent explicitement chaque étape à la notion React correspondante, de sorte que vous puissiez comparer ligne à ligne ce que le routeur fait pour vous et ce que vous écrivez à la main quand il n'y a pas de routeur. C'est dans cet écart que la compréhension se fixe. Le quiz de quatre questions, lui, vérifie en quelques minutes les règles les plus souvent oubliées.
+
+Passé cet exercice, deux directions s'ouvrent à vous. La première consiste à consolider la qualité : mémoriser les états d'un écran, les fermer dans un seul composant de rendu, écrire systématiquement la fonction de nettoyage, et tester d'abord le chemin du plomb. La seconde consiste à aller plus loin dans l'architecture : extraire les hooks personnalisés pour réutiliser le chargement d'une liste sur plusieurs écrans, ajouter la persistance pour que les inscriptions survivent à un rafraîchissement, puis relier le mini-client à un vrai service. Dans les deux cas, gardez le projet de la Médiathèque des Lilas sous la main : c'est lui qui vous dira, par un écran qui se remplit enfin ou un message d'erreur qui s'affiche au bon moment, que la leçon est réellement acquise.

@@ -1,0 +1,95 @@
+## À retenir
+
+Ce chapitre a tenu une promesse double : vous rendre à l'aise avec l'histoire du dépôt, puis avec l'automatisation qui la valide. Commençons par le récapitulatif des commandes, parce que la mémoire d'un outil en ligne de commande se construit par la répétition de gestes courts. Le rebase rejoue vos propres commits au-dessus d'une base plus récente, en mode interactif pour fusionner, renuméroter ou reformuler. Le cherry-pick transplante un seul correctif vers une autre branche, avec l'option -x qui conserve la trace de l'origine. Le stash suspend un travail inachevé dans une pile locale, avec un message explicite quand le doute est possible. Le reflog journalise tous les déplacements de vos références et permet de revenir à presque n'importe quel état récent.
+
+Le tableau suivant condense les décisions quotidiennes. Reportez-le dans votre cahier : il vous servira de mémo tant que les gestes ne seront pas automatiques.
+
+```table
+| Situation | Commande | Précaution |
+| --- | --- | --- |
+| Rendre une branche personnelle lisible | git rebase -i origin/main | uniquement avant la première poussée |
+| Synchroniser sans nœud de fusion | git pull --rebase | jamais sur une branche que d'autres utilisent |
+| Répliquer un correctif urgent | git cherry-pick -x identifiant | vérifier d'abord qu'il est absent |
+| Suspendre quelques minutes de travail | git stash push -u -m message | le stash n'est pas sauvegardé à l'extérieur |
+| Récupérer un travail cru | git reflog puis git branch | préférer une branche à une remise à zéro |
+| Pousser une branche réécrite | git push --force-with-lease | refuser le simple drapeau de force |
+```
+
+Sur l'organisation, retenons quatre idées. Une stratégie de branches est un contrat social qui nomme les branches, limite leur durée de vie et définit les fusions autorisées. La branche principale est toujours publiable, ce qui suppose une protection côté serveur, des contrôles obligatoires et l'interdiction des poussées forcées. Git flow structure le travail autour de versions planifiées avec des branches de préparation et de maintenance, quand le modèle à trunk unique raccourcit les branches à moins d'une journée et s'appuie sur les drapeaux de fonctionnalité. Enfin, la frontière entre rebase et fusion se situe à la première poussée : avant, vous êtes seul maître de votre historique ; après, il appartient à l'équipe.
+
+Sur l'automatisation, retenons également quatre idées. L'intégration continue vise la réduction du risque par la fréquence : plus les intégrations sont rapprochées, plus une anomalie se trouve près de sa cause. Un workflow se décrit en YAML, avec des déclencheurs, des jobs indépendants reliés par des dépendances, et des secrets qui ne figurent jamais dans le dépôt. Les pipelines se lisent en étages : validation qui répond à l'intégrabilité, livraison qui répond à la reproductibilité de l'artefact, déploiement qui répond à la mise en service, plus une vérification post-déploiement qui ferme la boucle. Et tout repose sur les tests, dont la qualité, non le pourcentage de couverture, décide de la vitesse réellement atteignable.
+
+Un dernier point mérite d'être souligné, car il relie les deux moitiés du chapitre. Les outils d'historique et les chaînes d'automatisation se renforcent mutuellement : un rebase propre réduit les conflits, donc raccourcit la chaîne ; une chaîne fiable autorise des branches courtes, donc rend le rebase inutile. À l'inverse, une équipe qui pousse tous les quinze jours sur une branche partagée verra sa chaîne saturée de conflits, et une équipe dont la chaîne prend quarante minutes cessera de pousser souvent. Améliorez les deux côtés progressivement, en mesurant : temps de fusion, durée de la chaîne, nombre de régressions en production.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus coûteuse, est la poussée forcée sur la branche principale. Elle arrive presque toujours dans un accident de parcours : une remise à zéro prononcée localement, un rebase mal cadré, puis une commande de poussée avec le drapeau de force pour faire passer ce que Git refuse. Le serveur accepte, la branche distante est réécrite, et chaque collègue qui récupère la suivante se retrouve avec un historique dupliqué ou perdu. Les commits remplacés existent encore techniquement, mais plus personne ne sait par quel identifiant les chercher. La parade est systémique : branche principale verrouillée côté serveur, poussée forcée interdite par les règles de protection, et --force-with-lease réservé aux branches personnelles.
+
+La seconde erreur est le rebase sur une branche partagée. Elle est plus insidieuse, parce que la commande semble anodine et réussit. Vous rebasedez votre branche de fonctionnalité sur la nouvelle base alors qu'un collègue y a déjà récupéré : vos anciens commits sont remplacés par des copies neuves, et son clone contient désormais les deux versions. Les fusions suivantes affichent des conflits portant sur des modifications identiques, et le journal des auteurs se troue de doublons. Le remède tient à la règle d'or déjà énoncée : réécrivez avant publication, fusionnez après. Si l'accident est arrivé, prévenez immédiatement l'équipe, publiez l'identifiant de l'état sain, et demandez à chacun de réaligner son clone plutôt que d'essayer de réparer chacun de son côté.
+
+La troisième erreur consiste à confondre historique personnel et historique collectif. Rebaser cent fois une branche que vous seul consultez est parfait ; le faire une seule fois après que la revue de code a commencé impose à chaque relecteur de réimporter son travail. Le même raisonnement s'applique aux amend, qui réécrivent le dernier commit, et aux réorganisations d'ordre avec le rebase interactif. Posez-vous la question avant chaque réécriture : quelqu'un d'autre a-t-il pu récupérer cet état ? Si la réponse est oui, ou même peut-être, préférez un nouveau commit qui annule ou complète le précédent, quitte à gâcher la propreté de l'historique.
+
+La quatrième erreur est le stash oublié. Le travail suspendu dort dans une pile locale que personne ne regarde, expire après quatre-vingt-dix jours, et disparaît avec la machine. Elle survient particulièrement lors des changements de contexte : une intervention urgente, des congés, un changement de projet. La parade est de deux ordres : pour les suspendus de quelques minutes, un message explicite à la création, et une revue de git stash list à chaque retour sur la branche ; au-delà, un commit de travail provisoire sur une branche jetable poussée sur le serveur. Notez aussi que le stash ne suit pas les fichiers non suivis sans l'option -u, ce qui laisse des fichiers visibles dans le répertoire de travail après une restauration.
+
+```bash
+# Diagnostic d'un historique réécrit par erreur
+git reflog --date=iso
+git branch --contains identifiant-ancien
+git fsck --lost-found
+# Rétablissement prudent : une branche d'abord, un reset ensuite
+git branch secours identifiant-ancien
+git log --oneline secours -5
+```
+
+La cinquième erreur porte sur les chaînes : laisser une chaîne rouge traîner. Quand personne ne prend la responsabilité de la réparer, l'équipe apprend très vite à contourner, à relancer, à merger malgré l'échec. En quelques jours, la chaîne a perdu toute autorité, et l'équipe se retrouve exactement là où elle était avant l'automatisation, mais avec en plus une machine à consommer des minutes. Une règle simple évite la dérive : la chaîne est prioritaire sur toute nouvelle tâche, et son état est visible de tous. Une équipe qui refuse cet engagement fera mieux d'automatiser moins de vérifications plutôt que de brader la signification du vert.
+
+La sixième erreur est de lancer trop de choses dans la chaîne dès le premier jour. Une installation ambitieuse, tests de bout en bout, analyse de sécurité, seuils de performance, déploiement automatique, produit des échecs fréquents, des diagnostiques lents et un sentiment d'impuissance. Inversez la marche : commencez par la compilation et les tests unitaires, mesurez la durée, ajoutez une vérification à la fois, et n'en branchez une nouvelle qu'une fois la précédente stable depuis plusieurs semaines. La sophistication vient avec la confiance, jamais avant.
+
+La septième erreur est de laisser les secrets se répandre. Clés copiées dans les fichiers de workflow, jetons dans les journaux d'exécution, mots de passe dans les scripts du dépôt : chacun de ces cas se retrouve régulièrement dans les audits, et chacun impose une rotation douloureuse. Gardez les secrets dans le coffre de la plateforme, limitez leur exposition aux seuls jobs concernés, interdisez les déclencheurs issus de contributions externes pour les étapes qui les manipulent, et faites tourner les valeurs périodiquement. La discipline coûte quelques minutes, la fuite coûte des semaines.
+
+La huitième erreur, plus douce mais pervasive, est de traiter les outils comme une fin. On rebasedez parce que c'est élégant, on maintient cinq types de branches parce que le modèle les prévoit, on ajoute des étapes parce qu'une autre équipe les a. Chaque habitude sans bénéfice mesuré devient une dette d'attention. Gardez deux ou trois indicateurs sous la main, temps moyen de fusion, durée de la chaîne, nombre d'incidents en production, et questionnez toute pratique qui n'améliore aucun d'eux.
+
+## Pour aller plus loin
+
+La première ressource reste la documentation officielle de Git, en particulier le guide de rebase et la page consacrée au reflog : écrits par les créateurs du système, ils sont brefs, exacts et suffisamment abstraits pour résister aux changements d'interface. Pour l'histoire interne, le livre Pro Git, disponible gratuitement en ligne, consacre deux chapitres remarquables à la façon dont Git stocke les objets et déplace les références ; les lire après avoir pratiqué les commandes donne un déclic durable. En français, les guides publiés par OpenClassrooms et par le site Git fr couvrent les mêmes notions avec des exemples pas à pas.
+
+Sur l'organisation de travail, le livre de Vincent Driessen qui a popularisé Git flow reste la référence primaire, à lire avec la mise au point postérieure de son auteur qui en précise les cas d'usage. Pour le modèle à trunk unique, les travaux de Google sur la monorepo et les publications du groupe DORA constituent la base factuelle la plus solide : elles relient la fréquence de livraison, la stabilité et la performance d'équipe, et donnent des ordres de grandeur mesurés sur des milliers d'ingénieurs. Prenez ces chiffres comme des repères, pas comme des cibles : votre contexte décide de ce qui est raisonnable.
+
+```yaml
+# Vue d'ensemble d'une chaîne complète, à adapter à votre projet
+stages:
+  - validation
+  - livraison
+  - mise-a-disposition
+validation:
+  regles:
+    - compile
+    - tests-unitaires
+    - tests-integration
+    - analyse-statique
+  budget-secondes: 600
+livraison:
+  declencheur: branche-principale
+  artefacts: conteneur, paquet, documentation
+  exigence: reproductible
+mise-a-disposition:
+  mode: etapes
+  verification-post-deploiement: fumee, metriques
+  retour-arriere: automatique-si-echec
+```
+
+Pour la pratique, rien ne remplace un dépôt d'entraînement que vous casserez volontairement. Simulez l'accident de poussée forcée sur un dépôt où personne ne travaille, puis ouvrez un second clone pour constater les dégâts vus par un collègue. Faites de même avec un rebase sur branche partagée. Ce genre d'expérience, vécu une fois sur du matériel jetable, vous marquera davantage que dix pages de mises en garde, et vous rendra définitivement prudent aux moments qui comptent.
+
+Côté automatisation, créez un dépôt public minimal, poussez-le, et ajoutez une chaîne en une seule étape, puis deux, puis quatre, en chronométrant chaque version. Cherchez le point où la durée devient gênante, puis identifiez ce qui la cause : installation des dépendances, démarrage d'un conteneur, attente d'un service tiers. Presque toujours, une mise en cache ou une exécution parallèle règle le problème. Portez ensuite l'attention sur les messages d'échec : une chaîne utile dit quelle étape a échoué et pourquoi, une chaîne inutile affiche quatre cents lignes de journal.
+
+Enfin, rejoignez la conversation. Les conférences sur l'intégration continue, les retours d'expérience d'équipes ouvertes et les dépôts de référence des grands projets montrent des solutions réelles à des problèmes que vous rencontrerez. Lisez-les avec un esprit critique : beaucoup de pratiques excellentes y sont présentées sans leur contexte, et un modèle qui fonctionne pour une équipe de cent cinquante personnes peut être absurde pour une équipe de trois. Votre objectif n'est pas d'appliquer un catalogue, mais de constituer, geste après geste, votre propre jugement.
+
+## Et maintenant : passez à l'exercice
+
+Vous avez désormais les commandes et le raisonnement ; il reste à les ancrer dans les gestes. L'exercice de ce chapitre est conçu pour vous obliger à prendre des décisions, pas à recopier une suite d'instructions. Il vous demande de mettre en place une chaîne d'intégration complète pour une petite application, puis de documenter les choix que vous avez tranchés en cours de route : type de branches, structure de la chaîne, tests retenus et règles de protection.
+
+Avant d'ouvrir le sujet, préparez votre terrain. Un dépôt d'entraînement vierge, un compte sur une plateforme d'hébergement, et une heure de temps continu, parce que l'exercice suppose d'observer plusieurs exécutions de bout en bout. Répartissez le travail en deux temps si besoin : d'abord la chaîne de validation, qui doit passer au vert sur une branche, ensuite la livraison, qui ne doit se déclencher qu'une fois la validation réussie. Chaque fois que la chaîne échoue, résistez à la tentation de relancer : lisez l'étape fautive, corrigez, poussez, et notez ce que l'erreur vous a appris.
+
+Trois pièges sont prévus dans l'énoncé, et vous les reconnaîtrez. Le premier porte sur l'interdiction de pousser directement sur la branche principale : la règle doit être posée côté serveur, pas seulement annoncée à l'équipe. Le second concerne la durée de la chaîne, qui doit rester dans un budget explicite que vous justifierez. Le troisième touche aux secrets, qui ne doivent figurer nulle part dans le dépôt. Si vous avez bien suivi la leçon, vous les éviterez sans difficulté ; s'il vous en coûte un contretemps, tant mieux : c'est le meilleur moment pour apprendre.
+
+Rédigez enfin un compte rendu court : la structure des branches retenue et pourquoi, le déroulé de la chaîne avec sa durée mesurée, la liste des vérifications bloquantes, et les deux angles morts que vous assumez en connaissance de cause. Ce document vaut plus que n'importe quelle configuration parfaitement copiée, car il révèle si vous maîtrisez les décisions derrière les fichiers. Ouvrez ensuite l'exercice, et abordez-le avec la même méthode que tout au long du chapitre : annoncez votre prédiction, exécutez, comparez, corrigez.

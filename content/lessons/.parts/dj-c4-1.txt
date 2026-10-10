@@ -1,0 +1,156 @@
+Bienvenue dans le quatrième chapitre du parcours Django, celui où votre projet passe d'une application qui fonctionne à une application que l'on peut exploiter, administrer et protéger. Les chapitres précédents vous ont appris à modéliser des données, à écrire des vues, à templater des pages et à gérer des formulaires. Tout cela produit une application interne : vous seul, ou vos collègues les plus proches, la consultiez jusqu'ici. Ce chapitre change de public. Il introduit trois acteurs distincts — l'équipe d'exploitation qui administre le contenu, les utilisateurs qui se connectent, et les attaquants qui tentent d'entrer — et il vous donne les outils que Django fournit nativement pour travailler avec les deux premiers et vous prémunir contre le troisième.
+
+À la fin de cette leçon, vous saurez faire quatre choses très concrètes. Vous saurez personnaliser en profondeur le panneau d'administration : configurer les listes, les formulaires, les objets liés éditables sur une même page, et les opérations en lot appliquées à une sélection. Vous saurez mettre en place un système de rôles et de permissions : groupes, permissions par modèle, permissions par objet via les mixins de vues, et vérification fine dans les templates. Vous saurez gérer le cycle de vie complet des comptes : création d'un utilisateur personnalisé avec son manager, connexion, déconnexion, changement et réinitialisation de mot de passe par jeton. Vous saurez enfin durcir l'ensemble : choisir le bon hachage de mot de passe, comprendre les cookies de session, activer et respecter la protection CSRF, configurer les en-têtes anti-clickjacking, et mettre en place un journal d'audit des accès.
+
+Le fil rouge est une plateforme de gestion de médiathèque que nous appellerons la console de la Médiathèque des Lilas. Elle compte trois publics : les bibliothécaires qui cataloguent les ouvrages et gèrent les prêts, les abonnés qui consultent le catalogue et suivent leurs emprunts, et les administrateurs techniques qui supervisent l'ensemble. Chaque section prend l'un de ces besoins, décrit d'abord la solution naïve — celle que l'on écrit quand on débute —, montre pourquoi elle insuffisante ou dangereuse, puis présente la solution Django complète. La progression est volontairement celle d'un projet réel : on commence par l'outil visible (l'administration), on descend vers les autorisations, puis vers l'authentification, et l'on termine par la sécurité et l'audit, parce qu'une application qui ne tient pas de journal est une application que l'on ne peut pas défendre.
+
+Un mot sur la manière d'aborder ce chapitre. Django se lit dans son code source presque aussi bien que dans sa documentation, et les modules contrib.auth et contrib.admin sont parmi les mieux commentés du framework. N'hésitez pas à ouvrir les fichiers de votre environnement virtuel pour voir comment LoginRequiredMixin vérifie une permission ou comment ModelAdmin construit sa requête de liste. Cette lecture directe vous fera gagner des heures de tâtonnement ultérieurement. Chaque bloc de code de ce chapitre est fait pour être recopié dans votre projet de la Médiathèque, puis modifié : changez un nom de permission, ajoutez un champ à un ModelAdmin, cassez une vue protégée et regardez ce que Django refuse ou accepte.
+
+## Pourquoi administration et authentification forment un tout
+
+On présente souvent l'administration et l'authentification comme deux chapitres distincts d'un cours Django. C'est une er pédagogique, parce qu'elles obéissent à la même question : qui a le droit de faire quoi. L'administration est la surface visible de cette question pour l'équipe ; l'authentification en est le mécanisme. Une permission accordée dans l'administration n'a de sens que si une identité fiable la porte, et une identité fiable n'a de valeur que si elle est attachée à des droits précis. Séparer les deux, c'est construire un système dont les pièces ne s'emboîtent pas.
+
+Prenons un exemple simple dans la console de la Médiathèque. Un bibliothécaire doit pouvoir créer et modifier les ouvrages, consulter la liste des abonnés, mais pas supprimer le compte d'un autre membre de l'équipe. Un abonné doit pouvoir consulter le catalogue et ses propres prêts, mais ne doit jamais atteindre la page qui modifie un ouvrage. Un administrateur technique doit pouvoir voir le journal d'audit, mais ne doit pas pouvoir modifier les ouvrages : sa fonction est de surveillance, pas de contenu. Trois rôles, trois ensembles de droits, et un seul mécanisme sous-jacent : l'attribution d'un utilisateur à un groupe, l'octroi de permissions à ce groupe, et la vérification de ces permissions à chaque requête.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Django_logo.svg/960px-Django_logo.svg.png
+| Le logo du framework Django, dont le module d'administration et le système d'authentification forment deux faces d'un même dispositif de contrôle d'accès.
+```
+
+Ce chapitre vous apprendra donc à penser en termes de sujet et d'action. Un sujet est un utilisateur ou un groupe d'utilisateurs ; une action est une opération sur un modèle, comme ajouter, modifier ou supprimer un ouvrage. Django modélise les actions par des permissions nommées, et il vérifie chaque requête en trois étapes : l'identité est-elle connue, l'identité est-elle autorisée à faire cette action, et l'objet visé est-il bien celui que l'autorisation couvre. Comprendre ce trio, c'est comprendre l'essentiel de la sécurité applicative dans Django.
+
+## Le panneau d'administration par défaut et ses limites
+
+Django livre avec son framework une application d'administration complète, générée automatiquement à partir de vos modèles. Elle se crée en quelques lignes : vous déclarez vos modèles, vous les enregistrez avec la fonction register, et l'interface apparaît. Cette génération automatique est l'un des arguments historiques de Django, et elle mérite qu'on s'y attarde pour comprendre ce qu'elle fait exactement, au-delà de la liste de colonnes qu'elle affiche.
+
+```python
+from django.contrib import admin
+from .models import Ouvrage, Abonne, Pret
+
+@admin.register(Ouvrage)
+class OuvrageAdmin(admin.ModelAdmin):
+    pass
+
+@admin.register(Abonne)
+class AbonneAdmin(admin.ModelAdmin):
+    pass
+
+admin.site.register(Pret)
+```
+
+Ce code minimal produit trois pages de liste, trois pages de formulaire et trois pages de confirmation de suppression. Chaque colonne de la liste correspond à un champ du modèle, chaque champ du formulaire utilise le widget adapté à son type, et les relations étrangères apparaissent sous forme de listes de sélection. Pour un projet en phase de prototype, c'est déjà une interface d'exploitation complète, et c'est pourquoi tant d'équipes commencent par là.
+
+Les limites apparaissent vite dès que le contenu devient complexe. La liste par défaut affiche les champs dans l'ordre de déclaration, sans tri pertinent, sans recherche, sans filtre. Le formulaire par défaut montre tous les champs sans regroupement, sans aide, sans contrôle de cohérence. Les relations étrangères obligent à quitter la page pour créer l'objet lié. Et surtout, l'administration ne connaît pas vos règles métier : elle sait qu'un ouvrage a un ISBN, mais elle ne sait pas qu'un ISBN doit être unique, qu'un prêt ne peut pas dépasser trente jours, ou qu'un abonné dont le compte est suspendu ne peut pas emprunter.
+
+La bonne nouvelle est que ModelAdmin est une classe pensée pour être héritée, et que presque chaque aspect de l'interface est configurable par des attributs de classe. La liste des champs affichés, les champs de recherche, les filtres latéraux, les colonnes calculables, l'ordre de tri par défaut, les champs en lecture seule, les segments du formulaire, les objets liés éditables en ligne : tout cela s'exprime en quelques lignes de configuration, sans écrire une seule balise HTML.
+
+```python
+@admin.register(Ouvrage)
+class OuvrageAdmin(admin.ModelAdmin):
+    list_display = ("titre", "auteur", "isbn", "disponible", "nombre_prets")
+    list_filter = ("disponible", "categorie")
+    search_fields = ("titre", "auteur", "isbn")
+    readonly_fields = ("nombre_prets",)
+    ordering = ("titre",)
+
+    fieldsets = (
+        ("Informations générales", {"fields": ("titre", "auteur", "isbn", "categorie")}),
+        ("État du stock", {"fields": ("disponible", "nombre_prets")}),
+    )
+```
+
+Ce premier niveau de personnalisation répond à quatre-vingts pour cent des besoins courants. La liste devient lisible, la recherche trouve un ouvrage par son ISBN, le filtre isole les titres disponibles, et le formulaire regroupe les champs en sections logiques. La colonne nombre_prets est calculée par une méthode du modèle, et Django l'affiche sans qu'elle soit un champ stocké. C'est la première leçon de l'administration : l'interface doit refléter la logique métier, pas la structure de la table.
+
+Une notion importante à comprendre dès maintenant est celle des permissions dans l'administration. Par défaut, un utilisateur qui se connecte au panneau et qui possède le statut is_staff voit les trois sections, mais il ne peut rien faire sur un modèle qu'on ne lui a pas explicitement accordé. Django applique ici les permissions par modèle : ajouter, modifier, supprimer, consulter. Un membre du personnel peut donc voir la liste des ouvrages sans pouvoir les modifier, si on ne lui a donné que la permission de consultation. Cette granularité fine est souvent suffisante pour les petites équipes, et elle se configure entièrement dans l'interface, sans écrire de code.
+
+## ModelAdmin : personnaliser le changelist, le formulaire et les inlines
+
+Le changelist, c'est la page de liste, et c'est celle que les équipes d'exploitation consultent le plus. Sa configuration mérite une attention particulière car c'est là que se joue la productivité quotidienne. Au-delà des attributs de base que nous avons vus, ModelAdmin propose des mécanismes avancés qui permettent de construire de véritables tableaux de bord d'exploitation.
+
+Le premier mécanisme est celui des colonnes calculables. Une méthode de modèle ou une méthode de ModelAdmin peut être déclarée dans list_display, et Django l'appelle pour chaque ligne. Vous pouvez ainsi afficher un résumé de l'état d'un abonné, le nombre de prêts en cours, ou une pastille colorée indiquant si un ouvrage est en retard. La méthode reçoit l'objet en premier argument, et son attribut short_description définit le titre de la colonne.
+
+```python
+@admin.register(Abonne)
+class AbonneAdmin(admin.ModelAdmin):
+    list_display = ("nom", "courriel", "prets_en_cours", "statut")
+    list_editable = ("statut",)
+
+    @admin.display(description="Prêts en cours", ordering="prets_en_cours")
+    def prets_en_cours(self, obj):
+        return obj.prets.filter(rendu=False).count()
+
+    @admin.display(description="Statut", boolean=True)
+    def statut(self, obj):
+        return obj.est_actif
+```
+
+Le deuxième mécanisme est celui des inlines, c'est-à-dire de l'édition des objets liés directement dans la page de l'objet parent. Dans la Médiathèque, un ouvrage possède des exemplaires, et un abonné possède des prêts. Sans inlines, l'opérateur doit créer l'ouvrage, puis revenir à la liste, puis ouvrir la page des exemplaires, puis créer chaque exemplaire un par un. Avec inlines, tout se fait sur une seule page.
+
+```python
+class ExemplaireInline(admin.TabularInline):
+    model = Exemplaire
+    extra = 1
+
+@admin.register(Ouvrage)
+class OuvrageAdmin(admin.ModelAdmin):
+    inlines = [ExemplaireInline]
+```
+
+La classe TabularInline affiche les objets liés dans un tableau compact, tandis que StackedInline les affiche dans des blocs empacés. L'attribut extra contrôle le nombre de lignes vides proposées pour ajouter de nouveaux objets. Vous pouvez également utiliser readonly_fields pour certains champs, exclude pour en masquer, et autocomplete_fields pour les relations avec un grand nombre d'objets, ce qui remplace la liste déroulante par un champ de recherche.
+
+Le troisième mécanisme est celui des queryset personnalisés. Par défaut, ModelAdmin interroge tous les objets du modèle, mais vous pouvez restreindre la queryset selon l'utilisateur connecté. C'est le moment de la granularité : un bibliothécaire de la section jeunesse ne verra que les ouvrages de sa section, et un responsable de site verra l'ensemble. Cette méthode recoit la requête HTTP, et peut donc lire l'utilisateur connecté.
+
+```python
+def get_queryset(self, request):
+    queryset = super().get_queryset(request)
+    if request.user.is_superuser:
+        return queryset
+    return queryset.filter(section=request.user.section)
+```
+
+Il faut enfin parler des list_display_links, qui définissent quelles colonnes mènent vers le formulaire, et des list_select_related, qui optimisent les requêtes SQL en préchargeant les relations. Une liste qui affiche le titre et l'auteur d'un ouvrage, mais qui requête la base cinq fois par ligne à cause des relations non préchargées, est une liste lente. L'attribut list_select_related résout ce problème en une ligne, et il est presque toujours pertinent dès qu'un champ affiché est une relation.
+
+Un dernier point sur les formulaires du ModelAdmin. Vous pouvez fournir votre propre formulaire en affectant l'attribut form à une classe Formulaire, ce qui vous permet de réutiliser la validation métier définie pour l'interface publique. Vous pouvez également surcharger les méthodes save_model, delete_model et save_related pour injecter des comportements personnalisés : envoyer une notification après la création d'un ouvrage, empêcher la suppression d'un ouvrage encore prêté, ou créer automatiquement les objets liés. Ces points d'extension font du ModelAdmin un cadre complet, et non un simple habillage.
+
+## Actions personnalisées : opérations en lot
+
+Les actions personnalisées répondent à un besoin réel : celui de traiter une sélection d'objets en une seule opération. Sans actions, un opérateur qui doit marquer cinquante ouvrages comme épuisés doit ouvrir cinquante pages, cocher cinquante cases et valider cinquante formulaires. Avec une action, il sélectionne les lignes, choisit l'opération dans le menu déroulant, et clique sur le bouton d'exécution.
+
+Une action est une méthode de ModelAdmin qui recoit trois arguments : le ModelAdmin lui-même, la requête HTTP, et le queryset des objets sélectionnés. Django l'enregistre automatiquement si elle possède un attribut short_description, qui devient le libellé du menu. L'action retourne une réponse HTTP, ou None pour rester sur la même page.
+
+```python
+@admin.register(Ouvrage)
+class OuvrageAdmin(admin.ModelAdmin):
+    actions = ("marquer_epuise", "marquer_disponible")
+
+    @admin.action(description="Marquer les ouvrages sélectionnés comme épuisés")
+    def marquer_epuise(self, request, queryset):
+        queryset.update(disponible=False)
+        self.message_user(request, f"{queryset.count()} ouvrage(s) marqué(s) comme épuisé(s).")
+
+    @admin.action(description="Marquer les ouvrages sélectionnés comme disponibles")
+    def marquer_disponable(self, request, queryset):
+        queryset.update(disponable=True)
+        self.message_user(request, f"{queryset.count()} ouvrage(s) marqué(s) comme disponible(s).")
+```
+
+Ce code ajoute deux entrées au menu déroulant de la liste. Quand l'opérateur les sélectionne, Django appelle la méthode avec le queryset filtré, et la mise à jour en masse se fait en une seule requête SQL grâce à la méthode update. La méthode message_user affiche une notification dans l'interface, qui est le retour d'information minimal indispensable : l'opérateur doit savoir que l'opération a réussi et combien d'objets ont été touchés.
+
+Une action peut aussi ouvrir une page de confirmation intermédiaire. C'est indispensable quand l'opération est lourde ou réversible, comme la suppression de plusieurs objets ou la publication en masse. Dans ce cas, la méthode renvoie un TemplateResponse avec un formulaire de confirmation, et c'est la soumission de ce formulaire qui déclenche l'opération effective. Cette séparation entre la sélection et l'exécution est une bonne pratique qui protège contre les clics maladroits.
+
+```python
+@admin.action(description="Publier les ouvrages sélectionnés")
+def publier(self, request, queryset):
+    if request.POST.get("confirmation"):
+        queryset.update(publie=True)
+        self.message_user(request, "Publication effectuée.")
+        return None
+    return TemplateResponse(request, "admin/confirmation_publication.html", {
+        "ouvrages": queryset,
+        "action_checkbox_name": admin.helpers.ACTION_CHECKBOX_NAME,
+    })
+```
+
+Les actions s'appliquent par défaut à tous les objets sélectionnés, mais vous pouvez restreindre leur visibilité selon les permissions de l'utilisateur. La méthode get_actions permet de filtrer la liste disponible : un utilisateur qui n'a pas la permission de suppression ne verra pas l'action de suppression. Cette vérification est automatique pour les actions de suppression intégrées, mais vous devez la reproduire pour vos actions personnalisées, sous peine de proposer une opération que l'utilisateur ne pourra pas exécuter.
+
+Une dernière notion concerne les actions en masse et la performance. Une action qui parcourt le queryset et sauvegarde chaque objet individuellement déclenche un signal par objet, ce qui peut être lent sur de grandes sélections. Quand c'est possible, préférez les mises à jour en masse ; quand les signaux sont nécessaires, traitez-les par lots. L'administration est un outil d'exploitation, pas un outil de calcul, et sa valeur réside dans la rapidité de l'opérateur, pas dans l'élégance de l'implémentation.

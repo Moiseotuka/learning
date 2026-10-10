@@ -1,0 +1,423 @@
+Bienvenue dans le sixième chapitre du parcours Cybersécurité offensive, consacré à l'offensive et à la défense. Les chapitres précédents vous ont appris à raisonner du côté de celui qui cherche à passer : recueillir des informations, ouvrir une voie, élever ses privilèges, circuler, sortir des données. Ce chapitre fait pivoter le casque et pose la question qui donne tout son sens à ce travail : que se passe-t-il de l'autre côté lorsque vous exécutez une technique ? Une attaque que personne n'a vue ne prouve rien, et une défense qui n'a jamais été mise à l'épreuve ne reste qu'une hypothèse de papier. Le sujet de ce chapitre consiste donc à provoquer méthodiquement le contact entre les deux, dans un laboratoire isolé, avec un protocole écrit, des horodatages fiables et une équipe qui note tout.
+
+Il y a cinq objectifs, et ils commandent toute la suite. Le premier est de comprendre précisément ce que l'attaquant voit et ce que le défenseur voit, car ces deux images du même fait diffèrent à tous les égards. Le deuxième est de maîtriser la matière première de la surveillance : les journaux, leur collecte, leur normalisation, leur conservation, puis le SIEM qui les rassemble. Le troisième est d'écrire des règles de détection qui tiennent debout, c'est-à-dire testées, filtrées, documentées et mesurées, plutôt que de traduire mot pour mot une technique en alarme intenable. Le quatrième est d'utiliser la matrice ATT&CK comme un outil de travail quotidien, pour poser des questions précises, et non comme une vitrine de cases cochées. Le cinquième est de boucler la boucle : après chaque simulation, corriger, durcir, retester, puis mesurer ce qui s'est réellement amélioré en temps de détection et en couverture.
+
+Toute la leçon se déroule dans un laboratoire fictif, volontairement isolé, que nous appellerons le lab Comptoir et qui ne contient aucune donnée réelle. Il se compose de quatre machines : SRV-DC01, un contrôleur de domaine de test, POSTE-ACC01, un poste de travail Windows, SRV-APP01, une application web sous Linux, et SRV-SIEM01, un collecteur de journaux. Le réseau est cloisonné en 10.42.7.0/24, sans route vers l'extérieur, les horloges sont synchronisées sur le même serveur, et une sauvegarde complète est refaite avant chaque session. Les comptes, les adresses et les scénarios cités ici sont inventés ; toute manipulation que vous reproduirez devra l'être dans votre propre bac à sable, sur des machines dont vous êtes propriétaire, jamais sur un système qui ne vous appartient pas.
+
+## Purple Team : deux casquettes, un seul terrain
+
+Le terme purple team désigne moins une équipe permanente qu'un mode de travail : au lieu de séparer ceux qui attaquent et ceux qui défendent dans deux missions qui ne se croisent jamais, on les réunit autour d'un même calendrier, d'un même périmètre et d'un même objectif explicite, améliorer la capacité de détection. L'image du violet comme mélange du rouge et du bleu est classique, mais elle prête à confusion si l'on croit à un troisième groupe qui exécuterait les deux tâches à la fois. En pratique, les rôles restent distincts : un opérateur offensive mène la simulation, un analyste de surveillance observe le flux côté défense, et la valeur naît de leur conversation continue, pas de leur fusion. Ce qui change, c'est la transparence : l'analyste est autorisé, voire invité, à regarder en direct et à poser des questions pendant l'exécution.
+
+La différence avec une red team classique se joue sur la finalité. Une red team cherche à atteindre un objectif, par exemple extraire un fichier sensible, tout en restant invisible ; son succès se mesure à ce que personne n'a remarqué. Une session purple cherche elle à produire de la connaissance défendable : on sait d'avance que l'analyste va recevoir des événements, et l'on veut surtout savoir lesquels, à quelle vitesse, avec quel niveau de détail et avec quelle qualité de formulation. Personne ne gagne. Si l'analyste détache l'alerte en trois minutes, c'est une victoire commune ; si l'opération arrive au bout sans qu'aucune règle ne se déclenche, c'est également une victoire, mais celle d'un diagnostic honnête : le périmètre de surveillance a un trou qu'il faut documenter et corriger.
+
+Côté défenseur, la blue team n'est pas mise en pause pendant l'exercice : elle continue de surveiller un environnement de production ou de préproduction, et c'est précisément cette continuité qui donne du sens à la simulation. Une session purple s'insère comme une injection de comportements connus dans un flux réel. L'analyste ne doit pas être prévenu de l'heure exacte, sinon il ne mesure plus rien, mais il doit connaître le périmètre des techniques qui pourraient être exercées. Cette discipline produit deux séries d'observations que l'entraînement seul ne donne jamais : la série des événements réellement enregistrés et la série des événements qu'on aurait dû enregistrer. L'écart entre les deux constitue le vrai cahier des charges du défenseur.
+
+Il faut donc dire ce que le purple team n'est pas, parce que les dérives sont fréquentes. Ce n'est ni un produit que l'on achète, ni une compétition opposant deux prestataires, ni le rapport annuel d'un test d'intrusion déguisé. Ce n'est pas non plus un événement ponctuel : une session isolée qui ne débouche sur aucune correction n'est qu'une démonstration. Le format utile est une boucle répétée, composée de cinq temps : préparer, exécuter, observer, corriger, retester. Préparer consiste à figer le périmètre et les attentes ; exécuter consiste à dérouler le scénario ; observer consiste à consigner ce qui est vu et ce qui n'est pas vu ; corriger consiste à modifier une règle, un journal, un durcissement ou une procédure ; retester consiste à relancer exactement la même étape pour vérifier l'effet. Sans le temps de retest, la boucle est ouverte et l'exercice ne prouve rien sur l'amélioration réelle.
+
+Le cadre d'exécution se négocie et s'écrit avant la session, sur une page suffit. On y stipule le périmètre des machines, la fenêtre horaire, les techniques autorisées et celles qui sont interdites, le signal d'arrêt immédiat, la manière de traiter les données rencontrées, et les personnes à prévenir. Dans le lab Comptoir, trois règles sont non négociables : un instantané de chaque machine est pris avant toute manipulation, aucune commande ne quitte le réseau cloisonné, et le mot « pause » prononcé par n'importe quel participant arrête tout le scénario jusqu'à réunion du groupe. Ces contraintes ne réduisent pas la valeur de l'exercice, elles la rendent reproductible, ce qui est la condition pour pouvoir comparer deux sessions et affirmer que la situation s'améliore.
+
+Quatre rôles couvrent la totalité du travail, et le plus souvent deux personnes en assurent plusieurs. L'opérateur offensive exécute les étapes du scénario et note ses propres observations. L'analyste défenseur suit les journaux et le SIEM, sans lire le scénario en avance, et consigne chaque alerte reçue avec son heure exacte. Le scribe tient le journal de bord commun, seule source qui permettra de reconstruire la chronologie après coup ; c'est le rôle le plus négligé et le plus déterminant, car la mémoire des participants se dégrade en moins d'une heure. Le décideur tranche les questions de périmètre et valide les corrections. Un exercice bien mené se reconnaît à un journal de bord complet, que l'on peut relire un mois plus tard sans avoir besoin de demander à personne ce qui s'était passé.
+
+```json
+{
+  "exercice": "COMPTOIR-03",
+  "etape": 3,
+  "heure_debut": "2026-03-09T09:14:00+01:00",
+  "technique_attack": "T1059.001",
+  "action_offensive": "lancement de PowerShell avec une commande encodée en base64 depuis POSTE-ACC01",
+  "vu_par_l_attaquant": "l'invite revient sans message d'erreur en moins d'une seconde",
+  "attendu_par_le_defenseur": "événement 4104 de transcription de script contenant la commande complète",
+  "observe_par_l_analyste": "aucune alerte, événement absent du collecteur",
+  "statut": "non detecte",
+  "cause_racine": "transcription des scripts désactivée par la stratégie locale",
+  "correction": "activer la transcription, redéployer la stratégie, relancer l'étape 3",
+  "retest_prevu": "2026-03-11T09:00:00+01:00"
+}
+```
+
+Une entrée de journal de bord utile répond donc à sept questions, dans cet ordre : à quelle heure, quelle technique, que fait l'opérateur, que verrait-il, que devrait voir le défenseur, qu'a-t-on réellement observé, et quelle est la suite. Les champs libres du type « commentaire » n'ont aucune valeur ensuite, car personne ne sait les rechercher. En revanche, un identifiant de technique, un horodatage au format ISO 8601 et un statut à valeurs fermées permettent de produire à la fin de la campagne un tableau de bord que l'on compare d'une session à l'autre. Le scribe doit résister à la tentation de résumer : il consigne les faits, pas les interprétations, et il note aussi ce qui a été manqué, car une absence d'alerte est un résultat au même titre qu'une alerte déclenchée.
+
+## Ce que voit l'attaquant : la carte du terrain adverse
+
+L'attaquant raisonne par objectifs, jamais par capteurs. Il ne dispose d'aucune vue globale du système : il ne connaît que ce que la cible lui répond lorsqu'il la touche. De cette succession de réponses, il reconstitue une carte mentale des zones de confiance, des comptes qui marchent, des portes qui résistent et des services qui répondent lentement. Cette carte est partielle, datée et souvent fausse, mais elle suffit à décider de la prochaine action. La première chose à comprendre dans ce chapitre, c'est que cette carte n'a aucun rapport avec celle du défenseur : elle est construite par échantillons successifs, alors que le défenseur dispose, lui, d'un flux continu qu'il doit interpréter.
+
+Prenons l'exemple concret de l'étape 3 du lab Comptoir. L'opérateur ouvre une session sur POSTE-ACC01 avec un compte de service, lance une commande, observe un retour immédiat et note « accès obtenu ». À ce moment précis, il ignore tout du reste : que l'ouverture de session a généré un événement 4624 de type 3, que cet événement a été transmis au collecteur SRV-SIEM01 avec environ trente secondes de retard, que la règle associée s'est déclenchée à 09:14:41 et que l'analyste a ouvert une fiche à 09:17. Son expérience vécue tient en une seconde d'écran ; l'expérience du défenseur s'étale sur trois minutes et porte sur une chaîne technique de six composants, dont plusieurs peuvent tomber en panne silencieusement.
+
+Ce que l'attaquant voit réellement tient dans une liste courte : les bannières et les versions exposées, les codes de réponse, les messages de refus, les délais de réponse, l'ouverture ou la fermeture d'un port, la différence entre un mot de passe refusé et un compte verrouillé, l'échec d'un droit d'accès à un dossier. Ces signaux sont sa matière première, et il les utilise pour affiner sa carte : un message d'erreur détaillé révèle une pile technique, un refus catégorique signale un contrôle d'accès, une lenteur inhabituelle trahit un service de supervision. Rien de tout cela n'est dans les journaux du défenseur sous cette forme : le défenseur reçoit des événements normalisés, pas des impressions d'écran, et c'est précisément cet écart de granularité qui rend la traduction difficile.
+
+L'attaquant cherche ensuite à se fondre dans la normale, ce qu'on appelle vivre sur les ressources légitimes plutôt que d'installer un outil maison. Il préfère PowerShell, certutil, wmic ou un planificateur de tâches à un binaire inconnu, parce que ces programmes sont déjà présents, déjà signés et déjà utilisés par l'administration. De son point de vue, le critère du silence est simple : pas de fenêtre qui clignote, pas d'alerte antivirus, pas de plantage. Mais ce qui est discret pour lui ne l'est pas pour le défenseur, à une condition, décisive : que la normale soit mesurée. Un poste qui n'a jamais lancé de script à l'ouverture de session et qui en lance un le mardi matin produit une déviation, alors que le même geste sur un poste d'administration, où l'on fait cela chaque jour, n'en produit aucune. La discrétion offensive est donc relative à une baseline, et établir cette baseline est un travail défensif, pas offensif.
+
+L'attaquant produit lui aussi des journaux, mais personne ne les lui demande : l'historique de ses commandes, le fichier de notes où il écrit les comptes valides, les captures d'écran, l'horodatage approximatif de ses étapes. Dans une session purple, ces artefacts deviennent la colonne vertébrale du débriefing, car ils sont la seule chronologie que l'opérateur possède. C'est aussi là que se joue une contradiction amusante : pour être efficace, l'attaquant tient peu de traces, donc il se prive d'une mémoire fiable ; pour être utile à l'équipe, il doit tout noter, donc il accepte de courir un risque opérationnel qu'il refuserait en contexte réel. Cette contradiction est volontaire dans un lab : on assume le carnet de notes, puis on rappelle en débriefing qu'une attaque réelle serait mieux documentée côté attaquant et bien moins documentée côté défenseur.
+
+Le déroulé type du scénario du lab Comptoir illustre la chaîne complète en six temps. L'étape 1 envoie un message piégé et l'opérateur voit uniquement que le lien a été ouvert depuis une adresse du réseau. L'étape 2 teste plusieurs mots de passe sur un compte et ne perçoit que des refus successifs jusqu'à la réussite. L'étape 3 exécute la commande encodée et observe son retour. L'étape 4 crée une tâche planifiée et vérifie qu'elle se relance. L'étape 5 ouvre un partage distant depuis le poste vers le serveur de fichiers. L'étape 6 copie une archive vers un dossier temporaire puis l'exfiltre par une requête HTTPS. À chaque étape, l'opérateur a l'impression d'avancer en silence ; à chaque étape, un événement existe théoriquement, mais il n'existe réellement que si le journal est activé, transporté, conservé et couvert par une règle.
+
+```text
+CE QUE L'OPÉRATEUR VOIT            CE QUE LE DÉFENSEUR DEVRAIT VOIR
+09:02:11  lien ouvert              journal du courrier : clic sur une destination inconnue
+09:05:47  12 refus puis 1 accès    journal d'authentification : 12 échecs, puis 4624 type 3
+09:14:02  commande exécutée        journal d'exécution : 4104 avec le script complet
+09:16:35  tâche créée              journal de planification : création d'une tâche utilisateur
+09:21:09  partage ouvert           journal réseau : connexion sortante SMB depuis un poste
+09:27:54  archive envoyée          journal du proxy : POST de 4,2 Mo vers un domaine neuf
+```
+
+La symétrie du tableau ci-dessus n'existe bien sûr que sur le papier : elle décrit ce qui devrait se passer si chaque capteur était en place et correctement réglé. Le fossé entre la colonne de gauche et la colonne de droite est exactement l'objet de ce chapitre. Il faut retenir deux avantages offensifs, parce qu'ils sont durables. Le premier est l'initiative : l'attaquant choisit l'heure, le lieu et la méthode, donc il agit toujours là où le regard est le moins attentif. Le second est l'asymétrie d'effort : il lui suffit d'un chemin fonctionnel, alors que le défenseur doit couvrir tous les chemins. En contrepartie, l'attaquant a une faiblesse structurelle qu'il ne peut pas supprimer : pour avancer, il doit toucher, et tout toucher laisse une trace chez quelqu'un d'autre.
+
+## Ce que voit le défenseur : des événements sans intention
+
+Le défenseur ne voit pas une attaque, il voit des événements. Un événement est un fait matériel horodaté, rattaché à un compte, une ressource et une source ; il ne contient jamais l'intention de son auteur. C'est la raison pour laquelle l'analyse défensive est un travail de reconstitution : on remet bout à bout des fragments produits par des systèmes différents, avec des formats différents, des niveaux de détail différents et des horloges qui ne sont pas parfaitement synchronisées, pour produire une histoire cohérente que l'on puisse défendre devant quelqu'un qui n'était pas présent. L'événement dit que le compte X a ouvert un fichier à 09:21 ; il ne dit pas s'il s'agissait d'un vol, d'une sauvegarde ou d'une habitude.
+
+Cette reconstitution se heurte d'abord à la latence. Entre le moment où le fait se produit et le moment où il apparaît dans la console de l'analyste, il s'écoule une chaîne : le programme écrit son journal, l'agent local le récupère, le réseau le transporte, le collecteur l'indexe, la règle s'exécute, l'alerte s'affiche. Chaque maillon ajoute son délai, typiquement de quelques secondes à une minute dans une configuration saine. Si les journaux sont copiés une fois par nuit par un script de maintenance, ce délai passe à vingt-quatre heures et le temps de détection minimale devient un jour, quelle que soit la qualité des règles. Mesurer cette chaîne est le préalable à toute amélioration, car on ne peut pas corriger une règle si l'on ne sait pas si le retard vient du transport, de l'indexation ou de la logique de corrélation.
+
+Le deuxième obstacle est l'angle mort : l'absence totale d'événement. Une action non journalisée est indétectable, sans ambiguïté ni exception, et aucune règle ne peut compenser un capteur absent. Les causes sont banales et nombreuses : la transcription des scripts a été désactivée pour gagner de l'espace, l'agent d'un serveur n'a pas redémarré après une mise à jour, un sous-réseau a été ajouté hors du périmètre de collecte, un service écrit ses journaux dans un fichier local que personne ne lit, ou une communication chiffrée dissimule les métadonnées utiles. Un exercice purple régulier est souvent le seul moyen de découvrir ces trous, parce qu'on y cherche précisiquement l'écart entre ce qui s'est passé et ce qui est apparu dans la console.
+
+Le troisième obstacle est la corrélation. Pris isolément, presque aucun événement ne constitue une preuve : des échecs de mot de passe arrivent chaque jour, une tâche planifiée se crée lors d'une mise à jour légitime, un transfert volumineux peut être une sauvegarde. La détection utile assemble des événements qui, séparément, sont banals : douze échecs sur le même compte puis une réussite depuis un poste qui ne s'en sert jamais, suivi d'une connexion réseau sortante vers une machine du même segment, puis d'une écriture dans un dossier inhabituel. Cette chaîne exige des sources multiples et un horodatage comparable ; elle exige aussi de l'enrichissement, car l'analyste doit savoir immédiatement si la machine visée héberge un service critique ou s'il s'agit d'un poste de test.
+
+```table
+| Étape de l'attaque | Ce que l'attaquant voit | Source que le défenseur consulte | Détection attendue | Échec classique |
+| Hameçonnage | Le lien s'ouvre et la page s'affiche | Journaux de la messagerie et du proxy | Clic sur une destination jamais vue par le périmètre | Journaux de messagerie purgés après quinze jours |
+| Pulvérisation de mots de passe | Des refus, puis un accès | Journaux d'authentification du contrôleur de domaine | Douze échecs sur un compte en cinq minutes suivis d'une réussite | Horloges désynchronisées entre les sources |
+| Exécution encodée | L'invite revient sans erreur | Journaux d'exécution de scripts | Script complet transcrit en un seul bloc à l'ouverture de session | Transcription désactivée sur le poste |
+| Maintien de la présence | La tâche existe et se relance | Journaux de la planification des tâches | Création d'une tâche pointant vers un chemin utilisateur | Rétention insuffisante des journaux locaux |
+| Mouvement latéral | Le partage répond | Journaux réseau et journaux du serveur de fichiers | Connexion sortante depuis un poste qui n'en fait jamais | Machine hors périmètre de collecte |
+| Exfiltration | Le transfert se termine | Journaux du pare-feu et du proxy sortant | Volume sortant inhabituel vers un domaine jamais observé | Trafic chiffré analysé sans métadonnées |
+```
+
+Le tableau se lit colonne par colonne, et chaque colonne correspond à une question que vous devez poser à n'importe quelle étape d'une simulation. Qui regarde quoi, à quoi cette source sert-elle, quel comportement est anormal, et surtout quelle est la raison la plus fréquente pour laquelle cette détection échoue dans la pratique. Lorsque la quatrième colonne reste vide, vous n'avez pas encore compris votre propre règle ; lorsque la deuxième reste vide, vous avez identifié un angle mort qui ne relève pas de la détection mais du paramétrage. Notez enfin que la dernière colonne est presque toujours banale : rétention, périmètre, synchronisation, agent arrêté. Les défaillances de défense sont rarement spectaculaires, elles sont presque toujours administratives.
+
+De cette asymétrie naît la discipline qui traverse tout le chapitre : comme l'attaquant n'a besoin que d'un chemin, le défenseur doit arbitrer plutôt que tout couvrir. On commence par les actifs dont la perte est irréversible, on hiérarchise les techniques selon leur fréquence réelle dans votre secteur, et on accepte explicitement des angles morts connus plutôt que de prétendre une couverture totale. Cet arbitrage se consigne : un angle mort assumé, daté et compensé par une autre mesure est une décision professionnelle, tandis qu'un angle mort ignoré devient un incident. La suite de ce chapitre part de ce principe et traite d'abord la matière première de la surveillance, les journaux et le SIEM qui les agrège.
+
+## Journaux et SIEM : la matière première de la détection
+
+Les journaux sont la matière première de toute détection, et cette matière n'est pas produite pour vous. Un système écrit des traces parce qu'il doit se déboguer, répondre à un contrôle d'audit, facturer un usage ou respecter une obligation légale ; la sécurité en est un usager secondaire qui récupère ce qui existe déjà. Il en découle une conséquence pratique immédiate : les journaux dont vous aurez besoin ne sont pas toujours ceux que la machine produit par défaut, et certains de ceux qu'elle produit sont inutiles, volumineux et coûteux. Le travail du défenseur commence donc par un inventaire honnête des sources disponibles, avant toute règle, avant tout outil, avant même de parler de corrélation.
+
+Quatre questions suffisent à caractériser chaque source, et vous devez pouvoir y répondre par écrit pour chacune d'elles. La première est la nature de l'événement : que se passe-t-il concrètement quand cette ligne s'écrit. La seconde est la liste des champs utiles : quelles informations permettent d'identifier l'acteur, la ressource, le contexte et le résultat. La troisième est la durée de conservation : combien de temps cette source permet-elle de remonter dans le passé, ce qui conditionne directement la capacité à reconstituer un incident. La quatrième est la personne qui la consulte réellement, et la réponse « personne » est fréquente. Prenons l'exemple de l'ouverture de session Windows : l'événement 4624 porte l'identité du compte, l'adresse source, le type de connexion, le poste d'origine et l'identifiant de processus, mais il ne dit rien sur l'intention et devient inexploitable si la conservation se limite à quarante-huit heures.
+
+La collecte elle-même se fait par trois voies, dont il faut connaître les compromis. Un agent installé sur la machine pousse les événements vers le collecteur, ce qui offre le plus de détails et permet d'auditer l'état de la collecte, mais demande une gestion des versions et des droits. Le protocole syslog pousse ou fait pousser des messages vers un récepteur central, ce qui est simple à mettre en place sur les équipements réseau mais repose sur un format peu structuré. Une interrogation par interface applicative tire les données à intervalle régulier, ce qui convient aux sources qui ne savent pas pousser, mais introduit un délai et rate les événements entre deux tirs. Dans le lab Comptoir, la règle est simple : tout ce qui peut pousser pousse, et le collecteur refuse les sources qui ne peuvent pas fournir un horodatage fiable.
+
+```json
+{
+  "timestamp": "2026-03-09T09:14:02.417+01:00",
+  "host": "POSTE-ACC01",
+  "source": "windows-security",
+  "event_id": 4624,
+  "actor": { "user": "compta.stage", "domain": "COMPTOIR" },
+  "target": { "logon_type": 3, "process": "powershell.exe" },
+  "origin": { "address": "10.42.7.31", "port": 50412 },
+  "result": "success",
+  "ingested_at": "2026-03-09T09:14:33.902+01:00"
+}
+```
+
+La normalisation consiste à ramener ces événements hétérogènes dans une forme unique, avec des noms de champs stables, afin qu'une même question puisse être posée à Windows, à Linux, au pare-feu et à l'application web. Sans elle, chaque règle devient spécifique à une source, la maintenance explose et toute comparaison entre périodes devient impossible. L'exemple ci-dessus montre la forme attendue : un horodatage au format ISO 8601 avec décalage horaire, une identité d'hôte, une source nommée, un identifiant d'événement brut, des acteurs et des cibles structurés, un résultat explicite et l'heure d'ingestion séparée de l'heure du fait. Cette dernière distinction est essentielle : elle seule permet de calculer le retard de la chaîne de collecte et de savoir si un délai de détection vient du système ou de votre propre pipeline.
+
+La conservation et le volume se posent ensemble, car ils sont deux faces d'une même contrainte budgétaire. Une organisation moyenne produit des téraoctets de journaux par mois, et l'indexation en temps réel de tout est rarement soutenable. On trie donc : les sources qui servent à détecter sont indexées et interrogables en continu, celles qui servent uniquement à l'investigation sont conservées à froid dans un stockage moins cher, et celles qui ne servent à rien sont supprimées. La tentation consiste à conserver le minimum, précisément ce qui rend les règles intenables : tester une règle exige de l'historique. Comptez trente jours glissants pour ajuster un seuil, davantage si votre activité est saisonnière, et considérez qu'une source conservée vingt-quatre heures rend tout réglage statistique impossible.
+
+L'horodatage est le point faible le plus fréquent et le plus facile à corriger. Si le poste, le serveur et le collecteur ne partagent pas la même référence de temps, la chronologie que vous construirez sera fausse, et une corrélation peut être renversée : l'événement paraîtra antérieur à sa cause. La synchronisation sur un serveur d'horodatage commun n'est pas une subtilité de gestionnaire de parc, c'est la condition de possibilité de toute analyse de séquence. Vérifiez-la avant chaque session purple : une dérive de quatre minutes sur un poste a suffi, dans un exercice que j'ai vu, à faire conclure à un mouvement latéral inexistant et à faire perdre une journée entière d'investigation à trois personnes.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Wazuh_SIEM_screenshot.webp/960px-Wazuh_SIEM_screenshot.webp
+| Console d'une plateforme SIEM open source qui affiche une alerte détaillée et les événements ayant déclenché sa règle.
+```
+
+Le SIEM, acronyme de plateforme de gestion des informations et des événements de sécurité, rassemble ces fonctions : recevoir, normaliser, indexer, corréler, alerter, présenter, et ouvrir un dossier d'analyse. Il ajoute l'étage que la simple centralisation ne fourit pas : la comparaison dans le temps et entre sources. C'est lui qui peut dire que le même compte a échoué chez le contrôleur de domaine et chez l'application web dans la même minute, alors que chaque source prise isolément paraît normale. Il faut cependant résister à deux idées reçues. La première est qu'un SIEM crée de la visibilité : il ne fait que rendre exploitable ce qui lui est livré, et il est parfaitement capable d'être rempli, indexé et admiré tout en ignorant un sous-réseau entier. La seconde est qu'il suffit de l'installer : une plateforme sans propriétaire, sans règles testées et sans procédure d'analyse produit de l'alerte, donc du bruit, donc de l'aveuglement.
+
+Pour évaluer sérieusement la qualité d'une collecte, retenez trois critères mesurables. La complétude s'exprime par le pourcentage d'actifs du périmètre qui fournissent effectivement leurs journaux, à comparer au pourcentage théorique prévu au recensement ; un écart de dix pour cent se voit immédiatement et se corrige en une semaine. La fidélité mesure le décalage entre l'heure du fait et l'heure d'ingestion, dont la médiane et le quatre-vingt-quinzième centile doivent être publiés, car la moyenne masque les extrêmes. La traçabilité vérifie qu'une entrée du collecteur renvoie vers la source d'origine, faute de quoi l'analyste ne pourra jamais prouver ce qu'il affirme. Ces trois indicateurs coûtent peu à produire et changent radicalement la qualité des discussions sur la détection.
+
+## Écrire une règle de détection qui tient debout
+
+Une règle de détection n'est pas un filtre, c'est une hypothèse. Elle affirme que tel ensemble d'observations, dans tel contexte, a une probabilité suffisante de correspondre à tel comportement pour justifier l'attention d'un humain. Formulée ainsi, elle impose sa structure : une sélection qui décrit le fait, des exclusions qui retirent les contextes légitimes connus, une condition qui relie le tout, un niveau de gravité qui décide du canal et de l'urgence, une liste de faux positifs attendus qui permet de vérifier la règle plus tard, et les champs affichés à l'analyste pour qu'il puisse trancher sans ouvrir dix écrans. Une règle dépourvue de faux positifs documentés est une règle que personne n'a jamais testée.
+
+La méthode de départ n'est pas l'outil mais la technique. On part d'un comportement observé du côté offense, on identifie la tactique et la technique correspondantes dans la matrice ATT&CK, on repère la donnée qui fait foi pour cette technique, et seulement ensuite on écrit la condition. Pour la création de tâche planifiée à des fins de maintien, la donnée fait foi lorsque le planificateur enregistre la création d'une tâche avec son chemin d'exécution ; la condition portera donc sur ce chemin et sur son emplacement, pas sur le nom de l'outil que l'attaquant aurait pu choisir. Ce décalage volontaire, chercher la donnée avant de chercher la syntaxe, est ce qui distingue une règle robuste d'un copier-coller de catalogue.
+
+```yml
+title: Création d'une tâche planifiée pointant vers un chemin utilisateur
+id: 7f2b91c4-5d3e-4a18-9b6c-2e0f4a7c1d55
+status: test
+description: >-
+  Une tâche planifiée vient d'être créée dont le programme est exécuté depuis
+  un profil utilisateur ou une mémoire vive, configuration inhabituelle pour
+  un poste de travail de ce parc et cohérente avec un maintien de présence.
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+author: équipe détection du lab Comptoir
+date: 2026/03/10
+logsource:
+  product: windows
+  service: taskscheduler
+detection:
+  selection:
+    EventID: 4698
+    TaskContent|contains:
+      - '\AppData\Local\Temp\'
+      - '\Users\Public\'
+      - '%TEMP%\'
+  filter_sauvegarde:
+    TaskName: '\Microsoft\Windows\Backup\'
+  condition: selection and not filter_sauvegarde
+falsepositifs:
+  - script d'inventaire déployé par l'équipe système dans un dossier temporaire
+  - poste de test sur lequel un administrateur crée des tâches manuellement
+fields:
+  - TaskName
+  - Author
+  - Date
+  - UserId
+level: high
+```
+
+Les exclusions méritent une attention particulière, car elles sont l'endroit où les règles meurent. Retirer du bruit est normal : un service de sauvegarde crée légitimement des tâches, un agent d'inventaire aussi. Mais chaque exclusion élargie réduit la surface que la règle couvre, et une chaîne de trois exclusions généreuses suffit à rendre une règle parfaitement silencieuse sur la totalité de votre parc. Deux disciplines évitent ce glissement. La première consiste à toujours exclure par une valeur précise, un compte, un chemin, un identifiant, plutôt que par un motif large. La seconde consiste à mesurer chaque exclusion : combien de déclenchements elle retire, et lesquels. Si vous ne pouvez pas chiffrer l'effet d'un filtre, vous ne devriez pas le déployer.
+
+Les seuils et les fenêtres transforment un événement isolé en séquence suspecte, et leur choix se justifie par des données, jamais par intuition. Douze échecs d'authentification sur un même compte en cinq minutes évoquent une pulvérisation ; les mêmes douze échecs répartis sur une journée évoquent un utilisateur qui oublie son mot de passe. La fenêtre doit être assez courte pour que les événements soient liés par une cause commune et assez longue pour absorber la latence de la collecte. En pratique, on part d'une fenêtre large, on l'affine après lecture de l'historique, et on documente la valeur retenue avec sa justification, comme le montre le commentaire en fin d'exemple. Une règle sans justification de seuil ne pourra jamais être défendue lorsqu'un incident réel viendra la contester.
+
+Le test sur historique est l'étape que l'on saute toujours, et c'est celle qui décide de la qualité finale. On rejoue la règle sur trente jours de journaux, on compte les déclenchements, on ouvre chaque alerte produite et on classe : pertinente, non pertinente, indécidable. Le quotient des pertinences sur le total donne le taux de pertinence, indicateur brutal mais honnête. Sous soixante-dix pour cent dans un périmètre réduit, la règle doit être retravaillée ; au-dessus de quatre-vingt-quinze pour cent, il est probable qu'elle soit trop étroite et laisse passer des variantes. Une période d'observation de deux semaines en mode non alertant, avec enregistrement silencieux des déclenchements, permet de valider sans inonder les analystes.
+
+Le cycle de vie d'une règle se gère comme du code, puisque c'en est. Chaque règle porte un statut qui évolue au fil des tests, un responsable identifié, une date de dernière revue et un historique de versions conservé hors de la plateforme, dans un dépôt versionné. Une règle stable dont personne ne relit la configuration pendant six mois finit par décrire un environnement qui n'existe plus : les machines ont changé de nom, les comptes ont été renommés, l'application a été migrée. La revue périodique n'a pas pour objet de changer la logique, mais de vérifier que les champs référencés existent toujours et que la source délivre encore l'événement attendu. Une règle qui ne se déclenche plus depuis trois mois doit être investiguée : elle est soit devenue inutile, soit aveugle.
+
+L'écriture de l'alerte est la dernière étape et souvent la plus rentable. L'analyste dispose de quelques secondes pour décider s'il approfondit ; il lui faut donc une phrase de fait, une gravité, le périmètre concerné et l'action immédiate attendue. Comparez deux formulations : « activité suspecte détectée sur POSTE-ACC01 » n'apprend rien et n'indique aucune suite, tandis que « création d'une tâche planifiée exécutant un script depuis un dossier temporaire sur le poste POSTE-ACC01 à 09:16:35, compte compta.stage ; vérifier l'origine de la tâche et isoler le poste si le chemin n'est pas connu » donne le fait, l'heure, l'acteur, la ressource et la conduite à tenir. Cette exigence se vérifie simplement : montrez l'alerte à un collègue qui n'a pas participé à son écriture et demandez-lui ce qu'il ferait.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Network_based_intrusion_detection_system.png/960px-Network_based_intrusion_detection_system.png
+| Schéma d'un système de détection d'intrusion basé réseau : la sonde analyse une copie du trafic et signale les correspondances de règles.
+```
+
+Un piège mérite enfin d'être signalé, parce qu'il ruine silencieusement des semaines de travail : une règle parfaitement écrite sur une source qui n'envoie rien. Le cas le plus fréquent est celui du journal d'exécution de scripts, désactivé par défaut sur beaucoup de postes, ou celui des journaux applicatifs d'une application nouvellement migrée dont l'agent n'a pas été redéployé. Avant de valider une règle, vérifiez qu'elle se déclenche au moins une fois dans des conditions contrôlées, par exemple en déclenchant volontairement le comportement dans le lab. Cette vérification, que l'on peut automatiser par une sonde de couverture qui déclenche chaque règle une fois par semaine, transforme une collection de règles en un système de détection dont on connaît l'état réel.
+
+## ATT&CK en pratique : de la matrice aux tests
+
+ATT&CK est une base de connaissances décrivant les comportements observés chez des adversaires réels, organisée en tactiques qui correspondent aux objectifs poursuivis et en techniques qui décrivent la manière d'y parvenir. Elle est publique, versionnée, documentée pour chaque technique avec des exemples, des détecteurs possibles et surtout des sources de données associées. Sa valeur n'est pas encyclopédique : elle est sociale. Offense et défense y gagnent un vocabulaire commun qui supprime les ambiguïtés quotidiennes. Lorsqu'un opérateur écrit qu'il a exercé la technique de création de tâche planifiée pour le maintien de la présence, tout le monde sait de quoi il parle, et le défenseur sait immédiatement dans quelles données aller chercher la preuve.
+
+L'erreur classique consiste à utiliser la matrice comme un tableau de score. Compter les techniques couvertes produit des pourcentages flatteurs qui ne résistent à aucune question : couverte selon quel critère, testée quand, par qui, avec quel délai, sur combien d'actifs. Une technique dite couverte parce que sa source de données est présente dans le collecteur n'est pas détectée, elle est seulement observable. La distinction est décisive et il faut l'imposer dans vos rapports : non couverte, signifie que la donnée n'existe pas ; observée, signifie que la donnée existe mais qu'aucune règle ne l'exploite ; détectée, signifie qu'une règle s'est réellement déclenchée lors d'un test, avec un délai connu. Seule la dernière catégorie doit compter dans vos indicateurs.
+
+Le premier usage concret d'ATT&CK dans une session purple est la sélection du périmètre. Plutôt que de viser un grand nombre de techniques, on en choisit un petit pourcentage justifié : les techniques fréquentes dans votre secteur, celles que votre exposition rend plausibles, et celles dont vous soupçonnez la couverture faible. Douze techniques bien choisies et correctement instrumentées valent mieux que quatre-vingts techniques exécutées sans observation, car c'est le nombre d'observations exploitables qui détermine la quantité d'amélioration produite. Chaque technique retenue fait l'objet d'une ligne de préparation : donnée attendue, source qui la fournit, règle associée, et comportement de test reproductible.
+
+Le deuxième usage est le plus précieux et le moins pratiqué : la dérivation des sources de données. Chaque technique d'ATT&CK liste les données susceptibles de la révéler. Cette liste se transforme directement en grille de collecte : pour cette technique, avons-nous cette donnée, sur quel périmètre, avec quelle rétention. C'est ainsi que se découvrent les angles morts, non par intuition mais par comparaison systématique entre ce que la connaissance publique dit nécessaire et ce que votre infrastructure fournit réellement. Une session de revue d'une heure sur douze techniques suffit souvent à révéler trois ou quatre sources absentes, dont certaines sont gratuites à activer.
+
+```json
+{
+  "technique": "T1053.005",
+  "intitule": "Tâche planifiée pour le maintien de la présence",
+  "source_de_donnees_attendue": "Création d'événement 4698 dans le journal du planificateur",
+  "collecte": { "presente": true, "perimetre": "18 postes sur 18", "retention_jours": 90 },
+  "regle": "creation-tache-planifiee-chemin-utilisateur",
+  "resultat_du_test": {
+    "session": "COMPTOIR-03",
+    "etape": 4,
+    "statut": "detecte",
+    "delai_secondes": 74,
+    "pertinence": true
+  },
+  "decision": "stabiliser la règle et l'étendre aux serveurs d'applications"
+}
+```
+
+Le troisième usage consiste à aligner les tests et les corrections sur une même référence. L'exemple ci-dessus montre une fiche de couverture complète : technique, donnée attendue, état réel de la collecte, règle associée, résultat du test avec son délai, puis décision prise. Cette fiche est l'unité de base du reporting purple team, et sa construction est mécanique une fois la session terminée. Elle a l'immense avantage d'être falsifiable : n'importe qui peut venir vérifier que la donnée existe bien et relancer le test. À l'inverse, un tableau récapitulatif de pourcentages, sans détaillage, ne peut être ni vérifié ni amélioré, et finit par être cru sur parole.
+
+Il faut aussi mesurer les limites de la matrice. Elle décrit des comportements observés chez des adversaires étudiés, ce qui la rend inévitablement incomplète pour votre contexte : elle sous-représente certaines menaces internes, ignore vos configurations métier et évolue par versions, ce qui impose de figer la version utilisée lors d'une campagne pour garder des comparaisons valides. Elle décrit également l'attaque, pas la défense : pour les contre-mesures, d'autres référentiels décrivent les actions défensives correspondantes, et le lien entre les deux se fait par votre propre analyse. Enfin, elle ne remplace aucun jugement : une technique absente de la matrice peut parfaitement être celle que vous subiriez, et votre veille doit alimenter une liste locale de comportements à tester en complément.
+
+L'erreur inverse consiste à abandonner la matrice au motif qu'elle est imparfaite. Elle apporte exactement ce dont une équipe a besoin pour sortir du ressenti : une échelle stable, des intitulés partagés, des sources de données exploitables et un historique que l'on peut comparer entre exercices. Adoptez-la comme un cadre de conversation, pas comme une vérité. Concrètement, réunissez l'offense et la défense autour de la grille une fois par trimestre, revenez sur les techniques marquées non couvertes, décidez lesquelles vous renoncez à couvrir en l'état, et inscrivez les autres au programme de la prochaine session. C'est à ce rythme, modeste et régulier, que la matrice cesse d'être une affiche pour devenir un outil de pilotage.
+
+## Exercice de détection : une attaque simulée dans le lab
+
+Un exercice de détection n'est pas une petite attaque livrée avec son rapport : c'est une expérience dont on connaît à l'avance la question posée, dont on instrumente les moyens de réponse, et dont on rejoue les étapes échouées. La distinction est fondamentale. Une attaque simule un adversaire ; une expérience de détection mesure un dispositif. Si vous ne savez pas, avant de commencer, quels journaux vous allez consulter et à quelle heure vous vous attendez à voir apparaître un événement, vous ne délivrez pas une simulation, vous délivrez du stress. Le chapitre précédent a posé la règle : on prépare d'abord la collecte, on exécute ensuite, et on n'accepte comme résultat que ce qui peut être relu, daté et reproduit.
+
+Les conditions préalables tiennent en une dizaine de vérifications, toutes mécaniques et toutes préalables à la première commande offensive. Les instantanés des quatre machines sont pris et vérifiés restaurables. Le réseau est cloisonné et ne possède aucune route vers l'extérieur. Les horloges partagent la même référence et l'écart maximal est mesuré. Le collecteur confirme la réception des sources prévues, en contrôlant que chaque machine du périmètre apparaît dans l'inventaire et que la dernière réception remonte à moins de deux minutes. Les sauvegardes des données de test sont intactes. Les personnes susceptibles d'être dérangées sont prévenues de la date, sans l'heure. Le signal d'arrêt est connu de tous. Enfin, la fenêtre horaire est inscrite au calendrier, car une simulation qui déborde sur une période de production crée un incident que personne n'avait prévu.
+
+Le scénario du lab Comptoir se déroule en six étapes sur environ vingt-cinq minutes, avec des horodatages que le scribe consigne au fur et à mesure. L'étape 1, à 09:02, ouvre un lien depuis un message piégé et déclenche le téléchargement d'un script court. L'étape 2, à 09:05, teste une série de mots de passe sur un compte identifié comme peu surveillé, puis ouvre une session lorsque l'un d'eux est accepté. L'étape 3, à 09:14, exécute la commande encodée décrite plus haut. L'étape 4, à 09:16, crée une tâche planifiée qui relancera le script. L'étape 5, à 09:21, ouvre un partage distant depuis le poste compromis vers le serveur de fichiers. L'étape 6, à 09:27, copie une archive de quatre mégaoctets et la transmet par une requête vers un domaine fictif du périmètre. Chaque étape produit un comportement volontairement simple, car la difficulté ne doit pas venir de la technique mais de l'observation.
+
+```text
+JOURNAL DE SÉANCE - COMPTOIR-03 - 9 mars 2026
+09:00:00  instrumentation vérifiée, 4 actifs visibles dans le collecteur
+09:02:11  étape 1 déclenchée par l'opérateur
+09:03:40  analyste : aucun événement de messagerie dans la console
+09:05:47  étape 2 déclenchée
+09:07:02  analyste : alerte « échecs répétés » reçue, délai estimé 55 s
+09:14:02  étape 3 déclenchée
+09:15:10  analyste : aucun événement 4104 présent, angle mort confirmé
+09:16:35  étape 4 déclenchée
+09:17:49  analyste : alerte « création de tâche » reçue, délai estimé 74 s
+09:21:09  étape 5 déclenchée
+09:22:31  analyste : connexion SMB visible dans le journal réseau, règle absente
+09:27:54  étape 6 déclenchée
+09:29:12  analyste : alerte « volume sortant inhabituel » reçue, délai 78 s
+09:35:00  fin de session, six étapes exécutées, quatre résultats observables
+```
+
+Le journal de séance ci-dessus est le livrable le plus important de l'exercice, plus que la liste des techniques. Il donne, pour chaque étape, l'heure d'exécution, l'heure d'observation côté défense et la nature de l'observation : alerte, événement visible sans règle, ou rien du tout. Trois statuts seulement sont possibles, et il est essentiel de les distinguer. L'état détecté signifie qu'une alerte est née dans les temps. L'état observé sans alerte signifie que la donnée existe dans le collecteur mais que personne n'a été prévenu, ce qui se corrige en écrivant ou en activant une règle. L'état invisible signifie que la donnée n'existe pas, ce qui se corrige en activant une source ou un journal, travail qui relève du paramétrage et non de la détection. Confondre les deux états conduit à écrire des règles sur des sources muettes.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Sword_26-_Cyber_Range_26_%289706738%29.jpg/960px-Sword_26-_Cyber_Range_26_%289706738%29.jpg
+| Participants réunis devant leurs postes pendant un exercice de cybersécurité sur un cyber-range dédié à l'entraînement.
+```
+
+L'analyste qui suit la session travaille dans des conditions particulières : il ignore l'heure exacte des étapes et ne doit pas lire le scénario, mais il connaît le périmètre des techniques susceptibles d'être exercées. Il note chaque alerte avec son heure de réception, ouvre le détail, décide en quelques secondes s'il remonterait l'information, et consigne sa décision. Deux minutes par alerte suffisent. Le point délicat est l'absence : lorsqu'une étape se produit et que rien n'apparaît, l'analyste doit pouvoir le constater sans qu'on le lui souffle, puis chercher activement la donnée dans le collecteur. C'est cette recherche, menée à froid pendant l'exercice, qui révèle le plus souvent qu'un agent est arrêté depuis une mise à jour ou qu'un champ attendu n'est jamais peuplé.
+
+La session se déroule généralement en deux temps. Le premier temps est aveugle : personne ne sait quand les étapes se produisent, et l'on mesure la détection telle qu'elle fonctionne réellement. Le second temps est transparent : on rejoue immédiatement les étapes non détectées, en observant ensemble le chemin complet, de la commande exécutée jusqu'à la ligne qui apparaît ou n'apparaît pas dans le collecteur. Ce second temps est pédagogiquement le plus fécond, car il rend visible la chaîne technique discutée plus haut. Il ne sert à rien de le remplacer par une discussion : montrez la source, montrez l'indexation, montrez l'exécution de la règle, puis montrez l'alerte. Les équipes qui adoptent ce réflexe corrigent en jours des problèmes qu'elles traînaient depuis des trimestres.
+
+Trois écueils reviennent à chaque première session et se laissent éviter en les nommant. Le premier consiste à instrumenter après coup : on attaque, on constate que rien n'est visible, et l'on découvre que le journal recherché n'était pas activé, ce qui gaspille l'exercice. Le deuxième consiste à modifier plusieurs choses entre le premier et le deuxième passage : on change une règle, un paramètre de collecte et un durcissement en même temps, et l'amélioration observée devient inexploitable car impossible à attribuer. Le troisième consiste à exécuter la simulation directement sur un système de production sans instantané ni autorisation écrite, ce qui expose les utilisateurs et vous expose juridiquement. Dans le lab, ces trois écueils sont exclus par conception ; hors du lab, ils doivent être exclus par procédure.
+
+Le compte rendu de session contient quatre parties, et leur ordre n'est pas indifférent. On commence par le résumé exécutif en cinq lignes, à destination de la direction. On donne ensuite le tableau des étapes et de leurs résultats, avec les délais mesurés. On expose les constats classés par nature, ce qui fait l'objet de la section suivante. On termine par le programme de correction, avec un responsable et une date pour chaque item. Un compte rendu qui s'arrête au tableau des résultats est un rapport d'activité ; un compte rendu qui se termine par un programme daté est un outil de pilotage. La distinction se vérifie au moment du prochain exercice : seul le second permet de dire ce qui a réellement changé.
+
+## La boucle de feedback : de l'attaque à la défense
+
+La boucle de feedback est le mécanisme qui transforme une observation en amélioration. Sans elle, les sessions successives produisent des constats toujours neufs et une situation qui ne s'améliore jamais. Le principe est simple : chaque constat issu d'une session devient une ligne de travail, avec une nature, une correction, un responsable et une échéance, et cette ligne ne se referme que lorsqu'elle a été retestée. Le scribe tient ce registre, la réunion de débriefing l'alimente, et le prochain exercice le vérifie. Tout le dispositif tient dans cette discipline administratif, moins séduisante que l'exécution de l'attaque, mais seule capable de produire une progression mesurable.
+
+La première opération consiste à classer les constats par nature, car la nature détermine la correction. Un manque de collecte signifie que la donnée n'existe pas et qu'il faut activer un journal, redéployer un agent ou élargir le périmètre. Un manque de règle signifie que la donnée existe mais n'est pas exploitée, et qu'il faut écrire, tester ou activer une détection. Un manque de qualité de règle se produit lorsqu'une alerte est née trop tard, avec trop peu de champs ou avec un message incompréhensible. Un manque de procédure apparaît lorsque l'alerte est juste mais que personne ne sait quoi en faire, faute de jeu d'actions préparé. Enfin, un manque de durcissement désigne un comportement qui reste possible alors qu'il pourrait être supprimé ou restreint à moindre frais. Tenter de corriger un manque de collecte en écrivant une règle est l'erreur la plus fréquente et la plus stérile.
+
+Le tableau de retour d'expérience ci-dessous reprend les six étapes du lab Comptoir et donne, pour chacune, la correction retenue. Il ne contient que des éléments vérifiables : une correction sans preuve de retest reste une intention. La dernière colonne est celle que l'on remplit lors de la session suivante, jamais avant, et son contenu décide de la fermeture de la ligne. Remplir cette colonne à l'avance est la manière la plus rapide de se fabriquer une illusion de progrès.
+
+```table
+| Constat de la session | Nature du manque | Correction retenue | Preuve attendue au retest |
+| Aucun événement de messagerie dans la console | Collecte | Réactivation de la collecte des journaux du courrier sur la passerelle | Événement de clic visible à moins d'une minute |
+| Alertes d'échecs reçues après 55 secondes | Qualité de règle | Fenêtre ramenée de dix à cinq minutes, champs de contexte ajoutés | Délai inférieur à trente secondes et message complet |
+| Exécution de script invisible | Collecte puis règle | Transcription des scripts activée par stratégie, puis règle dédiée | Événement 4104 présent et alerte à moins d'une minute |
+| Création de tâche détectée en 74 secondes | Qualité de règle | Enrichissement de l'alerte avec le chemin et l'auteur | Délai inférieur à trente secondes, action immédiate indiquée |
+| Connexion réseau visible sans alerte | Règle | Nouvelle règle sur les connexions sortantes inhabituelles | Alertes générées et retest passé avec pertinence supérieure à 80 % |
+| Transfert sortant détecté en 78 secondes | Procédure | Jeu d'actions rédigé et testé sur le poste isolé | Décision prise en moins de cinq minutes lors du retest |
+```
+
+La priorisation évite de vouloir corriger tout en même temps. On combine la gravité du manque, la facilité de la correction et le nombre d'étapes concernées, puis on retient un nombre limité de lignes actives, cinq suffisent pour une équipe de deux personnes. Une correction lourde mais décisive, comme l'activation de la transcription des scripts sur l'ensemble du parc, se découpe en jalons vérifiables plutôt qu'en chantier de trois mois. L'essentiel est que chaque ligne avance visiblement : une équipe qui en ferme cinq par trimestre modifie radicalement sa posture en un an, tandis qu'une équipe qui en ouvre cinquante sans en fermer une finit par abandonner le registre, donc la boucle elle-même.
+
+Le retour fonctionne aussi dans l'autre sens, et c'est souvent là que la valeur est la plus inattendue. L'analyste, en observant les événements réels, formule des hypothèses que l'offense n'avait pas envisagées. Par exemple : jamais nous ne voyons de connexions sortantes depuis le sous-réseau des postes d'accueil, ce qui peut signifier deux choses contradictoires, soit que ce trafic n'existe pas, soit qu'il n'est pas collecté. L'opérateur peut alors concevoir une étape supplémentaire pour trancher, et la session suivante répond à une question défensive plutôt qu'à une liste générique. De la même manière, un analyste qui constate qu'une alerte contient trop peu d'informations demande des champs précis, ce qui rend la règle suivante, écrite par l'offense, immédiatement plus exploitable.
+
+Le rythme de cette boucle détermine son efficacité. Un débriefing de trente minutes a lieu dans les deux jours qui suivent la session, tant que la mémoire est fraîche, et il est consacré exclusivement aux corrections, pas à la relecture du scénario. Un point hebdomadaire de quinze minutes suit l'avancement du registre. Une session mensuelle rejoue quelques étapes. Une revue trimestrielle remet à plat la couverture et le programme des techniques à venir. Ce calendrier paraît lourd, mais il représente moins d'une heure par mois pour chacun, et il transforme l'exercice ponctuel en processus. Sans calendrier, la boucle s'arrête à la première période chargée, ce qui arrive toujours.
+
+Un piège culturel menace ce dispositif, et il faut le nommer explicitement : l'exercice ne mesure pas les personnes. Lorsqu'une alerte n'est pas vue, l'objet du constat est le système, sa règle, son message ou son délai, jamais l'analyste de garde. Une équipe qui redoute d'être jugée par le résultat d'une simulation cesse de signaler ce qu'elle n'a pas vu, et donc détruit précisément l'information que la boucle cherche à produire. À l'inverse, une équipe qui sait que chaque constat deviendra une ligne corrigée et retestée finit par annoncer elle-même les angles morts, ce qui est le signe le plus fiable d'une maturité réelle. La mesure porte sur le dispositif, l'amélioration est collective, la responsabilité est sur le programme.
+
+## Après coup : contre-mesures et durcissement
+
+Le temps de la contre-mesure commence une fois la session terminée et ses constats classés. Il ne s'agit pas d'appliquer un catalogue de bonnes pratiques, mais de répondre à chaque étape observée par l'action la plus durable disponible. On distingue quatre niveaux d'action, ordonnés par solidité. Supprimer la capacité, c'est-à-dire rendre le comportement impossible, est le plus fort : désactiver un protocole obsolète, retirer un droit inutilisé, interdire l'exécution de scripts non signés. Restreindre la capacité, c'est-à-dire limiter le champ dans lequel le comportement reste possible, arrive ensuite : n'autoriser la création de tâches qu'à certains comptes, cloisonner un segment. Détecter la capacité est le troisième niveau et le seul qui subsiste lorsque le comportement est intrinsèquement nécessaire au fonctionnement. Accepter enfin, avec traçabilité et date de revue, est un choix et non une défaillance, à condition d'être explicite.
+
+Appliquons cette hiérarchie aux six étapes du lab Comptoir, en partant de la première. Face à l'hameçonnage, on peut filtrer les liens inconnus à la passerelle, forcer l'authentification multifacteur pour toute ouverture de session externe, et mettre à disposition un bouton de signalement qui alimente la détection ; l'élimination totale n'étant pas atteignable, la combinaison des trois niveaux est la réponse juste. Face à la pulvérisation, la suppression consiste à désactiver les comptes inutilisés et à imposer un verrouillage après un nombre limité d'échecs, la restriction à réserver certains comptes à des postes précis, la détection aux séquences d'échecs. Face à l'exécution encodée, la transcription et la journalisation de scripts rendent visible ce qui était invisible, ce qui est une détection, complétée par un mode de langage contraint qui restreint les capacités du script, une restriction.
+
+La différence entre corriger un symptôme et corriger une capacité mérite d'être illustrée, car elle commande la durée de vie des contre-mesures. Si l'attaquant utilise un outil maison et que vous bloquez cet outil par nom de fichier, vous avez corrigé un symptôme : la prochaine séance utilisera un binaire renommé et passera. Si vous interdisez l'exécution de tout ce qui provient d'un dossier temporaire, vous avez corrigé une capacité, car le chemin d'exécution est indépendant de l'outil. De même, désactiver un protocole réseau obsolète supprime définitivement une famille entière d'attaques, alors que surveiller ce protocole laisse la possibilité de le réactiver par erreur. Lorsque vous rédigez une contre-mesure, posez la question de la substitution : quelle serait la variante immédiate d'un adversaire, et cette contre-mesure la couvre-t-elle ?
+
+```yml
+# Durcissement du lab Comptoir après la session COMPTOIR-03
+poste:
+  nom: POSTE-ACC01
+  contre_mesures:
+    - cle: "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging"
+      valeur: 1
+      effet: "journalisation des blocs de script, rend l'étape 3 observable"
+    - cle: "HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription"
+      valeur: 1
+      effet: "transcription des sessions, preuve réutilisable en investigation"
+    - restriction: "création de tâches réservée au compte d'administration"
+      effet: "rend l'étape 4 impossible depuis un compte standard"
+    - restriction: "signature SMB exigée sur le segment des postes"
+      effet: "réduit l'étape 5 aux communications explicitement autorisées"
+retest:
+  date: "2026-03-11"
+  etapes_rejouees: [3, 4, 5]
+  critere_de_succes: "détection en moins de trente secondes pour l'étape 3"
+```
+
+Le durcissement a un coût qu'il faut assumer avant de l'appliquer, sinon il se retourne contre vous. Une politique qui interdit tout script inhabituel immobilise une équipe d'administration le premier matin ; une règle de verrouillage de compte trop stricte produit des blocages massifs lors d'une campagne de mot de passe oublié ; une restriction réseau qui oublie un service de supervision fait tomber la supervision elle-même. La discipline consiste à tester chaque contre-mesure dans le lab, à la déployer sur un périmètre volontairement réduit pendant une période d'observation, à documenter les exceptions avec un responsable et une date d'expiration, puis seulement à généraliser. Une exception sans date de fin est un trou que l'on a décidé d'ignorer, et il apparaîtra dans le rapport suivant.
+
+La vérification de l'effet est l'étape que l'on saute le plus souvent, alors qu'elle est la seule qui transforme une modification en amélioration prouvée. Après application des contre-mesures, on rejoue les étapes concernées dans des conditions identiques, on mesure à nouveau les délais, et l'on inscrit le résultat dans la colonne « preuve attendue au retest ». Si l'étape est désormais bloquée, il faut vérifier que le blocage laisse une trace exploitable, car un refus silencieux prive le défenseur de l'information que quelqu'un a essayé. Si l'étape reste possible mais devient détectable plus vite, il faut mesurer le nouveau délai et vérifier qu'il est compatible avec la procédure de réponse. Un durcissement qui n'est pas rejeté ni mesuré n'existe pas encore au sens de ce chapitre.
+
+La trace écrite de ce travail tient en quelques lignes par contre-mesure : le constat d'origine, l'action appliquée, le périmètre, la date de déploiement, la preuve obtenue au retest, le risque résiduel accepté et la date de la prochaine réévaluation. Ce risque résiduel est important : après la session COMPTOIR-03, la création de tâches reste possible pour deux comptes d'administration identifiés, ce qui constitue un chemin connu, assumé, daté, et surveillé par une règle dédiée. Dire ce qui reste, plutôt que prétendre à l'étanchéité, est la marque d'un programme défensif sérieux. C'est aussi ce qui rendra la prochaine discussion avec la direction simple : on montre le chemin corrigé, le délai gagné et le chemin restant, avec sa justification.
+
+## Mesurer la détection : temps de détection et couverture
+
+Une capacité de détection que l'on ne mesure pas ne peut être ni défendue ni améliorée, car elle reste une impression. Trois familles d'indicateurs suffisent à rendre la situation lisible, et chacune répond à une question différente. Le temps de détection répond à la vitesse : combien de temps entre le premier signal réellement présent dans l'environnement et le moment où un analyste dispose d'une alerte exploitable. La couverture répond à l'étendue : sur quel périmètre de comportements une détection existe-t-elle et a-t-elle été prouvée. La qualité répond à la crédibilité : les alertes produites sont-elles pertinentes, en nombre soutenable, et accompagnées de l'information nécessaire à la décision. Un dispositif excellent sur l'une de ces dimensions et catastrophique sur les autres est toujours faible, et c'est la lecture croisée des trois qui intéresse une direction.
+
+Le temps de détection se décompose en deux intervalles qu'il ne faut jamais confondre. Le premier est le délai de machine, entre l'heure du fait et l'apparition de l'alerte dans la console ; il dépend de la chaîne de collecte, de l'indexation et de la règle. Le second est le délai humain, entre l'apparition de l'alerte et sa prise en compte par un analyste ; il dépend de l'organisation, des effectifs et de la qualité du message. Dans la session COMPTOIR-03, les alertes sont apparues en cinquante-cinq, soixante-quatorze et soixante-dix-huit secondes, chiffres qui ne disent rien du moment où quelqu'un les a réellement traitées. Rapportez les deux délais séparément : si le premier est long, la faute est technique et se corrige par la collecte ; s'il est court et que le second explose, la faute est organisationnelle et se corrige par la procédure ou les effectifs, ce qui n'appelle pas le même budget.
+
+```table
+| Indicateur | Définition opérationnelle | Calcul | Cible de départ |
+| Délai de machine | Entre l'heure du fait et l'apparition de l'alerte | Médiane et 95e centile par règle sur trente jours | Médiane inférieure à trente secondes |
+| Délai humain | Entre l'apparition de l'alerte et sa prise en compte | Temps de la première action tracée dans la fiche | Inférieur à cinq minutes en heures ouvrées |
+| Couverture détectée | Techniques du périmètre réellement déclenchées en test | Détectées divisées par techniques retenues, hors techniques renoncées | Quarante pour cent la première année |
+| Taux de pertinence | Alertes jugées pertinentes divisées par alertes totales | Relecture de toutes les alertes sur une période | Supérieur à soixante-dix pour cent |
+| Charge d'alerte | Alertes à traiter par analyste et par poste de garde | Nombre de fiches ouvertes sur la fenêtre de référence | Inférieur à trente par poste de garde |
+```
+
+Le choix des statistiques compte autant que le choix des indicateurs. La moyenne d'un délai masque les extrêmes, et c'est précisément l'extrême qui fait perdre un incident : une règle qui alerte en dix secondes quatre-vingt-dix-neuf fois sur cent et en deux heures une fois sur cent a une moyenne décente et une fiabilité médiocre. Retenez donc la médiane pour décrire le fonctionnement courant et le quatre-vingt-quinzième centile pour décrire ce qui se passe quand ça se dégrade, et publiez les deux. Une même règle mesurée sur sept jours et sur trente jours ne donne pas les mêmes chiffres, car l'activité varie : fixez la fenêtre de mesure, et ne la modifiez que pour des raisons explicites, sinon chaque comparaison devient discutable.
+
+La couverture exige davantage de précautions encore, parce qu'elle est l'indicateur le plus flatteur et le plus trompeur. Il faut d'abord définir le dénominateur : non pas la totalité de la matrice ATT&CK, qui décrirait des dizaines de comportements sans rapport avec votre secteur, mais le sous-ensemble de techniques que vous avez choisi de traiter, celui-là même qui a été négocié avec la direction et inscrit au programme. Ensuite, il faut appliquer les trois états distingués plus haut : non couverte lorsque la donnée n'existe pas, observée lorsque la donnée existe sans règle, détectée lorsque la règle s'est réellement déclenchée lors d'un test. Publier une couverture qui mélange les deux premiers états avec le troisième produit des pourcentages qui s'effondrent dès qu'un contrôleur externe demande la preuve d'un échantillon.
+
+La qualité se mesure par le taux de pertinence et par la charge d'alerte, qui vont presque toujours dans le sens inverse. Une règle très large produit beaucoup d'alertes et peu de pertinentes ; une règle très étroite produit peu d'alertes et manque des variantes. Le réglage consiste à chercher le point où la pertinence reste élevée sans que le volume dépasse ce qu'une équipe peut réellement examiner. Cette capacité d'examen est un nombre : combien de fiches un analyste ouvre-t-il réellement et traite-t-il en profondeur sur un poste de garde. Au-delà, les alertes s'empilent, les délais humains explosent et le dispositif n'est plus détecteur en dépit de ses statistiques. Une règle qui génère plus de cent alertes par jour et n'est jamais examinée doit être désactivée ou réécrite, car elle produit de la confiance illusoire.
+
+```json
+{
+  "session": "COMPTOIR-03",
+  "perimetre": "4 actifs, 12 techniques retenues",
+  "avant": {
+    "couverture_detectee": 0.25,
+    "delai_machine_median_s": 66,
+    "taux_pertinence": 0.52,
+    "alertes_par_poste_de_garde": 74
+  },
+  "apres_corrections": {
+    "couverture_detectee": 0.66,
+    "delai_machine_median_s": 22,
+    "taux_pertinence": 0.81,
+    "alertes_par_poste_de_garde": 31
+  },
+  "etapes_retestees": [3, 4, 5, 6],
+  "restant_non_couvert": ["T1055", "T1071.001"],
+  "prochaine_session": "2026-04-13"
+}
+```
+
+La comparaison avant et après, illustrée par le bloc ci-dessus, est l'argumentaire le plus solide qui soit, parce qu'elle relie chaque chiffre à une correction précise. La couverture n'a pas augmenté par magie : trois techniques supplémentaires ont été déclenchées parce que la transcription a été activée, une règle a été écrite et une autre enrichie. Le délai médian a baissé pour les mêmes raisons, la suppression d'une source inutile ayant réduit le temps d'indexation. La pertinence a progressé grâce aux filtres chiffrés. Chaque variation doit pouvoir être reliée à une décision ; à défaut, il s'agit d'une fluctuation, et il serait malhonnête de la présenter comme un progrès.
+
+Les pièges de la mesure sont connus et méritent d'être énoncés avant que vous ne les pratiquiez sans vous en rendre compte. Le premier consiste à déclencher délibérément les tests aux moments les plus calmes, ce qui améliore artificiellement les délais : exécutez les étapes sur des plages représentatives, y compris chargées. Le second consiste à réduire la charge d'alerte en désactivant les règles difficiles, ce qui améliore deux indicateurs et dégrade réellement la posture : documentez les désactivations et comptez-les séparément. Le troisième consiste à changer de périmètre entre deux mesures, en ajoutant des techniques faciles au moment de la revue. Le quatrième consiste à présenter un pourcentage de couverture sans jamais citer les preuves. Toutes ces pratiques se détectent d'une même manière : on demande l'échantillon, on demande la liste des règles désactivées et on demande la date du dernier test pour chaque technique annoncée couverte.
+
+La restitution de ces indicateurs se fait à trois échelles, avec trois publics différents. La session produit un relevé technique destiné aux équipes, riche en détails, avec les délais par règle et les constats. La revue mensuelle consolide les tendances et arbitre le programme de corrections, en demandant pour chaque ligne son état d'avancement et sa preuve. La revue trimestrielle s'adresse à la direction et ne contient que trois chiffres, la couverture détectée, le délai médian et le taux de pertinence, accompagnés d'une phrase sur le risque restant. Cette discipline de restitution vaut plus que n'importe quel tableau de bord dans un outil : elle oblige à décider ce qui compte, et elle empêche de noyer l'essentiel sous des métriques qui ne servent à personne.
+
+## L'audit offensif au service de la maturité défensive
+
+L'audit offensif est une évaluation conduite par une tierce partie ou une équipe interne indépendante, qui utilise des méthodes offensives dans le cadre d'un mandat écrit pour juger l'efficacité des mesures de protection. Il se distingue d'un test d'intrusion par sa finalité : le test cherche un chemin vers un objectif, l'audit cherche à établir ce qui tient, ce qui ne tient pas et pourquoi. Il se distingue également de la session purple team par son indépendance et sa périodicité : l'audit est un examen à un instant donné, produit un rapport opposable et se renouvelle à intervalle long, alors que la session purple est un processus continu d'amélioration partagée. Les trois se complètent, et c'est leur enchaînement qui structure une maturité défensive.
+
+Ce que l'audit offensif apporte de proprement irremplaçable tient en trois contributions. La première est la preuve du chemin : contraître une vulnérabilité théorique en montrant qu'elle mène réellement à un dossier sensible transforme une priorité abstraite en fait daté, reproductible et compréhensible par ceux qui décident. La deuxième est le calibrage des priorités : un audit révèle que trois failles exploitables ouvrent la même porte, ce qui permet de corriger une fois au lieu de trois, et que dix autres, pourtant spectaculaires, ne mènent nulle part dans votre configuration. La troisième est la mesure de l'écart entre l'image que l'organisation a d'elle-même et sa situation réelle, écart qui constitue lui-même un indicateur de maturité : une organisation qui surestime sa posture investit au mauvais endroit.
+
+La conversion d'un rapport d'audit en programme de détection est un travail méthodique que l'on peut décrire en quatre temps. On commence par reprendre chaque constat et lui attribuer la ou les techniques correspondantes dans la matrice, car le constat décrit un comportement exploité, donc un comportement détectable. On dérive ensuite les sources de données associées, ce qui donne la liste des collectes à vérifier ou à créer. On écrit ou on adapte les règles correspondantes, en partant des événements que l'audit a effectivement générés pendant sa mission, ce qui fournit un jeu de test réel plutôt que simulé. Enfin, on planifie le retest de ces règles dans la prochaine session purple, ce qui referme la boucle. Une équipe qui exécute ce processus sur un rapport de vingt constats sort typiquement avec six ou huit règles neuves et deux angles morts de collecte identifiés, chiffre bien supérieur à ce qu'une réunion d'idées aurait produit.
+
+L'angle mort de l'audit, celui que vous devez connaître pour l'interpréter, est le suivant : un test d'intrusion classique ne dit rien de votre capacité à détecter, sauf si vous l'avez explicitement demandé. Un rapport peut affirmer qu'un poste a été compromis en quarante-huit heures sans préciser si la compromission a été visible en trente secondes ou jamais, et les deux situations sont parfaitement compatibles avec les mêmes constats. C'est pourquoi il faut faire inscrire dans le mandat une clause de défi de détection : l'auditeur exécute des étapes identifiées et horodatées, l'équipe de surveillance travaille normalement, et l'écart entre les deux chronologies est consigné dans le rapport. Cette clause ne renchérit pas la mission ; elle lui donne une seconde dimension, défensive, que le rapport ordinaire ne produit pas.
+
+La contribution de ces exercices à la maturité se décrit par niveaux, et chaque niveau doit être justifié par une preuve observable plutôt que par une auto-évaluation. Le premier niveau correspond à une posture déclarative : des journaux existent, des alertes apparaissent, mais personne ne sait dire avec quel délai ni avec quelle couverture ; la preuve est l'absence même de mesure. Le deuxième niveau correspond à une posture définie : des règles sont écrites, testées et documentées, des indicateurs sont produits à chaque session, mais ils ne sont pas encore suivis dans la durée ; la preuve est le relevé d'une session. Le troisième niveau correspond à une posture mesurée : les délais et la couverture sont suivis trimestriellement, les corrections sont retestées et les risques résiduels sont écrits ; la preuve est la série comparée de deux sessions successives. Le quatrième niveau suppose que le programme pilote ses investissements avec ses propres données, ce qui n'arrive presque jamais sans plusieurs années de boucles régulières.
+
+```table
+| Niveau | Critère observable | Preuve exigée | Rôle de l'audit offensif |
+| 1. Déclaratif | Alertes produites, aucun délai ni couverture connus | Absence d'indicateur daté | Révèle l'écart entre l'image et le réel |
+| 2. Défini | Règles écrites et testées, indicateurs produits ponctuellement | Relevé d'une session avec ses délais | Fournit un jeu d'essai réel pour les règles |
+| 3. Mesuré | Délais et couverture suivis, corrections retestées | Deux sessions comparées sur la même période | Valide ou infirme les priorités de correction |
+| 4. Piloté | Investissements arbitrés sur les propres mesures | Série de trimestres et décisions tracées | Alimente le programme annuel d'évaluation |
+```
+
+La fréquence de ces dispositifs répond à une logique de budget plus que de principe. Un audit offensif annuel marque le temps long et fournit le jeu de constats ; des sessions purple mensuelles ou bimestrielles produisent les micro-améliorations et les retests ; une revue trimestrielle consolide les indicateurs et arbitre ; un réglage hebdomadaire des règles absorbe le bruit quotidien. À chaque échelle correspond un livrable, et l'essentiel est que les livrables s'enchaînent : le rapport d'audit alimente le programme de la session, la session alimente le registre de corrections, le registre alimente la revue, et la revue justifie le budget de l'audit suivant. Une organisation qui finance ces quatre échelles sans les relier paie quatre fois le même travail.
+
+Un rappel de cadre ferme cette section, parce qu'il n'est jamais inutile. Toute action offensive, y compris la plus anodine en apparence, relève d'un mandat écrit, d'un périmètre délimité et d'une période limitée dans le temps. Dans la pratique du lab, cela signifie que vous vous entraînez sur des machines qui vous appartiennent, avec des données fictives, dans un réseau isolé, et que vous reportez chaque geste appris dans votre environnement professionnel uniquement à travers les canaux prévus : règle de détection, durcissement, procédure. La compétence offensive ne se valorise pas en démontrant qu'elle peut franchir une porte, mais en montrant qu'après son passage, la porte se voit, se ferme et se surveille.
+
+## À retenir
+
+L'essentiel de ce chapitre tient dans un petit nombre de propositions que vous devez pouvoir reformuler sans appui. L'offense et la défense ne sont pas deux métiers adverses mais deux observations d'un même fait, et leur articulation, le purple team, est un processus cyclique de préparation, d'exécution, d'observation, de correction et de retest, dont la boucle ne se referme qu'au moment du retest. Ce que l'attaquant voit est partiel, choisi et subjectif ; ce que le défenseur voit est complet mais dépourvu d'intention, fragmenté entre des sources multiples et retardé par une chaîne technique dont chaque maillon ajoute sa latence.
+
+Les journaux sont la matière première et ils ne sont pas produits pour la sécurité : ils se décrivent par quatre questions, nature du fait, champs utiles, durée de conservation et lecteur réel, et leur centralisation ne crée pas de visibilité, elle ne fait que rendre exploitable ce qui lui est livré. Une règle de détection est une hypothèse dotée d'une sélection, d'exclusions chiffrées, d'un seuil justifié, de faux positifs documentés, d'un niveau et de champs exploitables ; elle se teste sur historique, se déploie en observation puis se stabilise, et elle meurt le plus souvent parce que sa source de données n'existe pas. ATT&CK sert de vocabulaire commun, de grille de dérivation des sources de données et de périmètre de test, à condition de distinguer non couverte, observée et détectée.
+
+La mesure repose sur trois familles d'indicateurs : le délai de machine, le délai humain et la couverture, chacun lu avec sa médiane et son quatre-vingt-quinzième centile, et tous reliés à une correction traçable. L'audit offensif apporte la preuve du chemin, le calibrage des priorités et la mesure de l'écart entre l'image et le réel ; converti en programme, il produit des règles nouvelles et des angles morts identifiés ; adossé à des niveaux justifiés par des preuves, il construit une maturité défensive qui se démontre au lieu de s'affirmer.
+
+## Erreurs fréquentes
+
+La première erreur consiste à écrire des règles avant d'avoir vérifié la collecte. Elle est universelle, coûteuse et facile à éviter : ouvrez le collecteur, cherchez l'événement que vous comptez exploiter, confirmez qu'il arrive, qu'il est complet, horodaté et conservé assez longtemps, puis seulement rédigez la condition. La seconde erreur consiste à exclure trop large pour réduire le bruit : trois filtres généreux posés successivement au fil des semaines suffisent à rendre une règle parfaitement silencieuse, et personne ne s'en aperçoit tant que l'on ne rejoue pas la règle sur un test contrôlé.
+
+La troisième erreur est de confondre l'absence d'alerte avec l'absence d'événement. L'une se corrige en écrivant une règle, l'autre en activant un journal ou un agent, et tenter de corriger la seconde avec la première fait perdre des semaines. La quatrième est de présenter un pourcentage de couverture sans préciser le dénominateur ni l'état de chaque technique, ce qui transforme un indicateur en argumentaire. La cinquième est de réaliser une simulation sans instantané, sans isolation ni autorisation écrite, ce qui expose des utilisateurs et vous expose vous-même. La sixième est de corriger plusieurs causes entre deux passages et d'attribuer l'amélioration à l'ensemble, rendant le résultat inexploitable.
+
+La septième erreur, plus insidieuse, est d'utiliser les résultats d'une simulation pour juger une personne plutôt que pour améliorer un dispositif : l'équipe qui redoute le jugement cesse de signaler ce qu'elle n'a pas vu, et détruit l'information que la boucle cherche justement à produire. La huitième est de multiplier les indicateurs jusqu'à ce que personne n'en lise plus : trois chiffres tenus régulièrement valent mieux que trente irréguliers. La neuvième est d'oublier la formule de fermeture d'une ligne de correction : sans retest daté et sans preuve, une correction reste une intention, et le registre se remplit d'affirmations que personne n'a jamais vérifiées.
+
+## Pour aller plus loin
+
+Pour consolider ces acquis, le chemin le plus direct consiste à descendre d'un cran sur chacun des trois piliers. Sur la connaissance des comportements, parcourez la matrice ATT&CK en vous limitant aux techniques de vos douze retenues, et lisez pour chacune la description, les exemples et surtout les sources de données associées : cette lecture d'une heure par technique vaut plusieurs cours, car elle montre concrètement ce qui se voit et ce qui ne se voit pas. Sur l'écriture des règles, prenez une bibliothèque de règles publiées dans un format neutre, parcourez-en cinq en détail et refaites-en une à votre main en partant de la donnée plutôt que de la syntaxe : c'est l'exercice le plus rentable de tout le chapitre.
+
+Sur la partie mesure et organisation, entraînez-vous à écrire une page unique contenant votre périmètre, vos trois indicateurs, vos cibles et votre rythme de revue, puis présentez-la à quelqu'un qui n'est pas de votre métier : si la personne ne comprend pas ce que vous mesurez et pourquoi, la page doit être réécrite. La lecture des publications institutionnelles françaises et européennes sur la surveillance et la réponse apporte également un vocabulaire et des attentes réalistes, tandis que les rapports publics de retour d'expérience vous montreront que les défaillances décrites dans ce chapitre sont partout les mêmes : collecte incomplète, règles non testées, corrections jamais retestées.
+
+Un conseil de méthode enfin : conservez vos journaux de session. Relisez la première session six mois après, et vous verrez apparaître, dans votre propre manière de décrire les faits, la distance parcourue entre une observation floue et une mesure défendable. C'est ce décalage, et non le nombre d'outils installés, qui documente une progression.
+
+## Et maintenant : lancez votre première boucle de détection
+
+Vous avez désormais tous les éléments pour exécuter un cycle complet dans votre propre lab, et le plus simple est de commencer petit. Préparez une session de trois étapes plutôt que six, instrumentez d'abord les sources, faites jouer les deux rôles si vous êtes seul, en vous interdisant de regarder la console côté défense pendant l'exécution, puis tenez le journal minute par minute. Une fois la session terminée, écrivez les constats avec leur nature, choisissez trois corrections au maximum, appliquez-les, et rejouez exactement les mêmes étapes quarante-huit heures plus tard. C'est ce dernier passage, souvent négligé, qui transforme une série d'observations en une première preuve de progression.
+
+Le livrable attendu tient en quatre pièces : le journal de séance horodaté, le tableau des résultats avec les délais mesurés, la liste des corrections avec leur responsable et leur date, et le relevé du retest. Conservez le tout dans un format reproductible, par exemple un dossier par session, et revenez-y à la fin de votre parcours. Vous constaterez alors que la compétence centrale de ce chapitre n'est ni l'attaque ni la défense prises isolément, mais la capacité à faire circuler l'information entre les deux, avec méthode, preuves et régularité.

@@ -1,0 +1,159 @@
+Vous avez créé le bon index, sur la bonne colonne, dans le bon ordre. Vous lancez la requête, et le plan affiche toujours un balayage complet. L'index existe, il est sain, il a même déjà servi une fois, mais votre requête l'ignore. Dans la grande majorité des cas, la faute n'est ni du moteur ni de l'index : elle est dans la formulation de la condition. Il existe un mot pour décrire cette qualité d'une requête, sa capacité à tirer parti d'un index, et ce mot vient de SARG, une ancienne abréviation technique signifiant accès à la table selon un prédicat. Une condition sargeable est une condition que le moteur sait transformer en une recherche dans l'index ; une condition non sargeable lui impose de comparer chaque ligne, ce qui rend l'index inutilisable.
+
+Cette partie est la plus utile du chapitre, parce qu'elle traite d'erreurs que l'on voit partout et que l'on corrige en quelques minutes, une fois le mécanisme compris. Elle enchaîne trois idées. D'abord, la sargabilité, avec ses formes et ses limites, notamment le cas fameux du joker en tête de motif. Ensuite, l'ennemi le plus fréquent : la fonction appliquée à la colonne, qui transforme silencieusement une colonne indexable en colonne opaque. Puis la couverture d'index, qui est l'autre versant du problème : non seulement la condition utilise l'index, mais les colonnes demandées s'y trouvent déjà, ce qui supprime tout retour à la table. Enfin, une section d'exemples opposera des requêtes réelles, leur version lente et leur version rapide, avec le plan qui justifie chaque verdict.
+
+Le fil conducteur est simple : un index stocke les valeurs de la colonne telles qu'elles sont, triées, dans l'arbre. Toute opération qui modifie ces valeurs avant la comparaison empêche le moteur de les reconnaître. Si vous stockez des dates en colonne et que vous comparez à la suite de caractères obtenue en formatant la date, les valeurs rangées et la valeur cherchée n'appartiennent pas au même monde. Le moteur ne peut pas ranger l'arbre dans l'ordre des formats affichés, il ignore quelle fonction vous appliquerez demain. Sa seule sécurité est de renoncer à l'index et de comparer ligne à ligne. Comprendre cette règle, c'est comprendre à la fois pourquoi vos index échouent et comment réécrire vos requêtes pour qu'ils réussissent.
+
+Gardons notre bibliothèque des Lilas. Les requêtes typiques cherchent un lecteur par courriel, les emprunts d'un lecteur sur une période, les ouvrages disponibles selon leur cote, les prêts en retard. Toutes ces recherches sont a priori parfaitement sargeables : ce sont des égalités, des inégalités, des plages de dates. Si elles deviennent lentes, c'est presque toujours parce qu'une expression a été glissée entre la colonne et l'opérateur, parce qu'un joker a été placé en tête de motif, ou parce que la requête demande des colonnes absentes de l'index et multiplie ainsi les accès. Chacun de ces trois cas possède un diagnostic immédiat et un remède court.
+
+## Sargability : écrire des conditions que l'index peut utiliser
+
+Une condition est sargeable quand elle compare directement la colonne indexée à une valeur, ou à une plage de valeurs, sans transformation intermédiaire. Les formes classiques sont l'égalité, les inégalités, l'opérateur BETWEEN, les listes de valeurs avec IN, l'opérateur IS NULL quand l'index le prend en charge, et les jointures sur des clés. Toutes ces formes laissent la colonne intacte à gauche de l'opérateur : le moteur peut donc comparer une valeur rangée dans l'arbre à une valeur cherchée, et descendre l'arbre comme prévu. Plus la condition conserve l'ordre naturel des valeurs, plus elle offre au planificateur des possibilités, et un index sur une colonne de dates devient alors capable à la fois de filtrer et de trier.
+
+L'opérateur LIKE mérite une attention spéciale parce qu'il donne l'illusion d'être toujours utilisable. Quand le motif commence par des caractères fixes, comme LIKE 'ada%', la recherche ressemble à une recherche par préfixe : les valeurs correspondantes sont regroupées dans une plage contiguë de l'index, et l'index fonctionne parfaitement. C'est le cas de la recherche de livre par les premières lettres de son titre, ou d'un pays identifié par son code. Le joker pour cent, employé en tête de motif, détruit cet avantage : LIKE '%rard' ou LIKE '%a%' ne désigne aucune plage, car le moteur ignore où se trouvent les valeurs correspondantes dans l'ordre alphabétique. Une valeur peut commencer par n'importe quoi et finir par la recherche : rien ne la rattache à une position dans l'arbre, et le moteur est contraint de comparer chaque ligne.
+
+Le remède classique au joker en tête est de redéfinir la donnée pour que la recherche porte sur un préfixe. Si vous cherchez systématiquement les titres contenant un mot, la bonne solution n'est pas un index sur le titre, mais un index de plein texte, qui découpe le texte en unités et les range dans une structure adaptée. Si vous cherchez un suffixe, vous pouvez stocker une colonne supplémentaire contenant le texte inversé, sur laquelle un préfixe recherche fonctionnera, mais cette astuce se lit rarement bien dans le code et se justifie seulement dans les cas extrêmes. En pratique, la règle tient en une phrase : un LIKE avec joker en tête est une opération de balayage, et il faut l'accepter comme telle ou changer d'approche.
+
+Les opérations arithmétiques et logiques suivent le même principe. Une condition de la forme montant * quantite > 100 ne peut pas utiliser un index sur montant, car le produit n'est pas stocké ; le moteur doit calculer pour chaque ligne. De même, l'opérateur de reste, souvent noté % dans SQL, n'est pas un joker : il calcule une division et ne correspond à rien dans l'arbre. Les fonctions d'agrégation, les comparaisons entre deux colonnes, comme prix > cout * 1.2, sont également non sargeables, puisqu'une colonne indexée est comparée à une expression calculée à partir d'une autre colonne. Certaines de ces situations se résolvent par un index sur expression, d'autres par une colonne matérialisée à l'écriture, d'autres enfin seulement par un balayage assumé.
+
+Un dernier point sur NULL, qui surprend souvent. Un index standard contient les valeurs nulles, mais leur traitement dépend du moteur et de la forme de la condition. IS NULL peut être satisfait par un index dans la plupart des moteurs modernes, alors que = NULL ne l'est jamais, parce que cette comparaison ne vaut rien en SQL : l'inconnu n'est égal à rien, il faut écrire IS NULL. De même, NOT IN et NOT EXISTS, ainsi que les négations, poussent parfois le moteur à renoncer à l'index, car la recherche des lignes ne correspondant pas à un critère se formule moins directement dans un arbre. Testez toujours avec EXPLAIN, car ces comportements varient d'un moteur à l'autre et changent d'une version à l'autre.
+
+```sql
+-- Sargeable : le préfixe du motif est fixe, l'index sur titre sert.
+SELECT titre FROM ouvrages WHERE titre LIKE 'Les %';
+
+-- Non sargeable : le joker en tête interdit toute plage dans l'arbre.
+SELECT titre FROM ouvrages WHERE titre LIKE '%nuit%';
+
+-- Sargeable : plage de dates sur une colonne gauche.
+SELECT * FROM emprunts
+WHERE date_sortie BETWEEN '2026-01-01' AND '2026-03-31';
+
+-- Non sargeable : la colonne est transformée avant la comparaison.
+SELECT * FROM emprunts
+WHERE EXTRACT(YEAR FROM date_sortie) = 2026;
+```
+
+Pour vérifier la sargabilité d'une requête, aucun outil ne remplace le plan. Écrivez la condition, lancez EXPLAIN, regardez si un nœud d'index apparaît au-dessous de la ligne de filtre. Si le plan ne mentionne aucun index, la condition n'est pas sargeable ou la sélectivité est trop faible pour que l'index en vaille la peine. Corrigez alors la formulation, puis relancez. Ce réflexe, pris en quelques jours, vous évite des heures de perplexité devant des index qui semblent ne rien valoir.
+
+## Une fonction enveloppée autour de la colonne annule l'index
+
+C'est le piège le plus courant, et le plus trompeur, parce qu'il ne provoque aucune erreur. La requête s'exécute, elle renvoie exactement les bonnes lignes, et pourtant le plan balaie tout. La cause est mécanique : l'index range les valeurs de la colonne telles qu'elles ont été écrites dans la table, tandis que la requête demande au moteur de comparer la colonne après lui avoir appliqué une fonction. Le résultat de cette fonction n'existe nulle part dans l'arbre, car l'arbre a été construit avant, sur les valeurs brutes. Puisque rien ne correspond, le moteur renonce et compare chaque ligne, une par une, à la valeur calculée. Aucun avertissement ne vous est adressé : seul le plan révèle l'abandon.
+
+Les fonctions les plus fréquentes sont celles qui transforment du texte en une autre casse. Une condition écrit LOWER(courriel) = 'ada@lilas.fr' alors que la colonne courriel est indexée. L'index contient 'Ada@Lilas.fr' et toutes les variantes, rangées par ordre alphabétique où les majuscules précèdent les minuscules ; la condition cherche 'ada@lilas.fr' en minuscules. Même si le moteur décide d'appliquer LOWER au filtre, il ne peut pas retrouver une valeur dans un arbre trié selon une autre règle. La solution élégante est d'indexer l'expression elle-même, avec un index sur LOWER(courriel), que la plupart des moteurs modernes acceptent. L'alternative plus universelle consiste à imposer la casse à l'écriture, en stockant toujours le courriel en minuscules, ce qui rend la colonne elle-même sargeable sans expression.
+
+Les conversions de type appartiennent à la même famille. Comparer une colonne de type date à une chaîne de caractères peut fonctionner grâce à la conversion implicite, mais l'index n'est plus utilisable, car le moteur doit convertir chaque valeur de la colonne avant de la comparer. Comparer une colonne numérique stockée en texte à un nombre produit exactement le même effet. Le remède est de comparer des valeurs de même nature : écrire la constante sous la forme attendue par le type de la colonne, ou convertir la constante plutôt que la colonne. Une conversion appliquée à la droite de l'opérateur, sur la constante, ne nuit pas à l'index ; une conversion appliquée à la gauche, sur la colonne, le détruit.
+
+Il en va de même pour les calculs. Condition WHERE prix_ttc > 100 alors que seule la colonne prix_ht est indexée oblige à calculer le prix TTC ligne à ligne. WHERE annee = annee_de_publication - 1 compare deux colonnes, ce qui ne peut pas se résoudre par un seul accès à un arbre trié. WHERE id % 10 = 0 divise chaque identifiant. Toutes ces écritures sont légitimes et certaines sont indispensables, mais elles signifient, à une exception près, que l'index sur la colonne de gauche ne servira pas. L'exception, c'est l'index sur expression, qui construit un arbre sur le résultat de la fonction : il coûte de l'espace et se met à jour à chaque écriture, mais il rend la requête sargeable sans rien changer au schéma de la table.
+
+Le diagnostic est toujours le même, et il tient en une seconde : regardez si une fonction, une conversion ou un calcul enveloppe la colonne à gauche de l'opérateur. Si oui, l'index standard est hors course. Vérifiez-le avec EXPLAIN, puis choisissez parmi trois issues : réécrire la condition pour laisser la colonne intacte, créer un index sur expression, ou modifier la façon dont la donnée est stockée pour qu'elle corresponde naturellement aux requêtes. La troisième option est la plus durable, car elle règle le problème pour toutes les requêtes à venir, et non seulement pour celle du jour.
+
+```sql
+-- L'index sur courriel est ignoré : la fonction enveloppe la colonne.
+SELECT * FROM lecteurs WHERE LOWER(courriel) = 'ada@lilas.fr';
+
+-- Index sur expression : la structure range désormais le résultat.
+CREATE INDEX idx_lecteurs_courriel_min ON lecteurs (LOWER(courriel));
+
+-- Alternative : imposer la casse à l'écriture et comparer directement.
+-- Le même SELECT fonctionne alors avec l'index simple du chapitre 1.
+SELECT * FROM lecteurs WHERE courriel = 'ada@lilas.fr';
+```
+
+Un cas particulier mérite d'être signalé, celui du tri. Si vous demandez ORDER BY sur une colonne, le moteur peut éviter un tri coûteux quand un index fournit déjà l'ordre. Mais un ORDER BY sur LOWER(courriel) ne profitera pas d'un index sur courriel, pour exactement la même raison : l'ordre alphabétique des valeurs brutes n'est pas celui des valeurs transformées. Là encore, un index sur expression rétablit l'ordre demandé. Retenez que la règle de la colonne à gauche vaut pour le filtre comme pour le tri, et que toute transformation, même anodine en apparence, introduit une différence d'ordre.
+
+## La couverture d'index : répondre sans jamais toucher la table
+
+Jusqu'ici, nous avons supposé que l'index servait à retrouver des lignes, puis que le moteur allait chercher dans la table les colonnes demandées. Ce retour à la table a un coût : pour chaque ligne trouvée dans l'index, une lecture supplémentaire, souvent aléatoire, doit être payée. La couverture d'index supprime cette étape. Elle se produit quand l'index contient non seulement la colonne de la condition, mais aussi toutes les colonnes demandées par la requête. Le moteur peut alors répondre entièrement à partir de l'index, sans jamais ouvrir la table, et le plan affiche un nœud d'index only scan. C'est le type d'accès le plus rapide qu'un moteur puisse produire.
+
+Le mécanisme s'explique simplement. L'index contient la clé, c'est-à-dire la valeur indexée, et le lien vers la ligne. Si la requête demande une colonne qui figure dans l'index, le moteur lit la valeur à l'endroit où il se trouve déjà, sans suivre le lien. Si elle demande une colonne absente, il doit suivre le lien, retrouver la ligne et lire la colonne : c'est un index scan ordinaire. Certains moteurs vont plus loin et conservent, dans les pages d'index, les colonnes non indexées des lignes visibles, ce qui augmente la probabilité de couverture sans que vous fassiez rien. Dans tous les cas, la règle reste la même : moins la requête demande de colonnes, plus l'index a de chances de suffire.
+
+Construire un index couvrant revient à inclure dans la définition les colonnes accessoires. Un index sur la table des emprunts contenant lecteur_id, date_sortie et date_retour permet de répondre à une requête qui compte les prêts d'un lecteur sur une période, sans toucher la table. L'ordre conserve son importance : les colonnes de condition en premier, les colonnes d'affichage ensuite. Attention à ne pas déborder : ajouter des colonnes augmente la taille de l'index, ralentit ses mises à jour et peut le faire déborder de la mémoire tampon, au point que l'index devienne plus lent à parcourir. Un index couvrant est un compromis entre la profondeur de la réponse apportée et le coût d'entretien de la structure.
+
+Le mot clé SELECT mérite ici une mise en garde. Demander toutes les colonnes d'une table garantit qu'aucun index ne pourra couvrir la requête, puisque la table elle-même a nécessairement plus de colonnes que l'index. Une requête d'affichage qui a besoin réellement de tout reste légitime, mais une requête d'agrégation qui ne compte que des lignes, ou qui n'utilise que deux colonnes, gagne à les nommer. Le passage de SELECT étoile à une liste de colonnes est souvent le premier changement à tenter, précisément parce qu'il ouvre la porte à la couverture. Pensez-y aussi pour les requêtes d'existence, du type existe-t-il un emprunt pour ce lecteur, où un simple index sur la clé suffit amplement.
+
+```sql
+-- Index couvrant pour la requête de disponibilité par cote.
+CREATE INDEX idx_exemplaires_cote_etat
+  ON exemplaires (cote, etat);
+
+-- Le moteur peut répondre à partir de l'index seul.
+SELECT cote, etat FROM exemplaires WHERE cote LIKE 'LIL-%';
+
+-- Trop large : le SELECT étoile impose un retour à la table.
+SELECT * FROM exemplaires WHERE cote LIKE 'LIL-%';
+```
+
+La couverture se vérifie, comme tout le reste, dans le plan. Cherchez le nœud d'index only scan, ou son équivalent, et vérifiez qu'aucun accès à la table n'apparaît en dessous. Si le plan affiche malgré tout un accès à la table, c'est qu'une colonne demandée manque dans l'index, ou que des colonnes supplémentaires ont été ajoutées par le moteur, par exemple pour satisfaire une contrainte d'ordre ou une jointure. Ajoutez la colonne manquante à l'index, relancez, et observez disparaître le dernier accès à la table. Cette recherche du plan minimal, où l'index seul répond, est l'un des exercices les plus féconds pour comprendre l'optimisation.
+
+Un mot sur les jointures, qui se comportent comme la couverture. Quand une jointure relie deux tables, le moteur a besoin des clés des deux côtés, et parfois d'autres colonnes. Si les index des deux tables contiennent les colonnes nécessaires, la jointure se résout dans les index, sans lecture de table. C'est ce qui explique le choix fréquent d'indexer les clés étrangères : non seulement elles filtrent, mais elles servent de source à la jointure. Un schéma où les clés sont indexées des deux côtés permet à une requête à plusieurs jointures de ne jamais ouvrir les tables, ce qui change radicalement le profil de performance.
+
+## Exemples SQL commentés : du mauvais au bon
+
+Le meilleur moyen de fixer ces règles est de les opposer, cas par cas, avec la version lente, la version rapide et la raison du gain. Voici une première paire, portant sur la recherche d'un lecteur par courriel. La version incorrecte enveloppe la colonne d'une fonction de casse, ce qui rend l'index inutilisable ; la version corrigée laisse la colonne intacte. Si votre base contient déjà des courriers en majuscules, corrigez les données ou indexez l'expression, mais ne laissez pas la fonction dans la condition sans l'avoir mesuré.
+
+```sql
+-- Mauvais : la fonction autour de la colonne interdit l'index.
+SELECT identifiant, nom
+FROM lecteurs
+WHERE LOWER(courriel) = 'ada@lilas.fr';
+
+-- Correct : colonne comparée telle quelle, index simple utilisable.
+SELECT identifiant, nom
+FROM lecteurs
+WHERE courriel = 'ada@lilas.fr';
+```
+
+Deuxième paire, portant sur les titres d'ouvrages. La recherche cherche un mot au milieu du titre, et la forme LIKE ne peut pas y aider. La bonne réponse n'est pas un index supplémentaire sur la colonne, mais un index de plein texte, ou l'acceptation du balayage si la table est petite. Troisième paire, portant sur les emprunts de l'année en cours : la condition transforme la date avec une fonction d'extraction, alors qu'une plage de dates exprimée avec deux bornes reste parfaitement sargeable et exploite le même index que celui qui sert au tri.
+
+```sql
+-- Mauvais : le joker en tête impose un balayage complet.
+SELECT titre, auteur FROM ouvrages WHERE titre LIKE '%guerre%';
+
+-- Correct : un index de plein texte répond à la recherche de mot.
+CREATE INDEX idx_ouvrages_titre_texte
+  ON ouvrages USING GIN (to_tsvector('french', titre));
+
+SELECT titre, auteur
+FROM ouvrages
+WHERE to_tsvector('french', titre) @@ plainto_tsquery('french', 'guerre');
+```
+
+```sql
+-- Mauvais : la fonction annule l'index sur date_sortie.
+SELECT count(*) FROM emprunts
+WHERE EXTRACT(YEAR FROM date_sortie) = 2026;
+
+-- Correct : une plage exploite l'index et donne le même résultat.
+SELECT count(*) FROM emprunts
+WHERE date_sortie >= '2026-01-01'
+  AND date_sortie <  '2027-01-01';
+```
+
+Quatrième paire, sur la couverture. Compter les emprunts en retard d'un lecteur ne demande que trois colonnes : les nommer dans l'index suffit à éviter tout retour à la table, alors que le même filtre avec SELECT étoile impose des lectures supplémentaires pour chaque ligne correspondante. Cinquième paire, sur la faible cardinalité : filtrer sur un drapeau booléen n'obtient rien d'un index seul, mais combiné à la date, il devient l'élément de gauche d'un index composite dont la sélectivité totale est excellente. Cette combinaison est la réponse classique au problème des colonnes à faible cardinalité.
+
+```sql
+-- Faible cardinalité seule : l'index est ignoré, la sélectivité est mauvaise.
+SELECT * FROM emprunts WHERE est_en_retour = TRUE;
+
+-- Combiné : l'index composite (est_en_retour, date_sortie) devient utile.
+CREATE INDEX idx_emprunts_retard_date
+  ON emprunts (est_en_retour, date_sortie);
+
+SELECT identifiant, date_sortie
+FROM emprunts
+WHERE est_en_retour = TRUE
+  AND date_sortie < '2026-09-01';
+```
+
+Enfin, une paire qui résume la méthode. Plutôt que d'ajouter un index au hasard sur une requête lente, on commence par lire le plan, on repère l'opération dominante, on évalue la sélectivité de la condition, on vérifie que la condition est sargeable, puis on change une seule chose et on relance la mesure. Si le plan ne bouge pas, l'hypothèse était fausse et il faut en formuler une autre. Si le plan change mais que le temps réel ne s'améliore pas, le coût ailleurs, dans la jointure ou dans le tri. Cette discipline est le vrai sujet de ce chapitre ; les commandes que vous venez d'apprendre n'en sont que les outils.
+
+```sql
+-- Le réflexe complet, à appliquer dans cet ordre.
+EXPLAIN ANALYZE
+SELECT e.identifiant, l.nom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.est_en_retour = TRUE
+  AND e.date_sortie < '2026-09-01';
+```

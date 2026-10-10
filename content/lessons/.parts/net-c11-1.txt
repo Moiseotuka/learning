@@ -1,0 +1,90 @@
+Bienvenue dans le onzième et dernier chapitre du parcours Réseaux. Les dix chapitres précédents ont construit une infrastructure complète : adresses et masques, VLAN et commutation, couche transport, routage, filtrage, supervision, durcissement. Tout est en place, documenté, supervisé. Reste la question que personne ne pose le jour de la mise en service et que tout le monde pose le lendemain de la première panne : combien de temps ce service peut-il s'arrêter sans que l'organisation s'arrête avec lui, et que faut-il mettre en place pour que la réponse soit longue ? C'est exactement l'objet de ce chapitre, qui clôt le parcours en traitant de la haute disponibilité : redondance, équilibrage de charge et liens multiples.
+
+À la fin de cette leçon, vous saurez faire trois choses très concrètes. Vous saurez configurer un équilibrateur de charge : répartir des requêtes entre plusieurs serveurs avec un algorithme choisi, des contrôles d'état qui interrogent réellement le service, une persistance de session quand elle est nécessaire, et une interface de statistiques que vous lirez tous les matins. Vous saurez expliquer, avec des arguments chiffrés et non avec des slogans, ce qu'un SD-WAN apporte réellement à un réseau de sites multiples : overlay chiffré, contrôleur central, sélection de chemin selon la qualité mesurée, accès direct à Internet et politiques par application. Et vous saurez éliminer les points de défaillance uniques, un par un, en partant d'une cartographie méthodique et en finissant par des tests de bascule exécutés, chronométrés et documentés.
+
+Le fil rouge de ce chapitre est double, comme le veut la réalité. Le premier terrain est le site Lilas, que vous avez configuré, supervisé et sécurisé au fil des chapitres : deux routeurs de cœur, un pare-feu en bordure, des serveurs applicatifs en VLAN serveurs, une machine de supervision en VLAN de gestion. Le second terrain est une association culturelle qui exploite un site public avec deux liens opérateur, deux serveurs d'applications et une caisse en ligne dont la coupure se compte en recettes perdues. Deux échelles différentes, une même méthode : identifier la chaîne de dépendances, supprimer le maillon unique, doubler ce qui doit l'être, puis prouver que la bascule fonctionne.
+
+Une règle gouverne l'ensemble : une redondance non testée n'existe pas. Un deuxième serveur branlé mais jamais éteint à dessein, un second lien opérateur payé mais jamais vérifié, une base répliquée dont personne n'a mesuré le décalage, ne valent pas mieux qu'un équipement unique. Ils donnent en plus un sentiment dangereux de sécurité. Nous avancerons donc en suivant un ordre immuable : comprendre ce qui peut tomber, mesurer ce que la panne coûte, concevoir la solution, la configurer, puis provoquer la panne volontairement et chronométrer la reprise. Chaque section se termine par un contrôle exécutable : une commande à lancer, un état à observer, un chiffre à noter.
+
+## Pourquoi la haute disponibilité : le point de défaillance unique
+
+Un point de défaillance unique, souvent désigné par son acronyme anglais SPOF, est un élément dont l'arrêt met immédiatement hors service l'ensemble auquel il appartient, faute d'alternative disponible. La définition est simple ; la difficulté est entièrement dans le mot disponible. Deux serveurs affichés côte à côte sur le même tableau de bord ne constituent pas une redondance si une seule même alimentation électrique, un seul même commutateur ou un seul même fichier de configuration les tient. Le point de défaillance se déplace : on a doublé la machine, on a découvert que le vrai maillon unique était le câble, l'alimentation, la licence ou l'humain qui sait redémarrer le service. La haute disponibilité n'est donc pas une liste d'achats, c'est un raisonnement mené maillon par maillon.
+
+La méthode la plus sûre consiste à décrire le service comme une chaîne de dépendances, puis à écrire la loi qui la gouverne : la disponibilité d'une chaîne dont les maillons travaillent de façon indépendante est le produit des disponibilités de ces maillons. Si le serveur d'application tient à 99,9 pour cent, la base de données à 99,9 pour cent, la passerelle réseau à 99,9 pour cent, le service global plafonne à environ 99,7 pour cent, soit plus de deux heures d'arrêt par mois, malgré trois briques qui semblent fiables. Plus le nombre de maillons croît, plus le produit se dégrade : c'est la raison pour laquelle on commence toujours par supprimer les dépendances inutiles avant de doubler les autres. Réduire le nombre de maillons vaut souvent mieux que doubler les maillons restants.
+
+Confondre redondance et haute disponibilité est l'erreur conceptuelle la plus répandue du domaine. La redondance dit qu'il existe un second élément ; la haute disponibilité ajoute trois capacités : détecter la défaillance, décider de la bascule, puis l'exécuter à temps et sans erreur. Un second serveur qui n'est pas interrogé par un contrôle d'état ne sera jamais retiré du service au moment opportun. Une base répliquée dont la réplication échoue silencieusement depuis trois semaines n'est pas une redondance, c'est une copie obsolète. La redondance est un état du matériel ; la haute disponibilité est un comportement du système, et ce comportement se démontre uniquement par le test.
+
+Le schéma suivant met face à face une chaîne à maillon unique et la même chaîne doublée. Observez la différence de structure, pas seulement le nombre de boîtes : à droite, chaque étape possède une alternative, et les alternatives sont elles-mêmes rattachées à des chemins distincts. C'est cette indépendance qui fait tenir l'ensemble, car une redondance branchée sur le même maillon amont ne protège de rien.
+
+```text
+CHAINE A MAILLON UNIQUE              MEME CHAINE DOUBLEE
+
+  usagers                              usagers
+    |                                    |
+  DNS unique                           DNS chez deux registrar
+    |                                    |
+  un seul lien FAI          ---->     deux liens, deux operateurs
+    |                                    |
+  un seul pare-feu                   deux pare-feux en cluster
+    |                                  /   \
+  un seul serveur app             srv A   srv B
+    |                                \     /
+  base unique                      base maitre + replique
+    |
+  sauvegarde locale              sauvegarde hors site + copie
+```
+
+Le tableau ci-dessous sert d'inventaire de départ : il associe à chaque maillon le point de défaillance que l'on rencontre le plus souvent, la forme de redondance adaptée et la condition sans laquelle cette redondance reste décorative. Servez-vous-en comme d'une check-list de conception avant d'acheter quoi que ce soit.
+
+| Maillon | Point de défaillance typique | Redondance adaptée | Condition de bascule |
+|---|---|---|---|
+| Accès réseau | Un seul lien opérateur | Deux liens, deux opérateurs, deux entrées physiques | Suivi de route ou SD-WAN avec politique de repli |
+| Électricité | Une seule prise, un seul onduleur | Deux armoires, deux alimentations par serveur, groupe électrogène | Basculable et testé sous charge |
+| Commutation | Un commutateur de raccordement | Deux commutateurs, liens appairés en agrégation | Protocole de boucle maîtrisé et sans temps mort |
+| Traitement | Un seul serveur applicatif | Deux serveurs derrière un équilibrateur | Contrôle d'état interrogant réellement l'application |
+| Données | Une base mono-instance | Maitre et réplique avec bascule | Réplication surveillée et bascule répétée en exercice |
+| Noms | Un seul registrar, un seul serveur DNS | Deux zones chez deux fournisseurs | Délégation cohérente et TTL raisonnable |
+| Exploitation | Un seul administrateur | Deux personnes, runbook daté, astreinte | Procédure exécutée par la seconde personne |
+
+## Mesurer la panne : disponibilité, quatre neuf, RTO et RPO
+
+La disponibilité est un rapport : le temps pendant lequel le service est utilisable, divisé par le temps total, exprimé en pourcentage. Cette définition contient déjà deux pièges. Le premier est le mot utilisable : un serveur qui répond au ping mais dont l'application refuse toute authentification n'est pas disponible ; la mesure doit être prise du point de vue de l'usager, exactement comme le faisaient les tests synthétiques du chapitre sur la supervision. Le deuxième piège est la fenêtre de mesure : sur un mois de trente jours, une disponibilité de 99 pour cent autorise plus de sept heures d'arrêt, ce qui se lit facilement sur un graphique et se justifie difficilement auprès d'un dirigeant. Les pourcentages se comprennent toujours quand on les convertit en durée.
+
+Le tableau suivant donne les correspondances à retenir par cœur. Les valeurs sont calculées sur un mois de trente jours, soit 43 200 minutes. Elles servent de graticule : dès que quelqu'un prononce le mot quatre neuf, vous devez savoir qu'il parle de quatre minutes et vingt secondes d'arrêt par mois, ni plus ni moins.
+
+| Niveau | Disponibilité | Temps d'arrêt sur 30 jours | Exemple de service |
+|---|---|---|---|
+| Deux neuf | 99 pour cent | 7 h 18 min | Site vitrine, documentation interne |
+| Trois neuf | 99,9 pour cent | 43 min | Intranet, application métier de bureau |
+| Quatre neuf et demi | 99,95 pour cent | 21 min | Application métier en journée ouvrée |
+| Quatre neuf | 99,99 pour cent | 4 min 20 s | Paiement, tunnel de sécurité, DNS critique |
+| Cinq neuf | 99,999 pour cent | 26 s | Opérateur, cœur de plateforme de paiement |
+
+À l'objectif de disponibilité s'ajoutent deux mesures qui décrivent la panne elle-même plutôt que sa fréquence. Le temps de reprise, ou RTO, indique combien d'heure, de minute ou de seconde peut durer l'interruption avant que l'organisation subisse un dommage inacceptable ; c'est lui qui fixe la fréquence des sauvegardes et la durée de bascule admissible. La perte de données admissible, ou RPO, indique combien de données l'organisation accepte d'avoir perdu au moment de la reprise ; c'est elle qui décide si l'on accepte une réplique en différé ou s'il faut une réplication synchrone. Un site de commerce électronique peut fixer un RTO de quinze minutes et un RPO de zéro seconde pour les commandes en cours de paiement, tandis qu'un forum associatif acceptera un RTO de plusieurs heures et un RPO d'une journée. Ces deux chiffres, écrits avant la conception, décident presque à eux seuls de l'architecture retenue.
+
+La traduction chiffrée de la panne varie énormément selon l'activité, et c'est ce qui justifie des budgets très différents pour des réseaux d'apparence identique. Sur une plateforme de vente en ligne en période de forte affluence, chaque minute d'arrêt se mesure en chiffre d'affaires perdu et en campagnes publicitaires déjà payées dont le trafic ne convertit plus. Sur le site d'une association, la coupure du seul lien opérateur pendant un service de caisse se traduit en recettes non encaissées et en tickets imprimés à la main. Dans les deux cas, la méthode est identique : on multiplie le nombre d'utilisateurs impactés par le temps moyen d'arrêt, puis par la valeur perdue par unité de temps, et l'on compare le résultat au coût annuel de la redondance. Ce calcul, aussi approximatif soit-il, remplace l'argumentaire du type c'est plus prudent par une décision budgétaire défendable.
+
+## Cartographier les SPOF : sept questions sur le terrain
+
+Avant toute configuration, il faut un inventaire. La méthode que nous allons utiliser est volontairement artisanale : on prend un service réel, on le décrit de bout en bout, et on lui pose sept questions dans un ordre fixe. Elle se pratique assis devant un tableau blanc, avec l'administrateur qui connaît l'installation et l'utilisateur qui la subit, parce que les deux voient des maillons différents. L'objectif n'est pas de produire un joli schéma, c'est de sortir de la réunion avec une liste de maillons uniques classés par coût de correction. Comptez une à deux heures pour un service simple, une demi-journée pour une chaîne comprenant base de données, sauvegarde et dépendance à un tiers.
+
+Première question : quelle est la chaîne complète, du clic de l'usager jusqu'à la donnée enregistrée ? Tracez-la en écrivant chaque étape : résolution de nom, routage, pare-feu, équilibrateur, serveur applicatif, base, stockage, puis retour. Toute étape non écrite est un maillon que personne ne surveille. Deuxième question : où le trafic entre-t-il physiquement, et par combien de câbles ? Une seule paire de fibres entre la salle technique et l'opérateur, un seul connecteur dans le panneau de brassage, une seule gaine : autant de SPOF matériels qui coûtent peu à doubler le jour où l'on décide de les éliminer et qui coûtent cher la nuit où ils cassent. Troisième question : quelle est la source d'alimentation de chaque élément, et que se passe-t-il si l'on coupe cette source ? Deux serveurs sur la même prise multiprise restent un seul serveur du point de vue électrique.
+
+```image
+serveur-rack
+| Baie de serveurs en datacenter : chaque machine tire deux alimentations sur deux armoires distinctes, car la redondance ne commence qu'au câble d'alimentation.
+```
+
+Quatrième question : quel logiciel, quelle licence, quelle version unique peut mettre le service à l'arrêt ? Une seule instance de moteur de base de données, un seul service d'authentification, un seul démon de mise en cache, une licence flottante unique qui refuse la seconde connexion : la redondance matérielle ne sert à rien tant que cette couche logicielle reste mono-instance. Cinquième question : où vivent les données, et que se passe-t-il si la machine qui les porte disparaît ? Posez la question avec brutalité : si l'on éteint ce serveur et qu'on le détruit, combien de données perdez-vous, et depuis quand ? Si la réponse est au hasard, c'est que le RPO n'est pas tenu et qu'aucune réplication digne de ce nom n'existe.
+
+Sixième question : qui résout vos noms, et chez qui ? Le domaine du service dépend d'un registrar, d'un serveur de noms et d'un TTL ; une panne de ce trio vous rend invisible même si vos serveurs tournent à merveille. Vérifiez que la zone existe chez deux fournisseurs distincts, que les enregistrements sont cohérents, que le compte du registrar a un contact d'astreinte et que le renouvellement automatique est réellement actif. Septième question : qui sait faire, et quelle est la procédure écrite ? Un point de défaillance humain se traite comme les autres : deux personnes formées, un runbook daté accessible hors ligne, une astreinte avec un numéro testé, et une revue trimestrielle où la seconde personne exécute la procédure à la place de la première. Un service qui repose sur un seul expert n'est pas redondé, il est fragile avec élégance.
+
+- Quelle est la chaîne complète, du clic de l'usager jusqu'à la donnée enregistrée ?
+- Par combien de câbles physiques et de connecteurs le trafic entre-t-il dans la salle ?
+- Quelle source d'alimentation alimente chaque élément, et quelle bascule existe-t-il ?
+- Quel logiciel, quelle licence ou quelle version unique peut arrêter le service ?
+- Où vivent les données, depuis quand ne sont-elles plus synchronisées, et qui le sait ?
+- Qui publie vos noms, chez quel registrar, avec quel contact et quel délai de renouvellement ?
+- Qui sait exécuter la procédure de reprise, à quelle fréquence l'a-t-il réellement fait ?
+
+Une fois la liste écrite, classez chaque maillon selon deux axes : probabilité de panne et impact sur l'activité. En haut à droite, les maillons à fort impact et forte probabilité sont traités sans attendre ; en bas à gauche, les maillons à faible impact peuvent attendre une fenêtre de maintenance ou une simple documentation. La catégorie intermédiaire, à fort impact mais faible probabilité, est la plus trompeuse : c'est là que se cachent le disque unique, la réplication jamais testée et le second lien opérateur dont personne ne vérifie l'état depuis sa mise en service. Cette faible probabilité apparente ne tient qu'à l'absence d'historique de panne, ce qui prouve l'ignorance plutôt que la fiabilité. Exigez donc une donnée : date du dernier test, durée de bascule observée, personne qui l'a exécuté. Ce qui n'est pas daté n'existe pas.

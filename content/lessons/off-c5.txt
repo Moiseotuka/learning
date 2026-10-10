@@ -1,0 +1,520 @@
+Jusqu'ici dans le parcours Cybersécurité offensive, vous avez joué le rôle de celui qui frappe : reconnaissance, empreinte, exploitation, élévation de privilèges, preuve que la porte s'ouvre. À chaque étape, vous avez produit des captures, des journaux, des requêtes, des captures d'écran. Toute cette matière reste brute tant qu'elle n'est pas mise en forme. Le chapitre que vous commencez change de registre : il ne s'agit plus de démontrer que quelque chose est cassé, mais de faire en sorte que quelqu'un d'autre le répare, sans vous, sans votre présence, et souvent sans même vous revoir. Un audit ne se termine pas quand vous trouvez la faille ; il se termine quand votre écrit permet à une équipe de la corriger dans le bon ordre, au bon moment, avec le bon budget.
+
+C'est le point qui surprend le plus souvent les débutants : la découverte n'est qu'une partie mince du travail. Un constat que vous n'avez pas écrit n'existe pas pour l'organisation, et un constat mal écrit existe souvent sous une forme déformée, amplifiée ou minimisée selon qui le lit. Votre rapport est l'artefact qui survivra à la mission. Il sera relu dans six mois par un auditeur externe, cité dans un plan d'action, opposé à un prestataire, transmis à une direction qui n'a jamais vu une ligne de commande. Il est aussi ce qui vous protège : un périmètre décrit honnêtement, une méthode datée et des limites assumées vous évitent d'être tenu responsable de failles qui n'étaient pas dans la mission.
+
+Le fil rouge de ce chapitre reste le même que dans les leçons précédentes du parcours : la Médiathèque des Lilas, avec son site public, son espace d'inscription aux ateliers, son catalogue consultable et son espace administrateur. Prenons l'exemple d'un audit de cinq jours ouvrés sur cette application, mené du 4 au 8 novembre, à partir d'une version figée de la recette. Vous y avez relevé sept constats, dont un accès non contrôlé aux fiches des inscrits, une élévation de privilèges dans l'espace agent, une fuite d'informations techniques dans les messages d'erreur et trois failles de protection côté client. Nous allons construire ensemble le rapport que vous remettriez à la direction de la médiathèque, en suivant l'ordre exact dans lequel vous l'écrirez, en corrigeant au passage les erreurs que vous feriez probablement du premier coup.
+
+## Ce qu'un rapport de vulnérabilité doit permettre de faire
+
+Un bon rapport doit permettre cinq choses, dans cet ordre : décider, reproduire, corriger, prioriser, prouver. La décision vient d'abord parce que c'est elle qui déclenche tout le reste : sans verdict lisible en trois minutes, le rapport reste dans une pièce jointe que personne n'ouvre. La reproduction vient ensuite, car un constat que personne ne peut rejouer ne sera jamais crédible. La correction vient après, car elle exige la description exacte du mécanisme, pas seulement son nom. La priorisation vient ensuite, car les équipes disposent de capacités limitées et doivent savoir par quoi commencer. La preuve vient en dernier dans l'ordre de lecture, mais elle est la condition de tout : elle atteste que vous n'avez pas théorisé.
+
+Le test le plus simple est celui-ci : donnez votre rapport à un développeur qui n'était pas présent pendant la mission, avec pour seule consigne de lire la fiche du constat numéro un. En moins de vingt minutes, il doit être capable de dire où se trouve le défaut, ce qu'il change concrètement, quelle ligne ou quel paramètre corriger, et comment vérifier que la correction fonctionne. S'il doit vous appeler pour comprendre, le rapport est incomplet. S'il doit appeler deux collègues pour décider si le sujet le concerne, la synthèse est mal écrite. Si personne ne peut rejouer la manipulation sans votre poste, les preuves sont insuffisantes.
+
+Un rapport n'est pas non plus un acte d'accusation. Vous ne décrivez pas des équipes négligentes, vous décrivez des mécanismes observables : telle route accepte une valeur qui n'est jamais validée, tel service renvoie une trace de pile d'appel, tel bouton transmet une action d'administration sans vérification de rôle. La nuance n'est pas de la politesse : elle est factuelle. Une formulation personnelle déclenche la défense, et la défense fait perdre du temps à tout le monde. Une formulation mécanique, au contraire, se corrige elle-même en quelques lignes de code. C'est aussi ce qui rend votre travail reproductible par un autre auditeur : décrit par le mécanisme, le constat se vérifie indépendamment de son auteur.
+
+Enfin, le rapport doit dire ce qu'il ne dit pas. Aucune mission ne couvre tout, aucun test n'est exhaustif, aucun outil ne détecte l'ensemble des défauts possibles. Les limites que vous écrivez ne diminuent pas votre travail, elles le cadrent : elles disent au lecteur sur quel terrain il peut avoir confiance et à partir de quel point il doit demander un complément. Un rapport sans limites se lit comme une promesse d'exhaustivité que vous n'avez jamais donnée, et c'est précisément cette promesse implicite qui se retourne contre vous quand un incident survient plus tard sur un périmètre que personne n'avait couvert.
+
+```text
+Fiche de constat — structure minimale
+
+IDENTIFIANT      : ML-2026-003
+TITRE            : Accès non contrôlé à la fiche d'un inscrit par modification d'identifiant
+LOCALISATION     : GET /api/inscriptions/{id} (portail agent)
+CRITICITÉ        : Haute — CVSS 8.1 (vecteur complet en annexe)
+ÉTAT             : Confirmé, reproductible, non exploité au-delà de la lecture
+DESCRIPTION      : Le paramètre id est accepté sans vérification du rôle de l'utilisateur
+                   ni de l'appartenance du dossier à l'établissement connecté.
+PREUVE           : Journal de requête joint, ligne 42 ; capture A-03.
+REPRODUCTION     : 5 étapes, exécutables avec un compte agent standard.
+IMPACT MÉTIER    : Consultation d'identités et de coordonnées de personnes mineures.
+REMÉDIATION      : Filtrer par établissement côté serveur, puis ajouter un test de non-régression.
+RESPONSABLE      : Équipe application (à qualifier lors de la réunion de restitution)
+ÉCHÉANCE         : 15 jours pour le contournement, 45 jours pour la correction complète
+```
+
+Cette structure n'est pas un formalisme décoratif. Chaque ligne répond à une question que quelqu'un posera forcément : qui l'a trouvé, où, à quelle gravité, avec quelle preuve, comment le refaire, quel en est l'effet concret, qui corrige et pour quand. Si vous hésitez sur un champ, écrivez la question à laquelle il répond plutôt que d'inventer un libellé. L'identifiant mérite une attention particulière : il doit être stable, citable dans un ticket, dans un courriel et dans un tableur de suivi, sans jamais être réattribué à un autre constat, y compris si vous corrigez le constat lui-même.
+
+## Anatomie d'un rapport exploitable
+
+L'ordre des sections d'un rapport suit le sens de lecture de ses destinataires : on descend du général au particulier, de la décision à la manipulation. La synthèse exécutive ouvre, parce que c'est la seule page lue par la direction. Le périmètre et la méthode suivent, parce qu'ils conditionnent la valeur de tout ce qui vient après. Les constats classés par criticité constituent le cœur, parce que c'est là que le lecteur technique cherche. La plan de remédiation arrive ensuite, parce qu'il transforme des découvertes en travail planifié. Les annexes ferment, avec les preuves détaillées, les journaux, les vecteurs complets et les jeux de données nécessaires à la reprise.
+
+Cette progression a une raison pratique : chaque section doit être lisible seule. Un responsable de projet ouvre la synthèse et s'arrête. Un développeur saute directement à la fiche du constat qui lui est assigné. Un auditeur externe vérifie la méthode avant de croire aux résultats. Personne n'est obligé de lire le rapport de bout en bout, et un rapport qui suppose une lecture linéaire est un rapport qui ne sera pas lu. C'est pourquoi nous répétons les informations essentielles aux points où on les cherche, plutôt que de créer un système de renvois complexes.
+
+La règle de la redondance utile vaut aussi pour les identifiants. Le même numéro de constat apparaît dans la synthèse, dans la table de classification, dans la fiche détaillée, dans le plan de remédiation et dans le tableau de suivi du retest. Si vous renumérotez entre les versions, vous brisez la chaîne de suivi et vous obligerez quelqu'un à faire du rapprochement manuel. Dans la pratique, on fige la numérotation dès la version 0.9 du rapport, celle qui circule avant remise officielle, et on ne la touche plus jusqu'à la clôture. Les corrections de fond, elles, se marquent par une nouvelle date de version, pas par un nouveau numéro.
+
+Un rapport complet contient aussi une page de suivi des versions : qui a écrit quoi, quelle remarque a été intégrée, quelle version a été remise à quel destinataire. Cette page paraît administrative, elle est pourtant décisive en cas de litige ou de contestation. Elle prouve que le constat n'a pas été ajouté après coup, que la critique a été entendue, que la direction a bien reçu l'information à telle date. Pour une mission encadrée par contrat, elle constitue aussi la trace de la restitution, qui est souvent une obligation contractuelle en elle-même.
+
+```markdown
+## 4. Constats
+
+Chaque constat est présenté dans l'ordre décroissant de criticité. L'identifiant
+reste inchangé d'une version à l'autre du rapport.
+
+| Réf. | Titre | Criticité | CVSS | Responsable pressenti | Échéance |
+| --- | --- | --- | --- | --- | --- |
+| ML-2026-001 | Élévation de privilèges vers le rôle administrateur | Critique | 9.1 | Équipe application | 10 jours |
+| ML-2026-002 | Défaut de protection contre les falsifications de requête | Haute | 8.1 | Équipe application | 15 jours |
+| ML-2026-003 | Accès non contrôlé à la fiche d'un inscrit | Haute | 8.1 | Équipe applicative | 15 jours |
+| ML-2026-004 | Fuite de traces d'appel dans les messages d'erreur | Moyenne | 5.3 | Équipe plateforme | 45 jours |
+| ML-2026-005 | Absence de limitation de débit sur la connexion | Moyenne | 5.3 | Équipe plateforme | 45 jours |
+| ML-2026-006 | Réponse détaillée à un compte inexistant | Basse | 3.7 | Équipe plateforme | 90 jours |
+| ML-2026-007 | En-tête de sécurité absent sur les pages publiques | Basse | 2.6 | Équipe plateforme | 90 jours |
+```
+
+Le tableau ci-dessus illustre un principe que nous détaillerons dans la section sur la classification : la criticité et la note CVSS ne sont pas la même chose. L'une traduit un risque pour l'organisation, l'autre décrit la sévérité technique du défaut dans son contexte d'exécution. Un défaut noté 8.1 peut être moins urgent qu'un défaut noté 6.5 s'il touche un service arrêté la semaine prochaine, et c'est précisément le rôle du lecteur de trancher. Votre tableau doit donc fournir les deux colonnes, les laisser visibles côte à côte, sans jamais les confondre en une seule information.
+
+## La synthèse exécutive : une page pour décider
+
+La synthèse exécutive se rédige en dernier, quand tout est écrit, et se lit en premier. C'est le seul passage du rapport que lira certainement la direction, et souvent le seul qui décidera du budget accordé au suivi. Elle tient sur une page, au sens propre : deux mille signes au maximum, quatre paragraphes, un tableau de synthèse si vous en avez un. Elle s'écrit avec des mots de métier, pas avec des sigles. Elle répond à quatre questions : qu'est-ce qui ne va pas, quel risque cela fait courir, que faut-il décider, combien cela coûte de corriger.
+
+Le premier paragraphe annonce le verdict sans préambule. Vous y écrivez le nombre de constats, leur répartition par criticité, et la phrase la plus importante du rapport : celle qui dit si l'application peut continuer à fonctionner en l'état, ou si une action est requise avant une échéance donnée. Le deuxième paragraphe traduit les deux ou trois constats les plus graves en conséquences concrètes : consultation de données de personnes mineures, arrêt possible du service, obligation de notifier. Le troisième décrit les décisions attendues, avec leurs échéances. Le quatrième donne l'ordre de grandeur de l'effort, en jours-homme, pour que la direction puisse arbitrer.
+
+Ce que la synthèse ne doit pas contenir importe autant que ce qu'elle contient. Pas de vecteur CVSS complet, pas de capture d'écran, pas de nom d'outil, pas de jargon d'exploitation. Ces éléments appartiennent aux fiches détaillées et aux annexes. Une synthèse qui cite des acronymes invite le lecteur à exiger une formation avant d'agir, alors que la décision demandée est souvent simple : affecter des jours, fixer une échéance, accepter un risque résiduel. Le vocabulaire du risque métier n'est pas une trahison de la technique, c'est sa traduction : c'est le pont entre ce que vous avez observé et ce que l'organisation est capable d'arbitrer.
+
+```markdown
+## Synthèse exécutive
+
+Audit de sécurité externe du portail de la Médiathèque des Lilas, du 4 au
+8 novembre 2026, sur la version 3.4 de la recette. Sept constats ont été
+confirmés : un critique, deux hauts, deux moyens, deux bas. Aucun n'a été
+exploité au-delà de la démonstration et aucune donnée n'a été extraite.
+
+Le constat le plus grave permet à un compte agent standard de consulter la
+fiche d'un inscrit sans vérification d'appartenance, et de déléguer un
+droit d'administration. Sur un établissement accueillant des mineurs, ce
+défaut expose des coordonnées personnelles et déclencherait une
+notification obligatoire s'il était utilisé en dehors du cadre de l'audit.
+
+Décisions attendues : corriger les trois constats hauts et critiques sous
+15 jours, planifier les deux constats moyens au prochain lot de mise en
+production, reporter les deux constats bas au trimestre suivant. Effort
+estimé : 12 jours-homme au total, dont 5 pour le premier lot.
+
+Nous recommandons un retest ciblé sur les trois premiers constats à la
+date de mise en production prévue, avant communication aux usagers.
+```
+
+Remarquez ce que fait cette page : elle donne une échéance, un effort, un verdict et une action de suivi. Un lecteur non technique peut la signer. Un responsable technique peut la transformer immédiatement en tâche. Si votre synthèse se termine par une liste de constats sans décision attendue, elle a été écrite pour un rapport scolaire, pas pour une mission. Dans la pratique, relisez-la en supposant que votre lecteur n'a que trois minutes : s'il doit tourner les pages pour trouver l'échéance, la page a échoué.
+
+## Périmètre, méthode et limites de la mission
+
+Le périmètre répond à une question juridique autant que technique : sur quoi exactement portait votre droit de tester ? Vous y listez les hôtes, les URL, les comptes fournis, les versions des applications, les plages horaires, les actions explicitement interdites, et les éléments explicitement exclus. Chaque ligne exclue doit porter une raison : non fourni, hors contrat, non testable en conditions réelles, reporté par le client. Un périmètre vide ou vague n'est pas plus permissif, il est simplement ambigu, et l'ambiguïté joue toujours contre celui qui devra se défendre.
+
+La méthode décrit ce que vous avez réellement fait, avec quoi et sous quelles conditions. Vous y indiquez l'outil et sa version, la nature des tests, manuel, automatisé, ou mixte, le nombre de comptes utilisés, les journaux conservés, la politique de preuve retenue, et le niveau de couverture atteint. Cette section sert de filtre à la confiance : un lecteur expérimenté jugera la qualité des constats à partir de la qualité de la méthode. Une méthode écrite avec précision permet aussi à un autre auditeur de refaire le travail, ce qui est la définition même d'une mission reproductible.
+
+Les limites sont la partie la plus honnête et la plus rentable du rapport. Vous y écrivez ce que vous n'avez pas pu vérifier : absence d'accès au code source, pas de test sur l'environnement de production, campagne automatisée non poussée au-delà de la couverture nominale, tests de déni de service volontairement écartés, durée insuffisante pour détecter une fuite lente. Chaque limite est accompagnée de sa conséquence, et non seulement de son énoncé : non testé ne veut pas dire sûr, cela veut dire inconnu. C'est en écrivant ces conséquences que vous orientez le client vers un complément de mission, plutôt que vers une fausse tranquillité.
+
+```markdown
+## 2. Périmètre et méthode
+
+Périmètre inclus : https://portail-mediatheque.example.fr et ses sous-domaines
+app, agent, api ; environnement de recette, version 3.4.12 ; comptes fournis
+un visiteur, un inscrit, un agent, un administrateur ; fenêtre d'intervention
+du 4 au 8 novembre 2026, de 9 h à 18 h.
+
+Méthode : test manuel ciblé sur les flux d'authentification, d'inscription et
+de consultation du catalogue, complété par un scan automatisé hors production
+avec outil en version figée. Journalisation intégrale des requêtes envoyées,
+conservation pendant 90 jours puis destruction.
+
+Limites : pas d'accès au code source ; environnement de production exclu ;
+tests de charge et de déni de service hors contrat ; vulnérabilités de
+dépendances non auditées au-delà de la détection automatique. Un défaut non
+signalé ici ne doit pas être interprété comme inexistant.
+```
+
+Une remarque sur la terminologie : évitez les formules creuses telles que l'audit a été mené selon les meilleures pratiques, sans les nommer. Si vous vous appuyez sur une grille de référence, écrivez laquelle, dans quelle version, et sur quels points elle n'a pas été couverte. La précision vous coûte une phrase et vous gagne une crédibilité durable. Elle permet surtout au client de comparer deux rapports d'auditeurs différents, ce qui arrive plus souvent qu'on ne le pense lors des renouvellements de contrat.
+
+La criticité n'est pas une impression : c'est la rencontre entre la sévérité technique du défaut, la valeur de la cible et l'exposition réelle. Deux constats de même nature n'obtiennent pas la même criticité selon l'endroit où ils se trouvent. Une faille de contournement de contrôle d'accès sur un service interne isolé ne vaut pas la même chose que sur une route exposée à Internet depuis quatre ans. Votre travail de classification consiste donc à séparer trois questions que l'on confond sans cesse : quelle est la puissance du défaut, que peut-il toucher chez ce client, et combien de temps peut-il rester tel quel avant de devenir un incident.
+
+Dans la pratique, on procède en deux temps. On note d'abord la sévérité technique avec une méthode normalisée, dont CVSS fait l'objet de la section suivante, ce qui donne un chiffre reproductible et comparable d'un audit à l'autre. On applique ensuite une grille de criticité propre à l'organisation, qui pondère par l'exposition, la sensibilité des données, la criticité du service et l'effort d'exploitation. Cette seconde étape est un arbitrage, pas un calcul : elle se discute avec le responsable fonctionnel, elle se documente dans la fiche, et elle se déclare comme un jugement motivé plutôt que comme une valeur sortie d'un outil.
+
+Le tableau de classification est la pièce centrale du rapport. Il tient sur une page, il classe par ordre décroissant, et il relie chaque ligne à une fiche détaillée et à une action de remédiation. Une bonne table donne le numéro, le titre en clair, la criticité, la note, l'impact métier résumé et le délai conseillé. Une mauvaise table ne donne que la note, ce qui oblige le lecteur à remonter aux fiches pour comprendre quoi que ce soit. Elle sert aussi d'outil de négociation : c'est sur cette page que le client rediscute une criticité, et il est préférable qu'il la discute avec l'impact métier sous les yeux plutôt qu'avec un score isolé.
+
+```table
+Réf. | Titre | Criticité | CVSS | Impact métier | Délai conseillé
+ML-2026-001 | Élévation de privilèges vers le rôle administrateur | Critique | 9.1 | Prise de contrôle de l'espace de gestion | 10 jours
+ML-2026-002 | Absence de protection contre les falsifications de requête | Haute | 8.1 | Inscriptions falsifiées en masse | 15 jours
+ML-2026-003 | Accès non contrôlé à la fiche d'un inscrit | Haute | 8.1 | Divulgation de données personnelles de mineurs | 15 jours
+ML-2026-004 | Fuite de traces d'appel dans les messages d'erreur | Moyenne | 5.3 | Aide au ciblage d'attaques futures | 45 jours
+ML-2026-005 | Absence de limitation de débit sur la connexion | Moyenne | 5.3 | Risque d'épuisement des comptes | 45 jours
+ML-2026-006 | Réponse différente pour un compte inexistant | Basse | 3.7 | Recensement de comptes valides | 90 jours
+ML-2026-007 | En-têtes de sécurité absents sur les pages publiques | Basse | 2.6 | Surface de XSS renforcée | 90 jours
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/An_Audit_Report_on_Security_at_the_Texas_Lottery_Commission_-_DPLA_-_61ee224cf94862af79673622c918e025_%28page_1%29.jpg/960px-An_Audit_Report_on_Security_at_the_Texas_Lottery_Commission_-_DPLA_-_61ee224cf94862af79673622c918e025_%28page_1%29.jpg
+| Page de couverture d'un rapport d'audit public, avec son numéro de dossier, sa date et son objet : toute la rigueur attendue d'un rapport de sécurité tient déjà dans cette page d'ouverture.
+```
+
+Un mot sur les cas limites, qui occupent une part décente du temps de rédaction. Le même défaut obtient souvent deux notes selon la version de la grille utilisée, et le client peut venir avec une autre grille que la vôtre. Ne cherchez pas à imposer la vôtre : indiquez la grille et sa version, donnez votre note, et si la différence est notable, ajoutez une ligne expliquant l'écart. Un rapport qui assume une divergence argumentée est plus crédible qu'un rapport qui fait disparaître le désaccord en arrondissant. Gardez aussi une colonne de constats refusés ou non retenus : les défauts que vous avez identifiés puis écartés comme non exploitables doivent être tracés, car ils montrent que vous avez regardé.
+
+## CVSS en pratique : noter sans se mentir
+
+Le Common Vulnerability Scoring System donne un langage commun pour décrire la sévérité d'un défaut. Sa force est d'être normalisé et reproductible ; sa faiblesse est d'être systématiquement sous-estimé par les débutants et sur-utilisé par les outils. Une note seule ne veut rien dire : c'est le vecteur complet, la chaîne de métriques, qui permet de comprendre pourquoi le chiffre est celui-là. Deux constats notés 7.5 peuvent relever de correctifs complètement différents, et un lecteur qui ne voit que le chiffre ne peut pas le savoir.
+
+Partons du fonctionnement de la version 3.1, la plus répandue dans les rapports actuels. Le score de base se calcule à partir de trois groupes de métriques. Le groupe d'exploitation décrit comment le défaut est atteint : vecteur réseau, adjacent, local ou physique, complexité d'exploitation faible ou élevée, privilèges requis, interaction utilisateur exigée. Le groupe d'impact décrit ce qui se perd : confidentialité, intégrité et disponibilité, chacune évaluée à aucune, faible ou totale. À ces groupes s'ajoutent des métriques de portée, qui indiquent si l'effet dépasse le composant directement touché, et des métriques temporelles et environnementales, que nous verrons plus bas.
+
+L'erreur classique consiste à empiler les notes les plus hautes par réflexe. Un défaut de type exécution de code à distance avec authentification préalable n'est pas un 10.0 : les privilèges requis et l'interaction exigée font mécaniquement chuter le score. De même, la divulgation d'information n'atteint presque jamais 9.0, sauf si la fuite est massive et immédiate. Notez ce que vous avez observé, pas ce que le défaut pourrait théoriquement permettre dans le meilleur des cas pour l'attaquant. Si vous n'avez pas démontré une étape, écrivez-le dans la fiche et baissez la métrique correspondante : l'honnêteté du vecteur se lit dans ses valeurs basses autant que dans ses valeurs hautes.
+
+```text
+Vecteurs de référence utilisés dans cet audit
+
+ML-2026-001  CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H   -> 9.1
+             Élévation vers l'administration depuis un compte agent.
+
+ML-2026-003  CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N   -> 6.5
+             Lecture de fiches tierces ; calcul corrigé après arbitrage
+             du scénario d'exposition, noté 8.1 en version de base initiale.
+
+ML-2026-006  CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N   -> 3.7
+             Énumération de comptes par différence de réponse.
+
+ML-2026-007  CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N   -> 2.6
+             Absence d'en-tête de sécurité : impact réel non démontré.
+```
+
+Le piège suivant est le score environnemental. Les métriques temporelles servent à dire que le défaut est déjà corrigé chez certains fournisseurs, ou qu'un exploit public existe, ou que la remédiation est difficile à déployer. Les métriques environnementales servent à dire que ce système précis stocke des données plus sensibles que la moyenne ou que sa disponibilité est critique. Les utiliser correctement demande de connaître le contexte, ce que vous connaissez mieux que personne à la fin d'une mission. L'erreur n'est pas de les ignorer totalement, c'est de les modifier sans le dire : si votre score diffère de celui de l'outil, écrivez le score de l'outil, le vôtre, et la raison de l'écart.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/CVSS_4.0-complete-signature-RGB.svg/960px-CVSS_4.0-complete-signature-RGB.svg.png
+| Le sigle officiel du Common Vulnerability Scoring System, méthode normalisée de notation de la sévérité des vulnérabilités, dont la version 4.0 élargit la prise en compte du contexte d'exploitation.
+```
+
+Un constat sur CVSS 4.0, que vous rencontrerez de plus en plus : elle ajoute des métriques d'exploitabilité affinées, des exigences de réaction et une meilleure prise en compte des scénarios d'attaque spécifiques au système. Elle corrige plusieurs défauts de la version 3.1, notamment le traitement des cas où l'authentification est requise. Dans un rapport destiné à un public mixte, indiquez toujours la version de la grille : comparer un score 3.1 à un score 4.0 sans le préciser revient à comparer deux échelles différentes. Enfin, rappelez que le score ne prime jamais sur le jugement métier : il ordonne, il ne décide pas.
+
+## Reproduire et prouver sans exposer de données sensibles
+
+La preuve est ce qui distingue un rapport d'un avis. Elle doit être suffisante pour convaincre et reproductible par un tiers, tout en restant au strict nécessaire : ni plus, ni moins. Le principe directeur tient en une phrase : conservez tout ce qui permet de rejouer le constat, retirez tout ce qui expose une donnée personnelle, un secret ou un identifiant réutilisable. Chaque pièce jointe doit pouvoir être justifiée par une question précise : quelle étape prouve-t-elle, et que deviendrait le constat si on la retirait ?
+
+Les preuves les plus solides sont les plus simples : un extrait de journal de requêtes, une réponse serveur complète avec son code de retour, une capture montrant la même manipulation effectuée deux fois avec deux comptes différents. Les preuves fragiles sont celles qui ne reposent que sur une capture d'écran, car une image ne prouve ni l'environnement, ni l'heure, ni l'absence d'arrangement. Dans la pratique, vous associez à chaque constat un numéro de pièce, un horodatage, l'environnement concerné et la commande ou la requête exacte, puis vous référencez ce numéro dans la fiche. Le lecteur peut alors remonter à l'annexe, vérifier, et refaire.
+
+L'anonymisation demande une méthode, pas un réflexe. On ne remplace pas un nom par un autre nom, on remplace la valeur par un jeton stable, par exemple client-042, conservé tel quel d'une pièce à l'autre afin que les recoupements restent possibles sans révéler l'identité. Les adresses de courriel se réduisent à leur domaine lorsque c'est suffisant, les identifiants de session sont tronqués, les jetons d'accès sont masqués sauf leurs derniers caractères, les mots de passe saisis ne figurent nulle part, même fictifs. Les données de mineurs, les données de santé et les données bancaires ne figurent jamais dans le rapport : on décrit leur présence, on ne les recopie pas.
+
+```text
+ANNEXE A — Extrait de journal, constat ML-2026-003 (valeurs anonymisées)
+
+Horodatage        : 2026-11-05T10:42:17Z
+Environnement     : recette, version 3.4.12
+Compte utilisé    : agent-017 (rôle agent, établissement E-02)
+
+Requête envoyée
+  GET /api/inscriptions/4471 HTTP/1.1
+  Host: agent.mediatheque.example.fr
+  Cookie: session=<jeton tronqué sur 8 caractères>
+
+Réponse obtenue
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+  {"id":4471,"nom":"<remplacé: client-042>","mineur":true,
+   "etablissement":"E-07"}
+
+Observation
+  Le dossier renvoyé appartient à l'établissement E-07, alors que le
+  compte connecté relève de l'établissement E-02. Aucune vérification
+  d'appartenance n'est appliquée côté serveur.
+```
+
+Un point sur la chaîne de preuve : horodatage, environnement et compte utilisé doivent figurer pour chaque manipulation, y compris les plus triviales. C'est ce triptyque qui permet, six mois plus tard, de répondre à la question gênante : ce constat s'applique-t-il encore à la version en production ? Pensez aussi à conserver vos journaux pour une durée annoncée, généralement le temps de la mission plus la période de retest, puis à les détruire et à le noter dans le rapport. La destruction planifiée est une preuve de maturité, pas un aveu.
+
+La limite de la preuve est la démonstration d'impact. Vous pouvez montrer qu'un accès est possible sans affirmer qu'il a été utilisé. Vous pouvez montrer qu'une requête est acceptée sans exécuter l'action de masse. Vous pouvez montrer qu'une fuite technique existe sans extraire le jeu de données. Dans la rédaction, cette limite se traduit par un vocabulaire précis : confirmé signifie que vous l'avez observé, exploitable signifie que vous l'avez démontré, potentiel signifie que le mécanisme s'y prête sans que vous l'ayez fait. Ces trois mots ne sont pas interchangeables, et un lecteur expérimenté les distingue immédiatement.
+
+## Vérifier avant d'écrire : faux positifs, faux négatifs et seconde opinion
+
+Aucun constat ne rejoint le rapport sans avoir été rejoué à froid, dans des conditions différentes de celles de sa découverte. Un rapport qui contient un seul faux positif perd une part de sa crédibilité sur l'ensemble, parce que le lecteur se met alors à douter de ce que vous avez confirmé. Le coût de cette vérification est faible : quelques minutes par constat, un nouvel onglet, un autre compte, parfois une réinitialisation de l'environnement. Le coût de l'erreur, lui, se compte en semaines de travail perdues par une équipe qui aura corrigé un défaut inexistant.
+
+Les faux positifs naissent de causes très ordinaires. Un outil automatique signale un en-tête absent parce qu'il l'a cherché sur une route qu'il n'a jamais atteinte, une réponse 500 provient du redémarrage du service et non de votre charge, une injection paraît fonctionner parce que la chaîne de test a été renvoyée telle quelle dans un message d'erreur. Le réflexe à acquérir est toujours le même : chercher l'explication bénigne avant d'écrire la phrase qui affirme le défaut. Si la manipulation échoue une fois sur deux, le constat n'est pas confirmé, il est probable, et il doit être relégué en annexe avec les conditions de son instabilité.
+
+La seconde opinion est l'étape que les débutants sautent faute de temps. Faire relire un constat par un collègue, même brièvement, même sans entrer dans les détails, suffit souvent à révéler une lecture erronée. Demandez simplement : sans regarder ma conclusion, refais la manipulation et dis-moi ce que tu observes. Si vos deux observations concordent, le constat tient. Si elles divergent, c'est l'environnement ou votre compréhension qui cloche, et dans les deux cas vous venez d'éviter une ligne fausse dans un document contractuel.
+
+```text
+Grille de vérification appliquée avant intégration d'un constat
+
+1. La manipulation a-t-elle été refaite à froid, après fermeture des outils ?
+2. Le résultat est-il identique avec un second compte de même rôle ?
+3. Le résultat est-il identique après réinitialisation de l'environnement ?
+4. L'explication bénigne a-t-elle été écartée et documentée ?
+5. La note CVSS correspond-elle à ce qui a été observé, pas à ce qui était prévu ?
+6. Les pièces jointes contiennent-elles une donnée personnelle à retirer ?
+7. Un collègue a-t-il rejoué la manipulation sans indication préalable ?
+8. Le correctif proposé a-t-il été testé avant d'être recommandé ?
+```
+
+Le faux négatif mérite la même attention, sous une forme différente. Vous n'avez pas trouvé n'importe quoi, vous n'avez trouvé que ce que votre méthode permettait de trouver, et le rapport doit le dire explicitement. Décrivez les zones que vous n'avez pas couvertes, les comptes dont vous ne disposiez pas, les dépendances que vous n'avez pas auditées. Cette honnêteté n'affaiblit pas la mission, elle indique au client où investir ensuite. Elle vous protège aussi : un défaut découvert plus tard dans une zone que vous avez déclarée hors périmètre ne remet pas en cause votre travail, alors que le même défaut découvert dans une zone que vous avez implicitement couverte peut vous être reproché.
+
+Enfin, testez votre correctif avant de le proposer. Une recommandation non éprouvée vaut moins qu'une observation, parce qu'elle crée une attente. Si vous écrivez qu'il faut filtrer par établissement côté serveur, vérifiez que ce filtre neutralise bien la manipulation que vous avez documentée, et notez le résultat. Dans la pratique, ce passage de relais, constat, hypothèse de correction, vérification de la correction, est ce qui sépare un rapport suivi d'effet d'un rapport suivi d'une réponse du type nous allons étudier.
+
+## Deux destinataires, deux lectures : technique et direction
+
+Un rapport d'audit a deux lecteurs principaux, et ils ne cherchent pas la même chose. Le lecteur technique cherche la fiche, la reproduction et la ligne à corriger ; il ouvrira le document à la page du constat qui lui est assigné et refermera le reste. Le lecteur de direction cherche le verdict, l'échéance et le coût ; il lira la première page et s'arrêtera là, sauf si vous le convainquez d'aller plus loin. Un rapport écrit pour l'un seul de ces deux lecteurs échoue : rédigé pour les techniciens, il ne déclenche aucun arbitrage ; rédigé pour la direction, il ne contient rien de corrigeable.
+
+La solution n'est pas d'écrire deux rapports, mais d'écrire un rapport en couches, où chaque section annonce son niveau de lecture. La synthèse utilise le vocabulaire du risque métier : exposition, donnée concernée, service impacté, échéance, effort. Les fiches de constat utilisent le vocabulaire de l'implémentation : route, paramètre, vérification absente, contournement, correctif. Entre les deux, la table de classification sert de traducteur, parce qu'elle met l'identifiant, la note technique et l'impact métier sur la même ligne. Le lecteur de direction peut s'arrêter après cette table sans jamais rencontrer un acronyme, et le lecteur technique peut partir de la table vers la fiche sans perdre le fil.
+
+Cette architecture a une conséquence sur le ton. Vous ne pouvez pas employer la même phrase pour les deux publics. Devant la direction, vous écrivez qu'un défaut permet de consulter des données de personnes mineures sans autorisation, ce qui déclenche une notification. Devant l'équipe, vous écrivez que la route d'accès aux fiches ne vérifie pas l'appartenance du dossier à l'établissement de la session et qu'un filtre serveur fait défaut. Les deux phrases décrivent le même fait, mais l'une donne une raison d'agir et l'autre donne un moyen d'agir. Le rapport a besoin des deux, chacune à sa place.
+
+Dans la pratique, le moment de vérité est la réunion de restitution. Vous présentez à une salle mixte, avec des gens qui n'ont lu que la synthèse et d'autres qui ont déjà ouvert les annexes. Présentez la synthèse, puis montrez une fiche en entier, une seule, en expliquant chaque champ. Cette démonstration unique rassure les deux publics : la direction voit que le verdict repose sur des faits, les équipes voient qu'elles recevront du détail exploitable. Prévoyez ensuite un temps pour les questions sur le périmètre, qui sont en réalité des questions sur ce que le rapport ne couvre pas.
+
+Un troisième lecteur existe, souvent ignoré : l'auditeur externe ou le régulateur qui, dans un an, relira le document pour vérifier que les engagements ont été tenus. Ce lecteur ne connaît ni vous, ni le projet. Il a besoin des dates, des versions, des identifiants stables et des signatures de suivi. Écrivez pour lui en conservant chaque version du rapport, chaque note de version et chaque preuve de remise. Ce qui vous coûte une poignée de minutes vous évite, plus tard, une discussion sur le moment exact où le client a été informé.
+
+```markdown
+Rapport pour la direction — ce qu'il faut retenir
+
+Trois phrases suffisent : ce qui est cassé, ce que cela coûte s'il n'est pas
+corrigé, ce que vous demandez. Tout le reste est du détail que vous ajouterez
+si on vous le demande.
+
+Ce qui est cassé : trois défauts permettent de contourner les contrôles
+d'accès de l'espace agent et de consulter des inscriptions qui ne vous
+appartiennent pas.
+
+Ce que cela coûte : une notification obligatoire en cas d'usage réel, la
+perte de confiance des familles, et un mois de travail de crise si l'incident
+est rendu public.
+
+Ce que nous demandons : douze jours-homme répartis sur quinze jours, un
+retest avant mise en production, et un point de suivi à trente jours.
+```
+
+Attention à un écueil répandu : le rapport trop long. Au-delà d'une vingtaine de pages hors annexes, la probabilité qu'il soit lu intégralement chute. Longueur n'est pas rigueur. La rigueur tient dans la précision des faits, pas dans le nombre de paragraphes. Si vous dépassez ce volume, déplacez les détails vers les annexes, gardez les fiches synthétiques et signalez la page de l'annexe correspondante. Le lecteur pressé reste servi, le lecteur minutieux trouve tout, et le document reste maniable.
+
+## Plan de remédiation : effort, impact, priorité
+
+Le plan de remédiation transforme une liste de défauts en un travail planifiable. Il ne se contente pas de recommander : il propose un ordre, une estimation, un responsable pressenti et une échéance pour chaque constat. Sans ces quatre éléments, votre rapport se termine sur une page de conseils que personne n'a les moyens d'exécuter, et il finit archivé. Avec ces éléments, il devient un plan d'action que le responsable de projet peut intégrer au prochain lot de mise en production sans vous redemander quoi que ce soit.
+
+L'effort se mesure en jours-homme, en distinguant la correction du correctif lui-même, les tests de non-régression et la mise en production. Une correction d'une heure qui exige un cycle de recette complet coûte une journée, pas une heure. Estimez à voix haute, avec la marge que vous jugerez honnête, et indiquez toujours que l'estimation est celle de l'auditeur, non celle de l'équipe. Cette réserve évite qu'on vous reproche plus tard une fourchette trop optimiste, et elle laisse l'équipe libre de réviser le chiffrage à la hausse sans rompre l'accord.
+
+L'impact n'est pas la criticité, c'est le gain obtenu en corrigeant. Corriger un défaut de criticité moyenne qui bloque une mise en production peut passer avant un défaut haut qui ne touche aucun parcours réellement emprunté. La matrice de décision oppose donc effort et gain, et produit quatre cases : corriger maintenant, corriger au lot suivant, corriger si le contexte change, ne pas corriger en documentant le risque. Écrire cette dernière case est un signe de maturité : un rapport qui recommande de tout corriger n'a pas priorisé, il a recopié.
+
+```table
+Réf. | Effort estimé | Gain attendu | Priorité | Échéance proposée | Voie
+ML-2026-001 | 3 j | Très élevé | P1 | 10 jours | Correctif ciblé + retest
+ML-2026-002 | 4 j | Élevé | P1 | 15 jours | Correctif + test de non-régression
+ML-2026-003 | 2 j | Élevé | P1 | 15 jours | Filtre serveur + test de non-régression
+ML-2026-004 | 2 j | Moyen | P2 | Prochain lot | Politique d'affichage des erreurs
+ML-2026-005 | 1 j | Moyen | P2 | Prochain lot | Limitation de débit au proxy
+ML-2026-006 | 0,5 j | Faible | P3 | Trimestre suivant | Réponse identique
+ML-2026-007 | 1 j | Faible | P3 | Trimestre suivant | En-têtes au niveau du proxy
+```
+
+La colonne voie mérite une attention particulière. Deux constats de criticité identique peuvent relever de voies radicalement différentes : un correctif dans le code applicatif, un réglage au niveau du reverse proxy, une modification de procédure, une mise à jour de dépendance. Chaque voie appartient à une équipe différente, avec un délai de déploiement différent. C'est en écrivant la voie que vous découvrirez d'ailleurs que certains correctifs sont plus rapides que leur criticité ne le suggère, et que d'autres attendront un lot lointain faute de toucher au code en production.
+
+Enfin, annexe de remédiation oblige : pour chaque correction proposée, écrivez comment la vérifier. Un correctif sans test de non-régression revient à une promesse. Donnez la manipulation exacte qui doit échouer après correction, avec le résultat attendu. C'est le seul passage du rapport où vous décrivez l'avenir, et c'est celui que l'équipe vous redemandera à chaque point de suivi.
+
+## Suivi, retest et clôture
+
+Le rapport est remis, la mission est facturée, et pourtant le travail n'est pas terminé : un constat n'est clos que lorsqu'il a été retesté. Le retest est la vérification, à la date de mise en production, que la correction produit bien l'effet attendu et n'en produit aucun d'autre. Sans retest, le cycle reste ouvert, et dans six mois personne ne saura dire si les sept constats ont été traités ou simplement oubliés. Dans la pratique, le retest est prévu à la signature, pas découvert à la fin.
+
+Le protocole est simple et doit être écrit dans le rapport : à réception de la notification de correction, l'auditeur rejoue les manipulations documentées, dans l'ordre, avec les comptes d'origine si possible, et constate pour chaque identifiant un de trois états : corrigé, corrigé partiellement, non corrigé. Un état de retest n'est jamais déduit du ticket de correction : il naît de l'observation. Un ticket fermé dont le défaut persiste reste ouvert dans votre suivi, et cette divergence doit être signalée sans ménagement, car c'est exactement le type de problème que l'audit est censé révéler.
+
+La clôture d'un constat exige trois conditions réunies : la correction est en production, le retest est concluant, et la preuve du retest est archivée. Deux sur trois ne suffisent pas. Une correction validée en recette mais pas déployée laisse le défaut en place ; un retest concluant sur un environnement de test différent ne prouve rien pour la production. Conservez pour chaque clôture la date, l'environnement, le compte utilisé et le numéro de la pièce jointe. Ce niveau de traçabilité vous permet de répondre en une phrase à la question que posent toujours les audits suivants : qu'est-ce qui a été corrigé depuis le dernier rapport ?
+
+```text
+Tableau de suivi des retests — état au 12 janvier 2027
+
+Réf.      | Correctif reçu | Environnement | Rejeté par le retest | État
+ML-2026-001 | 2027-01-04    | production    | oui, pièce R-01      | non corrigé
+ML-2026-002 | 2027-01-04    | production    | non, pièce R-02      | corrigé
+ML-2026-003 | 2027-01-06    | production    | non, pièce R-03      | corrigé
+ML-2026-004 | 2027-01-06    | production    | non, pièce R-04      | corrigé
+ML-2026-005 | en attente    | —             | —                    | ouvert
+ML-2026-006 | reporté       | —             | —                    | reporté
+ML-2026-007 | reporté       | —             | —                    | reporté
+
+Commentaire : ML-2026-001 reste ouvert malgré le ticket clos le 5 janvier.
+Le contournement décrit dans la fiche fonctionne toujours avec le compte
+agent-017. Réouverture notifiée le 12 janvier.
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/3/31/Bugzilla_Lifecycle_color-aqua.svg/960px-Bugzilla_Lifecycle_color-aqua.svg.png
+| Cycle de vie d'un défaut, de sa découverte à sa clôture en passant par sa confirmation, sa correction et sa vérification : le retest est l'étape que les équipes oublient le plus souvent.
+```
+
+Le suivi ne se limite pas aux retests. Un rapport vivant contient un point d'étape à trente jours, un autre à quatre-vingt-dix, où vous résumez l'avancement, les constats ouverts et les nouveaux risques apparus entre-temps. Ce dispositif est particulièrement utile lorsque plusieurs lots de mise en production se succèdent : il empêche qu'un constat ne se perde entre deux incréments. Il vous rend aussi disponible à bon escient, car le point d'étape remplace les questions isolées qui, sans lui, se multiplient par courriel.
+
+Un dernier conseil sur le ton du suivi. Signaler qu'un correctif est incomplet n'est pas dénoncer l'équipe, c'est remplir votre fonction : vous êtes le seul à avoir la manipulation sous la main. Formulez-le comme un fait daté, avec la pièce à l'appui, sans commentaire sur la qualité du travail réalisé. L'équipe qui se sent respectée par ce genre de rapport est une équipe qui vous rappellera pour le prochain audit.
+
+## Bon rapport, mauvais rapport
+
+La différence entre un bon et un mauvais rapport se joue rarement sur la qualité des découvertes : les mêmes constats y figurent souvent. Elle se joue sur leur mise en forme, leur ordre et leur capacité à survivre à l'absence de leur auteur. Un bon rapport se lit dans le désordre, se cite par identifiant, s'exécute étape par étape, et se termine par des décisions. Un mauvais rapport se lit de bout en bout ou pas du tout, se raconte à l'oral, et laisse le client avec une pile de constats mais aucun chemin vers la correction.
+
+Les symptômes du mauvais rapport sont faciles à repérer dès la première lecture. Une synthèse qui répète la table des matières au lieu de donner un verdict. Des constats numérotés au hasard, sans rapport avec leur gravité. Des preuves qui reposent sur des captures d'écran seules, sans requête ni réponse. Une section périmètre réduite à la phrase l'audit a été réalisé selon les bonnes pratiques. Des recommandations qui disent durcir la configuration, sans dire laquelle, où, et comment vérifier. Chacun de ces défauts peut paraître mineur isolément ; ensemble, ils transforment le document en opinion.
+
+À l'inverse, un bon rapport présente des caractéristiques que vous pouvez vérifier mécaniquement avant remise. Chaque constat porte un identifiant stable, une localisation, un vecteur de score complet, une reproduction en étapes numérotées, au moins une pièce jointe référencée, une correction proposée et un test de vérification. La synthèse tient en une page et contient une décision demandée. Le périmètre liste explicitement les exclusions. Le plan de remédiation indique effort, échéance et responsable. Les limites sont écrites. Un rapport qui coche ces onze points est lu, discuté puis exécuté.
+
+```text
+Contrôle final avant remise du rapport
+
+- Le verdict figure-t-il dans les dix premières lignes de la synthèse ?
+- Chaque constat possède-t-il un identifiant réutilisable ailleurs ?
+- Chaque score est-il accompagné de son vecteur complet et de sa version ?
+- Chaque preuve est-elle horodatée, localisée et anonymisée ?
+- Chaque recommandation contient-elle un test de vérification ?
+- Les exclusions du périmètre sont-elles explicitement écrites ?
+- Les limites de la mission sont-elles accompagnées de leur conséquence ?
+- La date de retest est-elle convenue avec le client ?
+- Le document a-t-il été relu par un collègue en dehors de l'équipe ?
+- La version et la date figurent-elles sur chaque page ?
+```
+
+Un mot sur ce que l'on attend de vous au-delà du document. Le bon rapport est aussi celui qui sait dire non à la demande de reformulation opportune. Un client qui vous demande de baisser une criticité le jour de la remise vous demande de changer un fait. Vous pouvez accepter d'ajouter le contexte qui fonde son désaccord, vous pouvez reprendre la note si votre propre analyse était fausse, mais vous ne pouvez pas la modifier pour faire taire un désaccord. Un rapport qui se réécrit sous pression ne vaut plus rien comme preuve, et le protocole est alors simple : versionnez, annotez, conservez.
+
+En définitive, la qualité d'un rapport se mesure à un test simple, que vous pouvez appliquer trois mois après la remise. Prenez un constat au hasard, donnez la fiche à un membre de l'équipe qui n'a pas participé à l'audit, et observez. S'il corrige le défaut sans vous appeler, votre écrit a fait son travail. S'il vous appeler pour comprendre, il manque une étape. S'il ne trouve pas la fiche, l'organisation a perdu le fil : et c'est alors votre processus de suivi, non votre plume, qu'il faudra revoir.
+
+## Modèles de formulation en français
+
+La rédaction d'un rapport obéit à une contrainte rare : il faut dire des choses précises, parfois désagréables, dans une langue que des non-spécialistes liront sans traducteur. Les modèles qui suivent ne sont pas des formules à recopier sans réflexion, mais des ossatures éprouvées : elles garantissent que chaque phrase porte une information vérifiable, qu'aucun jugement personnel ne s'infiltre, et que le lecteur trouve toujours la réponse à la question qu'il se pose. Prenez-les comme des gabarits, remplacez les valeurs, gardez la structure.
+
+Le premier modèle sert à décrire un constat. La description ne raconte pas votre découverte, elle expose le mécanisme : ce qui devrait se passer, ce qui se passe réellement, et pourquoi l'écart existe. On évite les phrases telles que la sécurité est faible, qui ne disent rien de vérifiable, et on lui préfère la phrase qui nomme le contrôle absent. On évite aussi l'accumulation de sigles : un lecteur fonctionnel doit pouvoir comprendre la nature du défaut sans connaître l'acronyme.
+
+```text
+MODÈLE — Description d'un constat
+
+Ce que le système devrait faire :
+La consultation d'une inscription ne doit être possible que pour les agents
+de l'établissement rattaché au dossier.
+
+Ce que le système fait :
+La route renvoie le dossier demandé sans comparer l'établissement du dossier
+à celui de la session, quel que soit le compte connecté.
+
+Pourquoi l'écart existe :
+La vérification d'appartenance n'a jamais été implémentée côté serveur ; le
+contrôle existant est purement visuel et disparaît dès que la requête est
+formée manuellement.
+
+Preuve :
+Pièce A-03, requête et réponse intégrales, horodatée du 5 novembre 2026 à
+10 h 42, environnement de recette, compte agent-017.
+```
+
+Le deuxième modèle sert à formuler l'impact, et c'est le plus difficile. L'impact n'est pas la gravité technique, c'est la conséquence pour l'organisation : donnée exposée, service indisponible, opération falsifiée, obligation légale déclenchée. Une bonne phrase d'impact contient un objet concret, un périmètre et une condition. Elle dit ce qui peut arriver, à qui, et sous quelle hypothèse. Elle ne promet pas l'ampleur maximale : elle décrit l'ampleur démontrée, puis signale l'ampleur possible en la distinguant explicitement.
+
+```text
+MODÈLE — Phrase d'impact
+
+Forme faible  : la faille présente un risque élevé pour la sécurité des
+données.
+
+Forme correcte : un agent de l'établissement A peut consulter l'identité et
+les coordonnées des personnes inscrites dans l'établissement B, sans
+autorisation de ce dernier. Sur le périmètre testé, ce défaut touche 4 200
+dossiers, dont 1 700 concernant des mineurs. Aucun export massif n'a été
+démontré : la lecture est unitaire et nécessite une requête par dossier.
+
+Forme excessive : un attaquant peut extraire toute la base de données.
+```
+
+Le troisième modèle concerne les recommandations, où l'on voit le plus souvent des phrases vagues. Corriger la configuration, renforcer les mots de passe, sensibiliser les équipes : ces formules ne mesurent rien et ne se vérifient pas. Une recommandation utile nomme l'endroit, l'action, le critère de succès et la personne pressentie. Elle tient en une phrase que l'équipe peut transformer en ticket sans vous recontacter.
+
+```text
+MODÈLE — Recommandation
+
+Faible  : il est recommandé de renforcer la sécurité des accès.
+
+Correcte : ajouter, dans le middleware d'authentification de l'espace agent,
+une comparaison entre l'établissement de la session et l'établissement du
+dossier consulté, puis rejeter la requête avec un code 403 lorsqu'ils
+diffèrent. Vérification : rejouer la manipulation décrite à l'étape 3 de la
+fiche ML-2026-003, qui doit désormais renvoyer 403.
+
+Pressenti : équipe application. Effort : 2 jours, tests de non-régression
+inclus.
+```
+
+Au-delà des modèles de constat, gardez un répertoire de phrases types pour les moments où la rédaction se complique. La limite de périmètre, l'estimation incertaine, le désaccord sur une criticité, la demande d'arbitrage : autant de passages où une formulation approximative crée une ambiguïté durable. Ces phrases se préparent à l'avance, lorsqu'on est encore calme, et se déclinent ensuite avec les valeurs propres à la mission.
+
+```text
+PHRASES TYPES — Répertoire de rédaction
+
+Limite de périmètre
+  L'environnement de production étant exclu du contrat, les constats de ce
+  rapport décrivent un comportement observé en recette. Aucun essai n'ayant
+  été conduit en production, leur état réel sur le parcours en service n'est
+  pas connu.
+
+Estimation
+  L'effort indiqué est une estimation de l'auditeur, fondée sur la
+  complexité du correctif décrit ; il reste à confirmer par l'équipe
+  en charge du développement.
+
+Désaccord sur une criticité
+  Le client propose une criticité moyenne au motif que la route n'est pas
+  exposée publiquement. Nous maintenons la criticité haute car le défaut
+  suppose uniquement un compte agent, obtenu par inscription. Cette divergence
+  est consignée sans arbitrage supplémentaire.
+
+Demande d'arbitrage
+  Nous demandons à la direction de trancher entre le correctif complet, deux
+  jours, et la solution de contournement, demi-journée, en acceptant que
+  celle-ci laisse le défaut présent en production.
+
+Erreur de l'auditeur
+  Le constat ML-2026-009, noté initialement 7.5, a été retiré du rapport le
+  7 novembre : la manipulation reposait sur un service arrêté. La version 1.2
+  du rapport le mentionne en annexe des constats écartés.
+```
+
+Remarquez le dernier exemple. Reconnaître publiquement une erreur de notation, et la tracer, augmente votre crédibilité au lieu de la diminuer : il montre que le processus de vérification fonctionne. Un rapport qui ne contient jamais de rectification est un rapport où personne n'a relu. Inversement, la rectification doit rester factuelle, sans justification longue ni autocritique superflue : la date, l'identifiant, la valeur corrigée, la raison en une ligne.
+
+## Mini-projet : rédiger le rapport de l'audit de la Médiathèque
+
+Vous disposez maintenant de toute la chaîne : périmètre, méthode, classification, notation, preuves, remédiation, suivi et modèles. Le mini-projet consiste à produire, seul, le rapport complet de l'audit dont nous avons suivi les constats tout au long du chapitre. Ce n'est pas un exercice de style : c'est la livraison exacte que vous remettriez après cinq jours de mission, et elle doit pouvoir être lue par la direction autant que par l'équipe applicative.
+
+Les sept constats sont ceux du tableau de classification : élévation de privilèges vers le rôle administrateur, absence de protection contre les falsifications de requête, accès non contrôlé à la fiche d'un inscrit, fuite de traces d'appel dans les messages d'erreur, absence de limitation de débit, réponse différente pour un compte inexistant, en-têtes de sécurité absents. Vous rédigerez pour chacun une fiche complète, avec identifiant, localisation, vecteur CVSS et sa version, description du mécanisme, impact métier, reproduction en étapes numérotées, référence de preuve, correction proposée et test de vérification.
+
+Votre rapport contiendra, dans cet ordre : une synthèse exécutive d'une page maximum comportant une décision demandée et un effort estimé ; un périmètre listant les exclusions avec leur conséquence ; une méthode datant les outils et la politique de preuve ; la table de classification complète ; les sept fiches ; un plan de remédiation avec effort, échéance, responsable pressenti et voie ; un protocole de retest avec date convenue ; et une annexe de preuves anonymisées. Chaque identifiant devra apparaître à au moins trois endroits du document sans jamais changer de signification.
+
+```text
+Livrables attendus du mini-projet
+
+1. Rapport complet, structuré selon les huit sections ci-dessus.
+2. Tableau de classification en sept lignes, trié par criticité décroissante.
+3. Sept fiches de constat, dont au moins une rédigée intégralement, vecteur
+   de score, étapes de reproduction et test de correction compris.
+4. Une synthèse exécutive d'une page, lisible par un lecteur non technique,
+   contenant une décision, une échéance et un effort en jours-homme.
+5. Un extrait d'annexe de preuves avec valeurs anonymisées par jeton stable.
+6. Une page de suivi des versions, avec date, version et destinataires.
+
+Contrôle qualité personnel : relisez chaque phrase en vous demandant si un
+tiers peut la vérifier. Si la réponse est non, reformulez ou retirez-la.
+```
+
+Pour réussir cet exercice, travaillez dans l'ordre inverse de la lecture : d'abord les fiches, puis la table de classification, ensuite le plan de remédiation, enfin la synthèse. Les constats vous forcent à la précision, la table vous oblige à arbitrer, le plan vous contraint à chiffrer, et la synthèse vous apprend à condenser sans dénaturer. Rédiger la synthèse en premier est la faute classique du débutant : elle devient alors une promesse que le reste du rapport ne tient pas.
+
+## À retenir
+
+Un rapport d'audit n'est pas le compte rendu de votre mission, c'est l'outil grâce auquel d'autres personnes corrigeront ce que vous avez trouvé. Cette phrase résume le chapitre : tout ce que vous avez appris, structure, notation, preuves, priorisation, suivi, sert à rendre votre découverte exécutable par quelqu'un qui n'était pas là. La qualité d'un rapport ne se mesure donc pas à l'ingéniosité des failles qu'il décrit, mais à la vitesse avec laquelle il déclenme une correction.
+
+La structure repose sur huit blocs qui répondent chacun à une question : la synthèse dit quoi décider, le périmètre dit où vous avez regardé, la méthode dit comment, la classification dit dans quel ordre agir, les fiches disent quoi corriger, le plan de remédiation dit avec quel effort, le suivi dit quand vérifier, les annexes disent sur quelles preuves tout cela repose. Retenez surtout l'ordre : il suit la pensée du lecteur, du général au particulier, et il autorise une lecture sélective.
+
+La notation ne remplace pas le jugement. CVSS fournit un vocabulaire reproductible pour la sévérité technique, la grille de criticité traduit le risque pour l'organisation, et les deux doivent coexister sans se confondre. Le score seul ne dit rien de l'impact métier, l'impact seul ne permet pas la comparaison entre audits. Ce qui convainc un lecteur expérimenté, c'est la transparence : version de la grille, vecteur complet, écarts argumentés, divergences assumées.
+
+Enfin, la preuve et la limite sont les deux piliers de votre crédibilité. Une preuve horodatée, localisée et anonymisée se défend ; une capture seule ne se défend pas. Une limite écrite avec sa conséquence vous protège ; une limite absente se retourne contre vous. Et un constat qui porte la mention confirmé parce que vous l'avez rejoué à froid vaut mieux que trois constats spectaculaires dont personne ne peut garantir la reprise.
+
+## Erreurs fréquentes
+
+L'erreur la plus répandue est de confondre rapport et journal de bord. On y trouve l'itinéraire des tests, les commandes tentées, les heures de connexion, les outils installés, et très peu de ce dont le lecteur a besoin. Le journal de bord vous appartient, il vous sert à retrouver vos pas ; le rapport appartient au client. Copier le premier dans le deuxième donne un document long, difficile à naviguer, où les constats réels se noient. Gardez le journal en annexe, élagué, et écrivez dans le corps uniquement ce qui sert à décider ou à corriger.
+
+La deuxième erreur est de noter tout en haute criticité par précaution. Un rapport où sept constats sur sept sont critiques n'aide personne à arbitrer : il déclenche soit une réaction uniforme et mal ciblée, soit, plus souvent, une paralysie. La criticité n'a de valeur que par sa dispersion. Si votre classification produit toujours les mêmes cases, c'est votre grille qui cloche, pas le système audité. Revenez aux définitions, regardez les privilèges requis et l'exposition réelle, et acceptez d'écrire bas lorsque c'est bas.
+
+La troisième erreur est la recommandation sans vérification. Durcir les cookies, améliorer la gestion des erreurs, sensibiliser les utilisateurs : ces phrases ne se testent pas, donc elles ne se ferment jamais. Chaque recommandation doit être accompagnée de la manipulation qui prouve sa réussite. Sans ce test, votre constat reste ouvert indéfiniment, et le suivi se transforme en échange de messages où chacun affirme avoir fait le nécessaire.
+
+La quatrième erreur touche à la déontologie : inclure dans le rapport des données réelles rencontrées pendant les tests. Un numéro de téléphone, une adresse, un nom de famille copié dans une capture paraît anodin, il transforme votre document en nouvelle source de fuite. Anonymisez par jeton stable, conservez la correspondance séparément si elle est nécessaire au retest, et ne laissez dans le rapport que ce qui est indispensable à la démonstration. La même règle vaut pour les comptes et les secrets : jamais de mot de passe, même temporaire, jamais de jeton complet, même expiré.
+
+## Pour aller plus loin
+
+Pour approfondir la notation, lisez la documentation officielle du Common Vulnerability Scoring System, en commençant par la spécification de la version 3.1 puis par le guide utilisateur de la version 4.0. Le document technique est dense, mais il vous apprendra surtout à justifier chaque métrique plutôt qu'à subir le score produit par un outil. Comparez ensuite deux outils sur le même constat : l'écart entre leurs scores vous enseignera plus vite que des heures de lecture.
+
+Côté méthode, les guides publiés par les équipes d'incident et d'audit constituent une base solide pour structurer vos propres grilles. Le site du CERT-FR publie des analyses et des recommandations qui montrent comment une administration formule ses constats et ses correctifs, avec un vocabulaire précis et des échéances explicites. Observez la façon dont ces documents citent leurs sources et datent leurs observations : c'est exactement le niveau de rigueur attendu dans vos annexes.
+
+Pour la partie contractuelle, relisez les clauses de votre mission avant de rédiger, en particulier celles qui traitent de la divulgation, de la durée de conservation des preuves et de la propriété des livrables. Un rapport contredit par une clause que vous n'avez pas lue vous coûte plus cher qu'un constat mal classé. Enfin, formez-vous à l'écriture elle-même : lisez des rapports d'audit publics, comparez leur structure, repérez ce qui vous paraît clair ou confus, puis appliquez ce retour à vos propres brouillons.
+
+## Et maintenant : faire du rapport le livrable de chaque mission
+
+Vous avez terminé le parcours Cybersécurité offensive par là où tout se termine réellement : l'écrit. Les chapitres précédents vous ont donné les gestes, celui-ci vous a donné la manière de les transmettre. Reprenez votre dernier rapport, ou celui que vous écrirez après votre prochaine mission, et appliquez-lui le contrôle final de ce chapitre : verdict en tête, identifiants stables, vecteurs complets, preuves anonymisées, recommandations testées, limites écrites, date de retest convenue.
+
+Entraînez-vous ensuite à un exercice qui vous dépaysera : prenez un constat écrit par quelqu'un d'autre et réécrivez-le en vous interdisant tout adjectif. Ce que vous garderez sera factuel, localisé et corrigeable ; ce que vous retirerez était de l'opinion. Cette discipline, répétée quelques semaines, change plus votre maturité professionnelle que n'importe quel nouvel outil.
+
+Le dernier réflexe à installer est bref : à la fin de chaque intervention, écrivez la page de synthèse avant même d'avoir rangé le poste de travail. Elle vous oblige à formuler le verdict tant que la mission est fraîche, elle révèle immédiatement les constats que vous n'avez pas assez documentés, et elle vous donne une base pour le prochain. Un auditeur qui écrit au fil de l'eau arrive au dernier jour avec un rapport presque prêt ; un auditeur qui écrit à la fin arrive avec quatre cents notes brutes et une nuit devant lui.

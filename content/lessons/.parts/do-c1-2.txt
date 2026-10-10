@@ -1,0 +1,104 @@
+Si une commande bien choisie résout un problème, deux commandes correctement enchaînées en résolvent souvent dix. Ce deuxième mouvement du chapitre porte sur la composition : la capacité à assembler des utilitaires simples en chaînes de traitement, puis à confier ces chaînes à des scripts pour qu'elles s'exécutent seules. C'est là que le shell cesse d'être un simple terminal de saisie pour devenir un véritable langage d'automatisation. Sans composition, vous répétez les mêmes gestes chaque jour ; avec elle, vous écrivez une fois et vous réutilisez à l'infini.
+
+Nous verrons d'abord les tubes, ou pipes, qui transportent la sortie d'une commande vers l'entrée de la suivante, et qui constituent la structure élémentaire de tout traitement UNIX. Nous aborderons ensuite xargs, qui convertit des données en arguments de commande, l'outil que l'on invoque dès qu'une boucle manuelle devient pénible. Puis nous étudierons les permissions : chmod, chown, la notation symbolique et les masques, avec une attention particulière aux raccourcis séduisants mais dangereux comme le fameux 777. Enfin, nous franchirons le pas vers l'écriture de scripts, avec les variables, les conditions if et else, et les bonnes pratiques qui séparent un script jetable d'un script digne de confiance.
+
+L'ensemble de ce chapitre se pratique sur un répertoire de travail isolé. Préparez-en un avant de commencer, avec quelques fichiers textes de test : vous pourrez alors exécuter chaque exemple sans crainte de endommager votre système. Cette précaution n'est pas de la prudence excessive : elle vous permet d'explorer librement, d'erreurs comprises, ce qui est la seule manière réelle d'assimiler des commandes qui agissent sur des fichiers réels. Notez au passage que les scripts que vous écrirez ici serviront de modèle pour la suite du parcours, où ils seront réutilisés dans des contextes de déploiement et de supervision.
+
+## Les tubes : composer des commandes simples
+
+L'opérateur de tube prend la sortie standard de la commande de gauche et la branche directement sur l'entrée standard de la commande de droite. Aucun fichier intermédiaire n'est créé, aucune donnée n'est stockée : le flux circule en mémoire, ligne après ligne, si bien qu'un fichier de plusieurs centaines de mégaoctets peut être traité sans jamais occuper votre disque. Cette idée, énoncée au milieu des années soixante-dix, est le principe fondateur de la philosophie UNIX : faire une chose et la faire bien, puis laisser les autres outils composer le reste.
+
+```bash
+grep -i "erreur" /var/log/syslog | tail -n 20
+cat access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head
+ps aux | grep -v grep | wc -l
+ls -l | grep "^d" | wc -l
+```
+
+La première chaîne illustre le motif le plus courant : filtrer puis limiter. La deuxième, plus ambitieuse, compte les adresses les plus fréquentes d'un journal d'accès web, en extrayant la première colonne, en triant, en comptant les occurrences, puis en réordonnant par fréquence décroissante et en ne gardant que les dix premières. Chaque maillon reste trivial pris isolément ; c'est leur assemblage qui produit une statistique exploitable. C'est exactement la grammaire que vous devez intérioriser.
+
+Le tube n'est pas le seul opérateur d'enchaînement. Deux symboles permettent d'exécuter des commandes l'une après l'autre : l'un les enchaîne sans condition, l'autre n'exécute la seconde que si la première a réussi. Cette seconde forme est celle qu'il faut préférer dans un script, car elle arrête la séquence au premier échec au lieu de continuer sur des fondations fissurées. À l'inverse, enchaîner sans condition est utile dans un terminal, quand vous voulez lancer deux opérations indépendantes d'un seul geste sans attendre la fin de la première.
+
+Quelques utilitaires complètent avantageusement les tubes. cut extrait une colonne délimitée, tr remplace ou supprime des caractères, sort -u trie et supprime les doublons, uniq -c compte les répétitions adjacentes, et paste assemble des fichiers colonne par colonne. Pris isolément, chacun paraît bien modeste ; enchaînés, ils produisent des rapports, des inventaires et des dédoublonnages qui auraient demandé un script entier avec n'importe quel autre langage. C'est toute la force du modèle : la richesse vient de la combinaison, pas de la complexité de chaque brique.
+
+Un tube ne peut transporter que de la sortie standard. Les messages d'erreurs, eux, continuent leur chemin vers l'écran et traversent la chaîne sans la modifier. Cette séparation a une conséquence pratique : une commande qui échoue au milieu d'un pipeline peut laisser la suite s'exécuter sur des données incomplètes sans que rien ne vous avertisse. Le code de retour d'un tube est celui de sa dernière commande, ce qui masque les échecs des précédentes, sauf si vous activez un mode strict dans votre script.
+
+Pour conserver le code de retour de chaque maillon, on recourt à deux commandes complémentaires. tee écrit à la fois dans un fichier et sur sa sortie standard, ce qui permet de consulter un résultat tout en l'archivant. Le drapeau pipefail fait remonter le premier échec de la chaîne plutôt que le dernier. Un script sérieux commence presque toujours par activer ces deux options, car elles transforment un échec silencieux en erreur explicite, et c'est la différence entre une automatisation de confiance et une automatisation dangereuse.
+
+Une dernière remarque sur l'habitude à prendre. Placez toujours les filtres les plus coûteux le plus loin possible à droite, et limitez le volume tôt dans la chaîne : inutile de trier cent mille lignes si vingt suffisent à votre besoin. Cette optimisation n'est pas de la micro-optimisation : sur un serveur chargé, une chaîne mal ordonnée peut occuper un cœur processeur pendant plusieurs secondes, alors qu'une chaîne bien construite répond en quelques millisecondes. La lisibilité et la performance y gagnent ensemble.
+
+## xargs : transformer des données en arguments
+
+Certaines commandes ne lisent pas leur entrée standard : elles attendent des arguments. cp, mv, rm, chmod ou kill appartiennent à cette catégorie, et c'est précisément là qu'intervient xargs. Il lit des éléments séparés par des espaces ou des retours à la ligne sur son entrée standard, puis construit et exécute une commande en les utilisant comme arguments. Il comble ainsi la séparation entre le monde des données et le monde des instructions.
+
+```bash
+find . -name "*.tmp" | xargs rm -f
+find . -name "*.tmp" -print0 | xargs -0 rm -f
+cat liste.txt | xargs -n 1 echo
+ps aux | grep "[n]ginx" | awk '{print $2}' | xargs kill
+```
+
+La forme -print0 associée à -0 mérite une attention particulière. Elle traite correctement les noms de fichiers contenant des espaces ou des retours à la ligne, que la séparation par défaut couperait en morceaux, produisant alors des erreurs incompréhensibles ou, pire, des suppressions ciblant un fichier qui n'était pas celui visé. Sur un système hétérogène où les utilisateurs nomment librement leurs fichiers, cette précaution n'est pas anecdotique.
+
+L'option -n permet de contrôler le nombre d'éléments regroupés à chaque invocation, et -I permet d'insérer chaque élément à un emplacement précis de la commande. Cette dernière forme est la plus lisible quand la commande attend plusieurs arguments distincts, car elle montre exactement où la donnée se glisse. À l'inverse, quand vous voulez exécuter une opération par fichier, la forme simple avec une commande par ligne reste la plus sûre.
+
+Un piège courant mérite d'être signalé : xargs exécute la commande même quand son entrée est vide, sauf si vous ajoutez le drapeau qui diffère l'exécution tant qu'aucun élément n'a été lu. Ce détail évite des erreurs bêtes comme une suppression annonçant qu'aucun fichier ne correspond. Comme toujours en automatisation, les cas limites, entrée vide, nom exotique, volume très élevé, sont ceux qui distinguent un script fragile d'un script fiable. Testez-les exprès avant la mise en production.
+
+Une variante moderne existe sous la forme d'une boucle intégrée à certains interpréteurs, mais xargs reste universel et présent partout. Retenez-le comme le maillon qui relie la recherche de fichiers, le filtrage de texte et les commandes qui refusent l'entrée standard. Une fois que vous voyez cette articulation, vous constaterez que la plupart des tâches répétitives d'administration se démontent en trois ou quatre maillons simplement enchaînables.
+
+xargs sait aussi travailler en parallèle, avec une option qui limite le nombre de commandes lancées simultanément. C'est l'outil le plus simple pour exploiter un processeur multicœur sur une tâche indépendante par fichier : compression d'un arbre, redimensionnement d'images, copie réseau de milliers de petits fichiers. Le réglage du nombre de travaux parallèles demande cependant de la retenue : au-delà d'un petit multiple du nombre de cœurs, les gains s'effondrent, la mémoire augmente et l'ordonnancement du système devient le vrai goulot d'étranglement. Commencez toujours par une valeur prudente, mesurez, puis augmentez si la mesure le justifie.
+
+## Les permissions : chmod, chown et le masque 777
+
+Sous Linux, tout est fichier, et tout fichier porte trois catégories de droits : lecture, écriture et exécution. Elles sont attribuées séparément à son propriétaire, aux membres de son groupe, et à tous les autres utilisateurs. La commande ls -l les affiche sous forme symbolique, avec une série de lettres, et chmod les modifie, soit en notation octale à trois chiffres, soit en notation symbolique plus expressive. Comprendre cette grille, c'est comprendre qui peut faire quoi sur votre machine.
+
+```bash
+ls -l script.sh
+chmod 750 script.sh
+chmod u+x script.sh
+chmod go-w fichier.txt
+chown alice:equipe rapport.txt
+umask 022
+```
+
+La notation octale attribue à chaque catégorie un nombre de zéro à sept, obtenu en additionnant lecture valant quatre, écriture valant deux, et exécution valant un. Ainsi, sept correspond à tous les droits, cinq à la lecture et l'exécution, et zéro à rien du tout. Un répertoire a besoin du bit d'exécution pour être parcouru, ce qui explique pourquoi on accorde souvent soixante-cinq aux dossiers et soixante-quatre aux fichiers ordinaires.
+
+C'est ici qu'il faut parler sans détour du masque 777, réflexe de débutant et faux raccourci d'administration. Le donner à un fichier signifie que n'importe quel utilisateur de la machine peut le modifier, l'exécuter ou le vider, y compris un service compromis ou un compte mal configuré. Sur un serveur partagé, c'est ouvrir la porte à une escalade de privilèges. La justification habituelle, je l'ai donné pour que ça marche, avoue un problème de diagnostic non résolu : cherchez plutôt quelle unité, quel utilisateur ou quel groupe a réellement besoin d'accéder au fichier, et ne donnez que ce droit-là.
+
+La notation symbolique, avec les lettres utilisateur, groupe et autres, suivies de l'ajout, du retrait ou de l'affectation, est souvent préférable car elle explicite l'intention au lieu de remplacer tout le masque d'un bloc. Elle évite ainsi d'effacer par accident un droit que vous n'aviez pas pensé à conserver. Ajoutez-y l'option qui affiche ce qui allait être fait avant de le faire, et vous disposez d'un workflow sûr pour toute modification sensible.
+
+La modification récursive des permissions, celle qui redescend tout un arbre de fichiers, mérite une mise en garde distincte. Appliquée au mauvais niveau, elle transforme en exécutables des centaines de fichiers de données, ou retire l'accès en lecture à des répertoires que des services doivent parcourir, et le dégât ne se constate souvent qu'au prochain redémarrage. Testez toujours votre commande sur un sous-répertoire réduit, vérifiez le résultat avec ls -l, et seulement ensuite étendez-la. Un autre cas mérite attention : dans un répertoire avec le bit de balayage, seul le propriétaire d'un fichier peut le supprimer, ce qui protège les annuaires temporaires partagés où chacun nettoie ce qu'il a déposé.
+
+chown change le propriétaire et le groupe d'un fichier, et il ne fonctionne qu'avec les privilèges élevés, car attribuer un fichier à autrui est par définition une opération réservée à l'administrateur. Notez au passage l'existence du masque, umask, qui détermine les droits accordés par défaut à tout fichier nouvellement créé. Plutôt que de corriger indéfiniment après coup, un administrateur ajuste le masque une fois, et chaque création suit la politique décidée. C'est un exemple type de solution structurelle face à un problème répétitif.
+
+## Variables et conditions : écrire un vrai script bash
+
+Un script bash n'est rien d'autre qu'un fichier texte contenant des commandes, exécuté ligne à ligne par l'interpréteur. Sa première ligne, appelée ligne de générateur, indique quel shell doit le prendre en charge, et le premier réflexe consiste à rendre le fichier exécutable puis à l'enregistrer dans un répertoire figurant dans votre chemin de recherche. À partir de là, vous disposez d'un programme au sens propre, déclenchable par vous, par cron ou par un service.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE="nginx"
+SEUIL=80
+
+if ! systemctl is-active --quiet "$SERVICE"; then
+  echo "Alerte : $SERVICE ne tourne pas"
+  exit 1
+elif df -h / | awk 'NR==2 {gsub(/%/,"",$5); exit ($5 > '"$SEUIL"')}'; then
+  echo "Espace disque au-dessus de $SEUIL pourcent"
+  exit 1
+else
+  echo "Etat nominal"
+fi
+```
+
+Les variables se déclarent sans mot-clé, par simple affectation, et se lisent avec le signe dollar. Les guillemets autour de la valeur ne sont pas optionnels : sans eux, un espace dans la valeur découpe l'argument en plusieurs mots, et une chaîne vide disparaît purement et simplement, ce qui provoque des erreurs cryptiques. Le drapeau -u fait échouer le script dès qu'une variable non définie est utilisée, une protection précieuse qui transforme une faute de frappe en erreur immédiate au lieu d'un comportement étrange en production.
+
+Les conditions suivent une syntaxe rigide : le mot if, une commande ou une expression entre crochets, puis then sur sa ligne suivante, et fi pour refermer. Le test entre crochets évalue des comparaisons de chaînes et de nombres, avec des opérateurs distincts selon qu'il s'agit de texte ou d'arithmétique. La forme la plus robuste consiste à tester directement le code de retour d'une commande, comme dans l'exemple, car elle évite de dupliquer une logique qui existe déjà ailleurs. Le mot elif ouvre une branche alternative et else la branche par défaut.
+
+Un script devient réellement utile dès qu'il accepte des paramètres. Les positions un, deux et trois portent les arguments passés à l'appel, le nombre total permet de vérifier qu'on ne s'attend pas à moins ou plus, et le nom du script lui-même reste disponible pour afficher une aide d'utilisation. Cette vérification d'usage en tête de fichier est un gage de sérieux : elle transforme un appel incomplet en message clair plutôt qu'en exécution à moitié vide. On range ensuite la logique en fonctions, qui se déclarent avec le mot réservé puis s'invoquent comme une commande, ce qui rend le corps du script aussi lisible qu'une table des matières.
+
+Trois structures complètent utilement le conditionnel. La boucle sur une liste parcourt un ensemble d'éléments, la boucle conditionnelle répète tant qu'un test reste vrai, et la commande case sélectionne parmi plusieurs valeurs littérales une branche à exécuter. Prises ensemble, elles suffisent à décrire la quasi-totalité des tâches d'administration courantes : vérifier un état, réagir, réessayer, notifier. La difficulté ne réside jamais dans la syntaxe, mais dans la clarté des décisions qu'on met dedans.
+
+Pour que ce code survive au-delà de votre session, adoptez trois habitudes dès la première ligne. Activez le mode strict, qui arrête le script à la première erreur inattendue. Échappez toutes les variables, y compris dans les commandes système, pour neutraliser les valeurs contenant des espaces ou des caractères spéciaux. Enfin, factorisez les valeurs constantes en tête de fichier : un chemin ou un seuil modifié à un seul endroit se propage partout, alors qu'une valeur recopiée en cinq lieux finit par diverger. Ces trois gestes coûtent dix secondes et vous évitent des heures de débogage.

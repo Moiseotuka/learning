@@ -1,0 +1,134 @@
+## 802.1X sans fil : de l'association ouverte à la clé de session
+
+Sur le fil, le port de commutateur reste physiquement fermé tant que l'identité n'a pas été prouvée. Sur le sans-fil, il n'y a pas de port à fermer : l'espace est ouvert, tout le monde entend tout. Le mécanisme change donc de nature sans changer de logique. L'association est ouverte, c'est-à-dire que le client rejoint le nom sans fil sans aucun secret, puis la conversation d'authentification EAP se déroule dans les trames de données elles-mêmes, protocole EAPOL, entre le client et le point d'accès. Le point d'accès encapsule ces messages vers le serveur RADIUS et n'ouvre l'accès aux autres ressources qu'après l'acceptation. Ce qui était un contrôle de port devient un contrôle de session : sans identité acceptée, pas de clé de chiffrement, et sans clé, rien d'exploitable.
+
+L'ordre des opérations mérite d'être connu par cœur, car il explique la durée perçue par l'utilisateur. Le client sonde le nom sans fil, puis s'associe en système ouvert. Le point d'accès envoie une requête d'identité, le client répond avec son identifiant. La méthode d'EAP choisie se déroule, échange de certificat ou tunnel protégeant un mot de passe. Le serveur renvoie son acceptation, éventuellement accompagnée du VLAN à appliquer. Vient ensuite l'échange de quatre messages qui dérive la clé de session à partir de la phrase secrète de protection de la paire maître, puis distribue la clé de groupe. Ce n'est qu'à ce moment que le client peut chiffrer du trafic utile. Ajoutez-y la prise d'adresse dynamique, et vous avez la chronologie complète d'une connexion : de une à trois secondes dans le cas nominal, beaucoup plus si le serveur tarde.
+
+```text
+CHRONOLOGIE D'UNE CONNEXION WPA2-ENTREPRISE
+
+  t0    sonde et association ouverte
+  t1    requête d'identité EAP, réponse du client
+  t2    négociation EAP : certificat serveur verifié par le client
+  t3    Access-Accept du serveur, éventuellement avec le VLAN 20
+  t4    échange de quatre messages, dérivation de la clé de session
+  t5    remise de la clé de groupe, chiffrement actif
+  t6    demande d'adresse, première transmission utile
+
+  Une lenteur entre t2 et t3 vient presque toujours du serveur RADIUS ;
+  une lenteur entre t4 et t6 vient du réseau filaire ou du DHCP.
+```
+
+Le filtrage par adresse médiatique mérite une mise au point, parce qu'on lui demande souvent ce qu'il ne peut pas donner. Il ne constitue pas une authentification : l'adresse est transmise en clair, se copie en quelques secondes avec un outil gratuit, et un attaquant qui l'observe peut la reprendre. Il reste utile pour deux usages étroits : empêcher un appareil non déclaré de consommer du temps d'antenne, et servir de dérogation pour un objet qui ne sait pas faire d'EAP. Dans les deux cas, il s'accompagne d'un port ou d'un nom sans fil dédié, d'un VLAN de confinement et d'une ligne au registre des exceptions. En aucun cas il ne remplace l'authentification sur un nom sans fil portant des données sensibles.
+
+La décision prise en cas d'indisponibilité du serveur d'authentification se écrit avant le déploiement, et elle fait débat dans chaque projet. Si le serveur ne répond pas, faut-il laisser les clients se connecter sans contrôle, ou faut-il les refuser tous ? La première option protège la continuité de service mais retire la sécurité au moment précis où un incident peut survenir ; la seconde préserve la sécurité mais peut immobiliser l'ensemble du siège. Aucune réponse universelle : ce qui est certain, c'est que la décision doit être écrite, testée en coupant le serveur volontairement, et connue des gens qui seront déployés à 7 h du matin.
+
+La configuration du nom sans fil se lit sur le contrôleur ou sur le point d'accès lui-même. L'extrait ci-dessous, de syntaxe proche des contrôleurs professionnels, montre les réglages qui comptent réellement : méthode d'authentification, chiffrement par bloc de chiffrement compteur, protection des trames de gestion et nom sans fil de repli.
+
+```text
+# creation du nom sans fil et de sa politique de securite
+wlan create 10 "Easylearn-Postes" "Easylearn-Postes"
+wlan security wpa2 enable 10
+wlan security akm 802.1X enable 10
+wlan security encryption aes-ccm enable 10
+wlan security 802.1X enable 10
+wlan security 802.1X radius-server "radius-siege"
+
+# protection des trames de management : indispensable avec 802.1X
+wlan security pmf require 10
+
+# vlan applique en cas d'echec, si la politique du site le decide
+wlan security fallback-vlan 99 10
+
+# contournement pour les objets incapables de EAP : nom dedie
+wlan create 11 "Easylearn-Objets" "Easylearn-Objets"
+wlan security wpa2-psk enable 11
+wlan security passphrase "objet-2026-iso19" 11
+wlan vlan 40 11
+```
+
+La protection des trames de management, exigée par WPA3 et vivement conseillée partout, mérite une explication. Elle empêche qu'un tiers se fasse passer pour le point d'accès en émettant des trames de désassociation à destination des clients, une manœuvre classique qui déconnecte tout le monde pour provoquer une nouvelle authentification et tenter une attaque. Avec cette protection active, ces trames sont signées et rejetées quand elles ne viennent pas du point d'accès réel. Son coût pratique est réel : certains appareils très anciens refusent de se connecter, ce qui impose une vérification du parc avant de l'imposer.
+
+Enfin, notez la coexistence des deux noms dans l'extrait. Le nom réservé aux objets utilise une clé pré-partagée, mais il est isolé sur son VLAN, filtré et déclaré. C'est exactement le type de compromis qu'un auditeur accepte quand il est documenté, daté et justifié par une contrainte matérielle, et qu'il refusera s'il découvre un tel nom pendant son contrôle sans trouver aucune trace dans la documentation.
+
+## Roaming : 802.11r, 802.11k, 802.11v et la coupure d'appel
+
+Le roaming est l'épreuve de vérité d'un WLAN professionnel. Un utilisateur en appelle un autre en marchant : le client quitte la cellule d'un point d'accès pour entrer dans celle du suivant, et pendant cet intervalle il doit réassocier, renégocier les clés, parfois reprendre une adresse et souvent retélécharger. Le budget de temps acceptable se compte en dizaines de millisecondes pour la voix, un centaine pour la vidéo interactive. Un passage par le serveur d'authentification, avec un aller-retour réseau de plusieurs centaines de millisecondes, dépasse ce budget dès le premier mouvement. C'est la cause la plus fréquente des appels qui coupent en changeant de couloir.
+
+Trois normes travaillent ensemble pour résoudre ce problème. La 802.11r, dite de transition rapide de liaison, permet de négocier les clés de la nouvelle cellule avant même la réassociation, soit directement dans l'échange avec le point d'accès suivant, soit en transitant par le point d'accès précédent. Le temps d'authentification disparaît alors de la chaîne critique. La 802.11k fournit au client la liste des points d'accès voisins fiables, ce qui évite de perdre du temps à scanner toutes les fréquences pour chercher un candidat. La 802.11v permet au réseau de conseiller au client de changer de point d'accès, ce qui guérit le cas très fréquent du client qui reste accroché à un point d'accès éloigné alors qu'un autre est à deux mètres.
+
+Sans ces mécanismes, on se rabat sur le cache de clé principal : le client mémorise la clé dérivée du passage précédent et la réutilise à la réassociation, ce qui supprime la négociation complète mais conserve un aller-retour. Cette solution fonctionne dans un même site et sur un même nom sans fil, elle ne survit pas à un changement de VLAN ni à une expiration de session. Retenez la règle : pour roaming réellement fluide, un même nom sans fil, les mêmes paramètres de sécurité sur tous les points d'accès, un même VLAN sur l'ensemble de la zone, et les trois normes activées quand le parc le supporte.
+
+| Problème observé | Cause typique | Vérification |
+| --- | --- | --- |
+| L'appel coupe au changement de couloir | Authentification complète à chaque passage | Journal du client : temps entre désassociation et réassociation |
+| Le client reste connecté au point d'accès le plus éloigné | Client collant, seuil de déclenchement trop bas | État de la liaison : puissance reçue mesurée avec le point d'accès le plus proche à côté |
+| Déconnexion complète puis nouvel essai | Bascule de VLAN ou expiration de session | Comparaison du VLAN attribué avant et après le passage |
+| Débit s'effondre brièvement | Canal encombré au moment du passage | Utilisation du canal relevée sur le point d'accès d'arrivée |
+| Roaming OK en 5 GHz, aléatoire en 2,4 GHz | Canaux en conflit ou puissance excessive | Plan de canaux comparé au relevé de spectre |
+
+Au-delà des normes, deux réglages locaux font une différence énorme. Le premier est le seuil de déclenchement, valeur de puissance en dessous de laquelle un point d'accès demande au client de partir. Sans ce seuil, un ordinateur portable reste connecté au point d'accès du bout du couloir parce qu'il parvient encore à recevoir quelque chose, et il ruine le canal pour tous les autres avec des débits minables. Le second est l'équilibrage de charge entre points d'accès du même nom sans fil, qui empêche un point d'accès central d'absorber tous les clients pendant que son voisin est vide. Ces deux réglages s'ajustent sur le terrain, avec un test de marche, jamais sur la seule fiche technique.
+
+La vérification se fait par un essai de marche simple à réaliser : appelez un collègue, portez la conversation en traversant la zone pendant deux minutes, et relevez à la main le nombre de coupures ainsi que le point d'accès d'arrivée à chaque passage. Sur un poste Linux, les outils sans fil affichent en direct le point d'accès auquel la station est rattachée et sa puissance reçue, ce qui suffit pour savoir si la bascule a eu lieu et à quel moment. Un seul essai de marche vaut mieux que dix rapports de simulation.
+
+```bash
+# etat courant : point d'acces, canal, debit negocie, puissance recue
+iw dev wlan0 link
+
+# stations rattachees au point d'acces (cote hebergeur)
+iw dev wlan0 station dump | grep -E "Station|signal:|tx bitrate"
+
+# historique des associations et cause de deconnexion
+wpa_cli -i wlan0 status
+wpa_cli -i wlan0 log_level EXCESSIVE
+journalctl -u wpa_supplicant --since "-10 min" | grep -i "roam\|deauth"
+
+# cartographie des reseaux vus depuis le client, avec puissance
+iw dev wlan0 scan | grep -E "BSS |signal:|primary channel"
+```
+
+Un mot sur les appareils qui ne suivent pas. Un terminal portif d'entrepôt de dix ans, une caméra fixe ou un badge n'implémentent ni la transition rapide, ni la liste de voisins, ni même parfois la réassociation automatique. Pour ces appareils, on ne résout pas le roaming client : on réduit la mobilité attendue, on place les points d'accès de manière à ce que l'appareil ne change presque jamais de cellule, et on l'écrit dans le cahier des charges. Demander à un équipement de 2012 une latence de roaming de 2018, c'est chercher une panne qui n'existe pas.
+
+## Interférences, bruit et spectre partagé
+
+La bande de fréquences est un commun. Vos points d'accès y côtoient le matériel du voisin, les équipements industriels, les appareils médicaux et parfois l'opérateur voisin. Diagnostiquer une dégradation sans distinguer un problème de couverture d'un problème de bruit revient à changer une ampoule dans une pièce éclairée par le soleil : le résultat sera toujours décevant. La première habitude à acquérir est donc de mesurer le plancher de bruit, c'est-à-dire l'énergie présente sur le canal quand personne ne parle, avant de mesurer le signal utile.
+
+Le rapport signal sur bruit se calcule en soustrayant le plancher de bruit à la puissance reçue. Un point d'accès qui vous reçoit à moins 60 dBm sur un plancher de bruit à moins 95 dBm vous offre 35 dB de marge, très confortable. La même puissance reçue sur un plancher à moins 75 dBm ne laisse que 15 dB, en dessous de tout ce qu'il faut pour la voix. Deux conséquences pratiques : un signal faible n'est pas toujours le problème, un bruit élevé peut l'être autant, et la correction n'est pas la même. On soigne le signal en plaçant ou en orientant un point d'accès ; on soigne le bruit en changeant de canal, en éloignant une source ou en réduisant la portée.
+
+| Source de bruit | Bande touchée | Reconnaître | Réponse |
+| --- | --- | --- | --- |
+| Micro-ondes du foyer ou de la cafétéria | 2,4 GHz | Bruit impulsif, débits qui s'effondrent à heure fixe | Éloigner les points d'accès, réserver le 5 GHz à cette zone |
+| Casques, enceintes, caméras sans fil | 2,4 GHz | Bruit permanent et fluctuant | Basculer les clients critiques en 5 GHz |
+| Radar aéronautique ou météo | 5 GHz sur canaux DFS | Changement de canal inexpliqué | Vérifier les journaux, éviter le DFS si le site y est exposé |
+| Réseau du voisin sur le même canal | 2,4 et 5 GHz | Nombreuses stations étrangères vues en scan | Attribuer un canal libre, réduire la puissance |
+| Alimentations et variateurs LED | 2,4 GHz | Bruit proche des sources d'alimentation | Déplacer le point d'accès, vérifier le câblage |
+| Pénétration USB 3 près de l'antenne | 2,4 GHz | Bruit localisé sur un seul boîtier | Réorienter ou raccourcir les câbles |
+
+L'interférence co-canal est le cas le plus coûteux, parce qu'il n'apparaît pas comme une erreur mais comme une lenteur. Deux points d'accès voisins sur le même canal se font mutuellement attendre : chacun repousse son émission quand il entend l'autre, les trames sont renvoyées, et le temps d'antenne se consume sans transfert utile. Les symptômes sont caractéristiques : la puissance reçue est excellente, le plancher de bruit mesuré par le client est correct, mais le débit réel est faible et le nombre de renvois est élevé. Le remède tient en deux gestes : attribuer des canaux distincts aux cellules voisines, puis réduire la puissance pour que les deux points d'accès ne s'entendent plus.
+
+```bash
+# plancher de bruit et energie recue sur chaque canal (cote client)
+iw dev wlan0 survey dump | grep -E "frequency|noise|signal"
+
+# stations voisines et niveau de bruit percu depuis le point d'acces
+iw dev wlan0 station dump | grep -E "^Station|signal:|rx dropmisc"
+
+# compteur de renvois : au-dela de 10 a 15 pour cent, le canal souffre
+iw dev wlan0 station dump | grep -E "tx retries|tx failed|rx drop"
+
+# verrouillage manuel sur un canal libre apres mesure
+iw dev wlan0 set channel 44 HT20
+wpa_cli -i wlan0 reconfigure
+```
+
+L'entrepôt ajoute une couche de difficultés propres. Les racks métalliques réfléchissent le signal et créent des trajets multiples : un client peut recevoir deux versions du même signal décalées, qui s'annulent partiellement. Les allées étroites deviennent des guides d'onde, ce qui donne une excellente couverture le long de l'allée et une coupure nette dès qu'on tourne au bout. La réponse n'est pas d'augmenter la puissance, ce qui aggraverait les réflexions, mais de changer de géométrie : antennes orientables placées en tête d'allée, points d'accès positionnés au-dessus des zones de passage plutôt qu'au centre du bâtiment, et 5 GHz retenu pour les zones où les réflexions sont moins pénalisantes.
+
+La bande 2,4 GHz, dans ce type de bâtiment, se réserve aux terminaux anciens qui n'ont pas d'autre choix. On la limite à trois canaux, à une puissance basse et à un nombre réduit de points d'accès, précisément parce que sa meilleure traversée la rend dangereuse : une cellule de 2,4 GHz qui sort du bâtiment porte le bruit du site jusqu'au voisin et ramène le bruit du voisin jusqu'à vous. Une isolation qu'on croyait gratuite se paie en débit, et personne ne vient se plaindre tant que le débit affiché reste correct.
+
+```image
+antenne-wifi
+| Une antenne ou un point d'accès professionnel orientable permet de concentrer l'énergie dans l'allée ou la zone à couvrir plutôt que de la disperser sur 360 degrés au détriment du voisin.
+```
+
+Pour finir, une méthode en quatre temps, à appliquer à chaque suspicion d'interférence. Mesurez d'abord sur place, au point exact où le problème est signalé, avec les outils de la section précédente. Identifiez ensuite la source en comparant le relevé avec le tableau des bruits connus et avec le relevé d'un jour sans incident. Ne changez qu'une seule chose : un canal, une puissance, une position de boîtier. Puis remesurez immédiatement, et si le résultat n'est pas meilleur, revenez à l'état précédent avant d'essayer autre chose. Cette discipline est la seule qui permette de distinguer une amélioration réelle d'un effet de hasard sur un milieu qui bouge en permanence.
+

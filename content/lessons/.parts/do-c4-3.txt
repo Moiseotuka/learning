@@ -1,0 +1,82 @@
+Un Deployment donne à votre application des exemplaires stables en nombre, mais ces exemplaires sont éphémères : leur adresse disparaît dès qu'ils sont remplacés, et leur nombre change au gré des mises à jour. Si un composant doit appeler un autre, il lui faut donc un point d'ancrage qui survit aux pods. Le Service remplit exactement ce rôle : il possède un nom et une adresse durables dans le cluster, et il sélectionne en permanence l'ensemble des pods compatibles vers lesquels répartir le trafic. À cela s'ajoute une découverte de service fournie par le DNS du cluster, ce qui permet à vos applications de se référencer par nom plutôt que par configuration d'adresse.
+
+Le Service repose sur un mécanisme simple : un étiquetage et une sélection. Vous déclarez que le Service vise les pods portant l'étiquette app égale à api, et le cluster construit et maintient une table de redirection vers tous les pods qui répondent à ce critère. Quand un pod naît ou meurt, la table est mise à jour automatiquement, sans redémarrage du client ni reconfiguration. C'est ce qui rend possible la mise à jour progressive vue précédemment : pendant la transition, les anciens et les nouveaux pods coexistent, et le Service distribue le trafic entre les deux, ce qui garantit que la capacité ne s'effondre jamais.
+
+Chaque Service reçoit une adresse IP virtuelle, dite cluster IP, qui n'appartient à aucune machine et ne peut être jointe que depuis l'intérieur du cluster. Ce choix est volontaire : les applications se parlent par des identités stables, et l'exposition publique devient une décision séparée, confiée à un autre objet. Trois types couvrent l'essentiel des besoins, et le choix entre eux dépend d'une seule question : qui doit pouvoir joindre ce service, le cluster seul, un test externe, ou le monde entier.
+
+## ClusterIP, NodePort et LoadBalancer
+
+Le type ClusterIP est le défaut, et il convient à la grande majorité des communications internes. Le Service est joignable à une adresse unique à l'intérieur du réseau du cluster, sur un port que vous choisissez, et il n'est atteignable ni de l'extérieur ni depuis une autre machine du réseau. C'est le bon choix pour une API appelée par une application web, pour une base de données, pour un worker ou pour un service de fichiers. Un avantage souvent sous-estimé est le verrouillage : si personne d'autre ne peut joindre votre base, la surface d'attaque se réduit d'autant, sans qu'aucun pare-feu ne soit à configurer.
+
+Le type NodePort ouvre le Service sur un port élevé, compris dans une plage définie par le cluster, sur l'adresse de chacune des nodes. N'importe quelle machine capable d'atteindre une node peut alors joindre le service, et le trafic est acheminé vers les pods. Ce type est pratique pour un test rapide, un webhook d'un fournisseur externe ou un endpoint de santé surveillé depuis l'extérieur, mais il est rarement adapté à la production : l'adresse expose toutes les nodes, le port est choisi dans une plage partagée, et aucun contrôle de trafic n'est proposé. Il reste néanmoins un excellent outil de diagnostic, car il permet de vérifier en trente secondes que la chaîne complète, réseau, sélection, pods, fonctionne.
+
+Le type LoadBalancer demande au fournisseur cloud de créer une adresse publique équilibrée, de la relier au service et de gérer l'acheminement. C'est la solution la plus simple pour exposer une application sur internet depuis un cluster managé, et la plus coûteuse, puisque chaque service de ce type engendre souvent une ressource facturée, avec un adresse dédiée. Il s'agit également de la solution la moins portable : écrit sur un fournisseur, il ne fonctionne pas tel quel ailleurs. Une équipe qui a dix services exposés de cette façon se retrouve avec dix adresses publiques et dix factures, ce qui explique le recours systématique à l'Ingress dans les installations un peu matures.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+```
+
+Quelques précisions pratiques sur la lecture d'un Service. Le champ du port est celui que le client appelle, le champ du port cible est celui qu'écoute le conteneur, et les deux peuvent différer, ce qui permet de conserver une adresse publique stable même si l'application change de port. Le nom de port, facultatif, devient essentiel quand un service expose plusieurs protocoles, car il permet de distinguer le trafic. La vérification de disponibilité, elle, est héritée du pod : si aucun pod n'est prêt, la table de redirection est vide et le client reçoit un refus, ce qui se diagnostique en listant les pods sélectionnés et leur état de préparation.
+
+La résolution par nom mérite d'être expliquée, car elle est la source d'une bonne partie de la magie apparente. Le DNS du cluster attribue à chaque Service un nom composé de son nom d'espace de noms et de son nom, si bien qu'un pod de l'espace de travail appelle la base de données par un identifiant stable, sans jamais connaître d'adresse. Ce nom résout vers l'adresse du Service, laquelle redirige vers les pods : trois niveaux qui se réécrivent indépendamment les uns des autres. Un Service peut également être déclaré sans adresse virtuelle, dit sans en-tête, auquel cas le DNS renvoie directement les adresses des pods. Ce mode convient aux clients qui doivent joindre chaque exemplaire individuellement, comme un cluster de bases de données qui doit se contacter entre pairs.
+
+Un piège de sélection mérite d'être signalé, car il produit le symptôme le plus déroutant pour un débutant : un Service qui existe, une adresse qui répond, et pourtant aucune connexion. La cause la plus fréquente est une étiquette différente entre le Service et le gabarit du Deployment, parfois une simple coquille ou une majuscule. Le service sélectionne alors zéro pod. La commande de description du Service affiche le nombre de endpoints, c'est-à-dire les adresses réellement servies ; zéro endpoint signifie que le problème est une histoire d'étiquettes, pas un problème réseau.
+
+## L'Ingress : un routeur au-dessus des services
+
+L'Ingress est la couche qui décide comment le trafic entrant est routé vers l'un des services internes. Plutôt que d'exposer chaque application sur sa propre adresse publique, on expose un point d'entrée unique et l'on déclare des règles : les requêtes pour un nom d'hôte donné ou un chemin d'URL vont vers tel Service, les autres vers tel autre. Cette organisation correspond exactement à la structure d'un site disposant d'une application web, d'une interface de programmation et d'un service d'images : une seule adresse TLS, trois destinations internes, et aucun besoin de multiplier les adresses publiques.
+
+Concrètement, un objet Ingress porte des règles conditionnées par l'hôte et le chemin, chacune renvoyant vers un Service et un port. Le chiffrement est géré par une référence à un secret contenant le certificat, de sorte que le même objet décrit à la fois le routage et la politique de sécurité. Le routeur qui applique ces règles n'est pas inclus dans Kubernetes : il s'agit d'un contrôleur, souvent un proxy matériel ou logiciel installé dans le cluster, qui observe les objets Ingress et génère sa configuration. Sans ce contrôleur, un objet Ingress existe dans l'API mais n'a aucun effet, une panne classique lors d'une installation minimale.
+
+Le contrôle d'accès et la réécriture d'URL dépendent du contrôleur choisi : certains ajoutent l'authentification, la limitation de débit, la compression ou la réécriture d'en-têtes via des annotations, d'autres exigent un objet dédié. Cette dépendance à une implémentation est la limite principale de l'Ingress, et elle explique l'apparition d'une spécification plus complète, nommée Gateway API, conçue pour rendre ces comportements explicites et portables. Pour débuter, retenez que l'Ingress résout le routage de niveau sept, c'est-à-dire la compréhension de l'URL et de l'hôte, alors que le Service résout le routage de niveau quatre, c'est-à-dire l'adresse et le port.
+
+Le parcours complet d'une requête se décrivait ainsi : le client interroge le DNS public, qui renvoie vers l'adresse de l'équilibreur devant le contrôleur d'Ingress ; le contrôleur lit les règles, trouve l'hôte demandé et le chemin, puis sélectionne le Service correspondant ; le Service, à son tour, choisit un pod prêt parmi ceux dont les étiquettes correspondent ; enfin le pod traite la demande et répond. Chaque maillon de cette chaîne a son propre journal et son propre diagnostic, et savoir lequel examiner est la moitié du travail d'exploitation.
+
+## Les ConfigMaps : sortir la configuration de l'image
+
+Une application qui contient ses paramètres dans l'image doit être reconstruite pour chaque environnement, et le moindre changement de mot de passe ou d'adresse de service déclenche une nouvelle version. La ConfigMap résout ce problème en séparant la configuration de l'exécutable : elle est un ensemble de paires clé-valeur, ou de fichiers entiers, stocké dans l'API et adressable par nom. Le conteneur la reçoit soit sous forme de variables d'environnement, soit montée comme un répertoire de fichiers, et l'image reste identique d'un environnement à l'autre.
+
+Les deux formes d'injection ne sont pas équivalentes. Les variables d'environnement sont simples et immédiatement lisibles par le code, mais elles sont figées au démarrage du conteneur : une modification de la ConfigMap ne se propage que lors du redémarrage suivant. Le montage en fichier offre le comportement inverse, le pod voit la nouvelle valeur sans redémarrage, à condition que l'application relise le fichier, ce que la plupart ne font pas spontanément. La règle d'usage qui en découle est de privilégier le montage pour les configurations volumineuses et de considérer tout changement de ConfigMap comme un motif de mise à jour du déploiement.
+
+Une ConfigMap ne doit contenir aucune donnée sensible. Elle est lisible par quiconque dispose des droits de lecture sur l'objet, et elle apparaît telle quelle dans les journaux d'API et les fichiers de déploiement. Adresse de service de la base de données, identifiant d'environnement, seuil de mise en cache, log applicatif : tout cela y trouve naturellement sa place. Le champ des clés doit respecter quelques contraintes de nommage, et les valeurs longues, comme un fichier de configuration complet, s'écrivent sous la forme d'un fichier unique dans le document, ce qui se lit ensuite dans le conteneur comme un fichier ordinaire.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+data:
+  APP_ENV: recette
+  LOG_LEVEL: info
+  cache-ttl: "60"
+  config.yaml: |
+    serveur:
+      hote: api.interne
+      port: 8080
+    pistes:
+      niveau: info
+```
+
+Le cycle de vie de la ConfigMap impose une discipline. On la modifie, puis il faut penser à propager le changement, ce qui veut dire en général redémarrer les pods ou déclencher une mise à jour du déploiement avec une étiquette de version. Une équipe qui modifie une configuration sans redémarrer se croit alors face à un bug de l'application, alors que le processus, chargé en mémoire, continue simplement d'utiliser les valeurs de son démarrage. Indiquez systématiquement la version de configuration dans le nom ou dans une étiquette : le déploiement devient alors traçable et le retour arrière possible.
+
+## Les Secrets : des données sensibles sans les exposer
+
+Le Secret utilise la même structure qu'une ConfigMap, mais il est conçu pour les données que l'on ne veut pas rendre publiques : mots de passe, jetons d'accès, clés privées, identifiants de connexion. Les valeurs y sont encodées en base soixante-quatre, un format qui permet de les représenter sans caractère problématique mais qui ne constitue pas un chiffrement. Toute personne captable le flux entre le serveur d'API et le stockage d'état, ou disposant simplement des droits de lecture, obtient la donnée dans un état immédiatement exploitable. C'est précisément la raison pour laquelle il ne faut jamais écrire un mot de passe en clair dans un manifeste déposé dans un dépôt versionné.
+
+Le premier réflexe à prendre est d'éviter que la donnée sensible n'entre jamais dans le dépôt de code. La génération d'un secret s'effectue à partir d'un modèle, avec une valeur substituée à la volée depuis le gestionnaire de secrets de votre organisation, ou avec un outil de chiffrement du dépôt qui conserve le document chiffré et ne le décrypte qu'au moment de l'application. La commande de création à partir d'une chaîne convient aux essais, mais elle laisse une trace dans l'historique de la ligne de commande, d'où l'utilité des modes d'entrée par fichier ou par flux. Une fois appliqué, le secret est stocké chiffré dans etcd si le chiffrement au repos est activé, ce qui constitue la seconde protection.
+
+L'injection dans les conteneurs reprend les mécanismes de la ConfigMap : variables d'environnement ou montage en fichiers, avec les mêmes compromis. Le montage en fichiers est généralement préféré pour les certificats, car il permet un renouvellement sans redémarrage lorsque l'application sait recharger ses fichiers. Quel que soit le mode, soyez conscient que la variable d'environnement est visible par tout processus de l'hôte qui peut inspecter l'environnement du conteneur, et qu'un journal applicatif qui imprime sa configuration révèle alors la donnée. Le principe du moindre privilège s'applique aussi aux droits : un secret doit être monté uniquement dans les pods qui en ont besoin, et la politique d'accès du cluster doit l'interdire aux autres.
+
+Il existe enfin des mécanismes d'intégration avec les gestionnaires externes, qui évitent de stocker le secret dans le cluster même : le conteneur le récupère au démarrage auprès d'un service dédié, par identification du pod, et le conserve en mémoire. Ces solutions ajoutent une dépendance et une latence, mais elles suppriment la question du stockage et offrent une rotation centralisée. Quel que soit l'approche retenue, la règle reste la même : la valeur ne se trouve dans aucun fichier versionné, elle n'apparaît dans aucun journal, et son changement ne demande jamais de reconstruire l'image.

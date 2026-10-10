@@ -1,0 +1,48 @@
+{
+  "exercise": "La salle polyvalente de votre siège, 400 mètres carrés entièrement modulables, doit être reprise de fond en comble : pendant les séminaires les appels coupent, les débits sont inégaux d'un bout à l'autre de la pièce et le réseau invités circule librement dans l'interne. Partez d'un relevé de site : posez six à huit points d'accès de plafond, attribuez les canaux 1, 6 et 11 en 2,4 GHz et quatre canaux de 20 MHz en 5 GHz, réglez la puissance pour un recouvrement d'environ 20 pour cent et écrivez les seuils d'acceptation avant toute mesure, à savoir moins de 67 dBm partout en configuration pleine, 25 dB de rapport signal sur bruit et moins de 30 clients par point d'accès. Segmentez ensuite trois noms sans fil vers leurs VLAN respectifs, déployez 802.1X avec EAP-TLS pour les postes gérés, PEAP pour les portables et un VLAN de confinement pour les objets, puis testez le roaming en appel sur vingt mètres. Livrez le plan de placement coté, la table des canaux et des puissances, la configuration du serveur RADIUS, le relevé de terrain daté et la procédure de recette signée.",
+  "resources": [
+    {
+      "label": "Wi-Fi Alliance — certification, sécurité WPA3 et ressources officielles sur les réseaux sans fil",
+      "url": "https://www.wi-fi.org/"
+    },
+    {
+      "label": "FreeRADIUS — documentation du serveur d’authentification : installation, clients réseau et attributs de VLAN",
+      "url": "https://wiki.freeradius.org/"
+    },
+    {
+      "label": "Cisco — centre de ressources de déploiement et de diagnostic des réseaux sans fil professionnels",
+      "url": "https://www.cisco.com/c/en/us/support/wireless.html"
+    },
+    {
+      "label": "Grafikart — Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns"
+    },
+    {
+      "label": "Grafikart — Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# plan-radio.sh — verification du plan radio de la salle polyvalente\n# Usage : ./plan-radio.sh aps.csv\n# Format de aps.csv : ap,bande,canal,puissance_dBm,gain_antenne_dBi\nset -euo pipefail\n\nFICHIER=\"${1:-aps.csv}\"\n\n# TODO 1 : verifier que FICHIER existe ; sinon afficher l'usage sur la sortie\n#         d'erreur et quitter avec un code different de 0\n\n# TODO 2 : ecrire une fonction limite qui renvoie l'EIRP maximale autorisee en\n#         dBm selon la bande : 20 pour 2.4 GHz, 23 pour 5 GHz et 6 GHz\n\n# TODO 3 : afficher l'entete du tableau (AP, BANDE, CANAL, EIRP, LIMITE, ETAT,\n#         REMARQUE), puis lire aps.csv ligne a ligne en ignorant les lignes\n#         vides et celles qui commencent par #\n\n# TODO 4 : calculer l'EIRP (puissance + gain), la comparer a la limite et\n#         signaler tout depassement comme etat REFUSE\n\n# TODO 5 : memoriser les couples bande:canal deja rencontres ; si un canal est\n#         partage par deux points d'acces, signaler une interference\n#         co-canal et comptabiliser l'anomalie\n\n# TODO 6 : en 2.4 GHz n'accepter que les canaux 1, 6 et 11 ; en 5 GHz exiger\n#         un multiple de 4 compris entre 36 et 140\n\n# TODO 7 : afficher le bilan ; quitter avec 1 si au moins une anomalie a ete\n#         detectee, 0 sinon",
+  "solution_code": "#!/usr/bin/env bash\n# plan-radio.sh — verification du plan radio de la salle polyvalente\n# Usage : ./plan-radio.sh aps.csv\n# Format de aps.csv : ap,bande,canal,puissance_dBm,gain_antenne_dBi\nset -euo pipefail\n\nFICHIER=\"${1:-aps.csv}\"\n\nif [ ! -f \"$FICHIER\" ]; then\n  echo \"usage : $0 <aps.csv>\" >&2\n  exit 2\nfi\n\nlimite() {\n  case \"$1\" in\n    2.4) echo 20 ;;\n    5)   echo 23 ;;\n    6)   echo 23 ;;\n    *)   echo 20 ;;\n  esac\n}\n\nerreurs=0\ndeclare -A vus\n\nprintf '%-6s %-6s %-6s %-6s %-7s %-8s %s\\n' \\\n  \"AP\" \"BANDE\" \"CANAL\" \"EIRP\" \"LIMITE\" \"ETAT\" \"REMARQUE\"\n\nwhile IFS=, read -r ap bande canal puissance gain; do\n  case \"$ap\" in ''|'#'*) continue ;; esac\n\n  if ! [[ \"$canal\" =~ ^[0-9]+$ && \"$puissance\" =~ ^-?[0-9]+$ && \"$gain\" =~ ^-?[0-9]+$ ]]; then\n    echo \"ligne invalide : $ap\" >&2\n    erreurs=$((erreurs + 1))\n    continue\n  fi\n\n  eirp=$((puissance + gain))\n  max=$(limite \"$bande\")\n  etat=\"OK\"\n  remarque=\"-\"\n\n  if [ \"$eirp\" -gt \"$max\" ]; then\n    etat=\"REFUSE\"\n    remarque=\"EIRP $eirp dBm > limite $max dBm\"\n    erreurs=$((erreurs + 1))\n  fi\n\n  cle=\"$bande:$canal\"\n  if [ -n \"${vus[$cle]:-}\" ]; then\n    etat=\"REFUSE\"\n    remarque=\"$remarque ; co-canal avec ${vus[$cle]}\"\n    erreurs=$((erreurs + 1))\n  else\n    vus[$cle]=\"$ap\"\n  fi\n\n  if [ \"$bande\" = \"2.4\" ] && [ \"$canal\" -ne 1 ] && [ \"$canal\" -ne 6 ] && [ \"$canal\" -ne 11 ]; then\n    etat=\"REFUSE\"\n    remarque=\"$remarque ; canal 2.4 GHz attendu : 1, 6 ou 11\"\n    erreurs=$((erreurs + 1))\n  fi\n\n  if [ \"$bande\" = \"5\" ]; then\n    if [ \"$canal\" -lt 36 ] || [ \"$canal\" -gt 140 ] || [ $((canal % 4)) -ne 0 ]; then\n      etat=\"REFUSE\"\n      remarque=\"$remarque ; canal 5 GHz attendu : multiple de 4 de 36 a 140\"\n      erreurs=$((erreurs + 1))\n    fi\n  fi\n\n  printf '%-6s %-6s %-6s %-6s %-7s %-8s %s\\n' \\\n    \"$ap\" \"$bande\" \"$canal\" \"$eirp\" \"$max\" \"$etat\" \"$remarque\"\ndone < \"$FICHIER\"\n\necho\nif [ \"$erreurs\" -gt 0 ]; then\n  echo \"BILAN : $erreurs anomalie(s) — corrigez le plan avant la recette.\"\n  exit 1\nfi\necho \"BILAN : plan conforme (EIRP, canaux, aucun co-canal).\"\n\n# Exemple d'execution :\n#   ap,bande,canal,puissance_dBm,gain_antenne_dBi\n#   AP-01,2.4,1,12,6\n#   AP-02,2.4,6,12,6\n#   AP-03,5,36,14,6\n#   AP-04,5,36,14,6   -> co-canal signale, code retour 1",
+  "concepts": [
+    "Qu'est-un réseau (câbles, boîtiers, voyants)",
+    "Réseau local vs étendu",
+    "Commutateur, routeur, point d'accès",
+    "Adresses IP (IPv4/IPv6)",
+    "Méthode de diagnostic 5 étapes"
+  ],
+  "lecon": "net-c10.txt",
+  "videos": [
+    {
+      "title": "Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration",
+      "channel": "Grafikart"
+    }
+  ]
+}

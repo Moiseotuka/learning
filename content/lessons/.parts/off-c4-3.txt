@@ -1,0 +1,121 @@
+## Mouvement latéral simple : une seule étape à la fois
+
+Le mouvement latéral désigne le passage d'une machine à une autre à l'intérieur du périmètre autorisé. Dans un audit, il est presque toujours la partie la plus sensible de la mission : vous quittez la machine où vous vous trouviez pour en rejoindre une autre, ce qui multiplie les journaux touchés, les comptes sollicités et les responsabilités. La règle que nous appliquerons tient en trois mots : une seule étape à la fois. Vous ne passez d'un hôte à l'autre que si l'étape précédente est documentée, si la cible suivante figure explicitement dans le mandat, et si vous avez écrit pourquoi ce déplacement est nécessaire pour démontrer le risque.
+
+Concrètement, le mouvement latéral dans un laboratoire repose le plus souvent sur des identifiants plutôt que sur des failles. Un mot de passe réutilisé entre deux comptes, une clé privée laissée dans un répertoire, un ticket de connexion encore valide, un compte de service partagé entre plusieurs hôtes : voilà la matière ordinaire de ces déplacements. C'est d'ailleurs ce qui rend le sujet intéressant pour le client, car la réutilisation d'identifiants est un défaut organisationnel qu'aucun correctif logiciel ne viendra corriger à sa place.
+
+```bash
+# Verification prealable : la cible est-elle dans le perimetre ?
+grep -n 'serveur-web-02' "$AUDIT_DIR/mandat.txt"
+
+# Ce qui est deja ouvert et vers qui (lecture seule)
+ss -tnp | grep -E 'ESTAB'
+awk '$4 == "01"{print $3}' /proc/net/tcp 2>/dev/null | head
+
+# Test de reachabilite le moins bruyant possible
+ping -c 2 -W 2 10.20.0.12
+```
+
+Le premier vrai déplacement se fait avec le moins de nouveautés possible. Vous réutilisez une session déjà autorisée, une clé dont vous avez constaté la présence dans le périmètre, ou un compte dont les droits ont été explicitement étendus par le mandat. Chaque méthode laisse un type de trace différent : une connexion SSH écrit une ligne d'authentification, un transfert de fichier apparaît dans les journaux de la cible, une commande exécutée à distance laisse un horodatage côté serveur. Vous notez laquelle vous avez choisie, et pourquoi celle-là plutôt qu'une autre.
+
+```bash
+# Deplacement par cle presente dans le perimetre (lab isole)
+ssh -i "$AUDIT_DIR/cle_web01" -o IdentitiesOnly=yes \
+    -o BatchMode=yes auditor@10.20.0.12 \
+    'date -u; whoami; hostname' | tee -a "$AUDIT_DIR/deplacement.txt"
+
+# Journal de l'etape : heure, origine, cible, methode
+printf '%s | %s | %s | %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "10.20.0.11" "10.20.0.12" "ssh-cle-lab" \
+  >> "$AUDIT_DIR/journal_etapes.log"
+```
+
+Un mot sur le tunnelling et le relais, que vous rencontrerez dans les environnements un peu plus fournis. Un transfert de port permet d'atteindre un service qui n'est exposé que sur une machine intermédiaire ; un relais de connexion utilise une session existante pour ouvrir une nouvelle. Ces techniques sont légitimes dans un audit, mais elles déplacent votre action dans des journaux que vous ne contrôlez peut-être pas, et elles compliquent considérablement la reconstitution. Utilisez-les seulement quand le déplacement direct est impossible, et décrivez alors le chemin complet : machine d'origine, machine intermédiaire, machine finale.
+
+Le périmètre mérite d'être répété parce qu'il est la première chose que l'on oublie quand la technique devient intéressante. Une machine qui apparaît dans la table ARP mais pas dans le mandat n'est pas une cible : c'est une machine voisine. Vous pouvez noter son existence si votre commanditaire le demande, vous ne pouvez pas vous y connecter, y déposer un fichier, ni y tester un identifiant. La même discipline s'applique aux comptes : un compte trouvé sur la machine A n'autorise pas à l'essayer sur la machine B tant que le mandat ne le prévoit pas.
+
+La démonstration du risque de mouvement latéral se formule autrement que par la réussite d'une connexion. Elle tient en trois éléments réunis : des identifiants valides sur deux hôtes différents, une configuration qui l'autorise, et l'absence de contrôle qui l'aurait détecté. Vous écrivez ces trois éléments, vous citez les commandes qui les ont établis, et vous concluez sur la recommandation : rotation des mots de passe, comptes nommés par hôte, journalisation des connexions distantes, alerte sur authentification inhabituelle.
+
+Un point sur la détection, qui appartient autant à la post-exploitation qu'à la défense. Un déplacement propre laisse peu de traces visibles, mais il en laisse toujours : ouverture de session à distance, création de processus, accès à un répertoire nouveau, éventuellement transfert de fichier. Si le client dispose d'un centre d'opérations de sécurité, demandez-lui, après votre démonstration, si l'étape a été vue et à quelle heure. Cette seule question transforme votre preuve de risque en mesure de maturité : l'accès a fonctionné, la détection a fonctionné ou non, et le rapport contient les deux constats au lieu d'un seul.
+
+La discipline du journal mérite d'être illustrée, car c'est là que les équipes lâchent le plus souvent. Une ligne par étape, écrite au moment du déplacement, avec l'heure à la seconde, l'adresse d'origine, l'adresse de destination, la méthode employée, l'identifiant sollicité et l'issue. Si l'étape échoue, elle figure aussi dans le journal, avec la raison : refus d'authentification, route absente, port fermé. Un journal qui ne contient que les succès donne une image faussée de la mission et ne permet pas de reconstituer ce qui s'est réellement passé.
+
+## Persistance : mécanismes courants et interdiction en audit
+
+La persistance désigne tout ce que l'on installe pour retrouver un accès après le rétablissement de la situation normale : compte ajouté, clé déposée, tâche planifiée, service modifié, configuration système altérée. Dans une compétition ou un exercice de compromission prolongée, elle a du sens. Dans un audit classique, elle n'en a presque aucun, et ses inconvénients sont supérieurs à son intérêt. Comprendre ces mécanismes reste indispensable, ne serait-ce que pour les décrire, les prévenir et les rechercher côté défense.
+
+La première raison est la responsabilité résiduelle. Une clé ajoutée dans un répertoire d'administration reste valide après votre départ, même si vous avez oublié de la retirer. Un compte créé reste dans le système. Une tâche planifiée continue de s'exécuter à 3 heures du matin, avec les privilèges qu'on lui a donnés. Si vous quittez la mission demain et que la machine est compromise dans trois semaines, ce sera votre artefact que l'enquêteur trouvera, et il devra prouver qu'il ne vient pas de vous. Aucun avantage ne compense ce risque.
+
+```bash
+# Les quatre familles de persistance, en lecture seule d'abord
+crontab -l 2>/dev/null; ls -la /etc/cron.d /var/spool/cron 2>/dev/null
+systemctl list-unit-files --state=enabled --no-pager | head -n 20
+ls -la /etc/systemd/system/*.service 2>/dev/null | grep -v '^total'
+cat /etc/ld.so.preload 2>/dev/null
+grep -R 'PermitRootLogin\|AuthorizedKeysFile' /etc/ssh/sshd_config 2>/dev/null
+```
+
+La deuxième raison est l'effet sur la stabilité et sur les autres utilisateurs. Un service modifié peut ne plus démarrer après redémarrage, une tâche planifiée peut saturer un disque, un compte ajouté peut déclencher une alerte de conformité qui immobilise une équipe pendant une journée. Un audit a pour principe de ne pas dégrader la production. Quand bien même votre mandat autoriserait la persistance, le rapport de fin de mission devrait lister chaque élément à supprimer et en attester la suppression : vous transformez alors une opération à risque en une ligne de travail supplémentaire.
+
+```table
+| Mecanisme | Ou il se pose | Pourquoi l'eviter en audit | Contre-mesure cote defense |
+|---|---|---|---|
+| Cle ajoutee a authorized_keys | Repertoire .ssh admin | Acces residuel apres la mission | Audit periodique des cles, alerte a l'ajout |
+| Compte local privilegie | /etc/passwd | Identite fantome, mot de passe oublie | Comptes nominatifs, expiration, revue mensuelle |
+| Tache planifiee | cron, systemd timer | Execution silencieuse a distance | Liste blanche, journalisation des creations |
+| Service modifie | unité systemd, init | Modification durable de la demarrage | Gestion par version, verification d'integrite |
+| Fichier de preload | /etc/ld.so.preload | Contourne toute authentification | Verification a demarrage, fichiers scelles |
+```
+
+La troisième raison est la qualité du rapport. Un auditeur qui installe de la persistance doit passer autant de temps à décrire son retrait qu'à décrire son installation, et le moindre oubli se paie en crédibilité. À l'inverse, une mission sans persistance se résume à des lectures, des tests bornés et une remise en état vérifiable. Le lecteur comprend immédiatement que rien ne subsiste. Si votre mandat exige explicitement un test de détection, par exemple vérifier que les équipes voient une clé ajoutée, vous le faites en boîte de test, à heure convenue, avec un préavis, et vous retirez l'élément devant témoin.
+
+Voici comment décrire un mécanisme de persistance sans l'installer, ce qui suffit dans la grande majorité des missions. Vous écrivez la commande exacte qui serait nécessaire, vous la posez dans un répertoire jetable du laboratoire si vous voulez valider son comportement, vous photographiez la sortie, puis vous supprimez tout. Le rapport cite la configuration observée sur la cible, l'autorisation requise pour la modifier et la détection correspondante. La démonstration tient sans jamais altérer le système d'exploitation.
+
+```bash
+# Demonstration dans un bac a sable, jamais sur la cible
+SANDBOX="$AUDIT_DIR/sandbox"
+mkdir -p "$SANDBOX"
+
+# Ce qu'une tache de persistance serait, ecrite puis testee localement
+cat > "$SANDBOX/demo-cron.txt" <<'EOF'
+# Tache hypothetique : elle tournerait toutes les cinq minutes
+*/5 * * * * /usr/local/bin/agent.sh --check
+EOF
+
+# Verification que rien n'a ete pose sur le systeme reel
+crontab -l 2>&1 | grep -c 'agent.sh' || true
+```
+
+Il reste une situation où la persistance est explicitement demandée : le test de détection des équipes de surveillance. Là encore, la méthode prime sur la technique. Vous convenez d'une plage horaire, vous annoncez le type d'élément qui sera posé, vous l'installez avec l'administrateur de la machine, vous relevez l'heure de la détection et vous retirez l'élément le jour même, devant témoin. Le livrable n'est pas la persistance, c'est le délai de détection constaté et les journaux qui l'ont révélé, deux informations que l'organisation ne peut obtenir autrement.
+
+Le cas contraire, la persistance découverte dans un environnement défendu, se traite sans jamais la reproduire. Vous photographiez l'élément, vous notez sa date de création, son propriétaire, son contenu et sa localisation exacte, vous calculez son empreinte, puis vous signalez. Ne l'exécutez pas pour « voir ce qu'il fait » : un script de persistance peut chiffrer des données, appeler un service distant ou effacer ses propres traces à l'exécution. L'analyse statique, ligne par ligne, fournit presque toujours tout ce qu'il faut pour le rapport.
+
+## Collecte de preuves limitée au périmètre
+
+La collecte en post-exploitation ne vise pas à comprendre le système, elle vise à prouver un risque précis. La différence est capitale : comprendre vous pousse à tout regarder, prouver vous impose de ne prendre que ce qui sert la démonstration. Dans la pratique, cela signifie que vous avez défini avant la mission, avec votre commanditaire, le ou les fichiers témoins qui serviront de preuve : un fichier de configuration, un enregistrement de base de test, une page de contenu. Vous prouvez que l'accès permet de les lire ou de les modifier, et vous vous arrêtez là.
+
+La première règle est la proportionnalité. Si la démonstration exige de montrer qu'un compte peut lire un fichier, vous en prenez une copie du fichier autorisé, vous la rangez dans votre espace de travail, vous calculez son empreinte, et vous notez le chemin d'origine. Vous ne dupliquez pas le répertoire entier, vous ne compressez pas l'arborescence, vous n'emportez rien qui contienne des données de personnes. Une collecte qui déborde du périmètre transforme un audit en incident, et elle se voit immédiatement dans le rapport, par le volume anormal des pièces jointes.
+
+Le choix du témoin se prépare avec le client avant la mission, et il a plus d'importance qu'il n'y paraît. Un fichier modifié pendant des mois par un traitement automatique ne convient pas, car sa date de modification ne prouve rien de votre passage. Un fichier créé pour l'occasion, horodaté et nommé d'après la mission, donne en revanche une preuve limpide : vous pouvez montrer qu'il existait avant votre intervention, que vous y avez accédé, et qu'il est resté intact après. Demandez toujours un témoin dédié, plutôt que de choisir vous-même dans la production.
+
+```bash
+# Preuve minimale : copie, empreinte, horodatage, provenance
+SRC="/srv/data/fichier-temoin.txt"
+DST="$AUDIT_DIR/preuves/fichier-temoin.txt"
+mkdir -p "$AUDIT_DIR/preuves"
+
+cp -p "$SRC" "$DST"
+sha256sum "$SRC" "$DST" | tee "$AUDIT_DIR/preuves/empreintes.sha256"
+stat -c '%n | %U:%G | %a | %y' "$SRC" >> "$AUDIT_DIR/preuves/provenance.txt"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$AUDIT_DIR/preuves/acquisition.txt"
+```
+
+La seconde règle concerne l'intégrité de ce que vous produisez. Une preuve sans empreinte est une allégation ; une preuve avec empreinte, horodatée et conservée dans un répertoire d'affaire unique, est un élément défendable. Calculez l'empreinte immédiatement après la copie, enregistrez-la dans un fichier distinct, et ne modifiez plus jamais la pièce. Si vous devez la faire analyser par un collègue, vous lui transmettez l'empreinte en même temps que le fichier, de sorte que le contrôle puisse être refait indépendamment.
+
+La troisième règle touche à la vie privée et aux données de personnes, même dans un laboratoire. Vous vous entraînez sur des jeux de données fictifs, et si un environnement réel vous est confié, vous vous limitez aux éléments contractuellement prévus. Une capture d'écran qui montre une liste de noms réels, même sans intention malveillante, contient des données personnelles que vous n'avez pas le droit de conserver. Nettoyez vos captures, floutez ce qui n'est pas nécessaire, et joignez au rapport la liste exacte des pièces produites avec leur taille et leur empreinte.
+
+Le périmètre temporel compte autant que le périmètre fonctionnel. Une preuve se situe dans une période : celle du mandat. Un fichier modifié avant la période n'intéresse pas l'audit, un journal antérieur ne doit pas être exfiltré, et une donnée découverte par hasard hors période se signale sans être emportée. Notez systématiquement l'horodatage des éléments récoltés, en UTC, avec le fuseau d'origine quand il diffère : c'est ce détail qui permettra à un tiers de reconstituer votre séquence et de vérifier qu'elle ne déborde nulle part.
+
+Enfin, la collecte se pense comme un inventaire fermé. Vous ouvrez un registre au début de la mission, une ligne par pièce : identifiant, chemin d'origine, chemin de destination, heure, opérateur, empreinte, justification. Vous le refermez en fin de mission et vous y adjoignez le résultat de la vérification finale, c'est-à-dire la commande qui confirme que chaque empreinte enregistrée correspond toujours au fichier conservé. Cet inventaire devient l'annexe A du rapport, et il évite la question que tout commanditaire finit par poser : qu'avez-vous exactement emporté ?
+
+Le sort des pièces après la mission se décide lui aussi avant de commencer. Elles restent sur le poste de travail de l'audit, dans un répertoire chiffré si elles contiennent des informations sensibles, avec une durée de conservation fixée par le mandat. À l'échéance, vous les détruisez et vous en attestez la destruction par une ligne datée dans le registre. Une preuve conservée indéfiniment est un risque : elle expose le client, elle vous expose, et son existence non justifiée pèse davantage dans un litige que son absence au moment opportun.

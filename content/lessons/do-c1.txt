@@ -1,0 +1,365 @@
+Bienvenue dans le premier chapitre du parcours DevOps, consacré à Linux et à l'automatisation de base. Le système Linux n'est pas un système d'exploitation parmi d'autres : c'est l'infrastructure silencieuse sur laquelle reposent la grande majorité des serveurs, des conteneurs, des routesurs d'entreprise et des chaînes de déploiement. Que vous visiez un poste d'administrateur systèmes, d'ingénieur plateforme, ou simplement le statut de développeur capable de comprendre ce qui se passe sous le capot de sa machine, la maîtrise du shell n'est pas une option décorative. C'est la compétence qui sépare celui qui clique sur une interface de celui qui sait exactement quelle commande exécuter, quel fichier modifier et pourquoi le service ne démarre pas.
+
+Au terme de ce chapitre, vous saurez lire une ligne de commande comme une phrase dont chaque mot a une fonction précise. Vous manipulerez les chemins de fichiers sans hésiter, vous lirez et filtrerez des journaux volumineux, vous composerez des commandes simples en pipelines, vous attribuerez des permissions avec discernement, puis vous écrirez vos premiers scripts bash dotés de variables et de conditions. Vous découvrirez ensuite le système de services systemd, l'art de consulter les journaux avec journalctl, et les fondamentaux d'une connexion SSH correctement sécurisée. Chaque notion est immédiatement applicable sur une machine réelle, et aucune ne demande de connaissances préalables en programmation.
+
+Un conseil sur la manière d'aborder ce cours. Le shell s'apprend comme apprend une langue étrangère : en la parlant, pas en la lisant. Ouvrez un terminal, créez un répertoire de travail jetable, et recopiez chaque commande des exemples avant de la modifier. La compréhension vient après le geste, rarement avant. Les blocs de code de cette leçon sont faits pour être exécutés tels quels, puis détournés : changez un nom de fichier, ajoutez une option, observez ce que cela produit. Nous avancerons en alternant des explications détaillées, des sessions de commandes commentées et des mises en garde sur les pièges classiques, qui sont nombreux dans ce domaine.
+
+Enfin, une remarque sur l'environnement de travail et sur la prudence. Pour suivre ce chapitre en toute sécurité, privilégiez une machine virtuelle, un conteneur ou une distribution d'essai : les commandes montrées ici sont inoffensives dans un répertoire de travail isolé, mais certaines, nous le verrons, modifient des permissions ou des fichiers de configuration de bout en bout. Le réflexe à acquérir dès la première ligne est le suivant : lire la commande, comprendre ce qu'elle modifie, puis exécuter. Ce chapitre vous donnera les mots pour comprendre ; il vous appartiendra de contracter l'habitude de ne jamais taper une commande dont vous ne savez pas ce qu'elle fait.
+
+## Le shell, ce dialogue entre vous et le noyau
+
+Le shell est un programme qui reçoit les commandes que vous tapez au clavier, les interprète, puis les transmet au noyau Linux sous forme d'appels système. Il joue le rôle d'interprète entre vous et le matériel : vous écrivez du langage humain structuré, il traduit en ordres binaires. Il existe plusieurs shells, bash restant le plus répandu sur les distributions serveur, au côté de zsh, dash et fish. Quel que soit celui que vous utilisez, la grammaire de base reste identique : une commande, suivie d'options, suivies d'arguments, le tout séparé par des espaces.
+
+```bash
+commande [options] [arguments]
+ls -l /var/log
+grep -i "erreur" fichier.txt
+```
+
+Les options, aussi appelées drapeaux, modifient le comportement de la commande. Certaines se présentent sous forme compacte, comme -l -a -h, que l'on combine souvent en -lah ; d'autres prennent une valeur, comme -n 20 pour demander vingt lignes. La distinction est importante : une option sans argument se cumule, une option avec argument consomme le mot qui la suit. Cette grammaire, une fois assimilée, vous permet d'extrapoler la syntaxe de presque n'importe quel outil en ligne de commande, y compris ceux que vous n'avez jamais rencontrés.
+
+Avant d'aller plus loin, il faut comprendre d'où viennent les commandes que vous tapez. Le shell ne les connaît pas toutes par magie : il les cherche dans une liste de répertoires indiqués par une variable d'environnement, dont la conventionnelle contient les dossiers de programmes système. La commande type vous dit si une commande est un alias, une fonction, un shell résident ou un programme externe, tandis que which indique le chemin exact du binaire qui sera lancé. Cette distinction a une conséquence pratique : lorsqu'un script fonctionne dans votre terminal mais échoue lancé par un planificateur de tâches, la cause la plus fréquente est un chemin différent, et non un défaut de logique.
+
+Deux commandes vous accompagnent partout : man et --help. La première affiche le manuel complet d'un utilitaire, la seconde son résumé pratique. Lire un manuel peut sembler intimidant au début, car les pages sont denses et rédigées pour des lecteurs avertis, mais une habitude simple suffit : chercher d'abord la section des options, repérer celles qui vous intéressent, puis revenir aux exemples en fin de page. Un utilisateur expérimenté ne mémorise pas toutes les commandes, il sait où les trouver vite.
+
+Le shell conserve aussi un état que vous devez apprendre à interroger. Chaque commande renvoie un code de sortie, accessible avec l'instruction echo $? : zéro signifie succès, tout autre valeur signifie un type d'échec précis. Cette convention, qui paraît anodine, est la pierre angulaire de toute automatisation : un script s'appuie sur ces codes pour décider de la suite. Il faut donc résister à la tentation d'ignorer les erreurs, car ignorer un code de retour non nul revient à laisser une panne se propager silencieusement dans une chaîne de traitement.
+
+Enfin, le shell offre un confort d'usage qui change radicalement la productivité. La touche tabulation complète les noms de fichiers et de commandes, la flèche haute parcourt l'historique, la combinaison control et r lance une recherche dans cet historique, control et c interrompt une commande bloquée, control et l nettoie l'écran. Ces raccourcis ne sont pas des gadgets : ils réduisent les fautes de frappe, qui sont la première cause d'erreurs en ligne de commande, et ils vous permettent de rester concentré sur la logique plutôt que sur la mécanique.
+
+## Autour de vous : pwd, ls, cd et l'art des chemins
+
+Toute action dans un système de fichiers commence par la position. La commande pwd affiche le répertoire courant, c'est-à-dire l'endroit exact où vous vous trouvez dans l'arborescence. Deux notions de chemins structurent tout le reste. Un chemin absolu part toujours de la racine, indiqué par une barre oblique, et ne dépend pas de votre position : /var/log/nginx est absolu. Un chemin relatif part de votre répertoire courant : log/nginx ne signifie quelque chose que si l'on sait où vous êtes. La confusion entre les deux est l'origine d'une bonne partie des erreurs de débutant.
+
+```bash
+pwd
+cd /etc
+ls -la
+cd ../var/log
+```
+
+La commande cd vous déplace. Elle accepte plusieurs raccourcis utiles : cd sans argument ramène au dossier personnel, cd - revient au répertoire précédent, cd .. remonte d'un niveau, et tilde désigne votre home directory. Les deux points et le point seul désignent respectivement le répertoire parent et le répertoire courant. Préférez toujours des chemins explicites dans vos scripts : un cd relatif dans un script exécuté par cron ou par un service s'exécute dans un répertoire que vous ignorez probablement, et le script échouera sans raison apparente.
+
+La commande ls est votre principal outil d'inspection. L'option -l affiche la liste détaillée, avec le propriétaire, le groupe, les permissions en notation symbolique, la taille et la date de modification. L'option -a révèle les fichiers cachés, ceux dont le nom commence par un point, et qui concentrent souvent la configuration d'une application. L'option -h rend les tailles lisibles par un humain, en kilo ou méga octets. Combinées, ces options deviennent -lah, l'une des commandes les plus tapées au monde.
+
+Les motifs de correspondance, ou jokers, élargissent considérablement votre champ d'action. L'astérisque remplace n'importe quelle séquence de caractères, le point d'interrogation un seul caractère, et les crochets une liste de caractères possibles. Ainsi, ls *.log liste les fichiers journaux du répertoire courant, et rm ancien?.txt cible les fichiers courts dont le nom commence par ancien suivi d'un caractère. Attention cependant : un astérisque mal placé dans une commande de suppression peut viser bien plus que prévu, ce qui justifie à nouveau le réflexe de lire avant d'exécuter.
+
+L'affichage détaillé mérite une lecture méthodique, car il concentre une quantité énorme d'information sur une seule ligne. Vient d'abord le type, d pour un répertoire, tiret pour un fichier ordinaire, l pour un lien symbolique, puis les permissions, le nombre de liens durs, le propriétaire, le groupe, la taille en octets et la date de dernière modification. Une taille qui semble absurde sur un petit fichier, comme quarante ou cent vingt-huit octets, reflète l'espace réellement occupé sur le disque et non la quantité de données écrites. Apprenez à lire cette ligne d'un coup d'œil : elle vous dira presque toujours si un fichier est à sa place, sain et accessible à qui il le doit.
+
+Pour aller au-delà de l'inspection locale, retenez l'existence de find, qui recherche des fichiers selon le nom, la date ou la taille, et de tree, qui dessine l'arborescence. Ces outils complètent ls sans le remplacer : ls décrit un répertoire, find interroge tout un sous-arbre. Cette différence entre décrire et chercher vous sera utile dès que vous manipulerez des serveurs dont la structure de fichiers vous sera inconnue, car la première tâche de l'administrateur est toujours de comprendre où il se trouve.
+
+## Lire et chercher : cat, less, head, tail et grep
+
+Un fichier de texte se lit de plusieurs manières, et le choix de l'outil dépend de sa taille et de votre intention. cat affiche un fichier en entier d'un seul mouvement : il est parfait pour un petit fichier de configuration, dangereux pour un journal de dix gigaoctets qui noiera votre écran. less, lui, ouvre une vue paginée dans laquelle vous vous déplacez avec les flèches et la touche q pour quitter. Règle simple : si vous ne connaissez pas la taille du fichier, commencez toujours par less.
+
+```bash
+cat /etc/hostname
+less /var/log/syslog
+tail -n 50 /var/log/syslog
+tail -f /var/log/syslog
+head -n 20 config.yml
+wc -l config.yml
+```
+
+Les commandes head et tail extraient respectivement le début et la fin d'un fichier, avec un nombre de lignes configurable. L'option -f de tail transforme l'affichage en direct : elle reste ouverte et imprime chaque ligne au fil de sa création. C'est l'outil de référence pour observer un service en fonctionnement, car il vous montre l'effet d'une action en temps réel. La commande wc -l compte les lignes, wc -c les octets, une information pratique pour vérifier qu'un fichier n'est pas vide avant de le traiter.
+
+La commande grep est le couteau suisse de la recherche dans du texte. Elle filtre les lignes correspondant à un motif et les affiche numérotées avec -n, ignore la casse avec -i, inverse la sélection avec -v, et remonte récursivement dans les sous-répertoires avec -r. Dans la pratique quotidienne, la moitié du travail d'investigation consiste à chercher une chaîne précise dans un arbre de fichiers : un nom d'hôte dans des configurations, un code d'erreur dans des journaux, un mot de passe oublié dans un script. grep fait ce travail en une fraction de seconde.
+
+Les motifs de grep acceptent des expressions régulières, dont les plus utiles sont le point, qui remplace n'importe quel caractère, l'astérisque, qui répète l'élément précédent, et les ancres début et fin de ligne. Commencez par les chercher littéralement, puis enrichissez progressivement : beaucoup d'utilisateurs passent des années sans découvrir qu'un motif entre guillemets peut être une expression régulière complète. N'oubliez pas non plus que grep renvoie un code de sortie différent selon qu'il a trouvé ou non, ce qui en fait un excellent filtre dans un script conditionnel.
+
+La sortie de grep s'adapte aussi au contexte d'affichage. Redirigée vers un fichier, elle devient un rapport ; poussée dans un paginateur, elle reste navigable ; laissée telle quelle, elle défile trop vite pour être lue. Un réglage simple consiste à écrire les résultats dans un fichier temporaire, puis à l'ouvrir avec less : vous gardez la possibilité de chercher à l'intérieur du résultat avec la touche barre oblique, de vous déplacer de page en page, et de quitter sans rien perdre. Cette séquence filtrer, enregistrer, consulter constitue la boucle de travail de base de tout diagnostic sur serveur.
+
+Un réflexe de méthode s'impose avant toute recherche : reformuler ce que vous cherchez en termes que la machine peut reconnaître. Si vous cherchez pourquoi un service échoue, tapez d'abord grep -i error sur son journal, puis affinez avec le nom du service, puis avec la date. Cette approche en entonnoir, du général au précis, est infiniment plus efficace que de faire défiler un journal de méga-octets à l'œil nu. Elle constitue d'ailleurs la première étape de tout diagnostic d'incident en production.
+
+## Redirection : faire circuler les flux d'un programme
+
+Chaque commande possède trois canaux : une entrée standard, numérotée zéro, une sortie standard, numérotée un, et une sortie d'erreurs, numérotée deux. Par défaut, l'entrée vient du clavier et les deux sorties vont à votre écran. La redirection permet de rebrancher ces canaux vers des fichiers ou d'autres commandes, et c'est précisément ce mécanisme qui rend le shell si puissant : un programme qui écrit sur sa sortie standard peut alimenter un fichier, un autre programme ou un archivage, sans jamais savoir ce qu'il y a de l'autre côté.
+
+```bash
+grep -i "erreur" app.log > resultats.txt
+grep -i "erreur" app.log >> resultats.txt
+ls nosuchfile 2> erreurs.txt
+commande 2>&1 > sortie.txt
+commande > /dev/null 2>&1
+```
+
+L'opérateur de redirection simple écrase le fichier de destination à chaque exécution, tandis que l'opérateur double chevron ajoute en fin de fichier. Cette différence est l'une des plus coûteuses à découvrir a posteriori : un script qui utilise la mauvaise forme efface silencieusement des données accumulées depuis des mois. La bonne habitude consiste à écrire dans un fichier temporaire, à vérifier le résultat, puis à déplacer le fichier à sa place définitive.
+
+La sortie d'erreurs se redirige séparément, ce qui permet de conserver le journal propre tout en affichant les erreurs à l'écran. L'ordre des opérateurs compte : rediriger d'abord la sortie vers un fichier, puis la redirection d'erreur vers la sortie, n'a pas le même effet que l'inverse. Composez cette séquence avec soil, ou utilisez la forme équivalente qui fusionne les deux flux en un seul, une formulation plus lisible et plus courante dans les scripts modernes.
+
+Le fichier spécial /dev/null mérite une mention particulière. Il absorbe tout ce qu'on lui envoie, sans le conserver ni le remplir. On l'utilise pour supprimer une sortie inutile, pour vider un fichier d'un seul geste, ou pour tester qu'une commande s'exécute sans se soucier de son affichage. Attention à ne jamais l'inverser : rediriger /dev/null vers un fichier réel remplace son contenu par rien, de manière définitive et silencieuse. C'est un classique des dégâts causés par la précipitation.
+
+La commande tee illustre une troisième possibilité, à mi-chemin des deux : elle reçoit un flux, l'affiche à l'écran pour que vous le voyiez défiler, et l'écrit simultanément dans un fichier. On l'utilise quand on veut à la fois suivre une opération en direct et conserver la trace de ce qui s'est passé, par exemple pendant une installation ou une restauration. Combinée à l'opérateur qui ajoute au fichier, elle permet même d'accumuler plusieurs exécutions dans un même journal, une manière élégante de constituer un historique d'exploitation.
+
+La dernière grande redirection est l'entrée standard alimentée par un fichier, qui permet de traiter des données sans passer par le clavier. On l'associe souvent à la saisie en bloc, qui marque le début et la fin d'un texte multi-lignes fourni à une commande. Ce mécanisme est au cœur de la génération automatique de fichiers de configuration, et il vous sera utile dès que vous automatiserez l'installation d'un service. Il referme le chapitre sur un point essentiel : dans le shell, tout est flux, et maîtriser les flux, c'est maîtriser l'automatisation.
+
+Si une commande bien choisie résout un problème, deux commandes correctement enchaînées en résolvent souvent dix. Ce deuxième mouvement du chapitre porte sur la composition : la capacité à assembler des utilitaires simples en chaînes de traitement, puis à confier ces chaînes à des scripts pour qu'elles s'exécutent seules. C'est là que le shell cesse d'être un simple terminal de saisie pour devenir un véritable langage d'automatisation. Sans composition, vous répétez les mêmes gestes chaque jour ; avec elle, vous écrivez une fois et vous réutilisez à l'infini.
+
+Nous verrons d'abord les tubes, ou pipes, qui transportent la sortie d'une commande vers l'entrée de la suivante, et qui constituent la structure élémentaire de tout traitement UNIX. Nous aborderons ensuite xargs, qui convertit des données en arguments de commande, l'outil que l'on invoque dès qu'une boucle manuelle devient pénible. Puis nous étudierons les permissions : chmod, chown, la notation symbolique et les masques, avec une attention particulière aux raccourcis séduisants mais dangereux comme le fameux 777. Enfin, nous franchirons le pas vers l'écriture de scripts, avec les variables, les conditions if et else, et les bonnes pratiques qui séparent un script jetable d'un script digne de confiance.
+
+L'ensemble de ce chapitre se pratique sur un répertoire de travail isolé. Préparez-en un avant de commencer, avec quelques fichiers textes de test : vous pourrez alors exécuter chaque exemple sans crainte de endommager votre système. Cette précaution n'est pas de la prudence excessive : elle vous permet d'explorer librement, d'erreurs comprises, ce qui est la seule manière réelle d'assimiler des commandes qui agissent sur des fichiers réels. Notez au passage que les scripts que vous écrirez ici serviront de modèle pour la suite du parcours, où ils seront réutilisés dans des contextes de déploiement et de supervision.
+
+## Les tubes : composer des commandes simples
+
+L'opérateur de tube prend la sortie standard de la commande de gauche et la branche directement sur l'entrée standard de la commande de droite. Aucun fichier intermédiaire n'est créé, aucune donnée n'est stockée : le flux circule en mémoire, ligne après ligne, si bien qu'un fichier de plusieurs centaines de mégaoctets peut être traité sans jamais occuper votre disque. Cette idée, énoncée au milieu des années soixante-dix, est le principe fondateur de la philosophie UNIX : faire une chose et la faire bien, puis laisser les autres outils composer le reste.
+
+```bash
+grep -i "erreur" /var/log/syslog | tail -n 20
+cat access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head
+ps aux | grep -v grep | wc -l
+ls -l | grep "^d" | wc -l
+```
+
+La première chaîne illustre le motif le plus courant : filtrer puis limiter. La deuxième, plus ambitieuse, compte les adresses les plus fréquentes d'un journal d'accès web, en extrayant la première colonne, en triant, en comptant les occurrences, puis en réordonnant par fréquence décroissante et en ne gardant que les dix premières. Chaque maillon reste trivial pris isolément ; c'est leur assemblage qui produit une statistique exploitable. C'est exactement la grammaire que vous devez intérioriser.
+
+Le tube n'est pas le seul opérateur d'enchaînement. Deux symboles permettent d'exécuter des commandes l'une après l'autre : l'un les enchaîne sans condition, l'autre n'exécute la seconde que si la première a réussi. Cette seconde forme est celle qu'il faut préférer dans un script, car elle arrête la séquence au premier échec au lieu de continuer sur des fondations fissurées. À l'inverse, enchaîner sans condition est utile dans un terminal, quand vous voulez lancer deux opérations indépendantes d'un seul geste sans attendre la fin de la première.
+
+Quelques utilitaires complètent avantageusement les tubes. cut extrait une colonne délimitée, tr remplace ou supprime des caractères, sort -u trie et supprime les doublons, uniq -c compte les répétitions adjacentes, et paste assemble des fichiers colonne par colonne. Pris isolément, chacun paraît bien modeste ; enchaînés, ils produisent des rapports, des inventaires et des dédoublonnages qui auraient demandé un script entier avec n'importe quel autre langage. C'est toute la force du modèle : la richesse vient de la combinaison, pas de la complexité de chaque brique.
+
+Un tube ne peut transporter que de la sortie standard. Les messages d'erreurs, eux, continuent leur chemin vers l'écran et traversent la chaîne sans la modifier. Cette séparation a une conséquence pratique : une commande qui échoue au milieu d'un pipeline peut laisser la suite s'exécuter sur des données incomplètes sans que rien ne vous avertisse. Le code de retour d'un tube est celui de sa dernière commande, ce qui masque les échecs des précédentes, sauf si vous activez un mode strict dans votre script.
+
+Pour conserver le code de retour de chaque maillon, on recourt à deux commandes complémentaires. tee écrit à la fois dans un fichier et sur sa sortie standard, ce qui permet de consulter un résultat tout en l'archivant. Le drapeau pipefail fait remonter le premier échec de la chaîne plutôt que le dernier. Un script sérieux commence presque toujours par activer ces deux options, car elles transforment un échec silencieux en erreur explicite, et c'est la différence entre une automatisation de confiance et une automatisation dangereuse.
+
+Une dernière remarque sur l'habitude à prendre. Placez toujours les filtres les plus coûteux le plus loin possible à droite, et limitez le volume tôt dans la chaîne : inutile de trier cent mille lignes si vingt suffisent à votre besoin. Cette optimisation n'est pas de la micro-optimisation : sur un serveur chargé, une chaîne mal ordonnée peut occuper un cœur processeur pendant plusieurs secondes, alors qu'une chaîne bien construite répond en quelques millisecondes. La lisibilité et la performance y gagnent ensemble.
+
+## xargs : transformer des données en arguments
+
+Certaines commandes ne lisent pas leur entrée standard : elles attendent des arguments. cp, mv, rm, chmod ou kill appartiennent à cette catégorie, et c'est précisément là qu'intervient xargs. Il lit des éléments séparés par des espaces ou des retours à la ligne sur son entrée standard, puis construit et exécute une commande en les utilisant comme arguments. Il comble ainsi la séparation entre le monde des données et le monde des instructions.
+
+```bash
+find . -name "*.tmp" | xargs rm -f
+find . -name "*.tmp" -print0 | xargs -0 rm -f
+cat liste.txt | xargs -n 1 echo
+ps aux | grep "[n]ginx" | awk '{print $2}' | xargs kill
+```
+
+La forme -print0 associée à -0 mérite une attention particulière. Elle traite correctement les noms de fichiers contenant des espaces ou des retours à la ligne, que la séparation par défaut couperait en morceaux, produisant alors des erreurs incompréhensibles ou, pire, des suppressions ciblant un fichier qui n'était pas celui visé. Sur un système hétérogène où les utilisateurs nomment librement leurs fichiers, cette précaution n'est pas anecdotique.
+
+L'option -n permet de contrôler le nombre d'éléments regroupés à chaque invocation, et -I permet d'insérer chaque élément à un emplacement précis de la commande. Cette dernière forme est la plus lisible quand la commande attend plusieurs arguments distincts, car elle montre exactement où la donnée se glisse. À l'inverse, quand vous voulez exécuter une opération par fichier, la forme simple avec une commande par ligne reste la plus sûre.
+
+Un piège courant mérite d'être signalé : xargs exécute la commande même quand son entrée est vide, sauf si vous ajoutez le drapeau qui diffère l'exécution tant qu'aucun élément n'a été lu. Ce détail évite des erreurs bêtes comme une suppression annonçant qu'aucun fichier ne correspond. Comme toujours en automatisation, les cas limites, entrée vide, nom exotique, volume très élevé, sont ceux qui distinguent un script fragile d'un script fiable. Testez-les exprès avant la mise en production.
+
+Une variante moderne existe sous la forme d'une boucle intégrée à certains interpréteurs, mais xargs reste universel et présent partout. Retenez-le comme le maillon qui relie la recherche de fichiers, le filtrage de texte et les commandes qui refusent l'entrée standard. Une fois que vous voyez cette articulation, vous constaterez que la plupart des tâches répétitives d'administration se démontent en trois ou quatre maillons simplement enchaînables.
+
+xargs sait aussi travailler en parallèle, avec une option qui limite le nombre de commandes lancées simultanément. C'est l'outil le plus simple pour exploiter un processeur multicœur sur une tâche indépendante par fichier : compression d'un arbre, redimensionnement d'images, copie réseau de milliers de petits fichiers. Le réglage du nombre de travaux parallèles demande cependant de la retenue : au-delà d'un petit multiple du nombre de cœurs, les gains s'effondrent, la mémoire augmente et l'ordonnancement du système devient le vrai goulot d'étranglement. Commencez toujours par une valeur prudente, mesurez, puis augmentez si la mesure le justifie.
+
+## Les permissions : chmod, chown et le masque 777
+
+Sous Linux, tout est fichier, et tout fichier porte trois catégories de droits : lecture, écriture et exécution. Elles sont attribuées séparément à son propriétaire, aux membres de son groupe, et à tous les autres utilisateurs. La commande ls -l les affiche sous forme symbolique, avec une série de lettres, et chmod les modifie, soit en notation octale à trois chiffres, soit en notation symbolique plus expressive. Comprendre cette grille, c'est comprendre qui peut faire quoi sur votre machine.
+
+```bash
+ls -l script.sh
+chmod 750 script.sh
+chmod u+x script.sh
+chmod go-w fichier.txt
+chown alice:equipe rapport.txt
+umask 022
+```
+
+La notation octale attribue à chaque catégorie un nombre de zéro à sept, obtenu en additionnant lecture valant quatre, écriture valant deux, et exécution valant un. Ainsi, sept correspond à tous les droits, cinq à la lecture et l'exécution, et zéro à rien du tout. Un répertoire a besoin du bit d'exécution pour être parcouru, ce qui explique pourquoi on accorde souvent soixante-cinq aux dossiers et soixante-quatre aux fichiers ordinaires.
+
+C'est ici qu'il faut parler sans détour du masque 777, réflexe de débutant et faux raccourci d'administration. Le donner à un fichier signifie que n'importe quel utilisateur de la machine peut le modifier, l'exécuter ou le vider, y compris un service compromis ou un compte mal configuré. Sur un serveur partagé, c'est ouvrir la porte à une escalade de privilèges. La justification habituelle, je l'ai donné pour que ça marche, avoue un problème de diagnostic non résolu : cherchez plutôt quelle unité, quel utilisateur ou quel groupe a réellement besoin d'accéder au fichier, et ne donnez que ce droit-là.
+
+La notation symbolique, avec les lettres utilisateur, groupe et autres, suivies de l'ajout, du retrait ou de l'affectation, est souvent préférable car elle explicite l'intention au lieu de remplacer tout le masque d'un bloc. Elle évite ainsi d'effacer par accident un droit que vous n'aviez pas pensé à conserver. Ajoutez-y l'option qui affiche ce qui allait être fait avant de le faire, et vous disposez d'un workflow sûr pour toute modification sensible.
+
+La modification récursive des permissions, celle qui redescend tout un arbre de fichiers, mérite une mise en garde distincte. Appliquée au mauvais niveau, elle transforme en exécutables des centaines de fichiers de données, ou retire l'accès en lecture à des répertoires que des services doivent parcourir, et le dégât ne se constate souvent qu'au prochain redémarrage. Testez toujours votre commande sur un sous-répertoire réduit, vérifiez le résultat avec ls -l, et seulement ensuite étendez-la. Un autre cas mérite attention : dans un répertoire avec le bit de balayage, seul le propriétaire d'un fichier peut le supprimer, ce qui protège les annuaires temporaires partagés où chacun nettoie ce qu'il a déposé.
+
+chown change le propriétaire et le groupe d'un fichier, et il ne fonctionne qu'avec les privilèges élevés, car attribuer un fichier à autrui est par définition une opération réservée à l'administrateur. Notez au passage l'existence du masque, umask, qui détermine les droits accordés par défaut à tout fichier nouvellement créé. Plutôt que de corriger indéfiniment après coup, un administrateur ajuste le masque une fois, et chaque création suit la politique décidée. C'est un exemple type de solution structurelle face à un problème répétitif.
+
+## Variables et conditions : écrire un vrai script bash
+
+Un script bash n'est rien d'autre qu'un fichier texte contenant des commandes, exécuté ligne à ligne par l'interpréteur. Sa première ligne, appelée ligne de générateur, indique quel shell doit le prendre en charge, et le premier réflexe consiste à rendre le fichier exécutable puis à l'enregistrer dans un répertoire figurant dans votre chemin de recherche. À partir de là, vous disposez d'un programme au sens propre, déclenchable par vous, par cron ou par un service.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE="nginx"
+SEUIL=80
+
+if ! systemctl is-active --quiet "$SERVICE"; then
+  echo "Alerte : $SERVICE ne tourne pas"
+  exit 1
+elif df -h / | awk 'NR==2 {gsub(/%/,"",$5); exit ($5 > '"$SEUIL"')}'; then
+  echo "Espace disque au-dessus de $SEUIL pourcent"
+  exit 1
+else
+  echo "Etat nominal"
+fi
+```
+
+Les variables se déclarent sans mot-clé, par simple affectation, et se lisent avec le signe dollar. Les guillemets autour de la valeur ne sont pas optionnels : sans eux, un espace dans la valeur découpe l'argument en plusieurs mots, et une chaîne vide disparaît purement et simplement, ce qui provoque des erreurs cryptiques. Le drapeau -u fait échouer le script dès qu'une variable non définie est utilisée, une protection précieuse qui transforme une faute de frappe en erreur immédiate au lieu d'un comportement étrange en production.
+
+Les conditions suivent une syntaxe rigide : le mot if, une commande ou une expression entre crochets, puis then sur sa ligne suivante, et fi pour refermer. Le test entre crochets évalue des comparaisons de chaînes et de nombres, avec des opérateurs distincts selon qu'il s'agit de texte ou d'arithmétique. La forme la plus robuste consiste à tester directement le code de retour d'une commande, comme dans l'exemple, car elle évite de dupliquer une logique qui existe déjà ailleurs. Le mot elif ouvre une branche alternative et else la branche par défaut.
+
+Un script devient réellement utile dès qu'il accepte des paramètres. Les positions un, deux et trois portent les arguments passés à l'appel, le nombre total permet de vérifier qu'on ne s'attend pas à moins ou plus, et le nom du script lui-même reste disponible pour afficher une aide d'utilisation. Cette vérification d'usage en tête de fichier est un gage de sérieux : elle transforme un appel incomplet en message clair plutôt qu'en exécution à moitié vide. On range ensuite la logique en fonctions, qui se déclarent avec le mot réservé puis s'invoquent comme une commande, ce qui rend le corps du script aussi lisible qu'une table des matières.
+
+Trois structures complètent utilement le conditionnel. La boucle sur une liste parcourt un ensemble d'éléments, la boucle conditionnelle répète tant qu'un test reste vrai, et la commande case sélectionne parmi plusieurs valeurs littérales une branche à exécuter. Prises ensemble, elles suffisent à décrire la quasi-totalité des tâches d'administration courantes : vérifier un état, réagir, réessayer, notifier. La difficulté ne réside jamais dans la syntaxe, mais dans la clarté des décisions qu'on met dedans.
+
+Pour que ce code survive au-delà de votre session, adoptez trois habitudes dès la première ligne. Activez le mode strict, qui arrête le script à la première erreur inattendue. Échappez toutes les variables, y compris dans les commandes système, pour neutraliser les valeurs contenant des espaces ou des caractères spéciaux. Enfin, factorisez les valeurs constantes en tête de fichier : un chemin ou un seuil modifié à un seul endroit se propage partout, alors qu'une valeur recopiée en cinq lieux finit par diverger. Ces trois gestes coûtent dix secondes et vous évitent des heures de débogage.
+
+Jusqu'ici, nous avons manipulé des fichiers et des commandes qui s'exécutent une fois, puis disparaissent. Un serveur, lui, doit fonctionner jour et nuit, redémarrer tout seul après une coupure d'alimentation, relancer les applications qui tombent et enregistrer ce qui s'est passé pendant notre absence. Ce troisième mouvement du chapitre aborde donc la vie longue du système : les services, leur supervision, leurs journaux, puis la connexion à distance qui vous permettra de les piloter depuis votre poste de travail.
+
+Nous commencerons par systemd, le gestionnaire de services qui supervise l'amorçage et l'exécution des programmes système sur les distributions modernes. Nous verrons ensuite comment le piloter au quotidien avec systemctl : démarrer, arrêter, redémarrer, activer au démarrage, inspecter l'état réel d'une unité. Puis nous passerons à journalctl, l'outil qui donne accès à l'ensemble des journaux de la machine, filtrables par service, par période ou par niveau de gravité. Enfin, nous terminerons par SSH : la connexion chiffrée à distance, sa configuration soignée, et la gestion des clés qui remplace avantageusement les mots de passe.
+
+Comme pour les sections précédentes, la règle reste la même : observez d'abord, agissez ensuite. Les commandes de ce chapitre touchent à des services partagés, dont dépendent potentiellement votre accès à la machine et le fonctionnement de vos applications. Pratiquez sur une machine de test, lisez la sortie de chaque commande, et gardez à l'esprit qu'un redémarrage de service interrompt brièvement les utilisateurs. Cette prudence n'est pas de la timidité : elle distingue l'administrateur dont on sollicite l'avis de celui dont on redoute les gestes.
+
+## systemd, le gestionnaire de services modernes
+
+systemd est l'init system de la plupart des distributions Linux contemporaines : c'est le premier processus lancé par le noyau, et il devient l'ancêtre de tous les autres. Sa mission est double : orchestrer la séquence de démarrage du système, puis maintenir en vie les services configurés. Il remplace l'ancienne suite de scripts d'amorçage par un modèle déclaratif, où l'on décrit ce que l'on veut voir tourner, et laisser systemd s'assurer que c'est bien le cas, y compris après un redémarrage brutal ou une dépendance qui échoue.
+
+```bash
+systemctl list-units --type=service
+systemctl status nginx
+systemctl cat nginx.service
+systemctl list-dependencies multi-user.target
+```
+
+L'objet de travail de systemd est l'unité, un fichier de configuration décrivant une ressource : un service, un point de montage, un timer, une socket réseau. Ces fichiers sont répartis dans plusieurs emplacements, dont certains servent de modèles livrés avec les paquets et d'autres accueillent vos propres réglages locaux. Leur syntaxe est en sections entre crochets, avec des paires clé-valeur, et ils se lisent en quelques minutes une fois que l'on a compris qu'une unité décrit un comportement attendu plutôt qu'une commande à lancer aveuglément.
+
+Les directives les plus importantes structurent le cycle de vie du service. La commande à exécuter, l'utilisateur sous lequel l'exécuter, le répertoire de travail, les variables d'environnement, puis les règles de redémarrage en cas d'échec. C'est précisément ce dernier point qui justifie systemd : un processus qui plante peut être relancé automatiquement, avec un délai progressif qui évite une boucle de redémarrages dévorant le processeur. Un administrateur qui se contentait de lancer un binaire à la main perdait cette résilience, et découvrait les pannes uniquement en arrivant au bureau.
+
+La notion de dépendance est au cœur du modèle. Une unité peut déclarer qu'elle doit démarrer après telle autre, ou qu'elle exige qu'un point de montage soit disponible. systemd construit alors un graphe d'ordre de démarrage et le déroule en parallèle quand c'est possible, ce qui réduit considérablement le temps d'amorçage. Le piège classique du débutant consiste à ignorer ces dépendances et à écrire un service qui démarre avant la base de données à laquelle il doit se connecter : le service échoue, systemd le relance, il échoue encore, et le diagnostic reste opaque tant qu'on n'a pas regardé le graphe.
+
+À côté des services, systemd propose deux autres mécanismes qu'il vaut mieux connaître dès maintenant. Les cibles regroupent des unités selon un niveau du système, niveau multi-utilisateur, interface graphique, mode maintenance, et remplacent les anciens niveaux d'exécution en fournissant un modèle plus lisible. Les minuteries, elles, déclenchent une unité à intervalle régulier ou à une heure fixe, comme le ferait un planificateur de tâches mais avec une journalisation, des dépendances et un suivi d'état intégrés. Beaucoup de tâches d'administration, sauvegardes, purges, rapports, gagnent à être exprimées en minuteries plutôt qu'en entrées de crontab, précisément parce que leur échec devient visible dans le journal.
+
+Un point mérite d'être dit sur la relation entre systemd et les anciens scripts d'init. Beaucoup de logiciels anciens fournissent encore un script de démarrage hérité, que systemd sait exécuter via un type d'unité dédié. C'est pratique pour la migration, mais cela masque les informations de statut : le gestionnaire sait seulement que le script a rendu la main, pas si le service tourne vraiment. Dès que possible, remplacez ce pont par une unité native, et gagnez un suivi d'état réel.
+
+## systemctl : piloter les services au quotidien
+
+systemctl est la porte d'entrée pratique sur systemd. Il affiche l'état, lance des actions, recharge la configuration et suit les journaux d'une unité. Ses commandes de base sont si courtes qu'on les apprend en une journée : démarrer, arrêter, redémarrer, activer au démarrage, désactiver, vérifier l'état. La distinction entre démarrer et activer est essentielle : la première agit maintenant, la seconde inscrit la unité dans la liste de celles qui devront démarrer au prochain amorçage.
+
+```bash
+sudo systemctl start nginx
+sudo systemctl enable --now nginx
+sudo systemctl restart nginx
+sudo systemctl reload nginx
+sudo systemctl disable nginx
+systemctl is-active nginx
+systemctl is-enabled nginx
+```
+
+L'option qui fait les deux à la fois, démarrage immédiat et activation persistante, est celle que l'on utilise le plus souvent lors d'une installation. Elle évite l'erreur de configuration incomplète où le service fonctionne parfaitement jusqu'au prochain redémarrage de la machine, puis disparaît faute d'avoir été activé. Ce type de défaillance, qui ne se manifeste qu'une fois sur plusieurs semaines, est extrêmement coûteux à comprendre, et une seule commande permet de l'éviter.
+
+Redémarrer et recharger ne font pas la même chose. Le redémarrage arrête net le processus puis en lance un nouveau, avec une coupure de service mesurable, parfois de quelques secondes. Le rechargement, lorsque l'application le supporte, lui demande de relire sa configuration en gardant les connexions établies. Vérifier le support du rechargement avant de l'invoquer est une courtoisie envers les utilisateurs, et vérifier qu'une configuration est valide avant de la recharger est une obligation : systemd refuse les fichiers malformés, mais une application plus ancienne peut accepter puis échouer plus tard.
+
+Après toute modification d'un fichier d'unité, une commande de rechargement de la configuration de systemd s'impose avant toute tentative de démarrage. Sans elle, le gestionnaire continue de croire à l'ancienne définition, et vous vous épuiserez à chercher pourquoi votre changement semble ignoré. Ce réflexe fait partie de la mécanique élémentaire : éditer, recharger, démarrer, vérifier. Inversement, une unité dont l'état affiche un échec répété doit d'abord être lue, message de sortie et dernier code de retour, avant d'être redémarrée à son tour, car un redémarrage répété sur une configuration fautive ne fait que ralentir le système sans rien résoudre.
+
+La commande d'état est votre première source de diagnostic. Elle indique le processus principal, le compte sous lequel il tourne, le dernier code de retour, le chemin du binaire, la mémoire consommée, et surtout le point d'insertion dans les journaux, qui mène directement aux messages récents. Lire systématiquement cette sortie avant toute action vous évite de redémarrer un service sain, ou de chercher un problème de configuration là où se cache en réalité un manque de droits. L'état vous donne aussi la date de démarrage, précieuse pour relier un incident à un événement récent.
+
+Un dernier réflexe, valable avant toute modification majeure : préparer un retour arrière. Sauvegardez le fichier de configuration, modifiez une seule chose à la fois, rechargez, observez, puis ne continuez que si le résultat est attendu. Cette discipline en quinze secondes transforme les interventions risquées en séries de petits pas vérifiables. Elle s'applique à systemd comme à toute autre partie du système, et elle est la marque des administrateurs dont les modifications ne font jamais l'objet d'une correction d'urgence.
+
+## journalctl : lire les journaux sans se noyer
+
+Tous les messages émis par le noyau et par les services sont rassemblés dans le journal central, que journalctl interroge. Là où l'ancienne approche consistait à ouvrir des fichiers plats, séparés, tournés ou corrompus à la moindre coupure, le journal est structuré, indexé, horodaté et conservé de manière cohérente. Il résiste aux redémarrages brutaux, ce qui est exactement ce dont vous avez besoin après une panne : l'histoire du système avant l'incident reste consultable.
+
+```bash
+journalctl -u nginx -n 50
+journalctl --since "10 min ago"
+journalctl -p err -b
+journalctl -f -u nginx.service
+journalctl --disk-usage
+```
+
+Les filtres s'enchaînent naturellement. Le premier consiste à restreindre à une unité, ce qui isole immédiatement les messages d'un service donné. Le second borne la période, avec des expressions relatives ou absolues, indispensable quand'on sait que l'incident a commencé à telle heure. Le troisième filtre par niveau de gravité, depuis le débogage jusqu'à l'alerte critique, et le quatrième n'affiche que les messages de la session d'amorçage en cours, évitant de mélanger plusieurs démarrages.
+
+Le suivi en direct est l'équivalent du vieux suivi de fichier, mais avec tous les filtres en plus. Lancez le service, laissez la fenêtre ouverte, déclenchez l'action qui pose problème, et lisez ce qui apparaît. Cette méthode, simple à l'extrême, résout la majorité des incidents de configuration, parce que le message d'erreur exact est presque toujours émis au moment de la tentative. Résistez à l'envie de chercher immédiatement sur un moteur de recherche : lisez d'abord le message complet, souvent la cause y est écrite en toutes lettres.
+
+Le journal distingue enfin la session d'amorçage en cours des sessions précédentes, une distinction qui évite un piège classique : analyser des messages d'un démarrage antérieur en croyant lire l'état actuel. Après un redémarrage, précisez la session, ou bornez la période, et vous éliminez d'un geste une source entière de confusions. Reliez toujours un message à un instant précis, en notant l'horodatage complet plutôt que l'heure approximative que vous croyez vous souvenir : dans un système multi-processus, deux événements séparés d'une fraction de seconde peuvent s'afficher dans un ordre qui ne correspond pas à la chaîne des causes.
+
+La conservation des journaux obéit à une politique de taille et de durée, réglable dans la configuration système. Sur un serveur à disque limité, laisser une politique par défaut trop généreuse finit par grignoter l'espace disponible, ce qui provoque des pannes d'un tout autre ordre. Inversement, une politique trop restrictive efface l'historique dont vous aurez besoin pour analyser un incident survenu la semaine dernière. Un contrôle régulier de l'usage disque du journal, avec la commande qui affiche ce total, permet d'ajuster avant que le problème ne survienne.
+
+Un conseil de méthode pour l'analyse : travaillez toujours en entonnoir. Commencez par les erreurs de la période, puis élargissez à un niveau moins sévère si rien n'apparaît, puis retirez le filtre de gravité pour voir l'activité normale autour de l'instant critique. Beaucoup d'incidents ne produisent pas d'erreur, seulement une absence de messages là où on en attendait, ou une séquence inhabituelle. Lire le journal comme une chronologie, et non comme une liste d'erreurs, change radicalement la qualité de vos diagnostics.
+
+## SSH sécurisé et gestion des clés
+
+SSH est le protocole de connexion à distance qui a remplacé ses prédécesseurs non chiffrés. Il fournit un canal chiffré entre deux machines, avec authentification par mot de passe ou par clé, et il transporte bien plus que votre terminal : transferts de fichiers, tunnels, exécution à distance de commandes, port forwarding. Une installation typique le laisse tourner comme service système, écoutant sur le port vingt-deux, prêt à répondre aux connexions entrantes.
+
+```bash
+ssh alice@serveur.example.com
+ssh -p 2222 alice@serveur.example.com
+scp fichier.txt alice@serveur:/var/tmp/
+ssh-copy-id alice@serveur.example.com
+```
+
+Sécuriser SSH commence par la configuration du serveur. Trois réglages font 90 pour cent du travail : désactiver l'authentification par mot de passe au profit des seules clés, désactiver la connexion directe de l'utilisateur super administrateur, et refuser les comptes qui n'ont pas de clé déposée. Ces trois lignes, placées dans le fichier de configuration principal du démon, éliminent la grande majorité des tentatives de force brute qui martèlent continuellement les serveurs exposés sur internet.
+
+```bash
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+AllowUsers alice bob
+```
+
+Il faut cependant prévoir une porte de sortie avant d'appliquer la première règle : tant que votre propre clé n'est pas installée et testée dans une session restée ouverte, vous risquez de vous enfermer dehors. La procédure sûre consiste à ouvrir une session, à déposer la clé publique, à ouvrir une seconde session pour valider l'authentification par clé, et seulement ensuite à recharger la configuration et à refermer la première session. Ce rituel, répété chaque fois, vous évite l'intervention d'urgence via la console physique du serveur.
+
+Au-delà de la configuration, quelques réflexes durcissent l'accès. Changez le port d'écoute seulement si vous avez un motif réel, car ce n'est pas une protection, seulement un filtre anti-bruit. Restreignez les adresses autorisées au niveau du pare-feu quand le serveur ne doit être joignable que depuis un réseau de confiance. Désactivez les options de forwarding et de transfert si personne n'en a besoin, et interdisez l'exécution de commandes distantes pour les comptes dédiés au transfert de fichiers. Chaque fonctionnalité retirée est une surface d'attaque en moins.
+
+La gestion des clés mérite une section à part, tant elle est centrale. Une paire comporte une clé privée, qui ne quitte jamais votre machine et doit rester secrète, et une clé publique, déposée sur le serveur dans un fichier autorisé. La phrase de passe, ou passphrase, protège la clé privée au repos. Créer une paire prend une seconde, et l'option qui génère un algorithme moderne reste le choix par défaut recommandé aujourd'hui, les anciens algorithmes étant jugés trop faibles face à la croissance des capacités de calcul.
+
+Le piège le plus répandu consiste à créer une clé sans phrase de passe, par commodité. On gagne quelques secondes à chaque connexion, et on perd tout : une clé volée ouverte sur un poste infecté donne un accès direct et durable à tous les serveurs qui l'acceptent, sans aucun facteur supplémentaire à présenter. Avec une phrase de passe, le voleur doit en plus la deviner ou la récupérer par d'autres moyens, et l'agent de connexion peut la conserver en mémoire pendant votre session, ce qui vous donne le confort recherché sans sacrifier la sécurité. Si vous devez utiliser une clé sans protection, restreignez au moins les serveurs concernés et prévoyez une rotation rapide.
+
+Côté client, un fichier de configuration personnelle rend les connexions bien plus pratiques. Il permet de déclarer un alias court pour chaque hôte, d'y attacher l'adresse, le port non standard, l'utilisateur et la clé utilisée, au point de réduire la connexion complète à un mot. Cette déclaration centralise aussi des informations que l'on aurait sinon dispersées dans des notes : le nom exact d'un serveur, son adresse réelle, l'emplacement de sa clé. Toute information de ce type écrite en clair dans ce fichier reste non sensible, car elle ne contient aucun secret, seulement des indications de routage.
+
+Enfin, la hygiène des clés s'inscrit dans la durée. Chaque poste qui quitte l'entreprise, chaque clé perdue, chaque collègue qui change d'équipe doit déclencher la suppression de la clé publique correspondante dans le fichier des clés autorisées. Ce fichier est banni d'ailleurs plus utile que n'importe quel journal : il indique exactement qui peut entrer sur la machine. Relisez-le périodiquement, supprimez les entrées orphelines, et traitez ce fichier comme un registre d'accès, pas comme une liste que l'on remplit et qu'on n'ouvre plus jamais.
+
+Le premier chapitre du parcours DevOps est maintenant couvert de bout en bout. Vous avez vu ce qu'est un shell, comment il reçoit, interprète et transmet vos commandes, puis vous avez appris à vous déplacer dans l'arborescence, à lire et à filtrer du texte, à rebrancher les flux d'une commande vers un fichier ou une autre commande. Vous avez composé des pipelines, converti des données en arguments avec xargs, attribué des permissions en comprenant ce que chaque chiffre signifie, et écrit un script bash pourvu de variables et de conditions. Le dernier mouvement vous a conduit vers la vie longue du système : les services systemd, leur pilotage, les journaux centralisés, et une connexion SSH correctement configurée.
+
+Ces quatre blocs forment une seule compétence, pas quatre. Face à un serveur qui ne répond pas, un administrateur ne pioche pas au hasard dans une encyclopédie de commandes : il regarde où il se trouve, il lit ce que le système raconte, il formule une hypothèse, il agit par un geste mesuré, puis il vérifie. La leçon d'aujourd'hui vous a donné les mots, les gestes et les garde-fous ; la suite du parcours les mettra en œuvre dans des contextes de déploiement, de conteneurs et d'automatisation. Ce que vous retiendrez dépend donc moins du nombre de commandes mémorisées que de la rigueur avec laquelle vous les appliquez.
+
+Les sections qui suivent servent de pivot. La première rassemble l'essentiel, formule par formule, pour que vous puissiez la relire avant chaque exercice. La seconde recense les erreurs réellement observées sur le terrain, avec leur mécanisme et leur remède : c'est la partie la plus utile du chapitre, car une erreur comprise une fois ne se reproduit presque plus. La troisième propose des pistes d'approfondissement et des ressources de référence. La dernière vous envoie vers l'exercice, seul endroit où le savoir se transforme en capacité.
+
+## À retenir
+
+Le shell est un interprète entre vous et le noyau. Une commande suit une grammaire stable, une commande, ses options, ses arguments, et chaque commande renvoie un code de sortie dont zéro signifie succès. Cette convention est le socle de toute automatisation : un script qui ignore les codes de retour ne détecte pas ses échecs, il les propage. Les raccourcis de saisie, tabulation, historique, recherche, interruption, ne sont pas des ornements mais des garde-fous contre la faute de frappe, première cause d'erreur en ligne de commande.
+
+```bash
+pwd && ls -lah && grep -rn "motif" ./config | tail -n 20
+commande > sortie.txt 2>&1 || echo "echec"
+find . -name "*.log" -print0 | xargs -0 du -ch | tail -n 1
+chmod 750 script.sh && chown root:deploy script.sh
+systemctl enable --now service
+journalctl -u service -p err --since "1 h ago"
+```
+
+La navigation repose sur la distinction entre chemin absolu et chemin relatif, et les motifs de correspondance étendent chaque commande à tout un ensemble de fichiers. La lecture du texte combine cat pour les petits fichiers, less pour l'inconnu, head et tail pour les extrémités, tail -f pour le direct, et grep pour tout ce qui ressemble à une recherche. La redirection manipule trois canaux, entrée, sortie, erreurs, et le signe simple écrase alors que le double signe ajoute : cette unique différence suffit à séparer une sauvegarde d'une destruction.
+
+Les tubes transportent la sortie standard d'une commande vers l'entrée de la suivante, sans fichier intermédiaire, et constituent la structure élémentaire du traitement UNIX. xargs intervient dès qu'une commande refuse l'entrée standard et attend des arguments. Les permissions se lisent en trois catégories, propriétaire, groupe, autres, et en trois droits, lecture, écriture, exécution, attribués par la notation octale ou par la notation symbolique. Un script sérieux commence par le mode strict, échappe ses variables et place ses constantes en tête de fichier.
+
+systemd décrit ce qui doit tourner, maintient l'état désiré et relance ce qui tombe. systemctl agit sur le présent, démarrer, arrêter, recharger, et sur le futur, activer ou désactiver au démarrage. journalctl interroge le journal central avec des filtres de service, de période et de gravité. SSH fournit un canal chiffré dont la sécurité repose sur trois piliers : l'authentification par clé, une configuration serveur restrictive, et des clés protégées par une phrase de passe. Rien de tout cela n'est exotique : ce sont les outils que vous utiliserez chaque jour.
+
+## Erreurs fréquentes
+
+La première, et de loin la plus répandue, est d'attribuer les permissions les plus larges pour débloquer une situation. Donner tous les droits à tous les utilisateurs ne résout pas le problème d'accès, il le masque : le vrai coupable, un service lancé sous un mauvais compte, un groupe mal renseigné, un chemin mal référencé, reste en place, et s'ajoute désormais une faille de sécurité. La correction honnête consiste à identifier le compte qui doit accéder au fichier, à lui donner le droit strictement nécessaire, puis à vérifier que l'application fonctionne. Une permission est une décision, pas un correctif.
+
+La deuxième erreur consiste à recourir au privilège maximal sans se poser de question. La commande qui élève les droits est parfois nécessaire, mais l'utiliser par réflexe transforme chaque commande en potentiel destructeur irréversible : les protections n'existent plus, une coquille mal refermée supprime ce qu'elle veut, et personne n'est à l'abri d'une frappe hâtive. Posez-vous trois secondes : ai-je vraiment besoin des droits élevés pour cette étape ? Souvent, la réponse est non, et vous venez d'éviter l'incident du jour. Quand la réponse est oui, écrivez la commande complète, relisez-la, puis exécutez-la.
+
+La troisième erreur est de créer une clé de connexion sans phrase de passe. Le gain est réel mais mesurable, quelques secondes par connexion ; la perte l'est davantage : la clé privée devient un passe-partout absolu, valide sur tous les serveurs qui l'acceptent, et sa simple exfiltration donne un accès discret, durable et silencieux à vos machines. Une phrase de passe, couplée à un agent qui la conserve pendant votre session, offre le même confort au quotidien et fait obstacle au voleur pressé. Si les contraintes opérationnelles imposent vraiment une clé sans protection, restreignez le nombre de serveurs concernés et prévoyez son renouvellement.
+
+La quatrième erreur est de détruire ce que l'on voulait seulement inspecter. Remplacer un fichier par sa sortie de commande, par une copie vide ou par du texte mal dirigé est irréversible sur un serveur sans sauvegarde. La parade tient en deux gestes : écrire d'abord dans un fichier temporaire, vérifier le contenu, puis déplacer le fichier à sa place. La même prudence s'applique à la modification récursive des permissions, qui redescend tout un arbre, et à la suppression par motif, dont on ne relit souvent l'expression qu'après l'exécution.
+
+La cinquième erreur est d'agir avant de lire. Redémarrer un service qui ne donne aucun symptôme, recharger une configuration que l'on n'a pas validée, changer un réglage alors que le journal n'a pas été consulté : chacune de ces démarches ajoute un mouvement à la situation et dilue la trace de la panne d'origine. L'ordre inverse, lire l'état, lire le journal, formuler une hypothèse, agir d'un seul geste, puis relire l'état, coûte quelques minutes de plus et fait gagner des heures. À cela s'ajoutent trois pièges techniques qui reviennent sans cesse : un oubli de guillemets autour d'une variable, un script lancé depuis un répertoire inconnu avec des chemins relatifs, et une chaîne de commandes dont on n'a pas fait remonter le premier échec.
+
+La sixième erreur concerne la configuration de SSH : appliquer un durcissement sans garder une session ouverte pour valider qu'on peut toujours entrer. Fermer sa dernière connexion avec un réglage erroné coûte une intervention sur console physique, parfois un déplacement. La procédure sûre tient en trois temps : ouvrir une session, installer et tester la nouvelle authentification dans une seconde session, appliquer la configuration, puis seulement refermer la première. Enfin, évitez de considérer un service démarré comme un service sain : l'état, le code de retour et les messages récents en disent bien plus qu'une absence de message d'erreur à l'écran.
+
+## Pour aller plus loin
+
+La meilleure façon de fixer ces acquis est de les réemployer immédiatement, par petites touches, en ne changeant qu'une seule chose à la fois. Reprenez le script de vérification d'état de la section sur les conditions, remplacez le service contrôlé par un autre, ajoutez une branche qui prévient par courriel quand le disque dépasse un seuil, puis testez chaque version en provoquant exprès l'état d'erreur. Vous apprendrez davantage en observant votre script échouer proprement qu'en relisant dix pages de syntaxe, parce que c'est le comportement du code en situation limite qui révèle ce que vous n'avez pas compris.
+
+Appliquez ensuite la même méthode à un problème neuf, sans guide : inventaire des plus gros consommateurs d'espace, compte des échecs d'authentification sur les dernières vingt-quatre heures, rapatriement quotidien des journaux d'un service vers un fichier archivé daté. Chacun de ces cas exige une recherche, un filtrage, une redirection ou un enchaînement, donc exactement les briques de ce chapitre. Écrivez la solution sous forme de script, exécutez-le une fois à la main, puis programmez son exécution automatique et vérifiez dans le journal qu'il s'est bien déroulé. C'est à ce moment précis que les notions de code de retour, de permissions et de services cessent d'être théoriques.
+
+Trois ressources de référence couvrent le champ abordé ici et font autorité. La page encyclopédique sur les systèmes d'exploitation fournit le contexte général et situe Linux parmi les autres familles, ce qui aide à comprendre pourquoi certains concepts se retrouvent partout. La documentation officielle de systemd, dense mais remarquablement structurée, décrit chaque type d'unité et chaque directive, et se consulte utilement dès que vous écrivez votre premier fichier de service. Le guide de sécurité OpenSSH, maintenu par les soins de ses auteurs, fait foi pour la configuration du démon, les algorithmes recommandés et la gestion des clés : c'est la source à vérifier avant d'ouvrir un serveur au réseau.
+
+- https://fr.wikipedia.org/wiki/Syst%C3%A8me_d%27exploitation — panorama général des familles de systèmes et de leur organisation
+- https://www.freedesktop.org/software/systemd/man/systemd.service.html — référence des unités de service, directives de démarrage et de redémarrage
+- https://man.openbsd.org/sshd_config — page de référence de la configuration du serveur SSH et des options de durcissement
+
+Un conseil de méthode pour terminer. Tenez un carnet de commandes dans lequel vous noterez, pour chaque incident résolu, la commande exacte qui a débloqué la situation, le contexte qui l'a rendue nécessaire et la version corrigée de votre script. Relisez ce carnet au début des chapitres suivants : vous y retrouverez vos propres réflexes, ce qui est incomparablement plus efficace pour mémoriser qu'une relecture de manuel. Les erreurs que vous y consignerez valent mieux que dix pages de théorie, parce qu'elles portent votre signature.
+
+## Et maintenant : passez à l'exercice
+
+Vous avez les fondations : la lecture d'une ligne de commande, la navigation et la recherche dans un arborescence, la manipulation des flux, la composition en pipelines, les permissions, l'écriture d'un script conditionnel, la supervision des services et de leurs journaux, et une connexion à distance correctement configurée. Ce savoir n'est solide que s'il devient un geste, et le geste ne s'acquiert qu'en manipulant. Ne passez donc pas au chapitre suivant avant d'avoir produit quelque chose qui tourne, même court, même imparfait, sur une machine que vous pouvez réinitialiser sans dommage.
+
+Si vous butez sur un point précis, revenez aux sections correspondantes plutôt que de chercher une solution toute faite. Les bases du shell et la redirection sont dans la première partie, les tubes, xargs et les permissions dans la seconde, systemd et les journaux dans la troisième, la synthèse et la liste des pièges dans la dernière. Un exercice bloqué n'est pas un exercice raté : il désigne exactement l'endroit où votre compréhension s'arrête, et c'est une information précieuse qu'aucune leçon fluide ne peut fournir. Notez la question, poursuivez sur la partie suivante, et revenez-y après avoir avancé.
+
+L'exercice qui conclut ce chapitre vous demande de construire un petit outil d'exploitation complet : un script qui vérifie l'état d'un service, l'espace disque disponible et les dernières erreurs de son journal, puis qui rédige un rapport daté dans un répertoire dédié. Vous choisirez les seuils, vous écrirez les branches de décision, vous attribuerez les permissions les plus strictes compatibles avec son fonctionnement, vous l'activerez au démarrage ou à intervalle régulier, et vous vérifierez dans le journal qu'il s'exécute réellement. Gardez le résultat sous la main, car nous l'utiliserons comme point de comparaison lorsque nous aborderons l'automatisation avancée et le déploiement.
+
+Une fois ce devoir réalisé, relisez la section des erreurs fréquentes et confrontez-y votre travail ligne à ligne, en cherchant explicitement chacun des points de la liste de contrôle. Puis reformulez à voix haute, en trois phrases, ce qu'est un service, pourquoi les permissions se décrivent en trois catégories et ce que vous ne ferez plus jamais avec une clé de connexion. Si les trois réponses vous viennent sans hésitation, le chapitre est acquis et le suivant, qui consacrera ces notions à l'automatisation et au déploiement continu, vous semblera n'être qu'une conséquence naturelle de ce que vous venez de poser.

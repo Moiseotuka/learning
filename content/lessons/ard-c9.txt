@@ -1,0 +1,518 @@
+Bienvenue dans le neuvième et dernier chapitre du parcours Arduino et ESP32 embarqué, celui où votre prototype cesse d'être une démonstration pour devenir un objet que l'on peut laisser seul. Tout ce que vous avez construit jusqu'ici fonctionne sur l'établi : vos programmes lisent des capteurs, pilotent des sorties, passent par des machines à états, se connectent au Wi-Fi, publient en MQTT, découpent leur travail en tâches FreeRTOS et dialoguent avec des automates industriels par Modbus ou par CAN. Rien de tout cela ne garantit pourtant que l'objet survivra une semaine hors de la prise murale. Un objet de production se juge à quatre questions : combien d'énergie il consomme lorsqu'il ne fait rien, s'il peut rester des mois sans intervention, s'il résiste à un blocage logiciel comme à une tentative de reprogrammation, et s'il peut être corrigé sans être démonté. Ces quatre questions constituent le programme exact de ce chapitre.
+
+Les compétences que vous allez acquérir sont celles d'un ingénieur qui signe une mise en production. Vous saurez réduire la consommation en veille, ce qui suppose de comprendre et d'exploiter les modes de sommeil de l'ESP32 — veille légère, veille profonde, hibernation — puis de calculer l'autonomie réelle d'une batterie au lieu de l'espérer. Vous saurez protéger le code et les données : chiffrement de la flash, amorce de démarrage sécurisé, clés conservées dans les eFuses, gestion rigoureuse des secrets. Vous saurez préparer et déployer une mise à jour à distance : table de partitions, firmware en double, validation de l'image, retour automatique au programme précédent si le nouveau échoue. S'y ajoutent le chien de garde, premier rempart contre les blocages, et la checklist finale qui sépare nettement un prototype d'un produit expédié.
+
+Le fil rouge de ce chapitre est une sonde de terrain : un boîtier posé dans une parcelle, alimenté par une petite batterie, qui mesure l'humidité du sol toutes les trente minutes, se met en veille entre deux relevés et transmet ses résultats par Wi-Fi. La contrainte est simple à énoncer et exigeante à tenir : six mois d'autonomie, aucun déplacement sur site pendant la période, et un correctif à déployer à distance si un défaut est découvert au bout du troisième mois. Cette sonde vous accompagnera dans l'étude de cas sur l'alimentation, puis dans l'étude de cas sur la mise à jour à distance. À la fin de la leçon, vous aurez calculé son budget énergétique ligne à ligne, écrit son firmware endormi, durci sa carte et préparé la mise à jour que vous lui enverrez depuis votre bureau.
+
+Un mot sur la manière d'aborder ce chapitre, car il est à la fois le plus concret et le plus sévère du parcours. Rien ici ne se voit à l'œil : un courant de veille de quelques microampères, un retour arrière au firmware précédent, un chiffrement de flash ne s'observent pas en regardant une LED. Il faudra donc accepter de mesurer, de lire des spécifications et de raisonner sur des ordres de grandeur avant d'écrire une ligne de code. Commencez par le courant : l'énergie dicte tout le reste, de la taille de la batterie à la fréquence des réveils, en passant par l'autorisation d'allumer la radio. Un objet qui consomme mal ne se sauve pas par la suite, quelle que soit la qualité de son logiciel.
+
+## Le bilan énergétique : où part vraiment le courant
+
+Avant d'endormir quoi que ce soit, il faut savoir où part le courant. Sur un établi, la question ne se pose jamais : le câble USB délivre cinq cents milliampères et personne ne les compte. Dès qu'on passe sur batterie, chaque milliampère-heure devient une ressource comptable, et le budget se joue rarement là où le débutant l'imagine. La première habitude à prendre est donc de chiffrer avant de coder, en convertissant chaque état de votre programme en courant moyen sur une période de référence.
+
+Sur une carte ESP32, quatre consommateurs se partagent le budget : la puce elle-même, la radio, les composants de la carte régulateur de tension, convertisseur USB-série, voyant de statut, résistances de rappel et, enfin, les capteurs et actionneurs que vous ajoutez. La radio domine par instants très brefs : un envoi en puissance maximale tire de l'ordre de deux cents milliampères, une réception de l'ordre de cent, tandis que le processeur en pleine charge reste très en deçà. C'est la première leçon de ce chapitre : le pic de courant n'est presque jamais le problème, la durée pendant laquelle on le dépasse l'est. Un objet qui émet trois secondes par heure ne se juge pas sur sa crête, mais sur la moyenne de son cycle complet.
+
+La conversion en milliampères-heure sur vingt-quatre heures rend les choses limpides. Une ESP32 maintenue active en permanence, radio comprise, consomme de l'ordre de quarante milliampères en moyenne : cela représente neuf cent soixante milliampères-heures par jour, soit à peine deux jours pour une petite batterie de deux ampères-heure. La même puce en veille profonde, à dix microampères, absorbe un quart de milliampère-heure par jour : théoriquement plusieurs décennies, ce qui revient à dire que la batterie se sera déchargée toute seule bien avant. Entre ces deux extrêmes se joue toute l'autonomie de votre produit, et le tableau ci-dessous donne les ordres de grandeur à retenir avant tout calcul.
+
+```table
+| État de la carte | Courant typique | Observations |
+| --- | --- | --- |
+| ESP32 actif, Wi-Fi en émission | 240 mA en crête | Quelques millisecondes par paquet |
+| ESP32 actif, Wi-Fi en réception | 100 mA environ | Conservation de la liaison, boucle principale qui tourne |
+| ESP32 actif, radio coupée | 24 à 40 mA | Processeur à 240 MHz, périphériques activés |
+| Modem sleep | 20 mA environ | Radio coupée, processeur maintenu en marche |
+| Veille légère | 0,8 mA environ | Processeur en pause, mémoire et contexte conservés |
+| Veille profonde | 10 µA environ | Seul le domaine RTC reste alimenté |
+| Hibernation | 7 µA environ | RTC minimal, réveil par voie matérielle seulement |
+| Arduino Uno en fonctionnement | 50 mA environ | Convertisseur, régulateur et voyant compris |
+| AVR sous tension minimale | moins de 10 µA | Horloge arrêtée, réveil par veille matérielle |
+```
+
+
+Ces chiffres sont des ordres de grandeur publiés par le fabricant, mesurés à tension et température nominales. Ils varient selon la version de la puce, l'ESP32 classique, le S2, le S3 ou le C3 ne se comportant pas tout à fait pareil, selon la tension d'alimentation et selon la température de jonction. Retenez-en la hiérarchie plutôt que les valeurs exactes : radio très coûteuse par instants, processeur coûteux quand il tourne, domaine RTC presque gratuit. Toute décision d'architecture se déduit de cet ordre.
+
+La mesure au banc reste indispensable, car les composants de votre carte mangent leur part. Le régulateur linéaire consomme lui-même quelques microampères en repos, le convertisseur USB-série parasite la carte tant que le jumper reste en place, les voyants et les résistances de rappel ajoutent des milliampères parfois inattendus. La méthode correcte consiste à alimenter la carte par une alimentation stable, à intercaler un multimètre en série sur la ligne trois volts trois et à lire le courant dans chaque état du programme, radio allumée, radio coupée, veille légère, veille profonde. Quand la consommation est pulsée, un multimètre standard ne suffit plus : il faut un shunt de faible valeur ou un instrument capable d'intégrer sur un cycle entier, car c'est la moyenne, jamais l'instantané, qui décide de l'autonomie.
+
+Une dernière précision méthodologique, souvent négligée : mesurez toujours dans l'ordre où le programme réveille les périphériques. Coupez la radio et notez, activez le processeur à pleine vitesse et notez, allumez un capteur et notez. Cette marche progressive vous indique en une heure ce que la lecture d'une spécification ne dira jamais : la part de votre propre code dans la facture. Beaucoup de projets découvrent alors que le capteur lui-même, une résistance chauffante ou un régulateur mal choisi consomme davantage que la puce en veille, et aucun logiciel ne corrigera un mauvais choix de composant.
+
+## Les quatre modes de sommeil de l'ESP32
+
+L'ESP32 ne connaît pas un sommeil mais plusieurs, et confondre ceux-ci est la faute la plus fréquente dans un projet sur batterie. Le premier s'appelle veille de la radio, ou modem sleep : la puce coupe le Wi-Fi et le Bluetooth quand elle ne les utilise pas, tout en laissant le processeur tourner. Ce mode s'active automatiquement lorsque la liaison est inactive et peut aussi se piloter explicitement. Il divise par deux la consommation sans rien changer à l'exécution du programme, ce qui en fait l'option à activer par défaut dès que votre boucle principale passe plus d'une fraction de seconde à attendre.
+
+Le second mode est la veille légère. Le processeur s'arrête, la mémoire vive et le contexte d'exécution sont conservés, et la puce se réveille en quelques millisecondes en reprenant exactement là où elle s'était arrêtée. Pour votre programme, c'est un simple appel : la boucle reprend, les variables existent encore, les périphériques restent configurés. La consommation tombe à moins d'un milliampère. C'est le mode idéal pour une attente courte, de quelques millisecondes à quelques secondes, où l'on veut gagner de l'énergie sans réécrire la suite du code.
+
+Le troisième mode est la veille profonde, celui que vous utiliserez pour les longues pauses. Seul un petit domaine autonome, appelé domaine RTC, reste alimenté : le compteur de cycles, quelques broches dédiées et une mémoire réduite. Tout le reste, processeur, mémoire vive, périphériques, radio, est éteint. Le réveil ressemble à un démarrage à froid : le programme repart du début de setup(). Ce n'est pas un détail, c'est une contrainte d'architecture complète. Vous devrez reconstruire l'état nécessaire, ou le conserver dans la mémoire du domaine RTC, qui survit précisément à cette opération.
+
+Le quatrième mode, l'hibernation, va plus loin encore : il ne conserve qu'une horloge très basique et un détecteur de réveil matériel, pour une consommation encore plus faible. On y perd tout ce que la veille profonde conservait. Il convient aux objets qui ne se réveillent que sur un événement physique rare, bouton ou contacteur, et dont le démarrage complet est de toute façon nécessaire à chaque cycle. Pour une sonde qui doit se réveiller toutes les trente minutes, il n'apporte rien face à la veille profonde : la séquence d'initialisation coûterait davantage que l'énergie économisée.
+
+Le tableau récapitulatif ci-dessous sert de référence rapide pendant le développement. Lisez-le de gauche à droite avant de choisir : plus vous descendez, plus vous gagnez en autonomie, et plus vous perdez en contexte. Il n'existe pas de meilleur mode en soi, seulement le mode le moins coûteux qui satisfasse votre temps de réponse et votre fréquence de réveil.
+
+```table
+| Mode | Processeur | Mémoire vive | Radio | Courant | Réveil | Contexte après réveil |
+| --- | --- | --- | --- | --- | --- | --- |
+| Actif | en marche | conservée | selon usage | 24 à 40 mA | sans objet | poursuite normale |
+| Modem sleep | en marche | conservée | coupée | 20 mA environ | sans objet | poursuite normale |
+| Veille légère | en pause | conservée | coupée | 0,8 mA environ | 3 ms environ | reprise exacte du code |
+| Veille profonde | éteint | perdue | coupée | 10 µA environ | 10 ms environ | démarrage à froid |
+| Hibernation | éteint | perdue | coupée | 7 µA environ | matériel | démarrage à froid |
+```
+
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/esp32.jpg
+| Une carte de développement ESP32 : la puce dual-core au centre, l'antenne radio d'un côté et les deux rangées de broches de l'autre, dont certaines rattachées au domaine RTC qui survit à la veille profonde.
+```
+
+Le domaine RTC mérite qu'on s'y arrête, car il est au cœur de toute économie d'énergie. Quelques broches seulement lui appartiennent, parmi lesquelles les GPIO trente-deux et trente-trois sur une carte classique, ou les GPIO deux et quatre selon le modèle. Ces broches restent pilotables et lisibles pendant que tout le reste dort, ce qui permet de maintenir un relais fermé ou de détecter l'appui d'un bouton sans réveiller la puce. À l'inverse, la broche douze, utilisée au démarrage pour sélectionner la taille de la flash, impose une prudence particulière : mal polarisée au réveil, elle empêche la carte de redémarrer. Prenez l'habitude de vérifier la correspondance entre votre broche de réveil et les broches RTC avant tout câblage définitif.
+
+Le choix entre les modes suit une règle simple à appliquer. Pour une attente inférieure à quelques secondes, pendant laquelle le contexte doit rester intact, choisissez la veille légère : le gain est immédiat et le code inchangé. Pour toute attente mesurée en minutes ou en heures, choisissez la veille profonde et acceptez de reconstruire l'état au réveil. N'oubliez jamais de couper la radio avant de dormir, sinon votre veille profonde affichera un courant dix fois supérieur à la valeur annoncée, et vous conclurez à tort que la puce ne sait pas dormir. La section suivante traite précisément de l'écriture de ce sommeil, sans lequel aucun des objectifs de ce chapitre n'est atteignable.
+
+## Dormir pour de vrai : veille légère et veille profonde
+
+La théorie est en place, il est temps d'écrire le sommeil. Les deux appels qui structurent l'essentiel sont esp_light_sleep_start pour la veille légère et esp_deep_sleep_start pour la veille profonde. Le premier est réversible : il rend la main à votre programme une fois le réveil produit. Le second ne l'est jamais : la fonction ne retourne pas, puisque la puce redémarre. Cette différence de nature commande toute la structure de votre sketch, et il faut la décider avant d'écrire setup().
+
+Pour la veille légère, le réveil peut venir d'un minuteur ou d'une broche. La séquence consiste à configurer la broche en entrée avec son rappel, à autoriser son réveil, à demander un réveil temporisé, puis à endormir la puce. La boucle reprend au retour de l'appel, avec toutes les variables intactes. Le compteur suivant illustre l'usage : la carte se réveille toutes les trente minutes ou dès qu'un bouton est enfoncé, compte les réveils et continue son travail sans jamais repasser par setup().
+
+```cpp
+#include "esp_sleep.h"
+
+const uint64_t DUREE_VEILLE_US = 30ULL * 60ULL * 1000000ULL;
+constexpr gpio_num_t BROCHE_BOUTON = GPIO_NUM_33;
+
+RTC_DATA_ATTR uint32_t compteurReveils = 0;
+
+void preparerLeReveil() {
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask = 1ULL << BROCHE_BOUTON;
+  cfg.mode = GPIO_MODE_INPUT;
+  cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+  cfg.intr_type = GPIO_INTR_DISABLE;
+  gpio_config(&cfg);
+  gpio_wakeup_enable(BROCHE_BOUTON, GPIO_INTR_HIGHLEVEL);
+  esp_sleep_enable_timer_wakeup(DUREE_VEILLE_US);
+  esp_sleep_enable_gpio_wakeup();
+}
+
+void sommeilLeger() {
+  Serial.print("dormir, reveil numero ");
+  Serial.println(compteurReveils + 1);
+  Serial.flush();
+  esp_light_sleep_start();
+  compteurReveils++;
+  Serial.print("reveille, cause ");
+  Serial.println((int)esp_sleep_get_wakeup_cause());
+}
+```
+
+Pour la veille profonde, la logique est la même mais la séquence se termine par un départ sans retour. On y ajoute deux précautions : la persistance des données dans la mémoire du domaine RTC, qui survit au sommeil, et le maintien des états de broches, sans quoi un relais commandé avant l'endormissement retombera une fois la puce privée de ses périphériques. Le compteur des réveils est déclaré avec l'attribut RTC_DATA_ATTR, précisément pour conserver son évolution d'un cycle à l'autre malgré l'extinction complète de la mémoire vive.
+
+```cpp
+constexpr gpio_num_t BROCHE_RELAIS = GPIO_NUM_27;
+constexpr gpio_num_t BROCHE_REVEIL = GPIO_NUM_4;
+
+void dormirProfond(uint64_t dureeUs) {
+  pinMode(BROCHE_REVEIL, INPUT_PULLUP);   // contact ferme a la masse
+  gpio_hold_en(BROCHE_RELAIS);
+  gpio_deep_sleep_hold_en();
+
+  esp_sleep_enable_timer_wakeup(dureeUs);
+  esp_sleep_enable_ext0_wakeup(BROCHE_REVEIL, 0);
+
+  WiFi.mode(WIFI_OFF);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+```
+
+La fonction de maintien, gpio_hold_en, mérite une attention particulière. Pendant la veille profonde, les broches qui n'appartiennent pas au domaine RTC perdent leur état et se retrouvent flottantes. Un relais de puissance piloté en logique haute peut donc s'ouvrir au moment exact où vous vouliez le maintenir fermé, et une alimentation commandée peut se couper. Le maintien de broche résout le problème tant qu'il reste compatible avec le circuit : vérifiez toujours que la broche maintenue appartienne bien au domaine RTC, sinon l'appel est sans effet et votre constat de terrain reste inexpliqué. Réciproquement, relevez ce maintien dès le démarrage suivant, avec gpio_hold_dis puis gpio_deep_sleep_hold_dis, sans quoi la broche reste figée et vos écritures ultérieures n'ont plus aucun effet, ce qui ressemble à une panne de la sortie.
+
+Au réveil, distinguez toujours sa cause avant toute autre opération. La fonction esp_sleep_get_wakeup_cause renvoie un code qui différencie le réveil temporisé, le réveil par broche, le réveil par touche et le démarrage normal. Un objet qui ignore pourquoi il s'est réveillé ne peut pas décider correctement de la suite : il doit-il publier une mesure, traiter un événement physique ou simplement se rendormir ? Cette information coûte une ligne de code et vous fera gagner des heures de débogage, car le symptôme d'un réveil parasite ressemble trait pour trait à celui d'un programme défaillant.
+
+Une dernière règle, non négociable : la radio doit être coupée avant l'endormissement, et la sortie série vidée avec Serial.flush(). Une connexion Wi-Fi maintenue pendant la veille profonde fait exploser la consommation mesurée, tandis qu'un message coupé en cours d'écriture vous prive du seul diagnostic fiable dont vous disposez, le port série. Les deux lignes supplémentaires coûtent quelques microampères d'énergie et évitent l'immense majorité des campagnes de débogage sur batterie. C'est exactement le genre de discipline qui sépare un prototype qui fonctionne au bureau d'un objet qui tient six mois dans une parcelle.
+
+## Se réveiller sans réveiller tout le monde : événements, filtres et coprocesseur
+
+Un réveil n'est pas une fin en soi : c'est un coût que l'on accepte pour traiter un événement. La première question à poser n'est donc pas comment réveiller la carte, mais ce qui doit justifier ce réveil. Une broche qui change d'état à cause d'une induction sur un fil long de trois mètres, un capteur dont la sortie oscille au passage d'un véhicule, un bouton sans anti-rebond : chacun de ces phénomènes déclenchera un démarrage complet, une association réseau et une publication, pour rien. Sur une batterie, une série de faux réveils se paie plus cher que dix heures de veille profonde. Le durcissement du réveil commence avant toute ligne de code, au niveau du câblage.
+
+L'ESP32 propose deux mécanismes de réveil externe. Le premier, appelé ext0, surveille une seule broche du domaine RTC et se déclenche sur un état de niveau. Il convient à un bouton ou à un contacteur dont on veut que la carte se réveille tant que la condition persiste. Le second, ext1, surveille un masque de plusieurs broches et peut déclencher sur le premier passage à l'état haut de n'importe laquelle d'entre elles. C'est lui qu'on utilise quand plusieurs sources de réveil coexistent : une porte de boîtier, un capteur d'ouverture, une alarme. La distinction niveau ou bord est déterminante : en mode niveau, si la condition reste vraie après le traitement, la carte se rendort puis se réveille aussitôt, en boucle, et vide la batterie en quelques heures.
+
+Voici la séquence complète d'un réveil multi-broches associé à un minuteur de sécurité, avec l'identification de la cause au démarrage. Le masque est exprimé en broches du domaine RTC, et le résultat lisible indique laquelle des sources a déclenché le réveil.
+
+```cpp
+#include "esp_sleep.h"
+
+const uint64_t MASQUE_REVEIL =
+    (1ULL << GPIO_NUM_25) | (1ULL << GPIO_NUM_26);
+const uint64_t DUREE_SEC = 30ULL * 60ULL;
+
+void armerLeReveil() {
+  esp_sleep_enable_ext1_wakeup(MASQUE_REVEIL, ESP_EXT1_WAKEUP_ANY_HIGH);
+  esp_sleep_enable_timer_wakeup(DUREE_SEC * 1000000ULL);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+void identifierLaCause() {
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+    uint64_t broches = esp_sleep_get_ext1_wakeup_status();
+    Serial.printf("reveil externe, broches 0x%llx\n",
+                  (unsigned long long)broches);
+  }
+}
+```
+
+Notez le minuteur de sécurité : il garantit que la carte se réveillera au pire toutes les trente minutes, même si aucune broche ne bouge. Sans lui, une cause extérieure manquée ou une broche mal câblée laisserait l'objet figé en sommeil jusqu'à la décharge de la batterie, sans aucun journal pour l'expliquer. Le minuteur constitue toujours le plan de repli, la broche n'étant qu'un raccourci.
+
+Cette boucle de réveils spontanés est un défaut classique dont le symptôme est trompeur : la carte fonctionne parfaitement au banc, se réveille correctement, publie, puis se retrouve à plat une semaine après son installation. Le diagnostic consiste à compter les réveils en mémoire RTC et à afficher la cause de chacun. Si le compteur s'envole pendant la nuit sans que rien ne se soit passé dans le champ, la cause est matérielle : un fil qui capte, un rappel insuffisant, un capteur instable. Réglez alors le câblage, ajoutez un condensateur de filtrage sur la ligne, choisissez un déclenchement sur bord plutôt que sur niveau, ou exigez une condition persistante avant d'agir.
+
+Pour les cas difficiles, l'ESP32 embarque un coprocesseur de très faible consommation, nommé ULP, capable de tourner pendant que le processeur principal dort. Écrit en assembleur et chargé en mémoire RTC, il peut surveiller une entrée analogique, comparer une tension à un seuil et n'autoriser le réveil de la puce que lorsqu'un phénomène réel est détecté. C'est l'outil de choix pour une alarme d'inondation ou une détection de mouvement : le coprocesseur absorbe quelques microampères et ne réveille le système complet qu'une fois par jour, le cas échéant. Sous ESP-IDF, la compilation du programme ULP est intégrée au système de construction ; sous l'environnement Arduino, il faut charger le binaire produit à la main au démarrage, ce qui se planifie en quelques lignes mais demande de la rigueur.
+
+La règle générale se résume en trois exigences. Premièrement, chaque réveil doit avoir une cause identifiée, enregistrée en mémoire RTC et affichée sur le port série. Deuxièmement, chaque cause doit être traitée une seule fois, puis neutralisée avant de se rendormir. Troisièmement, le seuil de décision doit être suffisamment éloigné du bruit pour que la carte ne oscille pas entre deux états. Ce trio de précautions transforme un réveil erratique en événement maîtrisé, et c'est la condition pour que les calculs d'autonomie du reste de ce chapitre restent valides sur le terrain.
+
+## Choisir et dimensionner son alimentation
+
+La meilleure optimisation logicielle ne sauvera jamais une mauvaise alimentation. Le choix de la source d'énergie conditionne la taille du boîtier, l'autonomie, le coût de la maintenance et jusqu'à la possibilité de recharger sur site. Il se fait en trois temps : choisir la chimie, choisir le régulateur, puis protéger l'ensemble. Chacune de ces décisions a des conséquences directes sur le courant de veille, souvent davantage que le mode de sommeil lui-même.
+
+La chimie dépend de la contrainte de recharge. Un accumulateur lithium-polymère de trois volts sept est la solution naturelle quand la carte peut être rechargée : forte densité d'énergie, tension compatible avec un régulateur simple, format plat qui glisse dans un boîtier étanche. Il impose en revanche un circuit de charge, une protection contre la décharge profonde et une tolérance nulle aux températures négatives en charge. Une pile bouton au lithium, elle, ne se recharge pas : quelques centaines de milliampères-heures seulement, mais une autodécharge faible et une absence totale de circuit de charge. Les piles alcalines restent pertinentes quand l'objet doit vivre des années et se remplacer en magasin, au prix d'une décharge lente et d'une chute de tension sous charge.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/battery-li-ion.jpg
+| Une pile bouton au lithium : trois volts dans un format qui ne se recharge pas, ce qui impose de réduire la consommation plutôt que d'augmenter la capacité.
+```
+
+Le second point de décision est le régulateur, et c'est là que se cachent les pertes les plus stupides. Un régulateur linéaire abaisse la tension en dissipant la différence en chaleur : il est simple, silencieux, sans bruit électrique, mais son rendement chute avec l'écart entre entrée et sortie. Un régulateur à découpage convertit l'énergie par commutation : il atteint quatre-vingt-quinze pour cent de rendement, mais consomme lui-même en permanence un courant de repos. Sur un objet qui dort, c'est ce courant de repos qui tranche. Un linéaire de quelques microampères perd rarement face à un découpage de plusieurs dizaines de microampères, quand la moyenne du système est de l'ordre du milliampère. Consultez toujours la fiche technique avant de choisir, et pas seulement le rendement en pleine charge.
+
+Le tableau ci-dessous compare les principales sources selon les critères qui comptent pour un objet embarqué en veille.
+
+```table
+| Source | Tension | Capacité utile | Rechargeable | Courant de repos | Remarque de terrain |
+| --- | --- | --- | --- | --- | --- |
+| Lithium-polymère | 3,7 V | 500 à 3 000 mAh | oui | circuit de charge dédié | exige une protection de décharge |
+| Lithium 18650 | 3,7 V | 2 000 à 3 500 mAh | oui | circuit de charge dédié | format rigide, soudage délicat |
+| Pile bouton lithium | 3 V | 200 à 300 mAh | non | aucun | idéale pour un réveil très rare |
+| Alcaline AA | 1,5 V | 1 800 à 2 600 mAh | non | aucune | tension trop basse, nécessite un boost |
+| NiMH | 1,2 V | 1 500 à 2 500 mAh | oui | aucune | autodécharge élevée, tension faible |
+| Panneau solaire | variable | selon l'ensoleillement | oui | à dimensionner | ajoute charge et gestion de nuit |
+```
+
+
+Les protections ne sont pas optionnelles. Un lithium déchargé en dessous de trois volts se dégrade de manière irréversible et devient dangereux en charge : une petite carte de protection coupant la sortie en dessous de trois volts, associée à un circuit de charge, est le minimum. Prévoyez également de mesurer la tension de la batterie en runtime, mais avec une astuce indispensable : la pont diviseur qui réduit la tension pour l'entrée analogique consomme lui-même en continu, souvent plus que la puce en veille. Commandez le pont par une broche à travers un transistor, et ne l'activez que le temps de la mesure, ou acceptez la décharge qu'il représente et chiffrez-la dans le budget. Enfin, utilisez l'entrée analogique de premier groupe, les broches trente-deux à trente-neuf : le second groupe d'entrées analogiques devient inutilisable dès que le Wi-Fi fonctionne, et la mesure échoue exactement au moment de la transmission.
+
+La fenêtre de tension mérite la même attention. Un lithium part de quatre volts deux en pleine charge et ne doit pas descendre sous trois volts, alors qu'un module ESP32 régulé demande une entrée qui reste au-dessus de la tension de son régulateur, souvent trois volts cinq en charge. Entre les deux, la marge est étroite : d'où l'intérêt d'un régulateur abaisseur-élévateur maintenant trois volts trois stables sur toute la plage, quitte à en payer le courant de repos. Ajoutez le froid à ce calcul : sous zéro degré, la capacité restituée chute facilement d'un cinquième, et la charge est interdite. Un objet installé en extérieur doit être dimensionné pour la saison la plus défavorable, jamais pour les conditions du laboratoire.
+
+Un dernier détail d'ingénierie que l'on découvre toujours trop tard : la carte elle-même dissimule des consommateurs. Le convertisseur USB-série maintient la puce alimentée et consomme quelques milliampères tant que le jumper reste en place, le voyant de statut clignote à vide, et les résistances de rappel de certaines broches dérivent en permanence. Pour un prototype, cela ne se voit pas. Pour un objet sur batterie, retirez le jumper de mesure, déposez le voyant si l'application le permet, et vérifiez le courant de repos de la carte entière, non pas celui de la seule puce. C'est cette mesure, prise sur le module complet, qui doit entrer dans votre calcul d'autonomie.
+
+Une règle simple encadre le dimensionnement final : divisez la capacité réellement disponible en trois parts égales. Une part pour la consommation prévue, une part pour les pertes de conversion, la décharge propre et le froid, une part intacte pour l'imprévu. Si votre budget annuel consomme la totalité de la batterie, le produit n'a pas de marge, donc pas de terrain. Cette discipline vous évite surtout le raisonnement inverse, très répandu : augmenter la capacité pour compenser une consommation mal maîtrisée, jusqu'à ce que le coût et le volume de la batterie dépassent ceux d'une intervention technique.
+
+## Étude de cas : une sonde de terrain qui doit tenir six mois
+
+Reprenez la sonde annoncée en introduction : un boîtier étanche posé dans une parcelle, une batterie lithium-polymère de deux ampères-heure, un capteur d'humidité capacitif, un ESP32 et une passerelle Wi-Fi à cinquante mètres. La mesure a lieu toutes les trente minutes, soit quarante-huit cycles par jour. L'objectif chiffré est de six mois sans intervention, ce qui représente environ cent quatre-vingts jours et mille quatre cents milliampères-heures utilisables, en laissant une marge d'un tiers pour le froid, la décharge propre de la batterie et les aléas de transmission. Tout le reste du chapitre se joue sur ces quelques chiffres.
+
+Commençons par le scénario que tout le monde produit par défaut, faute de veille : la carte reste allumée, lit son capteur toutes les trente minutes et reste connectée entre deux relevés. Quarante milliampères en moyenne pendant vingt-quatre heures donnent neuf cent soixante milliampères-heures par jour. La batterie est vide en un jour et demi. Aucune taille de batterie raisonnable ne rachète ce mode de fonctionnement : le facteur limitant n'est pas la capacité, c'est la consommation continue. C'est la démonstration par l'absurde que la veille n'est pas une option de confort mais la condition d'existence de l'objet.
+
+Ajoutez maintenant la veille profonde entre les relevés, avec une radio coupée, et recomptez phase par phase. Le tableau suivant décompose un cycle complet, de la reprise du processeur au retour en sommeil.
+
+```table
+| Phase du cycle | Durée | Courant moyen | Énergie par cycle |
+| --- | --- | --- | --- |
+| Réveil et initialisation | 0,1 s | 30 mA | 0,0008 mAh |
+| Lecture du capteur et calcul | 0,5 s | 15 mA | 0,0021 mAh |
+| Association Wi-Fi | 3 s | 120 mA | 0,100 mAh |
+| Publication du relevé | 1 s | 100 mA | 0,028 mAh |
+| Veille profonde, trente minutes | 1 800 s | 10 µA | 0,005 mAh |
+| Total du cycle | 1 800 s | 0,03 mA moyen | environ 0,136 mAh |
+```
+
+
+Quarante-huit cycles donnent donc environ six milliampères-heure par jour, auxquels s'ajoute la décharge propre de la batterie, de l'ordre de quelques pour cent par mois, et les pertes du régulateur, de quelques pour cent. Sur cent quatre-vingts jours, la consommation totale avantage mille deux cents milliampères-heure, largement compatible avec les mille quatre cents milliampères-heure disponibles. L'objet tient six mois, avec de la marge. Notez la répartition : l'association réseau absorbe à elle seule les trois quarts du budget, la veille profonde n'en pèse qu'un centième. C'est le réveil qui coûte, jamais le sommeil.
+
+Cette répartition commande les optimisations à mener, par ordre d'efficacité. La première consiste à réduire le nombre de connexions : enregistrer les relevés en mémoire et n'ouvrir la liaison qu'une fois par jour, par exemple, divise la consommation quotidienne par six, l'envoi devenant le seul moment coûteux. La seconde consiste à compresser la trame et à abréger l'association, en conservant une adresse attribuée par le réseau si votre infrastructure le permet. La troisième consiste à descendre la fréquence de mesure quand le phénomène observé le tolère : sur sol, l'humidité varie en heures, pas en minutes. Aucune de ces trois mesures ne demande de changer de matériel, et toutes surpassent de loin un effort d'optimisation du code en langage machine.
+
+Reste à valider le calcul sur le banc, car un budget écrit n'est qu'une hypothèse. Mesurez chaque phase au multimètre en série, chronométrez l'association Wi-Fi réelle avec un point d'accès de faible portée, puis laissez la sonde tourner quarante-huit heures sur une alimentation instrumentée et comparez la consommation totale au cumul théorique. Une différence supérieure à dix pour cent signale un poste non comptabilisé : LED oubliée, résistance de pont toujours sous tension, tentative de reconnexion en boucle quand le réseau est absent. Corrigez le budget avant l'installation, et non après, parce qu'une sonde enterrée ne se diagnostique pas. Ce travail de validation achève la première compétence du chapitre : votre objet sait désormais dormir, et vous savez combien de temps il dormira.
+
+## Le chien de garde : premier rempart contre les blocages
+
+Un microcontrôleur qui plante sur l'établi se redémarre à la main. Le même défaut, installé dans un boîtier scellé au fond d'une parcelle, met l'objet hors service jusqu'à l'intervention suivante. Le chien de garde, ou watchdog, transforme cette panne en rédémarrage automatique : c'est un compteur matériel que le logiciel doit réinitialiser régulièrement ; s'il n'y parvient pas, la puce redémarre d'elle-même. C'est la mesure de sécurité la moins coûteuse à mettre en place et la plus efficace contre les blocages logiciels, les attentes infinies sur un capteur qui ne répond plus et les boucles de reconnexion qui ne tournent jamais à leur terme.
+
+L'ESP32 en propose deux. Le chien de garde de tâche surveille l'exécution des tâches FreeRTOS : chaque tâche inscrite doit être nourrie, sinon le système déclenche un redémarrage. Le chien de garde d'interruption, lui, détecte un processeur resté trop longtemps en traitement sans jamais rendre la main. Tous deux signalent leur déclenchement par un message explicite au démarrage. Apprenez à le lire : il vous dira non pas que la carte a redémarré, mais pour quelle raison, ce qui change radicalement la suite de l'investigation.
+
+Sous l'environnement Arduino, la surveillance de la tâche d'inactivité est active par défaut : si votre boucle principale cesse de rendre la main pendant plusieurs secondes, la carte redémarre avec un avertissement sur le moniteur série. Pour une supervision explicite, configurez le délai et inscrivez la boucle principale vous-même. Notez que l'API a changé entre les versions : les anciennes proposaient une initialisation en secondes, les plus récentes prennent une structure de configuration et séparent la réconfiguration de l'ajout des tâches.
+
+```cpp
+#include "esp_task_wdt.h"
+
+void configurerLeChienDeGarde() {
+  esp_task_wdt_config_t cfg = {};
+  cfg.timeout_ms = 10000;
+  cfg.idle_core_mask = 0;
+  cfg.trigger_panic = true;
+  esp_task_wdt_reconfigure(&cfg);
+  esp_task_wdt_add(nullptr);
+}
+
+void alimenterLeChienDeGarde() {
+  esp_task_wdt_reset();
+}
+```
+
+Trois règles d'usage valent plus que n'importe quel réglage. Premièrement, on nourrit le chien uniquement là où le travail progresse réellement, c'est-à-dire à la fin d'un tour complet de la boucle, jamais au milieu d'une attente. Deuxièmement, on n'allonge jamais le délai pour faire taire l'alarme : un chien de garde dont on triple le temps de réponse ne corrige rien, il se contente de retarder la panne et de masquer la cause. Troisièmement, chaque tâche longue, traitement réseau, mise à jour, acquisition lente, est inscrite individuellement, de manière à ce que le redémarrage désigne la tâche fautive plutôt que le système tout entier.
+
+Le redémarrage doit toujours être diagnostiqué. Après chaque démarrage, relevez la cause : réinitialisation logicielle délibérée, déclenchement du chien de garde, coupure d'alimentation, détecteur de chute de tension. Conservez un compteur de redémarrages en mémoire persistante et transmettez-le avec le prochain relevé. Un objet qui redémarde trois fois par jour paraît fonctionnel à l'œil et est en réalité déjà en panne : sans ce compteur, vous ne le découvrirez qu'au retour d'une intervention coûteuse. L'API fournit la liste complète des causes possibles, qu'il suffit d'associer à un libellé stable pour construire votre journal de démarrage.
+
+```cpp
+#include "esp_system.h"
+
+const char* expliquerReset(uint32_t cause) {
+  switch (cause) {
+    case ESP_RST_POWERON:  return "alimentation arrivee";
+    case ESP_RST_EXT:      return "demande externe";
+    case ESP_RST_PANIC:    return "panique logicielle";
+    case ESP_RST_INT_WDT:  return "chien de garde d'interruption";
+    case ESP_RST_TASK_WDT: return "chien de garde de tache";
+    case ESP_RST_BROWNOUT: return "chute de tension";
+    case ESP_RST_DEEPSLEEP:return "reveil de veille profonde";
+    default:               return "cause inconnue";
+  }
+}
+
+void journaliserLeDemarrage() {
+  Serial.print("cause du redemarrage : ");
+  Serial.println(expliquerReset(esp_reset_reason()));
+}
+```
+
+Cette cause doit voyager avec les données. Un relevé transmis sans l'historique des redémarrages vous prive du seul signal capable de distinguer un défaut rare d'une défaillance récurrente. Rassemblez les deux dans un même message, conservez les dix derniers événements en mémoire persistante, et vous disposerez d'une boucle de rétroaction exploitable même lorsque l'objet n'est joignable qu'une fois par jour. C'est la différence entre une flotte qu'on surveille et une flotte qu'on découvre.
+
+La vigilance doit aussi s'étendre à la nature du blocage lui-même. Un délai de temporisation trop généreux, une attente sur une lecture série sans limite, une file de messages qui ne se vide jamais : chacune de ces situations nourrit le chien de garde encore et encore sans que le travail progresse. Le symptôme n'est alors pas un redémarrage isolé mais une série régulière, presque métronomique. Mesurez l'intervalle entre deux redémarrages : s'il correspond au délai du chien de garde, vous tenez la cause, et le remède se trouve dans le code, pas dans les réglages.
+
+La chute de tension mérite une attention particulière sur batterie, car elle produit un symptôme très trompeur. Au moment de l'émission Wi-Fi, le courant appelle plusieurs centaines de milliampères ; une batterie fatiguée ou un câblage trop fin fait chuter la tension, le détecteur de chute déclenche une réinitialisation, la carte redémarre, réessaye, réactive la radio et redémarre à nouveau. La boucle est parfaite et le logiciel est irréprochable. Le remède est matériel : condensateur de soutien de quelques centaines de microfarads à proximité de la carte, câblage court et généreux, batterie dimensionnée pour la crête, seuil du détecteur vérifié. C'est exactement le type d'incident qu'une checklist de mise en production doit écarter avant expédition.
+
+## Durcir la carte : chiffrement, amorce sécurisée et clés
+
+Tant que votre objet est branché sur votre bureau, la protection n'a pas d'enjeu. Dès qu'il est expédié, il circule : un boîtier ouvert, un connecteur de débogage accessible, une mise à jour interceptée sur un réseau public. La question n'est plus de savoir si quelqu'un pourra accéder à la carte, mais ce qu'il pourra en tirer. Trois menaces structurent la réflexion : la lecture du firmware, qui révèle votre propriété intellectuelle et vos secrets ; l'écriture d'un firmware non signé, qui transforme votre objet en exécuteur de code étranger ; l'extraction des identifiants stockés en mémoire, qui ouvre l'accès à vos services.
+
+La première réponse est le chiffrement de la flash. La puce chiffre et déchiffre automatiquement chaque accès à la mémoire vive externe, avec une clé de deux cent cinquante-six bits gravée dans les eFuses, une mémoire programmable une seule fois. Pour le logiciel, l'opération est transparente : le code s'exécute normalement. Pour l'attaquant, la puce ne présente plus que du chiffrement, y compris lorsque l'image est extraite par voie matérielle. Le coût est nul en performance notable, et l'activation se fait à la fabrique, puisqu'une fois la clé gravée, on ne revient pas en arrière.
+
+La seconde réponse est l'amorce de démarrage sécurisé. Le module d'amorce vérifie la signature numérique de chaque image avant de l'exécuter, y compris celles reçues par la mise à jour à distance. Sur les premiers ESP32, la vérification repose sur une courbe elliptique ; sur les générations suivantes, elle s'appuie sur un schéma de signature plus long, plus résistant, avec une empreinte conservée dans les eFuses. Résultat : un firmware altéré, même déposé sur le bon emplacement de la flash, ne démarre pas. Cette mesure conditionne la sécurité de tout le mécanisme de mise à jour traité dans la section suivante.
+
+La troisième réponse concerne les secrets eux-mêmes. Un mot de passe Wi-Fi en clair dans le code source reste lisible dans la mémoire chiffrée par quiconque obtient la clé. Stockez plutôt les identifiants dans une partition de préférences chiffrée, ou mieux, dans un composant de sécurité dédié qui ne les livre jamais en clair. Ne réutilisez jamais un jeu d'identifiants pour toute une flotte : un objet compromis doit pouvoir être révoqué sans compromettre les autres. Pour une production sérieuse, la génération d'une clé par appareil, effectuée à la fabrication, reste la seule approche qui tienne sur la durée.
+
+Le tableau ci-dessous relie chaque menace à la mesure correspondante et à son coût de mise en œuvre.
+
+```table
+| Menace | Mesure | Où elle s'applique | Coût réel |
+| --- | --- | --- | --- |
+| Lecture du firmware | Chiffrement de la flash | Dès la fabrique | faible, une clé gravée |
+| Exécution d'image étrangère | Amorce sécurisée et signature | Module d'amorce | modéré, chaîne de signatures |
+| Extraction des identifiants | Partition de préférences chiffrée | Système de fichiers | faible |
+| Attaque par rejeu de mise à jour | Version minimale imposée | Serveur de mise à jour | faible |
+| Compromission d'un seul objet | Clés par appareil | Parc entier | à planifier en fabrication |
+```
+
+
+La gravure des eFuses est l'opération la plus délicate de tout le parcours, parce qu'elle est définitive. Une clé perdue, un bit de configuration mal positionné ou une option activée par erreur peuvent rendre la carte inexploitable, et aucun redémarrage ne la sauvera. Avant toute opération, sauvegardez l'état des eFuses, générez les clés sur une machine hors réseau, conservez les clés privées dans un coffre et non dans le dépôt de code, puis validez la procédure sur une carte jetable avant de toucher à une série. La séquence suivante illustre l'ordre des opérations tel qu'on l'exécute réellement en atelier.
+
+```
+$ espefuse.py --port /dev/ttyUSB0 dump-summary --file eFuse-avant.json
+$ idf.py secure-boot-sign build/sonde.bin secure_certs/cle-signature.pem
+$ espefuse.py --port /dev/ttyUSB0 burn_key secure_boot_v2 \
+      secure_certs/cle-signature.pem --force_write_protect
+$ idf.py flash
+```
+
+Deux régimes coexistent, et les confondre annule la protection. En mode de développement, l'amorce sécurisée accepte les images non signées afin de ne pas entraver les essais ; en mode de production, seule une image signée par la clé gravée est acceptée. Une carte expédiée en mode de développement présente donc toutes les apparences de la sécurité, chiffrement activé, signature configurée, sans opposer la moindre résistance à une image réécrite. Vérifiez l'état réel des eFuses sur l'appareil final, et non la configuration de votre projet : c'est la seule preuve qui vaille.
+
+La gestion des clés a elle aussi une dimension d'équipe. La clé privée ne doit jamais être la même que celle du dépôt de code, jamais stockée avec l'objet, jamais transmise par messagerie. On la conserve sur un support hors ligne, avec une copie d'urgence confiée à une personne tierce, parce qu'une clé perdue signifie l'impossibilité de signer la prochaine mise à jour et une flotte bloquée sur sa version courante. Pour une production de série, chaque appareil reçoit sa propre clé, dérivée d'un jeu de fabricant, de sorte qu'un objet compromis soit révocable un par un. Cette rigueur n'est pas une formalité : elle décide de votre capacité à corriger vos produits pendant toute leur durée de vie.
+
+Un mot enfin sur le débogage : laissez l'interface de débogage ouverte pendant le développement, refermez-la avant l'expédition. Un port de débogage actif sur une carte dont l'amorce sécurisée est en mode de développement ne protège quasiment rien. Ce verrouillage constitue le dernier jalon de la fabrication, après les tests finaux et avant l'emballage, et il doit figurer comme tel dans votre procédure.
+
+## Le principe de la mise à jour à distance : partitions, slots et retour arrière
+
+Une mise à jour à distance repose sur une idée très simple : ne jamais écrire par-dessus le programme en cours d'exécution. La mémoire flash est partagée en zones nommées par une table de partitions, et l'espace applicatif est dupliqué. Le nouveau firmware est téléchargé dans l'emplacement inoccupé, vérifié, puis l'indicateur de démarrage est commuté : le redémarrage suivant démarre la nouvelle version. Tant que la bascule n'a pas eu lieu, la version précédente reste intacte sur son propre emplacement, prête à servir de plan de repli. C'est ce partage qui rend l'opération tolérante à la panne.
+
+La table de partitions se décrit dans un fichier simple, dont l'exemple ci-dessous correspond à une carte de quatre mégaoctets équipée d'une mémoire de fichiers pour la persistance des mesures.
+
+```
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+app0,     app,  ota_0,   0x20000,  0x1E0000,
+app1,     app,  ota_1,   0x200000, 0x1E0000,
+donnees,  data, spiffs,  0x3E0000, 0x20000,
+```
+
+Chaque ligne a un rôle précis. La partition nvs reçoit les préférences, le Wi-Fi et l'état des mesures. La partition otadata, minuscule, contient deux exemplaires d'un enregistrement portant un numéro de séquence et un contrôle d'intégrité : le module d'amorce choisit l'enregistrement valide le plus récent, donc l'application qu'il doit lancer. Les deux partitions app0 et app1 sont les emplacements A et B, de taille strictement identique, chacun devant accueillir une image complète. Enfin, la partition de fichiers survit aux mises à jour, ce qui permet de conserver les mesures accumulées lors du changement de version.
+
+Le retour arrière, ou rollback, est ce qui distingue une mise à jour professionnelle d'une expérience. Au démarrage, la nouvelle image est marquée comme en cours de vérification. Elle doit alors prouver qu'elle fonctionne : lecture d'un capteur, connexion réseau, publication du premier relevé, puis déclaration explicite de sa validité. Si la carte redémarre avant cette déclaration, que ce soit par défaut du programme ou par déclenchement du chien de garde, le module d'amorce considère l'image comme défaillante et remet l'ancienne en service. L'objet revient seul à la dernière version connue pour fonctionner, et la mise à jour ratée n'a coûté qu'une tentative.
+
+Le schéma mental complet tient en cinq temps : réception de l'image, vérification de sa taille et de sa signature, écriture dans l'emplacement libre, commutation de l'indicateur de démarrage, vérification sur le vif puis déclaration de validité. Chaque étape peut échouer, et chacune doit échouer proprement. Une coupure de courant pendant l'écriture laisse l'image inachevée dans l'emplacement libre, jamais dans l'emplacement courant : le redémarrage repart donc de la version d'origine, sans intervention. Une image trop volumineuse pour l'emplacement est rejetée avant toute écriture. Un redémarrage non prévu avant la déclaration ramène l'objet à la version précédente. Toutes ces garanties sont structurelles : elles ne dépendent pas de la qualité de votre code applicatif.
+
+Le serveur a son propre contrat à respecter, qu'aucune bibliothèque ne gère pour vous. Il doit conserver au moins deux versions, publier un manifeste indiquant version, taille, empreinte et date, refuser toute demande portant une version inférieure à la version minimale, journaliser chaque téléchargement par identifiant d'appareil et rester joignable par HTTPS avec un certificat valide. Un serveur de mise à jour qui répond en clair sur un réseau public annule une partie des protections embarquées, puisqu'un tiers peut se substituer à l'objet et lui livrer une image de son choix. Serveur, certificat, jeton d'authentification et empreinte de l'image forment un ensemble indivisible.
+
+Il reste une discipline avant toute mise à jour en production : éprouver la panne volontairement. Déployez sur une seule carte un firmware qui refuse de se déclarer valide, laissez-la redémarrer et vérifiez qu'elle revient à l'ancienne version en une seule tentative. Débranchez l'alimentation en pleine écriture et contrôlez que la version d'origine survit. Remplacez l'image par un fichier tronqué et confirmez son rejet avant toute écriture. Ces trois essais coûtent une heure de banc et vous apprennent exactement ce que verront vos utilisateurs le jour où quelque chose se passe mal.
+
+Deux contraintes de dimensionnement restent fréquemment négligées. D'une part, l'image doit tenir dans un emplacement : au-delà, il faut choisir une table avec moins de mémoire de fichiers ou renoncer à la mise à jour en optant pour une partition unique, ce qui retire tout retour arrière. D'autre part, la version du firmware doit augmenter de manière stricte, sinon un attaquant pourrait réinstaller une version antérieure contenant une faille connue. Cette exigence, dite de version minimale, se règle côté serveur et se vérifie côté client, et elle constitue le complément indispensable de la signature.
+
+## OTA en production : HTTPS, authentification, version et retour arrière
+
+La mise à jour à distance se décline en deux familles, dont l'écart est plus moral que technique. La première, ArduinoOTA, transmet le firmware par le réseau local en utilisant la découverte automatique de service : elle est merveilleuse sur l'établi, où l'on change de version plusieurs fois par heure, et inadéquate en production, car elle suppose que l'objet et le poste de développement partagent le réseau, qu'aucun intermédiaire n'intercepte le flux et que le retour arrière est géré par vos soins. La seconde famille fait de l'objet un client qui va chercher lui-même une image signée depuis un point d'accès distant. C'est celle qui convient à une flotte, et c'est celle que la suite de cette leçon décrit.
+
+Le contrat de sécurité se compose de quatre exigences indissociables. Le transport est chiffré par TLS, avec le certificat de l'autorité embarqué dans le firmware afin d'écarter toute substitution d'identité. L'objet s'authentifie par un jeton propre à l'appareil, révocable indépendamment des autres. L'image elle-même est signée, et sa signature est vérifiée par le module d'amorce avant exécution. Enfin, la version est monotone : le serveur refuse de servir une image antérieure à celle déjà installée, de sorte qu'une vulnérabilité corrigée ne puisse pas être réintroduite par rejeu. Omettre l'une de ces quatre conditions revient à fermer la porte après le cambriolage.
+
+Le moment du téléchargement se décide côté objet, jamais par ordre impératif du serveur. À chaque réveil, l'objet interroge le point d'accès, compare les versions et, si une mise à jour est disponible, évalue d'abord ses propres conditions : batterie au-dessus du seuil convenu, signal radio suffisant, aucune action critique en cours, fin de fenêtre de mesure. S'il manque l'une de ces conditions, il remise l'opération au réveil suivant, avec une limite stricte d'une tentative par jour. Cette discipline évite le scénario catastrophe d'une mise à jour lancée à deux pour cent de batterie, en plein envoi d'une commande d'ouverture, à trente mètres du point d'accès.
+
+```cpp
+#include <Update.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+const char* URL_MAJ      = "https://depot.exemple.fr/sonde/sonde.bin";
+const char* VERSION_CUR  = "1.4.0";
+const char* JETON_APPAREIL = "sonde-parcelle-07";
+const size_t TAILLE_SLOT = 1966080;
+
+bool telechargerLaMiseAJour() {
+  WiFiClientSecure client;
+  client.setCACert(CERTIFICAT_AUTORITE);
+
+  HTTPClient https;
+  if (!https.begin(client, URL_MAJ)) return false;
+  https.addHeader("Authorization", String("Bearer ") + JETON_APPAREIL);
+  https.addHeader("X-Version-Installee", VERSION_CUR);
+
+  if (https.GET() != 200) { https.end(); return false; }
+  int taille = https.getSize();
+  if (taille <= 0 || (size_t)taille > TAILLE_SLOT) { https.end(); return false; }
+  if (!Update.begin(taille)) { https.end(); return false; }
+
+  size_t ecrit = Update.writeStream(*https.getStreamPtr());
+  https.end();
+  if (ecrit != (size_t)taille) { Update.abort(); return false; }
+  if (!Update.end()) return false;
+
+  Serial.println("image ecrite, bascule au prochain redemarrage");
+  return true;
+}
+```
+
+Le flux mérite d'être lu lentement, parce que chaque échec y est bénin. Une taille hors limites est refusée avant toute écriture. Une connexion interrompue laisse une image inachevée dans l'emplacement libre, jamais dans l'emplacement courant : l'objet continue de fonctionner sur sa version d'origine. La commutation n'intervient qu'après réception complète et vérification. Seul un redémarrage engage la nouvelle version, et c'est alors que la logique de retour arrière prend le relais.
+
+Après le redémarrage, le nouveau firmware exécute son auto-contrôle : il lit son capteur, établit la connexion, publie un relevé, annonce sa version, puis déclare explicitement sa validité. S'il échoue avant cette déclaration, le chien de garde ou la panique le font redémarrer, et le module d'amorce remet l'ancienne version en service. L'objet revient donc toujours à un état connu, sans intervention humaine. Cette promesse n'est tenable qu'à une condition : l'auto-contrôle doit être réellement représentatif, c'est-à-dire vérifier ce qui fait vivre l'appareil, et non simplement allumer une LED.
+
+La dernière pièce est la visibilité. Chaque connexion remonte la version installée, le nombre de redémarrages, la tension de batterie et l'état de la dernière mise à jour. Sans ce retour, vous ne saurez jamais si la mise à jour s'est répandue, si une carte est restée en attente ou si deux objets tournent en versions divergentes depuis six semaines. C'est cette visibilité qui rend la diffusion par vagues réellement exploitable.
+
+## Étude de cas : corriger quinze sondes sans se déplacer
+
+Au troisième mois d'exploitation, un défaut remonte : les relevés d'humidité dérivent après plusieurs semaines de fonctionnement, parce que la valeur initiale du capteur est mémorisée sans être recalée, et que la période de sécheresse l'a emmenée hors plage. Le défaut est réel mais non bloquant. Quinze sondes sont installées, quatre sur un terrain difficile d'accès, deux sans couverture radio fiable le matin. Vous disposez d'une semaine et vous ne vous déplacerez pas. Voici comment se déroule une mise à jour responsable.
+
+La première étape est de réduire la correction au strict nécessaire. On isole le défaut, on écrit le correctif le plus court possible, on n'y accole aucune refonte. Une mise à jour à distance n'est pas l'endroit où l'on améliore l'architecture : c'est l'endroit où l'on réduit le périmètre de risque au minimum compatible avec la correction. On crée une branche, on incrémente la version de patch, on la nomme, et on conserve l'artefact binaire avec son empreinte. Le binaire partant en production doit être reproductible depuis le dépôt, jamais reconstruit au dernier moment sur un poste perso.
+
+Ensuite, on prépare le déploiement par vagues, selon le tableau ci-dessous.
+
+```table
+| Vague | Cibles | Critère d'entrée | Surveillance |
+| --- | --- | --- | --- |
+| Banc | 1 carte sur établi | batterie artificielle, port série ouvert | auto-contrôle complet |
+| Pilote | 2 sondes proches | signal fort, batterie au-dessus de 60 % | version et redémarrages |
+| Générale | 8 sondes en zone accessible | batterie au-dessus de 40 % | journal d'adoption |
+| Difficile | 4 sondes éloignées | fenêtre météo favorable, batterie au-dessus de 50 % | tentatives reportées |
+```
+
+
+La vague de banc paraît superflue et n'est jamais inutile : elle vérifie que l'image produite par la chaîne de construction démarre réellement, se déclare valide et publie, dans des conditions contrôlées. La vague pilote confirme le même comportement sur le terrain, où le point d'accès est à cinquante mètres et où le délai d'association n'est plus celui du laboratoire. Ce n'est qu'après lecture de ces deux retours que l'on ouvre la vague générale, puis la dernière, qui attend sa fenêtre.
+
+Les objets injoignables ne posent pas de problème structurel : ils réessaient à chaque réveil, dans la limite d'une tentative quotidienne, jusqu'à ce que les conditions de réussite se présentent. Le même objet reste en version ancienne pendant des jours sans bloquer personne, et la vague suivante le rattrape. Ce comportement est une force à condition de le mesurer : sans remontée de version, vous croyez une flotte homogène alors que trois appareils vivent avec la précédente. Le journal d'adoption répond à une question unique : quelle proportion de la flotte tourne sur la nouvelle version, et depuis quand.
+
+Arrive enfin le moment où quelque chose se passe mal. Sur deux sondes de la vague pilote, l'auto-contrôle échoue : la publication ne part pas, la version n'est jamais déclarée valide, les deux cartes redémarrent et repassent automatiquement à la version précédente. Le déploiement est immédiatement gelé côté serveur, les vagues suivantes ne reçoivent plus l'image, et l'enquête commence avec deux objets fonctionnels en version antérieure. C'est précisément pour ce scénario que le retour arrière existe : le coût total de l'incident se réduit à quelques redémarrages, sans déplacement ni démontage.
+
+Clôturé, l'incident laisse trois obligations. On conserve les deux binaires, la version défaillante pour l'analyse et la version précédente comme référence de repli. On publie une note de version qui décrit le défaut, la correction et la raison de l'échec, afin que la prochaine personne en charge ne réapprenne rien par cœur. On remet enfin le déploiement avec un correctif dont l'auto-contrôle a été élargi pour couvrir le cas défaillant. Une mise à jour à distance qui ne produit jamais d'incident est une mise à jour qui n'a jamais été testée sur autre chose qu'un établi.
+
+## Du prototype à la série : la checklist de mise en production
+
+La distance entre un prototype qui fonctionne et un produit qui tient se mesure au nombre de questions auxquelles on ne peut pas répondre. Sur l'établi, tout est connu : l'alimentation, le réseau, l'accès au port série, la présence de l'opérateur. Dans la série, chacune de ces certitudes disparaît, et il ne reste que ce qui a été vérifié, écrit et conservé. La checklist n'est pas une formalité administrative : c'est la mémoire du chantier, la trace de ce qui a été prouvé avant l'expédition.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/arduino-uno.jpg
+| Une carte Arduino Uno, fidèle compagnon du prototype : elle reste branchée sur un ordinateur et se redémarre à la main, ce qui suffit sur l'établi et ne suffit plus une fois l'objet expédié.
+```
+
+Les domaines à couvrir sont fixes depuis le début du chapitre : autonomie, alimentation, robustesse, protection, mise à jour, industrialisation. Chaque ligne de la table qui suit doit être associée à une preuve tangible, une mesure, une capture, un enregistrement de port série, un fichier conservé avec la version du logiciel. Une case cochée sans preuve n'est pas cochée : elle est supposée.
+
+```table
+| Domaine | Point de contrôle | Preuve attendue |
+| --- | --- | --- |
+| Autonomie | Consommation mesurée en veille | relevé du banc sur vingt-quatre heures |
+| Autonomie | Budget énergétique validé | calcul daté, marges comprises |
+| Alimentation | Seuil de coupure respecté | courbe de décharge sous charge réelle |
+| Robustesse | Chien de garde actif | message de déclenchement provoqué |
+| Robustesse | Redémarrages comptabilisés | journal transmis avec les relevés |
+| Robustesse | Perte de réseau testée | reconnexion avec délai croissant observée |
+| Protection | Secrets hors du code source | revue du dépôt, recherche des identifiants |
+| Protection | Amorce et chiffrement actifs | lecture des eFuses sur l'appareil final |
+| Mise à jour | Retour arrière éprouvé | essai de firmware invalide documenté |
+| Mise à jour | Taille d'image vérifiée | marge restante dans l'emplacement |
+| Mise à jour | Version remontée à chaque connexion | journal d'adoption d'un déploiement-test |
+| Industrialisation | Version figée et étiquetée | marque de version et empreinte de l'image |
+| Industrialisation | Boîtier et antenne contrôlés | fiche de test avec le boîtier fermé |
+```
+
+
+Trois lignes de ce tableau méritent un commentaire particulier, car elles sont celles que l'on coche le plus souvent par optimisme. Le retour arrière, parce qu'il ne se prouve qu'en provoquant un échec réel, ce que personne n'a envie de faire à la veille d'une expédition. L'antenne sous boîtier, parce que le plastique se comporte différemment du métal, et qu'un objet validé nu perd une partie de sa portée une fois enfermé. La remontée de version, enfin, parce qu'elle fait défaut exactement le jour où l'on en a besoin.
+
+Le dernier point de contrôle est humain. Une version figée correspond à un étiquetage dans le dépôt, à une note de version, à un binaire conservé avec son empreinte, à une liste de connus non corrigés assumés et à un exemplaire de réserve maintenu en état de fonctionnement. C'est ce qui vous permet, six mois plus tard, de répondre à la question d'un client sans fouiller dans la mémoire de personne. Un objet ne devient produit qu'au moment où un autre que vous peut le maintenir.
+
+## À retenir
+
+- L'autonomie se calcule avant de se mesurer : convertissez chaque état du programme en milliampères-heures par jour.
+- La radio domine le budget par instants très brefs, la durée du pic compte davantage que sa valeur.
+- Veille légère, veille profonde et hibernation s'ordonnent par coût croissant et perte de contexte croissante.
+- Le domaine RTC survit à la veille profonde : il accueille les compteurs, les causes de réveil et les broches de déclenchement.
+- Une sortie non maintenue retombe pendant la veille profonde, ce qui peut couper une alimentation ou ouvrir un relais.
+- Le réveil doit avoir une cause identifiée, traitée une fois, puis neutralisée avant le rendormissement.
+- Un pont diviseur de mesure non commuté consomme plus que la puce endormie, et le second groupe d'entrées analogiques sature dès que le Wi-Fi tourne.
+- Le chien de garde transforme un blocage en redémarrage, à condition de ne jamais allonger son délai pour faire taire l'alarme.
+- Chiffrement de la flash, amorce sécurisée et partition de préférences chiffrée traitent trois menaces distinctes.
+- Les eFuses se programment une fois pour toutes : sauvegardez leur état et validez la procédure sur une carte jetable.
+- La mise à jour à distance n'écrit jamais par-dessus l'emplacement courant, elle bascule entre deux emplacements de taille égale.
+- Le retour arrière impose au nouveau firmware de se déclarer valide après un auto-contrôle réel.
+- Sans remontée de version à chaque connexion, une flotte paraît homogène alors qu'elle vit avec plusieurs versions.
+
+## Erreurs fréquentes
+
+- Choisir la veille légère pour des pauses de trente minutes et gaspiller dix fois l'énergie économisée.
+- Laisser la radio connectée pendant la veille profonde, puis conclure que la puce consomme dix fois la valeur annoncée.
+- Ignorer la cause du réveil et se retrouver en boucle de redémarrage déclenchée par une broche restée à l'état actif.
+- Oublier de couper le pont diviseur de mesure, qui décharge la batterie en quelques jours alors que le logiciel est parfait.
+- Allonger le délai du chien de garde pour supprimer l'alerte au lieu de trouver l'attente qui bloque.
+- Oublier la chute de tension au moment de l'émission Wi-Fi, très fréquente sur une batterie fatiguée.
+- Graver une eFuse avant d'avoir sauvegardé son état et validé la commande sur une autre carte.
+- Stocker les identifiants dans le code source sous prétexte qu'ils sont chiffrés dans la flash.
+- Expédier une carte en mode de développement, où l'amorce sécurisée accepte toute image.
+- Téléverser par-dessus la partition en cours d'exécution, au lieu d'utiliser l'emplacement libre.
+- Oublier de se déclarer valide après le démarrage, ce qui déclenche un retour arrière permanent.
+- Omettre la contrainte de version minimale et permettre la réinstallation d'une version vulnérable.
+- Déployer sur toute une flotte d'un seul jet, sans vague pilote ni fenêtre d'observation.
+- Cocher une ligne de checklist sans conserver la preuve correspondante.
+
+## Pour aller plus loin
+
+La documentation d'Espressif reste la référence pour le sommeil et l'énergie : les fiches techniques détaillent les courants par mode, les guides d'alimentation traitent de la mesure sur shunt et des contraintes de l'alimentation par batterie, et les pages du gestionnaire de veille décrivent chaque source de réveil, y compris le coprocesseur de très faible consommation. La documentation d'Arduino consacre une section aux mises à jour à distance et à la gestion de partition, avec des exemples directement compilables.
+
+Trois pistes progressives pour consolider le chapitre, dans l'ordre. Premièrement, écrivez le firmware de votre propre objet sur batterie, calculez son budget, puis mesurez-le et publiez l'écart entre le théorique et le réel, en le corrigeant jusqu'à obtenir moins de dix pour cent. Deuxièmement, préparez la table de partitions et le flux de mise à jour, puis éprouvez les trois pannes volontaires décrites plus haut : image invalide, coupure pendant l'écriture, échec de l'auto-contrôle. Troisièmement, rédigez la checklist de mise en production de votre projet en y ajoutant les cinq lignes qui vous manquent, puis faites-la valider par quelqu'un qui n'a jamais vu votre code.
+
+Des ressources utiles accompagnent cette lecture :
+
+- Documentation Espressif sur le gestionnaire de veille et les sources de réveil.
+- Documentation Espressif sur les mises à jour à distance, partitions et retour arrière.
+- Documentation Arduino sur la bibliothèque de mise à jour à distance.
+- Guides d'alimentation et de consommation publiés par Espressif.
+- Exemples de mise à jour à distance et de veille profonde sur les sites de tutoriels reconnus de l'écosystème.
+
+## Et maintenant : votre objet quitte l'établi
+
+Ce neuvième chapitre achève le parcours en transformant vos programmes en produits. Vous savez chiffrer une autonomie avant de la promettre, endormir une carte sans perdre son état, choisir une batterie et un régulateur qui tiennent sur la durée, diagnostiquer un redémarrage, verrouiller une carte contre la lecture et l'écriture indésirables, puis déployer une correction chez plusieurs objets sans jamais déplacer qui que ce soit. Aucune de ces compétences n'est spectaculaire, toutes décident de la durée de vie réelle de ce que vous construisez.
+
+Le critère de sortie est simple à formuler, exigeant à tenir : votre objet doit pouvoir rester seul six mois, tomber en panne sans rester hors service, et être corrigé depuis votre bureau. Si vous pouvez répondre oui, avec une preuve à l'appui, pour chacun des points de la checklist, vous avez franchi la frontière que ce parcours avait pour but de faire traverser. S'il vous manque une ligne, sachez exactement laquelle et pourquoi, ce qui est déjà une compétence de niveau professionnel.
+
+La suite appartient désormais au terrain. Reprenez le projet mené depuis le premier chapitre, appliquez-lui l'intégralité de cette checklist, corrigez ce qui ne tient pas, documentez ce qui tient, puis laissez-le tourner. Un objet que vous oubliez pendant six mois, qui se réveille à l'heure, qui envoie ses relevés et se met à jour sans vous, voilà la preuve finale que vous maîtrisez l'embarqué connecté.

@@ -1,0 +1,470 @@
+Jusqu'ici, tout votre code tenait dans un seul fichier Python, ou presque. L'analyseur de notes que vous avez construit au chapitre 5 lisait un fichier de notes, calculait des moyennes et affichait le rapport : quelques centaines de lignes, une seule page à défiler, une impression de maîtrise totale. Or voici ce qui arrive toujours un peu plus tôt qu'on ne le croit : le fichier grossit, les fonctions s'empilent, les constantes s'entassent en haut du script, et vous commencez à faire défiler l'écran en cherchant « où était déjà la fonction qui calcule la mention ? ». À deux cents lignes, on s'y retrouve encore. À mille, on cherche. À deux mille, on duplique le code plutôt que de le retrouver, et la lisibilité devient la première victime collatérale du projet. Le chapitre 7 est donc le moment de changer d'échelle : vous ne construisez plus un script, vous construisez un projet, c'est-à-dire un ensemble de fichiers qui se parlent, se réutilisent et survivent à vos humeurs de développeur.
+
+Vous connaissez déjà ce réflexe, mais à une échelle plus petite : au chapitre 3, vous avez appris à découper un long script en fonctions, parce qu'une fonction qui fait une seule chose se relit, se teste et se corrige plus facilement qu'un bloc de mille lignes. Les modules appliquent exactement la même idée un niveau au-dessus : au lieu de découper à l'intérieur d'un fichier, vous découpez le projet entre plusieurs fichiers. Une fonction regroupe des instructions qui se répondent ; un module regroupe des fonctions, des constantes et des structures de données qui se répondent. Le chapitre 5 vous a appris autre chose d'essentiel : un programme sérieux ne fabrique pas ses données, il les lit et les écrit dans des fichiers textuels. Il est temps de faire la même chose avec son propre code : votre programme doit désormais pouvoir être lu, copié, partagé et réinstallé sur une autre machine, à l'identique.
+
+C'est précisément l'objectif de ce chapitre, qui se décline en trois compétences. D'abord, importer un module et choisir la bonne convention d'import, car la manière dont vous écrivez `import math` ou `from math import sqrt` change la lisibilité de tout le reste du fichier. Ensuite, découper un projet en plusieurs fichiers Python, avec une arborescence lisible et un point d'entrée unique. Enfin, installer et figer des dépendances avec pip, pour que votre projet tourne à l'identique sur l'ordinateur de votre collègue, sur une machine neuve ou dans six mois, après que votre environnement a été mis à jour. À la fin du chapitre, votre analyseur de notes sera réellement scindé en deux fichiers, `calc.py` et `main.py`, accompagnés d'un `requirements.txt` qui déclare la bibliothèque `rich` utilisée pour l'affichage. Tout ce que vous apprendrez ici servira directement le mini-projet du chapitre 8, où cette architecture deviendra le cadre dans lequel s'inscrira toute votre démarche.
+
+## Comprendre : de la ligne de code au projet structuré
+
+Un module, en Python, c'est d'abord une réalité très concrète : un fichier portant l'extension .py. Dès que ce fichier contient du code exécutable, il est lui-même un module, sans aucune déclaration particulière à écrire, sans aucun registre à remplir. Vos fichiers `calculs.py` ou `lire_notes.py` des chapitres précédents étaient déjà des modules, vous ne le saviez simplement pas encore. Le nom du module est le nom du fichier sans l'extension .py, et il doit pouvoir être utilisé comme identifiant Python : c'est pourquoi l'on écrit des noms en minuscules, sans accent ni espace, éventuellement séparés par des underscores. Le contenu d'un module peut être tout ce que vous savez déjà écrire : définitions de fonctions, constantes, chaînes de caractères, appels à `print`, tests conditionnels. La seule différence, c'est que ce contenu n'est plus rangé dans le script principal : il est rangé dans un endroit nommé, ce qui change tout, car un endroit nommé se retrouve, se cite et se réutilise.
+
+Importer un module, ce n'est pas copier son code dans votre fichier : c'est exécuter ce module une seule fois, puis mettre à disposition dans votre espace de noms un objet auquel vous accéderez. Concrètement, quand vous écrivez `import math` en tête de votre script, Python cherche le module `math`, l'exécute de haut en bas, ce qui définit toutes ses fonctions et ses constantes, puis vous donne accès au nom `math`. Vous appelez ensuite `math.sqrt(2)` pour solliciter la fonction `sqrt` qui vit dans ce module. Cette mécanique a une conséquence pratique importante : si vous importez deux fois le même module, ou si deux modules de votre projet l'importent, il n'est exécuté qu'une seule fois et tout le monde partage la même copie en mémoire. C'est ce que garantit le dictionnaire `sys.modules`, qui mémorise chaque module déjà chargé. Un import revient donc cher une fois, puis devient gratuit, et vous pouvez appeler la même ligne autant de fois que nécessaire sans jamais ralentir votre programme.
+
+À quoi bon séparer le code en modules ? Pour quatre raisons qui se vérifient dès la première ligne écrite. La réutilisation : une fonction de calcul de moyenne placée dans `calc.py` sert au script principal, aux tests éventuels et au projet du chapitre suivant, sans jamais être recopiée. La lisibilité : un fichier de deux cents lignes qui fait une seule chose se relit en une minute, quand un fichier de deux mille lignes impose de chercher pendant dix. La testabilité : vous pouvez exécuter `calc.py` seul, avec des valeurs connues, sans lancer toute l'application ni lire le fichier de notes sur le disque. Enfin, la collaboration : deux personnes peuvent modifier `services.py` et `cli.py` en parallèle sans se marcher sur les pieds, alors qu'un fichier unique produit un conflit garanti à chaque sauvegarde. La règle est simple : quand vous hésitez à créer un module, c'est généralement que le moment est venu.
+
+Un module n'est pas l'ennemi de la fonction, il l'héberge. Les fonctions que vous avez apprises au chapitre 3 restent l'unité de travail, celle qu'on lit, qu'on teste et qu'on réutilise ; le module devient simplement l'adresse où elles vivent ensemble. La conséquence est l'apparition d'une notion nouvelle, celle d'interface : un module bien conçu expose peu de noms, mais des noms bien choisis, documentés par une phrase de docstring. L'appelant n'a pas besoin de savoir comment la moyenne est calculée, seulement qu'elle existe, quels arguments elle attend et ce qu'elle renvoie. Une règle pratique vous aidera à dessiner cette frontière : si un nom n'est utilisé que dans son propre fichier, il reste en interne et peut garder un nom court ; s'il doit être appelé depuis un autre fichier, il mérite un nom explicite, stable, et une entrée dans la documentation du projet. C'est cette discipline qui fait la différence entre un empilement de fichiers et une petite bibliothèque personnelle.
+
+Quand un projet grandit, des fichiers isolés ne suffisent plus : il faut les regrouper. Un package est un dossier qui contient des modules Python apparentés, signalé comme tel par la présence d'un fichier `__init__.py`. Ce fichier marque la frontière : Python sait que le dossier `notes/` est un package importable, et non un simple répertoire de travail où traînent des fichiers. Dans un package `notes`, vous rangerez par exemple `models.py` pour les structures de données, `services.py` pour la logique métier, `cli.py` pour la ligne de commande et l'affichage. L'import prend alors une forme hiérarchique : `from notes.services import moyenne`. L'intérêt n'est pas seulement esthétique : un package se nomme, se documente, se teste, se publie, et peut contenir lui-même des sous-packages, ce qui permet d'organiser un projet de cent modules sans jamais perdre le fil de son architecture. C'est aussi l'unité que l'on partage avec les autres, puisque l'on publie un package, jamais un fichier isolé.
+
+Un projet structuré pose aussitôt une question pratique : quand on importe `calc.py` depuis `main.py`, faut-il que `calc.py` exécute quelque chose ? La réponse est non, et c'est exactement le rôle du garde `if __name__ == "__main__":`. Ce bloc ne s'exécute que lorsque le fichier est lancé directement par l'interpréteur, jamais lorsqu'il est importé par un autre. Grâce à lui, `calc.py` peut contenir à la fois des fonctions réutilisables et un petit script de démonstration ou de vérification, sans que la démonstration se déclenche à chaque import, au milieu du travail du fichier voisin. C'est la condition pour que vos modules restent silencieux et prévisibles, deux qualités que vous apprécierez dès que votre projet comptera cinq ou six fichiers qui s'importent les uns les autres dans plusieurs sens. Un chargement prévisible se débogue en quelques secondes, quand un enchaînement d'effets de bord oblige, lui, à relire le programme en entier.
+
+Un projet n'utilise pas que son propre code : il s'appuie aussi sur des bibliothèques extérieures. C'est là qu'intervient pip, le gestionnaire de paquets officiel de Python, qui installe depuis Python Package Index des bibliothèques comme `rich` pour de belles sorties en terminal, `requests` pour les échanges HTTP ou `pytest` pour les tests automatisés. Installer est facile, presque trop : une ligne `pip install rich` et la bibliothèque est là, disponible partout sur votre machine. La difficulté commence ensuite, six mois plus tard, quand il faut reproduire l'environnement exact d'un autre développeur ou d'une machine neuve. La solution tient dans un fichier texte, `requirements.txt`, obtenu avec `pip freeze > requirements.txt`, qui liste chaque dépendance avec sa version exacte. Une commande `pip install -r requirements.txt` restaure alors l'environnement à l'identique. Vous en déduirez qu'une dépendance est un engagement de maintenance, que vous assumerez aussi longtemps que votre projet vivra avec elle.
+
+Réunissons les pièces. Un projet Python bien organisé répond à trois questions en trois secondes : où est le code métier, où est le point d'entrée, quelles bibliothèques faut-il installer ? La première trouve sa réponse dans une arborescence claire, souvent `models.py` pour les données, `services.py` pour les traitements, `cli.py` ou `main.py` pour l'interface avec l'utilisateur. La deuxième, dans un fichier unique dédié au lancement, qui lit les saisies, affiche les résultats et appelle vos fonctions. La troisième, dans `requirements.txt`, versionné avec le reste du code. Cette organisation n'est pas une cérémonie administrative : elle vous fait gagner du temps dès la deuxième semaine, lorsque vous reprenez le code après une interruption et que vous retrouvez immédiatement l'endroit où modifier le calcul de la mention. La suite du chapitre suit ce chemin dans l'ordre : les trois formes d'import, la bibliothèque standard, le garde `__name__`, le découpage concret, les packages, puis pip et la discipline des dépendances. Chaque section contient des exemples exécutables tels quels : lancez-les, modifiez-les, cassez-les volontairement, c'est en manipulant que l'on retient. Voici d'abord une liste de règles pour nommer et organiser vos modules sans regret.
+
+- Un module porte un nom court, en minuscules, sans accent ni espace : `calculs.py`, jamais `Mon Module.py`.
+- Le nom d'un module ne doit pas entrer en conflit avec les noms réservés ni avec les fonctions intégrées : évitez `types.py`, `token.py`, `print.py` ou `id.py`.
+- Un module a une responsabilité : s'il contient des fonctions sans lien les unes avec les autres, il en masque plusieurs à la fois.
+- Les constantes globales du projet vivent dans un module dédié, souvent `config.py` ou `constants.py`.
+- Un fichier qui dépasse deux à trois cents lignes mérite d'être examiné : presque toujours, deux modules distincts sortent de là.
+- Chaque dossier qui contient du code Python de votre projet gagne à être un package, donc à posséder son `__init__.py`.
+
+Ces conventions ne sont pas des caprices de style : elles rendent vos fichiers prévisibles pour toute personne qui les ouvrira, y compris pour vous dans six mois. Elles servent aussi à éviter deux écueils récurrents chez le débutant, à savoir des imports dispersés au milieu du code et des noms importés qui masquent silencieusement d'autres noms. Un autre écueil est l'oubli d'une conséquence bénigne en apparence : renommer un fichier, déplacer un dossier, et les imports qui pointaient vers l'ancien emplacement se mettent à lever une erreur au démarrage. Appliquez ces règles dès le premier fichier du projet, avant même d'avoir écrit une ligne de logique, car il est toujours plus simple d'installer une bonne habitude que de réécrire trente fichiers pour la remettre en place. Celles qui concernent les imports sont tout aussi courtes et tout aussi contraignantes : six lignes suffisent à résumer la discipline attendue dans tout fichier Python. Les voici.
+
+- Regroupez les imports en trois blocs ordonnés : bibliothèque standard, bibliothèques tierces, puis vos modules locaux.
+- Préférez `import numpy as np` pour les alias consacrés par l'usage, mais gardez le nom complet pour vos propres modules.
+- Évitez `from module import *`, qui remplit votre espace de noms de manière invisible et peut masquer un nom sans prévenir.
+- Les imports se placent en haut du fichier, avant toute définition de fonction ou de constante.
+- Un import local s'écrit sans extension ni chemin : `import calc`, jamais `import calc.py`.
+- Un import local ne dépend jamais du répertoire depuis lequel vous lancez Python : lancez vos scripts depuis la racine du projet.
+
+## Les trois formes d'import
+
+Python connaît trois écritures principales pour accéder à un module, et le choix entre elles n'est pas qu'une affaire de goût : il détermine la longueur de vos lignes, la lisibilité de votre code et le risque de collisions de noms. La première forme importe le module sous son nom complet, la seconde importe directement les objets dont vous avez besoin, la troisième ajoute un alias quand le nom d'origine est long ou peu parlant. Commençons par la forme la plus courante et la plus prudente, celle que vous utiliserez par défaut. Avec `import math`, le module entier est chargé et accessible sous un seul nom, celui du module. Vous écrivez ensuite `math.sqrt(2)` ou `math.pi`, et il est toujours évident, en lisant la ligne, que la fonction vient de la bibliothèque mathématique. C'est l'avantage décisif de cette convention : l'origine de chaque appel est explicite, ce qui évite toute confusion lorsque deux modules proposent une fonction du même nom. Regardez la forme complète d'un tel fichier :
+
+```python
+import math
+import random
+rayon = 5
+aire = math.pi * rayon * rayon
+tirage = random.randint(1, 6)
+print(aire)
+print(tirage)
+```
+
+La deuxième forme, `from math import sqrt`, extrait un objet précis du module et le place directement dans l'espace de noms du fichier courant. Vous écrivez `sqrt(2)` au lieu de `math.sqrt(2)` : c'est plus court, plus fluide, et surtout utile lorsque vous n'avez besoin que d'une seule fonction sur les centaines qu'un module propose. L'inconvénient est symétrique : en lisant `sqrt(2)` seul, on ne devine pas d'où vient la fonction, et si un autre import fournit une autre `sqrt`, l'un écrase silencieusement l'autre. C'est d'ailleurs la raison pour laquelle de nombreux style guides recommandent d'importer le module complet dès lors que vous utilisez trois fonctions ou plus : au-delà de ce seuil, l'écriture devient plus courte, mais la lecture devient plus obscure, et c'est la lecture qui doit primer dans un code que vous relirez dans six mois. La forme courte convient donc aux besoins ponctuels, à une ou deux fonctions tirées d'un module riche. Concrètement :
+
+```python
+from math import sqrt, ceil
+print(sqrt(16))
+print(ceil(3.2))
+print(sqrt(16) + ceil(3.2))
+```
+
+Cette seconde forme reste excellente pour vos propres modules, car elle exprime l'intention avec précision : `from calc import moyenne` dit clairement que vous avez besoin de la fonction `moyenne`, et rien d'autre. C'est aussi l'écriture employée par la plupart des bibliothèques tierces pour exposer leur API principale, par exemple `from rich import print`. Le point délicat est la portée : la fonction importée devient une variable locale du fichier, indépendante de la suite du module d'origine. Si vous testez votre code avec des outils qui remplacent une fonction par un double, ces outils préfèrent justement la forme `module.fonction`, car elle laisse la porte ouverte au remplacement, tandis que la forme courte fige la référence au moment de l'import. La troisième forme introduit un alias avec le mot-clé `as`, et sert à deux usages bien distincts. Le premier est l'abréviation de confort : `import numpy as np` est devenu la convention universelle pour la bibliothèque NumPy, `import pandas as pd` pour Pandas, et ces alias sont compris par tous les lecteurs. Le second est le renommage d'un objet venu de la bibliothèque standard, lorsque son nom est trop générique ou trop long, ou lorsqu'il risque de heurter un nom existant. L'exemple suivant est exécutable tel quel et montre les deux cas :
+
+```python
+import datetime as dt
+from math import sqrt as racine_carrée
+aujourdhui = dt.date.today()
+print(aujourdhui.isoformat())
+print(racine_carrée(144))
+```
+
+Pour choisir sans hésiter, appliquez cette hiérarchie simple. Par défaut, utilisez `import module`, surtout pour la bibliothèque standard et pour vos propres fichiers, car l'origine reste visible. Utilisez `from module import objet` lorsque vous ne tirez du module que deux ou trois symboles, ou lorsque le module est l'un de vos fichiers locaux et que le nom de la fonction suffit à la repérer. Utilisez l'alias pour reprendre une abréviation consacrée ou pour éviter un nom trop long, mais ne rebaptisez jamais vos propres modules, car un lecteur qui rencontre `import services as s` devra remonter en haut du fichier pour comprendre ce que `s` désigne. Dans le doute, choisissez la forme la plus explicite, celle qui se lit correctement à voix haute. Une seule ligne d'import ne doit jamais vous coûter trois secondes de réflexion à la lecture. Les trois écritures réunies, cette fois avec de vrais modules, donnent ceci :
+
+```python
+import math
+from math import sqrt
+import datetime as dt
+```
+
+Il existe une quatrième écriture, `from module import *`, qui importe tout le contenu du module. Évitez-la dans un projet : elle remplit votre espace de noms sans le dire, rend impossible l'origine d'un nom, et peut écraser une fonction du même nom sans le moindre avertissement. Elle ne se justifie que dans un contexte d'exploration rapide en interpréteur, jamais dans un fichier destiné à être relu. Avant même de choisir une forme d'import, il arrive qu'il faille découvrir ce qu'un module contient. Trois outils suffisent, et tous trois sont déjà présents sur votre machine. La fonction `dir(module)` renvoie la liste alphabétique de tous les noms qu'il expose, y compris ceux qui commencent par un underscore, lesquels désignent en général des détails d'implémentation : un simple filtre sur le début du nom suffit à les écarter. La fonction `help(module)` affiche la documentation intégrée, souvent un résumé suivi des signatures des fonctions principales. Enfin, l'attribut `__doc__` d'un objet contient sa docstring, ce qui permet d'afficher une aide ciblée depuis un script. Le bloc suivant explore le module `statistics` sans rien installer :
+
+```python
+import statistics
+print([nom for nom in dir(statistics) if not nom.startswith("_")][:6])
+print(statistics.mean.__doc__)
+print(statistics.median([1, 2, 3, 4]))
+```
+
+Cette exploration préalable a un avantage pédagogique décisif : elle vous évite de chercher sur le web une fonction que la bibliothèque standard propose déjà, à quelques secondes de distance. L'habitude de taper `dir` et `help` dans un interpréteur avant d'écrire une ligne de code fait gagner un temps considérable, surtout lorsque vous découvrez une bibliothèque tierce dont la documentation semble trop longue à parcourir. Notez au passage que `dir` est elle-même une fonction intégrée, vivant sans module : certains outils appartiennent au langage, d'autres à des modules, et cette frontière se repère avec l'usage. Il reste à comprendre ce qui se passe exactement en coulisses d'un import, car ce détail expliquera la plupart de vos futurs cafouillages. Python maintient un dictionnaire appelé `sys.modules`, qui contient chaque module déjà chargé, indexé par son nom. Au premier `import statistics`, le module est trouvé, exécuté, puis rangé dans ce dictionnaire ; aux imports suivants, Python n'exécute plus rien, il renvoie simplement l'objet déjà présent. D'où une conséquence très utile pour le débogage : si vous corrigez le contenu d'un module en cours de session, un nouvel import ne prend pas en compte votre correction, car la version en mémoire est jugée suffisante. Il faut alors redémarrer l'interpréteur, ou purger manuellement l'entrée correspondante. Le code suivant montre le mécanisme en trois lignes :
+
+```python
+import sys
+import statistics
+print("statistics" in sys.modules)
+print(sys.modules["statistics"] is statistics)
+```
+
+Les deux affichages renvoient `True`, ce qui prouve que la même instance circule partout. Cette mécanique unique présente deux avantages très concrets. Le premier est la vitesse : après le premier chargement, un import se contente de renvoyer un objet déjà construit, si bien qu'importer un module lourd en début de programme ne se paie qu'une seule fois. Le second est la cohérence : deux modules qui importent `statistics` partagent exactement les mêmes définitions, donc les mêmes constantes et les mêmes fonctions, sans qu'aucun d'eux ait besoin de recopier le moindre code. Si vous modifiez une valeur dans le module, tous les utilisateurs voient la même modification, car il n'existe qu'une seule copie en mémoire. C'est aussi la raison pour laquelle un import n'est pas un moyen de dupliquer du code, mais une manière de le partager. Gardez ce mécanisme à l'esprit : la prochaine fois qu'une correction apportée à un module ne semblera pas avoir d'effet, vous saurez que la faute n'en est pas à votre code, mais à la copie que l'interpréteur a déjà en mémoire.
+
+```table
+Forme | Écriture | Appel ensuite | Quand l'utiliser
+--- | --- | --- | ---
+Import du module | `import math` | `math.sqrt(2)` | Par défaut, surtout la bibliothèque standard et vos fichiers
+Import d'un objet | `from math import sqrt` | `sqrt(2)` | Une ou deux fonctions seulement, ou vos modules locaux
+Import avec alias | `import datetime as dt` | `dt.date.today()` | Une abréviation consacrée ou un nom trop long
+```
+
+## La bibliothèque standard : un module pour presque tout
+
+Avant de chercher une bibliothèque à installer, regardez ce que Python fournit déjà. La bibliothèque standard, appelée souvent « batteries included », est livrée avec chaque installation de Python, ne nécessite aucune connexion réseau, aucune autorisation et aucune ligne dans votre `requirements.txt`. Elle contient des centaines de modules couvrant l'essentiel du travail quotidien : `math` pour le calcul numérique, `random` pour le hasard contrôlable, `datetime` pour les dates et durées, `json` et `csv` pour les formats de données, `re` pour les expressions régulières, `pathlib` pour les chemins de fichiers, `statistics` pour les statistiques descriptives, `collections` pour les conteneurs spécialisés, `sys` pour le lien avec l'interpréteur, `unittest` pour les tests. Connaître cette liste, même imparfaitement, vous fait gagner des heures et vous évite d'ajouter une dépendance pour une fonction qui existe déjà sous vos doigts. Le module `statistics` en est la démonstration parlante pour votre analyseur de notes. Tant que vous n'avez que la moyenne, un simple `somme / len` suffit, mais dès que vous voulez la médiane, le mode ou l'écart-type, la bibliothèque standard vous évite d'installer NumPy. L'exemple suivant calcule trois indicateurs sur une liste de notes et s'exécute sans rien installer :
+
+```python
+import statistics
+notes = [12, 15, 9, 17, 14, 14, 11]
+print(statistics.mean(notes))
+print(statistics.median(notes))
+print(statistics.stdev(notes))
+```
+
+`pathlib` illustre un autre intérêt de la bibliothèque standard : moderniser des tâches anciennes. Dans le chapitre 5, vous avez manipulé des chemins sous forme de chaînes de caractères, par exemple `os.path.join(dossier, "notes.txt")`. Avec `pathlib`, le chemin devient un objet doté de méthodes, ce qui se lit comme une phrase : `dossier / "notes.txt"`. L'objet sait se décomposer en nom, en dossier parent et en extension, il sait vérifier si le fichier existe, s'il est absolu ou relatif, et il produit le même résultat sous Windows, macOS et Linux, sans que vous ayez à penser aux barres obliques ou aux antislashs. C'est le type de confort qui transforme un code fragile en code sûr : l'objet refuse de vous laisser concaténer deux chaînes oubliées. Le bloc ci-dessous lit le nom d'un fichier, vérifie si le fichier existe sur le disque et affiche son extension, sans une seule barre obliques à écrire :
+
+```python
+from pathlib import Path
+fichier = Path("notes.txt")
+print(fichier.name)
+print(fichier.suffix)
+print(fichier.exists())
+```
+
+Le module `sys` mérite une attention particulière, car il vous donne accès à ce que fait l'interpréteur lui-même : `sys.argv` contient les arguments passés en ligne de commande, `sys.exit` termine le programme avec un code de retour, `sys.path` indique la liste des dossiers où Python recherche les modules importés, et `sys.version` affiche la version exacte en cours. Comprendre `sys.path` vous sera directement utile : c'est la raison pour laquelle un script lancé depuis un autre dossier ne trouve pas vos modules. Un dernier réflexe à acquérir : avant `pip install`, tapez le nom du module qui vous manque dans la documentation officielle de Python ; si vous le trouvez dans la bibliothèque standard, vous venez d'économiser une dépendance et son entretien futur. Deux modules supplémentaires méritent votre attention pour l'analyseur de notes, car ils relient directement ce chapitre au précédent. Le module `json` écrit et relit des structures Python dans un fichier texte, ce qui en fait l'outil naturel pour conserver un résumé calculé, un historique de notes ou une préférence d'affichage. Les fonctions `json.dump` et `json.load` travaillent sur un objet fichier, exactement comme les fonctions `open` du chapitre 5, et le paramètre `ensure_ascii=False` garantit que les accents sont conservés tels quels. Le bloc suivant écrit un résumé puis le relit pour vérification :
+
+```python
+import json
+resume = {"moyenne": 13.4, "mention": "Assez bien"}
+with open("resume.json", "w", encoding="utf-8") as fichier:
+    json.dump(resume, fichier, ensure_ascii=False, indent=2)
+with open("resume.json", "r", encoding="utf-8") as fichier:
+    print(json.load(fichier))
+```
+
+Le second apporte le hasard, mais un hasard maîtrisé. La bibliothèque `random` est précieuse pour simuler des notes, tirer un élève au sort ou générer des données de démonstration ; en revanche, un hasard qui change à chaque exécution rend un test impossible à reproduire. C'est là qu'intervient `random.seed`, qui fixe la suite aléatoire et rend l'exécution parfaitement reproductible. À la même graine correspond toujours la même séquence, ce qui vous permet de relancer votre script en cas de doute et de retrouver exactement les mêmes valeurs, y compris pour comparer deux exécutions ligne à ligne. Sans cette fixation, un écart de moyenne entre deux lancements resterait inexplicable, et vous perdriez du temps à chercher une faute qui n'existe pas. Le module `collections.Counter` complète le tableau en comptant les occurrences d'une note, ce qui donne immédiatement la ou les notes les plus fréquentes, sans tri ni boucle supplémentaire à écrire vous-même :
+
+```python
+import random
+from collections import Counter
+random.seed(7)
+notes = [random.randint(8, 20) for _ in range(10)]
+print(notes)
+print(Counter(notes).most_common(3))
+```
+
+Ces deux exemples illustrent la même leçon : la bibliothèque standard n'est pas un résidu de l'histoire de Python, c'est un outillage mûr, stable et documenté, qui couvre le calcul, les dates, les fichiers, les formats d'échange, le hasard, les conteneurs et le lien avec l'interpréteur. Une bibliothèque installée, elle, change de version, se déprécie parfois, impose sa propre façon d'écrire et demande à être mise à jour avec le reste de l'environnement. Celle qui est fournie avec l'installation, en revanche, est exactement la même sur la machine de votre collègue, sur le poste de l'examinateur et sur votre ordinateur trois ans plus tard. C'est pourquoi la bonne question n'est jamais « quelle bibliothèque installer pour résoudre ceci ? », mais « quel module Python résout déjà ceci ? ». Plus vous l'utiliserez, moins vous installerez, et moins vous installerez, moins vous entretenirez, et plus votre projet survivra aux années.
+
+## if __name__ == "__main__"
+
+Voici une ligne que vous croiserez dans presque tous les projets Python sérieux, et qui mérite d'être comprise en profondeur plutôt que copiée machinalement : `if __name__ == "__main__":`. Chaque module exécuté par Python dispose d'une variable spéciale nommée `__name__`, dont la valeur dépend de la manière dont le fichier a été démarré. Si vous lancez le fichier directement avec la commande `python calc.py`, alors `__name__` vaut la chaîne `"__main__"`. Si un autre fichier écrit `import calc`, alors `__name__` vaut `"calc"`, c'est-à-dire le nom du module tel qu'il est importé. Le bloc conditionnel n'est donc rien d'autre qu'un test sur la façon dont le programme a été appelé. Le mécanisme devient limpide si vous l'affichez. Créez un fichier `demo.py` contenant la ligne `print(__name__)` : lancez-le, et la sortie sera `__main__`. Créez ensuite un second fichier qui importe `demo`, et la sortie sera `demo`. C'est tout le principe, et il est robuste jusqu'aux packages imbriqués, où la variable prend le nom qualifié, par exemple `notes.cli`. Le bloc suivant illustre les deux comportements dans un seul fichier, que vous pouvez tester en le lançant directement puis en l'important depuis un autre script :
+
+```python
+print("Chargement du module demo, __name__ =", __name__)
+if __name__ == "__main__":
+    print("Le fichier demo.py est exécuté directement")
+```
+
+L'intérêt pratique est considérable : ce garde permet de ranger dans un même fichier deux choses qui ne doivent jamais se déclencher en même temps, à savoir la bibliothèque de fonctions réutilisables et le petit programme de démonstration ou de vérification. Sans ce garde, importer `calc.py` déclencherait immédiatement la saisie au clavier, l'affichage du rapport ou la lecture d'un fichier, en plein milieu du chargement du fichier voisin. C'est la cause numéro un des bugs incompréhensibles au début d'un projet structuré, celui où lancer `main.py` provoque l'exécution de trois autres scripts dans un ordre apparemment aléatoire. Un module bien conçu est silencieux au chargement : il définit des noms et se tait. La convention complète consiste à écrire une fonction `main()` qui contient tout le comportement du script, puis à l'appeler uniquement sous le garde. Cette structure a trois avantages : le fichier reste lisible en le parcourant, la fonction `main()` peut être rappelée depuis un test ou depuis l'interpréteur, et les variables temporaires de lancement ne viennent pas polluer l'espace de noms du module. Voici le squelette que vous réutiliserez tout au long de ce chapitre :
+
+```python
+def traiter(notes):
+    return sum(notes) / len(notes)
+def main():
+    valeurs = [12, 15, 9, 17]
+    print(traiter(valeurs))
+if __name__ == "__main__":
+    main()
+```
+
+Une précaution demeure : le garde ne protège que le code placé à l'intérieur du bloc. Tout ce qui se trouve au niveau supérieur d'un module, c'est-à-dire toutes les lignes qui ne sont ni dans une fonction ni dans ce bloc, s'exécute dès l'import. Définir une constante comme `SEUIL = 10` est parfaitement sûr, car l'opération est instantanée et sans effet, mais appeler `input()`, ouvrir un fichier ou lancer une boucle de calcul au niveau supérieur revient à exécuter ce travail au chargement. Gardez donc en tête cette distinction : les définitions et les constantes en haut de fichier, les actions dans des fonctions, et l'exécution réelle sous le garde `__name__`. Un dernier point de vocabulaire : le nom `"__main__"` n'a rien de magique pour l'interpréteur, c'est une simple convention universellement adoptée, exactement comme la fonction `main()` héritée du langage C. Écrire `"main"` ou `"principal"` au lieu de `"__main__"` ne produirait aucune erreur de syntaxe, mais le bloc ne s'exécuterait jamais, car Python affecte `"__main__"` et rien d'autre. Même si la mécanique reste simple, c'est précisément ce détail qui rend possible le découpage de votre analyseur en deux fichiers : l'un expose des fonctions, l'autre pilote la saisie et l'affichage.
+
+Le garde ne s'active pas seulement quand vous tapez `python calc.py`. La commande `python -m calc` produit exactement le même effet : le module indiqué devient le script principal, son `__name__` vaut `"__main__"`, et son bloc de lancement s'exécute. L'option `-m` présente toutefois un avantage supplémentaire, puisqu'elle ajoute le dossier courant au chemin de recherche et permet de lancer un module appartenant à un package, comme `python -m notes.cli`. La règle reste donc unique et mémorisable : quel que soit le moyen de lancement, le bloc gouverné par le test sur `__name__` ne s'exécute que pour le fichier désigné comme principal, jamais pour ceux qu'il importe.
+Ce schéma permet d'écrire des fichiers réellement polyvalents, à la fois bibliothèque pour les autres et outil en ligne de commande pour l'utilisateur. L'exemple suivant, à enregistrer sous le nom `stats.py`, se comporte différemment selon la manière dont on le lance : importé, il se contente d'exposer sa fonction ; lancé directement, il convertit les arguments passés après le nom du script et affiche la moyenne calculée.
+
+```python
+import sys
+def moyenne(notes):
+    if not notes:
+        return 0.0
+    return sum(notes) / len(notes)
+if __name__ == "__main__":
+    valeurs = [float(arg) for arg in sys.argv[1:]]
+    print(moyenne(valeurs))
+```
+
+Exécutez `python stats.py 10 12 14` et le programme affiche `12.0` ; exécutez `import stats` dans un autre fichier et le même module reste muet, prêt à servir via `stats.moyenne`. Une seule source, deux comportements maîtrisés. Pour garder cette distinction nette, appliquez une recette constante : les imports et les définitions en haut de fichier, le code exécutable entièrement rangé dans une fonction `main()`, et un unique bloc `if __name__ == "__main__":` en dernière ligne qui appelle cette fonction. Un fichier qui respecte ce plan peut être importé par n'importe quel autre, y compris par un futur outil de test, sans jamais déclencher de saisie, d'affichage ou d'écriture sur le disque. C'est la condition d'un code réutilisable, et vous la retrouverez dans tous les projets Python que vous ouvrirez par la suite, du script le plus modeste au plus gros projet que vous mènerez un jour. Cette habitude deviendra vite un réflexe.
+
+## Découper un projet en plusieurs fichiers
+
+Le découpage d'un projet ne se décrète pas à partir d'une théorie abstraite, il part d'un symptôme très concret : le moment où vous ne trouvez plus rien. Reprenons votre analyseur de notes et imaginons qu'il ait grossi jusqu'à mille lignes : lecture du fichier, nettoyage des données, calcul des moyennes et des mentions, formatage du tableau, saisie du nom d'un élève, gestion des erreurs de saisie, écriture du rapport en sortie. Tout se tient, tout se répond, et pourtant tout se télescope, car ces responsabilités n'ont rien à faire dans le même fichier. La première question à vous poser n'est donc pas « comment couper ? » mais « quelles sont les frontières naturelles ? ». Répondez en nommant les grands blocs du programme : des données à décrire, des calculs à effectuer, une interface à afficher. Ces trois réponses donnent déjà trois fichiers, et le reste du chapitre ne fera qu'affiner ces frontières plutôt que de les déplacer.
+
+Un critère simple guidera presque toujours vos décisions : séparez ce qui calcule de ce qui communique avec l'extérieur. Les fonctions purement calculatoires, comme moyenne, médiane ou mention, prennent des valeurs en entrée et renvoient un résultat sans rien lire, rien écrire, rien afficher. Elles sont donc testables en une seconde, dans un interpréteur ou avec un script de vérification, et elles ne dépendent d'aucun fichier sur le disque. À l'inverse, tout ce qui touche au monde réel, c'est-à-dire la lecture d'un fichier avec la bibliothèque du chapitre 5, la saisie au clavier avec `input()`, l'affichage avec `print()` ou `rich`, appartient à un autre fichier. Le résultat s'exprime souvent avec trois noms qui reviennent dans la plupart des projets : `models.py` pour les structures de données, `services.py` pour la logique métier, `cli.py` pour la ligne de commande. Le fichier `calc.py`, qui héberge les seuls calculs de votre analyseur, commence ainsi :
+
+```python
+def moyenne(notes):
+    """Renvoie la moyenne arithmétique des notes.
+    >>> moyenne([10, 12, 14])
+    12.0
+    >>> moyenne([])
+    0.0
+    """
+    if not notes:
+        return 0.0
+    return sum(notes) / len(notes)
+def mention(notes):
+    moy = moyenne(notes)
+    if moy >= 16:
+        return "Très bien"
+    if moy >= 14:
+        return "Bien"
+    if moy >= 12:
+        return "Assez bien"
+    if moy >= 10:
+        return "Passable"
+    return "Insuffisant"
+```
+
+Un des bénéfices les plus concrets de ce découpage est la possibilité de vérifier un morceau de programme sans déclencher tout le reste. Tant que votre analyseur était un seul fichier, la moindre vérification passait par l'exécution complète : saisie au clavier, lecture du fichier, affichage du rapport. Dès que les calculs vivent dans `calc.py`, vous pouvez les éprouver directement, avec des valeurs choisies, sans toucher au clavier ni au disque. La méthode la plus rapide porte un nom informel, le quick check : un petit script posé dans le même dossier, qui importe le module et appelle ses fonctions avec des valeurs connues. Il reste écrit en Python, ne demande aucune installation, et documente en même temps l'usage attendu du module : une personne qui découvre le projet peut lire ce fichier pour comprendre comment appeler vos fonctions, avec quels types d'arguments et quel format de retour attendu. Voici celui de votre analyseur :
+
+```python
+import calc
+print(calc.moyenne([12, 15, 9]))
+print(calc.mention([16, 15, 17]))
+print(calc.moyenne([]))
+```
+
+Quand le contrôle échoue, l'erreur Python vous indique exactement la ligne fautive, ce qui suffit amplement tant que votre module reste petit et autonome. Un autre réflexe consiste à faire produire des preuves par le module lui-même : Python embarque le module `doctest`, qui extrait les exemples contenus dans les docstrings et les rejoue comme un test, si le résultat affiché diffère de celui attendu, le contrôle échoue. L'avantage est double, puisque la documentation et la vérification sont rédigées au même endroit, dans la même phrase, et que la docstring ne peut plus mentir sur le comportement réel de la fonction. La commande `python -m doctest calc.py` exécute alors tous les exemples du fichier, et la variante `python -m doctest -v calc.py` liste chaque contrôle réussi. C'est une introduction parfaite aux tests automatisés que le chapitre suivant mettra en place pour de bon, avec un outil dédié et une convention de nommage de fichiers.
+
+Le second point à comprendre est le mécanisme même d'un import local. Lorsque `main.py` écrit `import calc`, Python ne recherche pas le fichier n'importe où sur le disque : il parcourt une liste de dossiers appelée `sys.path`, et cette liste contient notamment le dossier du script que vous lancez. Si les deux fichiers sont dans le même répertoire, l'import fonctionne immédiatement, sans configuration, sans variable d'environnement, sans installation. C'est la raison pour laquelle un petit projet se lance simplement avec `python main.py`, depuis son propre dossier. Si vous le lancez depuis un autre répertoire en donnant un chemin complet, le dossier de recherche ne sera plus le bon et l'import échouera avec une erreur du type `ModuleNotFoundError` ; ce cas reviendra dans la section des erreurs fréquentes, avec sa correction exacte. Placez à présent `main.py` dans ce même dossier : il appelle les fonctions de `calc` sans rien recalculer lui-même :
+
+```python
+import calc
+notes = [12, 15, 9, 17, 14]
+print("Moyenne :", calc.moyenne(notes))
+print("Mention :", calc.mention(notes))
+```
+
+Un troisième principe vient compléter la réflexion : gardez un point d'entrée unique. Dans un projet bien découpé, un seul fichier a pour rôle de démarrer le programme, de lire les arguments, de demander les saisies et d'afficher les résultats ; tous les autres fichiers se contentent d'exposer des fonctions et des constantes, et ne font jamais rien d'autre au moment où on les importe. Ce fichier d'entrée est celui qui porte le fameux garde `if __name__ == "__main__":`, tandis que les modules importés restent muets. Testez votre découpage avec une question très simple : « mon collègue veut-il modifier le calcul de la mention, dans quel fichier va-t-il ouvrir ? ». Si la réponse n'est pas évidente en trois secondes, un fichier cumule encore trop de responsabilités et mérite d'être fendu en deux. Une racine de projet bien découpée ressemble alors à ceci, avec les cinq fichiers qui constituent le squelette de votre futur projet :
+
+```python
+mon_projet/
+    models.py
+    services.py
+    cli.py
+    requirements.txt
+    notes.txt
+```
+
+Le nommage mérite une attention particulière, car il conditionne toute la lecture future du projet. Le piège classique s'appelle `utils.py` : un fichier sans métier précis où l'on dépose au fur et à mesure tout ce qui ne trouve pas sa place, une fonction de formatage, une constante de seuil, une conversion de date, une vérification de saisie. Au bout de quelques mois, ce fichier rassemble trois cents lignes hétérogènes et redevient exactement le monolithe que vous cherchiez à éviter, avec en plus un nom qui ne dit rien. Préférez nommer par domaine plutôt que par mécanisme : `calcul_notes.py`, `formatage_bulletin.py`, `saisie_clavier.py` disent au lecteur ce qu'il trouvera, tandis que `utils.py`, `helpers.py` ou `misc.py` lui demandent d'ouvrir le fichier pour le savoir. Un second principe découle de cette exigence : les noms de modules doivent durer. Renommer un module n'est pas une opération anodine, car chaque fichier qui l'importe doit être modifié en conséquence, et un import oublié casse le programme au démarrage avec un message qui ne mentionne pas toujours le fichier fautif. Réfléchissez donc au nom avant de créer le fichier, en le prononçant à voix haute dans une phrase d'usage : « le module de calcul des notes renvoie la moyenne ». Si la phrase sonne juste, le nom convient. Si vous devez ajouter « enfin, c'est le fichier où il y a aussi... », le découpage n'est pas terminé.
+
+Enfin, évitez deux écueils classiques du découpage. Le premier est l'import circulaire : `a` importe `b`, qui importe `a`, et Python vous délivre alors une erreur redoutée, `ImportError: cannot import name ...`. Il apparaît presque toujours parce que deux modules ont été coupés au mauvais endroit, chacun contenant un bout de l'autre ; la correction consiste à extraire la partie commune dans un troisième module, souvent `models.py` ou un module de domaine clairement nommé. Le second écueil est la fragmentation : multiplier les fichiers de quinze lignes au nom d'une propreté théorique rend le projet plus difficile à parcourir qu'un seul gros fichier. Visez des modules de quelques dizaines à quelques centaines de lignes, chacun capable de se lire de bout en bout sans retour en arrière. Retenez surtout le principe qui court sous tout ce chapitre : un module qui fait une seule chose se teste en une ligne, et un module testable se corrige sans risque.
+
+## Packages et __init__.py
+
+Un dossier de modules devient un package dès lors qu'il contient un fichier nommé `__init__.py`, et ce nom, underscores compris, se tape exactement. Ce fichier peut être vide, sa présence suffit : elle indique à Python que le répertoire n'est pas un dépôt de fichiers quelconque mais un ensemble organisé de modules importables. Dans un projet nommé `notes`, le dossier `notes/` contiendra `models.py`, `services.py`, `cli.py` et, pour clore l'ensemble, `notes/__init__.py`. On peut alors écrire `import notes.services` ou `from notes.services import moyenne`, et Python parcourt la hiérarchie des dossiers comme il parcourt celle des modules. L'import se lit alors comme une adresse postale : le package d'abord, le module ensuite, l'objet enfin. Retenez cette image : elle vous évitera d'hésiter, dans deux sections, entre écrire `notes.services.moyenne` ou `from notes.services import moyenne`, car vous saurez toujours où vous vous situez dans l'adresse, quelle que soit la taille de l'arborescence et le nombre de sous-packages qu'elle contient.
+
+```python
+notes/
+    __init__.py
+    models.py
+    services.py
+    cli.py
+```
+
+Au chargement, `import notes.services` produit deux opérations successives : Python exécute d'abord `notes/__init__.py`, puis `notes/services.py`. C'est une occasion en or de comprendre ce que contient réellement un `__init__.py`. Souvent, on y laisse le fichier vide, ce qui en fait une simple étiquette. Parfois, on l'utilise pour exposer une API réduite, c'est-à-dire les quelques symboles que les autres fichiers du projet doivent utiliser au quotidien. Si `services.py` propose dix fonctions mais que le projet n'en appelle qu'une seule au quotidien, votre `__init__.py` peut la réexporter, de sorte que les clients écrivent `from notes import moyenne` au lieu de connaître l'arborescence interne. L'arborescence reste ainsi libre de changer du tout au tout sans casser les fichiers qui utilisent votre package : seuls les responsables du package voient la répartition interne des modules. C'est exactement le mécanisme qui rend les bibliothèques tierces agréables à utiliser, elles qui exposent deux ou trois noms au sommet et cachent le reste de leur organisation. Voici la forme minimale de ce fichier :
+
+```python
+from .services import moyenne
+__all__ = ["moyenne"]
+```
+
+Le point délicat de cet extrait est le point placé devant `services` : il s'agit d'un import relatif, qui signifie « depuis le package courant ». Python 3 encourage cette écriture à l'intérieur d'un package, car elle rend l'import indépendant du nom absolu du projet : si vous renommez le dossier `notes` en `analyseur`, les imports internes continuent de fonctionner. La contrepartie est qu'un import relatif n'a de sens que dans un package, jamais dans un fichier isolé lancé directement. Par mesure de sécurité, beaucoup d'équipes préfèrent malgré tout les imports absolus, `from notes.services import moyenne`, qui se comprennent sans contexte et fonctionnent partout, à condition que le dossier parent soit dans le chemin de recherche. Les deux écritures cohabitent d'ailleurs souvent : imports absolus entre packages, imports relatifs à l'intérieur d'un même package. Le fichier `notes/models.py` décrit alors la donnée élémentaire du domaine, et `notes/services.py` exploite ces objets en important la classe depuis le module voisin :
+
+```python
+class Note:
+    def __init__(self, matiere, valeur):
+        self.matiere = matiere
+        self.valeur = valeur
+```
+
+```python
+from .models import Note
+def moyenne(notes):
+    """Moyenne des valeurs d'une liste d'objets Note."""
+    if not notes:
+        return 0
+    return sum(note.valeur for note in notes) / len(notes)
+```
+
+Lancer un module d'un package se fait de préférence avec l'option `-m` de Python, que vous exécutez depuis le dossier parent : `python -m notes.cli`. Cette forme indique à l'interpréteur de traiter `notes.cli` comme un module d'un package, et elle laisse les imports relatifs intacts. La commande alternative `python notes/cli.py`, elle, lance le fichier comme un script autonome : Python ne lui connaît alors aucun parent, et le premier import relatif provoque une erreur `ImportError: attempted relative import with no known parent package`. Ce n'est pas un caprice de l'interpréteur, c'est la conséquence directe du fait qu'un script lancé par son chemin n'a pas d'identité de package.
+Il existe une variante élégante pour rendre un package entièrement exécutable. Si vous ajoutez dans le dossier `notes/` un fichier nommé `__main__.py`, alors la commande `python -m notes` devient valide : Python traite ce fichier comme le script d'entrée du package. Dans ce fichier, on importe généralement la fonction principale du module d'interface et on l'appelle, ce qui évite de dupliquer la moindre logique :
+
+```python
+from .cli import main
+main()
+```
+
+Le résultat est une commande courte, mémorisable et indépendante de l'arborescence : l'utilisateur tape `python -m notes` depuis la racine du projet, et le package déroule lui-même son chemin d'exécution. C'est la même mécanique que la commande `python -m pip` que vous avez déjà utilisée, ou de `python -m doctest` employée au début de ce chapitre : ces outils sont eux aussi des packages, dotés d'un point d'entrée dédié. Notez que ce `__main__.py` n'est jamais importé par un autre fichier, il n'existe que pour le lancement, et il peut rester très court puisque tout le travail est délégué aux modules du package. Reste une question pratique : comment Python choisit-il entre votre package local et les packages installés ? Il parcourt dans l'ordre les dossiers listés dans `sys.path`, qui commence par le dossier du script lancé, puis les emplacements de l'installation Python où se trouvent la bibliothèque standard et les paquets installés par pip. Vos modules de projet sont donc cherchés en premier, ce qui est exactement ce que vous voulez : votre `notes/` locale est prioritaire sur un éventuel paquet du même nom téléchargé depuis Internet. Cette priorité peut toutefois jouer des tours, si un fichier local porte le nom d'une bibliothèque standard, car il prend alors la place de cette dernière.
+
+Pour conclure, retenez que le package est l'unité de nommage et de partage de Python. Un dossier avec ses modules et son `__init__.py` peut être copié tel quel dans un autre projet, déposé sur un dépôt de code, ou publié sur Python Package Index pour être installé avec pip par d'autres développeurs. C'est exactement ce qui sépare un empilement de fichiers d'un projet structuré : chacun des éléments a un nom, une place, un rôle connu de l'interpréteur. D'ailleurs, la plupart des bibliothèques que vous avez installées avec pip sont des packages de cette forme, enrichis d'un fichier de métadonnées et d'une documentation, mais le principe de base est exactement celui que vous venez d'étudier. Vous savez donc reconnaître un package au premier regard, le construire, lancer son contenu et le partager : reste à voir comment ajouter au projet les bibliothèques qui ne sont pas de vous, et comment les garder figées.
+
+## pip et requirements.txt
+
+pip accompagne toute installation récente de Python et son rôle est simple : aller chercher une bibliothèque publiée sur Python Package Index, la télécharger, la construire si nécessaire, puis la déposer dans le dossier partagé de votre interpréteur, généralement nommé site-packages. Concrètement, la commande `pip install rich` suffit à rendre disponible la bibliothèque d'affichage élégante que vous utiliserez dans l'exercice de ce chapitre. Vérifiez l'installation avec `pip list`, qui énumère tout ce qui est installé, ou avec `pip show rich`, qui affiche la version exacte, l'emplacement et la description. Sur certaines machines, il faut écrire `python -m pip install rich` pour être certain que l'installation vise bien l'interpréteur que vous utilisez : si deux versions de Python cohabitent sur la même machine, pip et python peuvent ne pas désigner la même installation. Le point décisif, c'est que pip installe par défaut une version flottante, c'est-à-dire la plus récente qu'il trouve compatible avec votre Python. Si vous exécutez `pip install rich` en janvier et votre collègue en juillet, il est fort possible que vous n'ayez pas le même code dans vos dossiers site-packages, donc pas tout à fait le même comportement. Or un logiciel qui fonctionne chez vous et pas chez votre collègue est un logiciel qui ne fonctionne nulle part ailleurs. Chaque dépendance doit donc être déclarée avec sa version exacte dans un fichier texte nommé `requirements.txt`, qui accompagne le code source du projet. Voici le contenu typique d'un tel fichier pour l'analyseur de notes :
+
+```python
+rich==13.7.0
+```
+
+Ce fichier se génère automatiquement avec la commande `pip freeze > requirements.txt`, qui liste toutes les bibliothèques installées dans l'environnement courant avec leur version exacte, en suivant le format nom du paquet, double égal, version. Vous pouvez aussi figer une seule dépendance, avec `pip freeze rich`, lorsque le reste de l'environnement ne vous intéresse pas. Le résultat se place à la racine du projet, à côté de vos fichiers Python, et se versionne avec eux, car il décrit une part essentielle de l'application. À l'inverse, sur une machine neuve, une seule commande restaure l'environnement complet : `pip install -r requirements.txt` lit le fichier ligne à ligne et installe chaque dépendance à la version indiquée. Notez que `pip freeze` liste aussi vos outils de développement, tests et formatage, ce qui est souvent souhaitable pour garantir la reproductibilité, mais vous pouvez éditer le fichier à la main pour ne conserver que ce dont le projet a réellement besoin au démarrage.
+
+Une pratique professionnelle vient encadrer tout cela : l'environnement virtuel, créé avec le module `venv` de la bibliothèque standard. Il s'agit d'un dossier autonome qui contient sa propre copie de l'interpréteur et ses propres bibliothèques, isolées de celles de votre machine et des autres projets. On le crée une fois pour toutes dans le dossier du projet, on l'active au début de chaque session de travail, puis on y installe les dépendances déclarées. Le dossier ainsi créé se nomme en général `.venv` ou `env`, et il doit être ajouté à votre fichier d'ignore de versionnement, car personne d'autre n'a besoin de vos bibliothèques installées. Sans cet isolement, deux projets qui réclament des versions incompatibles de la même bibliothèque se marchent dessus, et vous passez plus de temps à résoudre des conflits d'installation qu'à coder. La boucle complète tient en trois commandes, à exécuter depuis la racine du projet, et vous les répéterez pour chaque nouveau projet, presque sans y penser :
+
+```python
+python -m venv .venv
+pip install -r requirements.txt
+pip freeze > requirements.txt
+```
+
+Au-delà de la technique, une discipline de fond s'impose : une dépendance est un engagement de maintenance. Chaque bibliothèque que vous installez entre dans votre chaîne de responsabilité. Elle peut être abandonnée par son auteur, contenir une faille de sécurité, changer d'API dans une version majeure, ou traîner derrière elle dix autres paquets qu'elle appelle en cascade. Avant `pip install`, posez-vous donc une série de questions : existe-t-il un équivalent dans la bibliothèque standard, comme `statistics` au lieu de NumPy pour des moyennes simples ? Le projet est-il maintenu, documenté, utilisé par une communauté importante ? Sa licence est-elle compatible avec votre usage ? A-t-il besoin d'un compilateur ou de bibliothèques système pour s'installer ? Un projet qui s'en sort seul, sans dépendance, reste toujours le plus facile à maintenir, à déployer et à comprendre dans deux ans, et c'est la raison pour laquelle la bibliothèque standard mérite d'être inspectée avant tout appel à pip.
+
+La mise à jour d'une dépendance obéit à la même exigence de méthode. Une commande comme `pip list --outdated` énumère les paquets installés dont une version plus récente existe, et `pip install --upgrade paquet` procède à la mise à jour d'un seul d'entre eux. Résistez à la tentation de tout mettre à jour d'un coup : une version majeure peut renommer une fonction, changer un comportement par défaut ou abandonner la compatibilité avec votre version de Python. La conduite raisonnable consiste à isoler la modification, mettre à jour une bibliothèque, relancer vos vérifications, puis figer à nouveau l'environnement avec `pip freeze > requirements.txt`. Si quelque chose casse, vous savez exactement quel paquet en est la cause, et le retour arrière reste simple. Une précision importante sur le contenu de ce fichier : `pip freeze` liste toutes les bibliothèques effectivement présentes, y compris celles que vos dépendances ont installées automatiquement en chemin. Ces bibliothèques indirectes font partie de l'environnement, et les omettre priverait la reconstruction d'un élément nécessaire. C'est pourquoi un fichier figé est si fidèle, et c'est aussi pourquoi il faut se méfier des listes recopiées depuis un tutoriel : elles décrivent l'environnement d'un autre, pas le vôtre. Enfin, gardez à l'esprit que `requirements.txt` ne s'applique pas tout seul, il ne sert qu'à documenter et à alimenter une commande d'installation explicite. Et si une dépendance devient inutile, désinstallez-la avec `pip uninstall paquet` avant de régénérer le fichier, sinon elle continuera de paraître indispensable aux yeux de vos collègues.
+
+```table
+Commande | Effet | Exemple d'usage
+--- | --- | ---
+`pip install rich` | Ajoute une bibliothèque depuis Python Package Index | Installer `rich` pour l'affichage
+`pip list` | Énumère tout ce qui est installé | Vérifier que `rich` est bien installé
+`pip show rich` | Affiche la version exacte, l'emplacement et la description | Consulter la version de `rich`
+`pip freeze > requirements.txt` | Liste les bibliothèques installées avec leur version exacte | Figer l'environnement du projet
+`pip install -r requirements.txt` | Installe chaque dépendance à la version indiquée | Restaurer l'environnement sur une machine neuve
+`pip uninstall paquet` | Désinstalle une dépendance devenue inutile | Avant de régénérer le fichier
+```
+
+La méthode complète tient en six gestes qui forment la boucle normale d'un projet Python, du début à la reproductibilité. Ce n'est pas de la bureaucratie : chacun des gestes répond à une défaillance précise que vous rencontrerez tôt ou tard, à savoir l'installation qui ne se reproduit pas, la version qui change en cours de route, l'oubli de documenter l'installation pour un nouveau venu, et l'environnement mondial où s'entassent les bibliothèques de tous vos projets à la fois. Exécutés dans l'ordre, ces gestes transforment une installation fragile en une opération reproductible à l'identique, chez vous comme chez n'importe qui. Un nouveau venu arrive alors sur votre projet, tape deux commandes, et dispose exactement du même environnement que vous, sans appel téléphonique ni copie de dossier à la main. Répétez-les à chaque nouvelle idée de bibliothèque, et vous ne vous tromperez plus jamais d'environnement, même en changeant de machine :
+
+1. Créez l'environnement virtuel du projet avec `python -m venv .venv`.
+2. Activez-le, puis vérifiez avec `pip list` que vous partez d'une base connue.
+3. Installez la dépendance choisie avec `pip install nom_de_la_bibliotheque`.
+4. Testez la bibliothèque dans un interpréteur avant de l'intégrer au code.
+5. Figez les versions avec `pip freeze > requirements.txt` et versionnez ce fichier.
+6. Documentez dans le README la commande exacte pour installer le projet ailleurs.
+
+## Exemple guidé : l'analyseur de notes en deux fichiers
+
+Vous avez toutes les pièces : les formes d'import, le garde `__name__`, le découpage en modules, les packages et pip. Place au montage. L'exemple suivant transforme votre analyseur de notes en un mini-projet réellement structuré, composé de deux fichiers Python, d'un fichier de dépendances et d'un dossier de données. Les deux fichiers doivent se trouver dans le même dossier, à côté de `notes.txt` que vous aviez créé au chapitre 5. La responsabilité de chaque fichier est délibérément tranchée : `calc.py` ne fait que du calcul, sans saisie ni affichage, tandis que `main.py` pilote la saisie, appelle les calculs et met en forme le résultat avec la bibliothèque `rich`. Ce partage n'est pas décoratif : il vous permettra de tester les calculs sans toucher au clavier, et de changer l'affichage sans jamais rouvrir la moindre formule. Rien de nouveau n'apparaît dans les deux fichiers qui suit : tout y puise dans ce que les sections précédentes ont posé.
+
+```python
+import statistics
+def moyenne(notes):
+    if not notes:
+        return 0.0
+    return sum(notes) / len(notes)
+def mention(notes):
+    moy = moyenne(notes)
+    if moy >= 16:
+        return "Très bien"
+    if moy >= 14:
+        return "Bien"
+    if moy >= 12:
+        return "Assez bien"
+    if moy >= 10:
+        return "Passable"
+    return "Insuffisant"
+def note_sur20(note, bareme):
+    if bareme <= 0:
+        raise ValueError("le barème doit être strictement positif")
+    return round(note * 20 / bareme, 2)
+def resume(notes):
+    if not notes:
+        return {"moyenne": 0.0, "mediane": 0.0, "mention": "Insuffisant"}
+    return {"moyenne": round(moyenne(notes), 2),
+            "mediane": statistics.median(notes),
+            "mention": mention(notes)}
+if __name__ == "__main__":
+    essai = [12, 15, 9, 17, 14]
+    print(resume(essai))
+```
+
+Le fichier ci-dessus, à enregistrer sous le nom `calc.py`, est un module au sens exact du terme. Il importe un module de la bibliothèque standard, définit quatre fonctions et se termine par un garde qui déclenche une vérification minimale uniquement si vous tapez `python calc.py`. Si un autre fichier écrit `import calc`, aucune impression n'a lieu : les quatre fonctions sont simplement mises à disposition. Notez l'absence totale d'appel à `input()`, `print()` ou ouverture de fichier hors du garde : ce module ne dépend que des listes de nombres qu'on lui transmet, ce qui le rend immédiatement réutilisable, y compris depuis le projet du chapitre suivant. C'est là toute la différence entre un script et un module : le script attend ses ordres de l'utilisateur, le module attend ses données de l'appelant, et cette indépendance complète est la condition de tout ce qui suit désormais dans ce chapitre, et de chaque module que vous écrirez par la suite.
+
+```python
+from rich.console import Console
+from rich.table import Table
+import calc
+console = Console()
+def demander_notes():
+    notes = []
+    print("Saisissez les notes décimales, une par ligne.")
+    print("Laissez vide puis validez pour terminer.")
+    while True:
+        saisie = input("Note : ").strip()
+        if not saisie:
+            return notes
+        try:
+            notes.append(float(saisie))
+        except ValueError:
+            print("Cette saisie n'est pas un nombre, réessayez.")
+def afficher(resultat):
+    table = Table(title="Bulletin de l'élève")
+    table.add_column("Indicateur")
+    table.add_column("Valeur", justify="right")
+    table.add_row("Moyenne", str(resultat["moyenne"]))
+    table.add_row("Médiane", str(resultat["mediane"]))
+    table.add_row("Mention", resultat["mention"])
+    console.print(table)
+def main():
+    notes = demander_notes()
+    afficher(calc.resume(notes))
+if __name__ == "__main__":
+    main()
+```
+
+Ce second fichier, à enregistrer sous le nom `main.py`, est le point d'entrée unique du programme. Les trois premières lignes montrent l'ordre d'import recommandé : d'abord la bibliothèque tierce `rich`, puis votre module local `calc`, toujours rangés dans cet ordre en haut du fichier. La boucle `while True` de `demander_notes` illustre le chapitre 2, le bloc `try except` rappelle le chapitre 6, et l'appel `calc.resume(notes)` met en œuvre le chapitre 3 : tout ce que vous avez appris converge enfin dans un fichier court, organisé et lisible. Notez que `main()` ne fait que trois lignes, car le travail réel y est délégué à des fonctions nommées, chacune chargée d'une seule tâche précise. Pour installer la dépendance d'affichage puis figer l'environnement, exécutez les commandes suivantes depuis le dossier du projet, dans cet ordre ; la dernière sert à vérifier que le fichier généré suffit bien à reconstituer l'environnement à l'identique :
+
+```python
+pip install rich
+pip freeze > requirements.txt
+pip install -r requirements.txt
+```
+
+Le fichier `requirements.txt` généré contient alors une ligne du type `rich==13.7.0`, qui fixe la version exacte avec laquelle votre programme a été écrit et vérifié. C'est ce fichier que vous joignez au code, dans le dépôt du projet, pour que n'importe qui puisse reconstituer votre environnement à l'identique. Prenez l'habitude de le mettre à jour chaque fois que vous ajoutez ou retirez une bibliothèque : un `requirements.txt` périmé est pire qu'absent, car il laisse croire à un collègue que l'installation va fonctionner alors qu'elle installera une version qui n'a jamais servi à valider votre code. Une équipe qui néglige ce fichier passe en effet son temps à reconstituer à la main l'environnement de chacun, au lieu de travailler sur le projet lui-même. Pensez-y dès la toute première bibliothèque installée : le fichier est alors déjà à jour, et personne n'a jamais à reconstituer votre historique d'installation pas à pas, y compris longtemps après la sortie du projet.
+
+Le démarrage tient désormais en une commande, exécutée depuis le dossier du projet : `python main.py`. Le programme vous invite à saisir les notes une par ligne, accepte une ligne vide pour terminer, rejette les saisies non numériques grâce au bloc `try except` du chapitre 6, puis affiche un tableau coloré produit par `rich`. Lancez aussi `python calc.py` : le garde déclenche alors la vérification intégrée et affiche le résumé des cinq notes d'essai, sans jamais demander quoi que ce soit au clavier. Ces deux comportements, identiques au code mais différents à l'exécution, sont exactement ceux annoncés dans la section sur `__name__`, et les observer vous-même en une minute vaut mieux que n'importe quelle explication théorique. Pourquoi deux fichiers plutôt qu'un ? Faisons l'expérience de pensée inverse : remettez tout dans `main.py` et demandez-vous où modifier le calcul de la mention, où ajouter l'écart-type, où brancher l'export JSON du rapport. Chaque modification vous obligera à rouvrir un fichier mêlant saisie, formatage et calcul, et à relire mille lignes pour retrouver le bon endroit. Avec le découpage, la mention se change dans `calc.py`, l'affichage se change dans `main.py`, et l'export s'ajoutera comme un troisième fichier sans toucher aux deux premiers. Le test reste le même que précédemment : si votre collègue doit corriger un calcul, doit-il ouvrir le fichier qui gère la saisie et l'affichage ? Ici, la réponse est non, et c'est toute la valeur de l'exercice.
+
+Ce découpage est volontairement minimal, mais il est extensible sans remise en cause. Dès que la lecture du fichier de notes devient plus complexe, avec plusieurs formats ou des contrôles d'intégrité, elle gagne son propre module, souvent nommé `io_notes.py` ou `lire_notes.py`. Les structures de données du domaine, élève, note, matière, migrent vers `models.py`. À cinq ou six modules, le projet devient un package : vous créez un dossier `notes/`, vous y déplacez les fichiers, vous ajoutez `__init__.py`, et le lancement passe de `python main.py` à `python -m notes.cli`. Aucune fonction n'a besoin d'être réécrite, seuls les imports changent, et c'est précisément la trajectoire que vous suivrez au chapitre 8. Avant de passer à l'exercice, vérifiez quatre points : `calc.py` se lance seul et affiche sa vérification ; `main.py` importe `calc` sans provoquer la moindre impression ni saisie au chargement ; `requirements.txt` est présent, à jour et contient la version exacte de `rich` ; aucun fichier n'importe un autre qui l'importe en retour. Si ces quatre conditions sont réunies, votre projet est déjà plus propre que la majorité des scripts trouvés en ligne, et vous disposez d'une base saine pour la suite du parcours.
+
+## À retenir
+
+- Un module est un fichier .py : tout fichier Python en est déjà un, sans déclaration particulière.
+- `import math` donne accès à `math.sqrt`, l'origine de l'appel reste visible.
+- `from math import sqrt` importe directement l'objet, code plus court mais origine implicite.
+- `as` crée un alias, comme `import numpy as np` ou `from math import sqrt as racine`.
+- La bibliothèque standard offre `statistics`, `pathlib`, `datetime`, `json`, `sys` sans rien installer.
+- `if __name__ == "__main__":` n'exécute le bloc que si le fichier est lancé directement.
+- Un module importé ne doit rien faire d'autre que définir des noms et des constantes.
+- Découpez entre calcul et communication : `calc.py` calcule, `main.py` saisit et affiche.
+- Un package est un dossier avec `__init__.py` qui rassemble des modules apparentés.
+- Point d'entrée unique : un seul fichier pilote le lancement du programme.
+- `pip install` ajoute une bibliothèque, `pip freeze > requirements.txt` fige les versions.
+- Une dépendance est un engagement de maintenance : vérifiez la bibliothèque standard d'abord.
+
+## Erreurs fréquentes
+
+- ModuleNotFoundError: No module named 'calc' → le dossier courant n'est pas celui du projet ; lancez la commande depuis le dossier contenant `calc.py`, ou vérifiez que les deux fichiers sont bien dans le même répertoire.
+- Votre module affiche des résultats ou réclame une saisie dès qu'un autre fichier l'importe → tout le code placé en dehors des fonctions s'exécute au chargement ; déplacez-le sous `if __name__ == "__main__":`.
+- ImportError: attempted relative import with no known parent package → vous avez lancé un module de package par son chemin ; utilisez `python -m notes.cli` depuis le dossier parent.
+- ImportError: cannot import name ... → import circulaire entre deux modules ; extrayez les éléments communs dans un troisième module comme `models.py`.
+- Le programme fonctionne chez vous et pas chez votre collègue → `requirements.txt` absent ou périmé ; régénérez-le avec `pip freeze > requirements.txt` et versionnez-le avec le code.
+- pip répond que tout est installé mais l'import échoue → deux interpréteurs cohabitent ; écrivez `python -m pip install paquet` pour cibler le bon Python.
+- Un import de la bibliothèque standard renvoie vos propres fichiers → un module local porte le même nom, comme `random.py` ou `email.py` ; renommez votre fichier.
+- Un nom disparaît sans explication après un import → vous avez utilisé `from module import *` ; remplacez-le par des imports explicites.
+
+## Pour aller plus loin
+
+Le tutoriel officiel de Python consacre un chapitre entier aux modules : il détaille la recherche des modules dans `sys.path`, la différence entre import absolu et relatif, le rôle exact de `__init__.py`, l'organisation des packages et les usages du garde `__name__`. La page du module `sys` de la bibliothèque standard complète ce tableau en décrivant de l'intérieur les mécanismes évoqués ici : `sys.path`, la liste des dossiers parcourus lors d'un import, `sys.modules`, le dictionnaire des modules déjà chargés, et `sys.argv`, la liste des arguments de la ligne de commande. Ces deux lectures suffisent à approfondir chaque notion de cette leçon, à expliquer la quasi-totalité des messages d'erreur d'import que vous rencontrerez, et à trouver des exemples complets que vous pourrez exécuter tel quels dans un interpréteur, avant de les adapter à vos propres modules. Commencez par le tutoriel, puis gardez la page `sys` en signet : vous la relirez bien plus souvent que vous ne le pensez. Adresses : https://docs.python.org/fr/3/tutorial/modules.html et https://docs.python.org/fr/3/library/sys.html
+
+La documentation officielle de pip, elle, décrit la gestion des installations, le format des fichiers de dépendances, les options de `pip freeze` et les bonnes pratiques d'environnement isolé. Elle répondra à vos questions sur les contraintes de version, sur les installations effectuées depuis un dépôt privé, et sur la mise à jour contrôlée d'une dépendance sans casser un projet en production. Vous y trouverez aussi la référence complète des commandes, la description des options avancées et des exemples de fichiers de dépendances, ce qui vous évitera de recopier une configuration venue d'un tutoriel qui ne correspond pas à votre machine. Lisez-la le moment venu, c'est-à-dire au premier problème réel d'installation, plutôt que d'avance : une documentation de référence se mémorise mal, mais se consulte remarquablement bien dès que vous savez quelle question vous posez. Gardez aussi cette habitude de lire la version installée plutôt que la version supposée, car les deux diffèrent souvent. Adresse : https://pip.pypa.io/en/stable/
+
+## Et maintenant : la vidéo du chapitre
+
+La vidéo prolonge cette leçon pas à pas : vous verrez le découpage d'un script unique en modules, la navigation entre fichiers dans un éditeur de code, l'effet concret du garde `__name__`, puis la création d'un `requirements.txt` et son utilisation sur une machine neuve. Regardez-la en gardant vos propres fichiers sous la main, puis passez à l'exercice pratique : vous découpererez l'analyseur de notes en `calc.py` et `main.py`, et vous ajouterez le `requirements.txt` avec `rich`, la dépendance réellement utilisée pour l'affichage. Avant de lancer la vidéo, rouvrez vos fichiers des chapitres précédents et repérez ceux qui mériteraient déjà d'être scindés en deux : ce petit examen préparatoire vous fera suivre les étapes du montage avec votre propre code en tête, ce qui vaut cent fois la recette copiée sans réflexion. Notez au passage les instants où l'instructeur hésite ou corrige une erreur : ils valent eux aussi le détour, car c'est exactement ainsi que se comporte un projet réel en cours de construction.

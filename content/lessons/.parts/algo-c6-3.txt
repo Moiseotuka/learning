@@ -1,0 +1,168 @@
+L'étape de codage transforme le pseudocode et les intentions de conception en un programme exécutable, correct d'abord, lisible ensuite, rapide seulement lorsque la mesure l'exige. L'objectif de cette section n'est pas d'apprendre Python — le parcours Python du site couvre cette tâche bien mieux — mais de fixer les règles de travail qui rendent un projet algorithmique mesurable et défendable. Un code qui ne peut pas être mesuré isolément, ou dont les fonctions ont des effets de bord cachés, rend le banc de mesure inopérant et condamne le projet à des affirmations vagues. Voici donc les règles d'écriture que vous appliquerez, quel que soit votre sujet.
+
+Première règle : séparez la fonction calcul de tout ce qui n'est pas calcul. L'entrée-sortie sur disque, l'affichage, la génération des données de test, la lecture du dossier, tout cela se fait en dehors de la fonction que vous chronométrerez. La fonction mesurée reçoit des structures de données déjà en mémoire et renvoie un résultat, sans imprimer, sans écrire de fichier, sans ouvrir de réseau. Cette isolation n'est pas une coquetterie : elle garantit que le temps mesuré correspond au travail algorithmique que vous revendiquez, et non à la lueur du disque dur ou à la latence d'un lecteur de fichiers, dont la variabilité ferait s'effondrer toute votre étude.
+
+Deuxième règle : écrivez une fonction par variante, avec la même signature et le même contrat de sortie. Si votre variante simple s'appelle trier_par_insertion et reçoit une liste de couples, que votre variante optimisée s'appelle trier_natif et reçoive la même liste de couples, alors le banc de mesure pourra les appeler indifféremment dans une boucle commune. Ce contrat commun est ce qui rend la comparaison légitime. Si les deux fonctions renvoient des formes de résultat différentes, vous serez tenté de formater l'une et pas l'autre, et la comparaison sera faussée par du travail asymétrique.
+
+Troisième règle : traitez les cas limites dans la fonction elle-même, et testez-les avant toute mesure. Une fonction de tri qui s'arrête net sur une liste vide produira une exception pendant le banc de mesure, et l'exception consumera du temps sans rapport avec votre algorithme. Écrivez donc dès la première version les gardes de début de fonction : si la liste est vide, renvoyer la liste vide ; si le dossier n'existe pas, lever une erreur explicite ; si la grille ne contient pas de case de départ, renvoyer un résultat d'échec signalé. Ces gardes coûtent quelques lignes et vous évitent des heures de débogage déguisé en investigation de performance.
+
+Quatrième règle : limitez les effets de bord des structures de données. En Python, certaines méthodes modifient la liste appelante, d'autres en renvoient une nouvelle. Si votre fonction de tri modifie la liste reçue, vous devrez la recopier avant chaque exécution de mesure, sinon la deuxième exécution partira d'une liste déjà triée et mesurera quelque chose de complètement différent. Cette précaution, copie défensive avant appel, est si importante qu'elle mérite d'être écrite explicitement dans le banc de mesure, avec un commentaire dans le code, afin que le lecteur du rapport comprenne que chaque exécution voit des données identiques.
+
+Voici un exemple de structure de fonction pour un tri par insertion sur une liste de couples nom, taille, du type de celle que produit l'analyse d'un répertoire. Le code est volontairement simple, sans fioriture d'optimisation, parce qu'il joue le rôle de référence mesurable.
+
+```python
+def trier_par_insertion(entrees):
+    if not entrees:
+        return []
+    resultat = list(entrees)
+    for i in range(1, len(resultat)):
+        courant = resultat[i]
+        j = i - 1
+        while j >= 0 and resultat[j][1] > courant[1]:
+            resultat[j + 1] = resultat[j]
+            j -= 1
+        resultat[j + 1] = courant
+    return resultat
+```
+
+Remarquez les trois décisions prises dans ce morceau de code. La fonction renvoie une nouvelle liste au lieu de modifier l'argument, ce qui protège le banc de mesure contre la contamination entre exécutions. Le critère de comparaison, ici l'élément d'indice un, est isolé dans une expression unique, ce qui rendra plus facile la variante multi-critères. Enfin, le cas de la liste vide est traité en tête, conformément à la méthode du premier chapitre, et il rend la fonction sûre pour le cas limite sans condition supplémentaire.
+
+La cinquième règle concerne la récursion, si votre sujet l'utilise, par exemple pour un puzzle résolu par découpage de sous-positions. Dans ce cas, mesurez séparément la profondeur d'appels que votre implémentation tolère, et comparez-la à la taille des instances que vous générez. Il n'y a rien de plus désagréable que de voir une variante récursive gagner toutes les mesures moyennes pour planter sur le grand jeu de test, faute de pile. Si ce risque existe, prévoyez d'écriture une variante itérative, ou limitez explicitement la profondeur dans la fiche d'analyse, et signalez-le dans le rapport : la limite est un choix assumé, pas un accident.
+
+Enfin, consacrez un temps, même court, à des tests de cohérence avant de mesurer. Sur le petit jeu de données, vérifiez à la main que le résultat est celui attendu. Vérifiez que deux appels consécutifs sur des copies identiques donnent le même résultat, ce qui détecte les dépendances à l'état global. Vérifiez que la fonction résiste aux valeurs égales, aux noms vides, aux éléments en ordre inverse. Ces tests ne sont pas une perte de temps par rapport au banc de mesure : ils sont le préalable qui rend la mesure interprétable, puisqu'une fonction fausse peut être rapide de façon très convaincante.
+
+## Étape quatre : construire un banc de mesure avec timeit
+
+Le banc de mesure est le cœur technique du projet, et sa construction obéit à des règles précises. L'outil que nous allons utiliser est le module timeit de la bibliothèque standard de Python, conçu précisément pour exécuter une expression ou un appel de fonction un grand nombre de fois et en reporter le temps total. Son avantage sur une simple boucle chronométrée avec time.perf_counter est qu'il neutralise une partie du bruit : il répète automatiquement, il exclut le temps de construction de l'appel lorsqu'on l'y invite, et il renvoie une statistique de synthèse. Commençons par voir à quoi ressemble un banc minimal, puis nous détaillerons chaque réglage.
+
+Le squelette d'un banc de mesure comporte quatre parties. La première prépare les données, hors de toute zone chronométriee. La seconde définit les fonctions à comparer, avec la même signature. La troisième construit des amorces d'appel, des petits bouts de code qui appellent chaque fonction sur des données préparées, afin que timeit ne mesure que le travail intérieur. La quatrième exécute timeit pour chaque variante et affiche les résultats dans un tableau stable. Voici une implémentation complète, commentée, que vous adapterez à votre sujet en changeant les données et les fonctions.
+
+```python
+import timeit
+import random
+
+def preparer_donnees(taille):
+    return [(f"fichier_{i}.txt", random.randint(0, 10000)) for i in range(taille)]
+
+def trier_par_insertion(entrees):
+    resultat = list(entrees)
+    for i in range(1, len(resultat)):
+        courant = resultat[i]
+        j = i - 1
+        while j >= 0 and resultat[j][1] > courant[1]:
+            resultat[j + 1] = resultat[j]
+            j -= 1
+        resultat[j + 1] = courant
+    return resultat
+
+def trier_natif(entrees):
+    return sorted(entrees, key=lambda item: item[1])
+
+def mesurer(taille, repetitions=5, nombre_appels=20):
+    donnees = preparer_donnees(taille)
+    durees_insertion = []
+    durees_natif = []
+    for _ in range(repetitions):
+        copie_i = list(donnees)
+        durees_insertion.append(
+            timeit.timeit(lambda: trier_par_insertion(copie_i), number=nombre_appels)
+        )
+        copie_n = list(donnees)
+        durees_natif.append(
+            timeit.timeit(lambda: trier_natif(copie_n), number=nombre_appels)
+        )
+    return durees_insertion, durees_natif
+
+if __name__ == "__main__":
+    for taille in (100, 500, 1000):
+        durees_i, durees_n = mesurer(taille)
+        meilleure_i = min(durees_i)
+        meilleure_n = min(durees_n)
+        print(taille, "insertion", meilleure_i, "natif", meilleure_n)
+```
+
+Ce banc, tel quel, est déjà instructif, mais il contient plusieurs défauts que la section suivante va corriger. Le plus grave est l'usage du minimum comme statistique de synthèse : le minimum correspond à l'exécution la plus favorable, celle où la machine n'a subi aucune interruption, et il tend à sous-estimer le coût réel, d'autant plus que la durée totale est courte. Le second défaut est l'absence de réchauffement : la première exécution d'une fonction paye le chargement des modules, la compilation interprétée des premiers chemins, et le remplissage des caches, ce qui gonfle artificiellement certaines mesures. Le troisième défaut est l'absence de statistique de dispersion, qui empêche de savoir si l'écart entre deux mesures est significatif ou relatif au bruit.
+
+Le réglage du nombre d'appels, l'argument number de timeit, doit être choisi pour que chaque mesure dure au moins quelques dizaines de millisecondes, et de préférence une fraction de seconde. Trop peu d'appels, et le chronomètre mesurera surtout la granularité du système et les interruptions ; trop d'appels, et le programme entier deviendra long sans gain d'information. Une bonne pratique consiste à calibrer : on augmente le nombre d'appels tant que la durée totale reste inférieure à un seuil confortable, disons une seconde, puis on fige ce nombre pour toutes les variantes et toutes les tailles, afin de rester comparable.
+
+La préparation des données mérite une attention particulière, en particulier si vous générez des listes aléatoires. L'aléatoire doit être initialisé de façon déterministe, avec une graine fixe, sinon deux bancs de mesure voisins travailleront sur des instances différentes et vos comparaisons perdront tout sens. De plus, la génération doit se faire une fois par taille, puisque toutes les exécutions mesurées voient des copies de la même instance, ce qui isole l'effet de l'algorithme de l'effet de la difficulté de la donnée. Si vous voulez étudier l'influence de la forme des données, triées, inverses, aléatoires, ajoutez une dimension explicite au banc plutôt que de la laisser varier par accident.
+
+Un mot sur le chronomètre lui-même. time.perf_counter est le compteur le plus fin disponible en Python pour mesurer des durées courantes, et c'est lui que timeit utilise en interne. time.time, lui, mesure le temps écoulé depuis une époque de référence, ce qui le rend sensible aux réglages de l'horloge système et inadapté à une chronométrie fine. Ne confondez pas non plus la durée d'exécution d'un algorithme et la durée de bout en bout d'un script, qui inclut la lecture de fichiers, l'affichage et la construction des structures : le projet porte sur la première, et le banc doit l'isoler rigoureusement.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Stopwatch,_1810201155,_ako.jpg/960px-Stopwatch,_1810201155,_ako.jpg
+| Une ancienne montre à chronomètre rappelle qu'une mesure fiable exige un protocole, pas seulement un coup d'œil sur un afficheur.
+```
+
+## Lire ses mesures : répétitions, médiane et dispersion
+
+Une fois le banc en place, la question devient : que faire de toutes ces durées brutes ? La réponse tient en trois gestes : répéter suffisamment, résumer par la médiane, et documenter la dispersion. Le premier geste protège contre le bruit accidentel ; le second protège contre l'influence des valeurs extrêmes ; le troisième rend honnête la comparaison. Ensemble, ils transforment un nuage de nombres en un résultat présentable, et ils constituent la compétence de mesure qui manque le plus souvent aux premiers projets.
+
+La répétition se fait à deux niveaux. Le niveau bas est le nombre d'appels regroupés dans un même appel à timeit, qui noie le bruit de granularité. Le niveau haut est le nombre de mesures indépendantes, généralement entre cinq et vingt, qui permet d'observer la variabilité d'un banc complet. Ces deux niveaux ne sont pas interchangeables : dix mille appels dans une seule mesure donnent une durée stable mais une seule réalisation du banc ; cinq mesures de cent appels donnent cinq réalisations, chacune un peu différente, ce qui est exactement ce dont vous avez besoin pour estimer la fiabilité de votre comparaison.
+
+Le choix de la médiane comme statistique de synthèse se justifie par un fait simple : les mesures de durée sur un système multitâche contiennent presque toujours quelques valeurs anormalement élevées, dues à une tâche d'arrière-plan, à un ramasse-miettes, à un micro-variant de fréquence. Ces valeurs extrêmes faussent la moyenne vers le haut, alors qu'elles ne représentent pas le comportement courant de l'algorithme. La médiane, valeur qui sépare la moitié inférieure de la moitié supérieure de l'échantillon, ignore presque totalement ces pics et reflète beaucoup mieux le centre de la distribution. C'est pourquoi les bancs de mesure sérieux rapportent la médiane, parfois accompagnée du quartile inférieur et du quartile supérieur, plutôt qu'une simple moyenne.
+
+La dispersion se documente au minimum en affichant la valeur minimale et la valeur maximale des mesures, et mieux encore en calculant l'écart interquartile, distance entre le premier et le troisième quartile. Un banc dont la médiane est de dix millisecondes et l'écart interquartile de une milliseconde est beaucoup plus fiable qu'un banc dont la médiane est de dix millisecondes et l'écart interquartile de six millisecondes. Lorsque vous comparerez deux variantes, un écart interquartile plus petit que l'écart de médianes entre les deux variantes signifiera que la différence est probablement réelle ; un écart interquartile plus grand signifiera qu'il faudra augmenter le nombre de répétitions ou suspecter une interférence avant d'affirmer quoi que ce soit.
+
+Voici comment enrichir le banc précédent pour qu'il produise médiane et dispersion, en utilisant le module statistics de la bibliothèque standard.
+
+```python
+import timeit
+import random
+import statistics
+
+def preparer_donnees(taille):
+    random.seed(42)
+    return [(f"fichier_{i}.txt", random.randint(0, 10000)) for i in range(taille)]
+
+def trier_par_insertion(entrees):
+    resultat = list(entrees)
+    for i in range(1, len(resultat)):
+        courant = resultat[i]
+        j = i - 1
+        while j >= 0 and resultat[j][1] > courant[1]:
+            resultat[j + 1] = resultat[j]
+            j -= 1
+        resultat[j + 1] = courant
+    return resultat
+
+def trier_natif(entrees):
+    return sorted(entrees, key=lambda item: item[1])
+
+def mesurer(taille, repetitions=15, nombre_appels=20):
+    donnees = preparer_donnees(taille)
+    durees_i = []
+    durees_n = []
+    for _ in range(5):
+        trier_par_insertion(list(donnees))
+        trier_natif(list(donnees))
+    for _ in range(repetitions):
+        copie_i = list(donnees)
+        durees_i.append(
+            timeit.timeit(lambda: trier_par_insertion(copie_i), number=nombre_appels)
+        )
+        copie_n = list(donnees)
+        durees_n.append(
+            timeit.timeit(lambda: trier_natif(copie_n), number=nombre_appels)
+        )
+    return durees_i, durees_n
+
+def synthese(durees, nombre_appels):
+    par_appel = [d / nombre_appels for d in durees]
+    return {
+        "median": statistics.median(par_appel),
+        "q1": statistics.quantiles(par_appel, n=4)[0],
+        "q3": statistics.quantiles(par_appel, n=4)[2],
+    }
+
+if __name__ == "__main__":
+    for taille in (100, 500, 1000):
+        durees_i, durees_n = mesurer(taille)
+        synthese_i = synthese(durees_i, 20)
+        synthese_n = synthese(durees_n, 20)
+        print(taille, synthese_i, synthese_n)
+```
+
+Ce banc contient maintenant les quatre ingrédients d'une mesure défendable : des données préparées hors mesure avec graine fixe, une phase de réchauffement explicite, un nombre de mesures suffisant, et une synthèse par médiane accompagnée de quartiles. Il reste cependant une limite à assumer dans le rapport : la mesure porte sur une machine donnée, à un instant donné, avec un interpréteur donné. Les chiffres absolus ne sont donc pas transposables tels quels à une autre machine ; en revanche les rapports de vitesse entre variantes, et leur évolution avec la taille des données, sont beaucoup plus transposables, et c'est sur eux que doit porter la discussion.
+
+Une dernière habitude complète la lecture des mesures : toujours mesurer au moins trois tailles de données. Une seule taille ne dit rien de l'ordre de grandeur de la croissance du coût, et elle peut placer artificiellement une variante dans une zone favorable. Trois tailles, par exemple cent, cinq cents et mille éléments, commencent à dessiner une tendance, et elles permettent de vérifier la prédiction de conception : si vous attendiez un rapport de croissance linéaire contre quadratique, vous devez le voir apparaître dans les mesures, sous peine de devoir revoir votre analyse. La comparaison des croissances, plus que la comparaison des chiffres absolus, est le véritable objet du projet.

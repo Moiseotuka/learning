@@ -1,0 +1,421 @@
+Bienvenue dans le deuxième chapitre du parcours DevOps. Le premier chapitre vous a donné les gestes essentiels de Git : créer un dépôt, ajouter des fichiers à l'index, produire un commit, pousser sur un serveur distant, récupérer les travaux des autres et ouvrir une branche pour isoler un correctif. Ces commandes suffisent pour travailler seul sur un projet court, mais elles ne tiennent pas face à la vraie vie d'une équipe : une branche qui dérive pendant deux semaines, un correctif d'urgence à répliquer sur trois versions, un travail suspendu que l'on croit perdu, une remise à zéro trop zélé qui semble avoir détruit trois jours de travail. Ce chapitre vous donne les commandes et les réflexes pour ces situations.
+
+À la fin de cette leçon, vous saurez réécrire proprement l'extrémité d'une branche avec le rebase, y compris en mode interactif pour fusionner, renuméroter ou reformuler vos propres commits. Vous saurez transplanter un correctif précis d'une branche à l'autre avec le cherry-pick, suspendre un travail inachevé sans le committer avec le stash, et retrouver n'importe quel état passé, même celui que vous croyez détruit, grâce au reflog. Vous connaîtrez enfin la règle d'or qui sépare les opérations privées des opérations partagées, celle qui décide de savoir si une commande est anodine ou potentiellement désastreuse pour vos collègues.
+
+La méthode de travail reste celle du chapitre précédent, adaptée à un outil qui se pratique au clavier. Créez un dépôt d'entraînement vide, avec quelques fichiers de texte sans importance, et exécutez chaque commande sur ce terrain d'essai avant de l'utiliser sur un vrai projet. Annoncez votre prédiction avant chaque exécution : si vous estimez que le rebase va replacer trois commits au-dessus de la branche principale, écrivez-le noir sur blanc, puis vérifiez avec l'historique affiché. L'écart entre votre prédiction et la sortie réelle de Git est votre zone d'apprentissage, et c'est la seule qui compte. Gardez ce dépôt d'essai sous la main tout au long du chapitre : les sections suivantes le sollicitent l'une après l'autre.
+
+Un mot sur ce que cette leçon n'est pas. Elle n'est pas un cours sur les mécanismes internes de Git : les objets blob, arbre et commit, les références symboliques et les paquets ne sont évoqués qu'autant qu'ils éclairent une commande. Elle n'est pas non plus un manuel exhaustif des options : chaque commande est présentée avec son usage quotidien et ses deux ou trois options qui comptent vraiment, les autres se découvrant dans la page d'aide quand le besoin survient. Ce qu'elle suppose en revanche, c'est que vous savez déjà créer un commit, ouvrir une branche et pousser, et que vous acceptez de passer une heure dans un dépôt jetable pour gagner ensuite des heures sur vos projets réels.
+
+## Le rebase : rejouer une histoire proprement
+
+Le rebase répond à un problème précis. Vous avez ouvert il y a dix jours une branche de fonctionnalité, la branche principale a avancé de vingt-cinq commits entre-temps, et vos retours de fusion contiennent des conflits qui mélangent vos changements et ceux des autres. Sans rebase, la fusion finale produira un historique où vos commits et leurs commits s'entremêlent, avec des points de fusion successifs difficiles à lire dans six mois. Avec un rebase, vous rejouez vos propres commits au-dessus de la pointe actuelle de la branche principale : l'historique devient une ligne droite, vos modifications restent regroupées, et chaque conflit se résout une fois pour toutes, commit par commit.
+
+Concrètement, la commande la plus courante s'écrit git rebase main, exécutée depuis votre branche de fonctionnalité. Git repère le point de divergence, fabrique une copie de vos commits un par un, les applique sur la pointe de main, puis déplace votre branche sur ce nouveau pied. Le contenu final du travail est le même que celui d'une fusion, mais l'historique raconte une autre histoire : non plus deux lignes qui se rejoignent, mais une ligne unique rebâtie sur la base la plus récente. C'est cette différence de narration, et elle seule, qui motive l'opération : le rebase ne change pas le résultat fonctionnel, il change la lisibilité du passé.
+
+Le mode interactif, déclenché par git rebase -i main, est l'outil de sculpteur du même geste. Git ouvre un éditeur listant vos commits du plus ancien au plus récent, chacun précédé d'une action à choisir : retenir, réprimer, fusionner, renuméroter, reformuler ou arrêter. Fusionner deux commits en un, souvent appelé squash, permet de transformer une série de correctifs de mise en place en un seul commit explicite. Reformuler permet de réécrire le message final une fois le travail terminé. La boucle classique d'un développeur expérimenté tient en trois temps : travailler par petits commits provisoires, pousser, puis avant la revue, réécrire l'extrémité pour n'offrir au lecteur que des étapes logiques et correctement nommées.
+
+```bash
+git checkout feature-paiement
+git fetch origin
+git rebase -i origin/main
+# éditeur : choisir fixup, reword, renuméroter selon le plan
+git push --force-with-lease origin feature-paiement
+```
+
+L'option --force-with-lease mérite une explication, car elle distingue l'amateur du professionnel. Un rebase a déplacé des commits déjà connus du serveur : votre poussée suivante sera refusée, car le serveur détient des objets que votre branche ne contient plus. La solution naive, git push --force, écrase la branche distante sans poser de question. La solution sûre, --force-with-lease, vérifie d'abord que la branche distante est toujours à l'endroit que vous aviez au dernier fetch : si quelqu'un a poussé entre-temps, la poussée échoue au lieu d'écraser son travail. Adoptez-la par défaut, elle ne vous coûte rien et vous sauve la mise.
+
+La règle d'or du rebase tient en une phrase : ne rebasedez jamais une branche que d'autres ont déjà récupérée. Rebaser réécrit l'historique, donc tous les commits postérieurs au point de divergence changent d'identité. Vos collègues, qui travaillent encore sur les anciennes versions, se retrouveront avec un historique dupliqué à l'intégrer, et les prochaines fusions seront un enfer de conflits. Réécrivez vos propres commits avant publication, autant de fois que vous voulez ; une fois la branche partagée et stable, privilégiez la fusion ou, en dernier recours, coordonnez un rebase collectif annoncé à l'avance et assorti d'une poussée force contrôlée par tous.
+
+Enfin, le rebase possède une variante utile : git pull --rebase. Par défaut, git pull crée un commit de fusion dès que la branche distante a avancé, ce qui parseme l'historique local de nœuds de fusion dès la première synchronisation. L'option --rebase rejoue à la place vos commits non poussés au-dessus de l'origine, préservant la ligne droite. Beaucoup d'équipes la rendent obligatoire pour les branches longue durée via la configuration git config pull.rebase true. Attention toutefois : même cette option reste interdite sur une branche que vous partagez et sur laquelle d'autres ont des commits en attente, car elle réécrit alors votre propre travail publié.
+
+## Le cherry-pick : transplanter un correctif
+
+Le cherry-pick sert à déplacer un changement précis, identifié par son commit, d'une branche vers une autre sans emporter le reste de l'histoire. Son nom évoque la cueillette : vous ne prenez que la cerise que vous voulez. L'usage typique est le correctif d'urgence. Une faille est corrigée sur la branche de développement, mais la version 2.3 en production, qui ne recevra plus de fonctionnalités, doit bénéficier du même correctif. Plutôt que de refaire le correctif à la main, vous repérez son identifiant avec git log, vous basculez sur la branche de maintenance, et vous appliquez git cherry-pick a1b2c3d. Le correctif devient un nouveau commit sur la branche cible, avec le même contenu mais un identifiant propre à cette ligne d'histoire.
+
+Plusieurs options changent l'issue. L'option -n, pour no-commit, applique les changements dans la zone de préparation sans produire de commit, ce qui permet de rassembler plusieurs cherry-picks en une seule opération finale. L'option -x ajoute au message la mention du commit d'origine, sous la forme cherry-picked from commit a1b2c3d : c'est un investissement de lisibilité que vous apprécierez quand, un an plus tard, une anomalie vous demandera de savoir si le correctif existe déjà sur telle version. L'option -e ouvre l'éditeur de message, et l'option --abort annule proprement l'opération si les conflits deviennent ingérables.
+
+```bash
+git log --oneline --grep="faille" main
+git checkout release-2.3
+git cherry-pick -x a1b2c3d
+# en cas de conflit :
+git status
+git add <fichiers-resolus>
+git cherry-pick --continue
+```
+
+Les conflits sont fréquents, et leur résolution ressemble à celle d'une fusion : Git arrête, signale les fichiers en désaccord, et vous demande de trancher avant de continuer. Si le contexte a trop changé entre les deux branches, le correctif peut ne plus s'appliquer du tout ; vous le résolvez alors manuellement, ou vous abandonnez avec cherry-pick --abort. C'est aussi le moment de mesurer une réalité d'équipe : plus les branches vivent longtemps séparément, plus les cherry-picks coûtent cher. Un correctif transplante un contenu, pas une relation historique : si la branche cible évolue ensuite indépendamment, les deux copies du correctif divergeront silencieusement.
+
+Deux écueils reviennent souvent. Le premier consiste à cherry-pick une série entière de dix commits, un par un, pour la reproduire sur une autre branche : le résultat fonctionne, mais vous dupliquez toute une histoire, et les deux lignes ne seront plus synchrones. Dès qu'il s'agit d'une série, préférez une fusion ou un rebase, qui conservent la relation d'origine. Le second écueil est de cherry-picker un commit déjà présent sur la branche cible : l'opération fabrique alors un doublon au contenu identique, et la prochaine fusion affichera un conflit absurde. Vérifiez avec git log --oneline la présence du correctif avant d'agir, ou recherchez le marqueur cherry-picked from si vos équipes utilisent systématiquement l'option -x.
+
+Enfin, gardez à l'esprit ce que le cherry-pick ne fait pas : il ne déplace pas le commit, il le recopie. L'original reste sur sa branche d'origine. Cette distinction devient importante quand vous décidez d'abandonner une fonctionnalité : annuler une branche abandonnée n'annule pas les correctifs que vous en avez prélevés ailleurs. Pensez au cherry-pick comme à un outil de distribution ponctuelle, excellent pour les correctifs isolés, mal adapté à la relocalisation de travail continu.
+
+## Le stash : suspendre sans committer
+
+Le stash est le tiroir de secours de Git. Vous êtes au milieu d'une modification, le responsable de projet vous demande un correctif urgent sur une autre branche, et vos fichiers sont dans un état inachevé : certains prêts, d'autres à moitié, sans que le travail mérite un commit. Fermer une session sans rien faire revient à tout laisser exposé ; créer un commit bâclé pollue l'historique. Le stash résout le dilemme en rangeant l'état courant de la zone de préparation et du répertoire de travail dans une pile à part, puis en remettant le dépôt dans l'état du dernier commit. Vous basculez, traitez l'urgence, et vous revenez reprendre exactement où vous étiez.
+
+La séquence quotidienne tient en trois commandes. git stash push -u enregistre les modifications suivies, y compris les fichiers non suivis grâce à l'option -u, puis nettoie le répertoire. git stash list affiche la pile, chaque entrée étant identifiée par un identifiant du type stash@ plus deux et un message généré automatiquement. Après votre passage sur la branche d'urgence, git stash pop réapplique la première entrée et la supprime de la pile. Si vous hésitez sur la fin de l'opération, remplacez pop par apply : le contenu est restauré mais l'entrée reste enregistrée, ce qui vous laisse une copie de sécurité.
+
+```bash
+git stash push -u -m "formulaire-commande, validation moitié faite"
+git stash list
+git stash apply stash@{1}
+git stash drop stash@{1}
+```
+
+L'option -m est souvent négligée et se révèle précieuse au bout d'une semaine. Sans message, la pile affiche un résumé généré depuis le premier fichier modifié, ce qui devient illisible quand vous cumulez trois suspendus. Un intitulé court qui décrit l'état du travail vous évite de restaurer la mauvaise entrée. Pour une entrée qui mérite vraiment d'être conservée, créez une branche dédiée avec git stash branch nom-de-la-branche : Git ouvre une branche à partir du commit d'ancrage du stash, y applique le contenu et retire l'entrée de la pile. C'est la sortie propre lorsque le travail suspendu s'avère être le début d'une fonctionnalité à part entière.
+
+Les pièges du stash sont de deux ordres. D'abord, la pile n'est pas sauvegardée : elle vit dans le dépôt local, disparaît avec votre clone, et expire au bout de quatre-vingt-dix jours par défaut, puisque git fsck expire automatiquement les entrées les plus anciennes. Ne confiez jamais au stash seul une journée de travail : un commit provisoire sur une branche jetable, poussé sur le serveur, est infiniment plus sûr. Ensuite, les fichiers non suivis sans l'option -u restent en place et peuvent se retrouver écrasés par l'application d'un stash plus ancien, ou masqués par git stash pop qui les réintroduit à côté de fichiers créés entre-temps.
+
+Un réflexe professionnel consiste d'ailleurs à se passer du stash dès que le travail dépasse quelques heures. Un commit avec un message tel que wip avant démonstration, poussé sur une branche personnelle, offre les mêmes avantages que le stash et deux de plus : il traverse les clones, il est versionné et commentable. Réservez le stash aux suspendus très courts, de quelques minutes à quelques heures, où la commodité l'emporte sur la pérennité. Et notez au passage que le stash ne suit pas les commits : si vous committez puis oubliez d'ajouter un fichier, il faudra le stasher séparément, ce que l'option -u fait précisément.
+
+## Le reflog : l'archive qui sauve
+
+Le reflog, abréviation de reference log, est l'historique local des déplacements de vos références. Chaque fois que HEAD change de position, que ce soit par un commit, un checkout, un rebase, une fusion, un reset ou un ammend, Git note l'opération et l'ancienne valeur dans un journal vivant dans le répertoire de travail. Ce journal n'est pas poussé sur le serveur, il n'appartient qu'à votre clone, et il vous donne un accès direct à n'importe quel état récent. C'est le filet de sécurité de Git : presque rien n'est définitif tant que le reflog n'a pas expiré.
+
+La commande git reflog affiche une liste dont chaque ligne commence par un identifiant du type HEAD moins trois, suivi de l'opération et de son message. Chaque identifiant désigne un état précis du dépôt. Pour revenir à l'un d'eux, vous disposez de deux gestes. git reset --hard HEAD plus trois replace la branche courante sur cet état, en écrasant le répertoire de travail. Une variante plus prudente consiste à créer une branche de récupération avec git branch sauvegarde HEAD plus trois, ce qui fige l'état dans une référence stable sans rien détruire, puis à examiner les choses à tête reposée. Préférez toujours cette seconde voie quand l'état récupéré contient du travail que vous n'avez pas encore inspecté.
+
+```bash
+git reflog
+git reflog show main
+git branch recuperation main@{2}
+git reset --hard HEAD@{7}
+```
+
+Les scénarios de récupération les plus courants sont connus par cœur. Un git reset --hard prononcé trop tôt vient d'effacer trois heures de modifications non poussées : le reflog de HEAD les montre, un reset ou un checkout les ramène. Une branche vient d'être supprimée par erreur : git reflog show nom-de-la-branche conserve la trace de sa dernière position, et git branch -f nom-de-la-branche identifiant la recrée. Un rebase mal calibré a déplacé vos commits au-dessus de la mauvaise base : tant que vous n'avez pas poussé, git reset --hard HEAD plus l'identifiant d'avant l'opération vous rend exactement à votre point de départ.
+
+Une subtilité mérite attention : il existe deux reflog, l'une pour HEAD, l'autre pour chaque branche. git reflog show nom-de-la-branche montre les déplacements de cette branche, alors que git reflog montre ceux de HEAD. Dans la majorité des cas, c'est la première qui vous sauve, car après un reset, HEAD désigne désormais une position nouvelle et non pas celle que vous cherchez. Si vous avez déjà poussé un état détruit, le reflog local ne suffit plus : les objets existent toujours sur le serveur, mais il faudra les y chercher par leur identifiant, par exemple avec git fetch origin identifiant, puis créer une branche dessus.
+
+Deux limites encadrent ce filet de sécurité. La première est temporelle : par défaut, les entrées de reflog sont conservées quatre-vingt-dix jours, puis purgées par la récupération automatique des objets inutiles. Un état plus ancien peut donc disparaître définitivement, surtout si une commande de nettoyage agressif a été lancée. La seconde est géographique : le reflog n'existe que dans votre clone, il n'est donc d'aucun secours sur la machine d'un collègue ni après la perte de votre disque. La vraie protection combine les trois niveaux : un reflog pour les accidents du quotidien, une branche poussée pour les travaux importants, et un serveur distant qui conserve l'essentiel.
+
+La première leçon de ce chapitre vous a donné les commandes qui réécrivent ou déplacent du travail : rebase, cherry-pick, stash et reflog. Ces commandes sont puissantes, mais elles ne répondent pas à la question qui précède toute d'équipe : sous quel nom pousser, qui a le droit de fondre quoi, et à quel moment un travail devient-il intégré pour de bon. Ce sont des questions d'organisation, pas de syntaxe, et c'est précisément ce que traite cette leçon. Un dépôt bien tenu se juge à deux choses : la clarté de son historique et la prévisibilité de son cycle de livraison.
+
+Nous verrons d'abord les stratégies de branches dans leur principe, c'est-à-dire les conventions qui décident du nom des branches, de leur durée de vie et des fusions autorisées. Nous comparerons ensuite deux modèles aboutis qui occupent l'essentiel du débat : Git flow, qui structure le travail autour de versions planifiées, et le développement à trunk unique, qui pousse vers la branche principale plusieurs fois par jour. Nous terminerons par la question la plus fréquemment posée en revue de code : faut-il fusionner ou rebaser, et à quel moment exactement l'un cède-t-il la place à l'autre.
+
+Là encore, la méthode recommandée est pratique. Ouvrez un second dépôt d'entraînement, simulez une équipe de trois personnes avec trois clones, et jouez les scénarios : une fonctionnalité qui dérive deux semaines, un correctif à livrer pendant que la fonctionnalité est en cours, une version de maintenance qui refuse toute nouveauté. Annoncez à l'avance l'ordre des opérations et le nom des branches que vous allez créer, puis vérifiez si le résultat obtenu ressemble à ce que vous aviez prévu. Les modèles présentés ici ne sont pas des recettes à appliquer aveuglément : ce sont des vocabulaires communs qui permettent à une équipe de se comprendre sans réunion.
+
+Une remarque de cadre avant de commencer. Aucun de ces modèles n'est un standard universel, et choisir revient à trancher entre deux biens rivaux : la stabilité des versions livrées et la fréquence de livraison. Git flow favorise la première, le trunk-based la seconde, et beaucoup d'équipes réelles tiennent un chemin intermédiaire qui emprunte aux deux. L'objectif de cette leçon n'est donc pas de vous faire adhérer à un camp, mais de vous donner de quoi diagnostiquer votre propre contexte : rythme de publication, nombre de versions supportées simultanément, maturité des tests automatiques et appétence de l'équipe pour la fréquence des fusions.
+
+## Stratégies de branches : organiser le travail en équipe
+
+Une stratégie de branches est un contrat social. Elle dit quels noms portent les branches, qui peut les créer, combien de temps elles vivent, quelles fusions sont autorisées et sous quelles conditions une branche peut être supprimée. Sans contrat, chaque développeur improvise : l'un pousse sur la branche principale, l'autre ouvre une branche nommée d'après sa humeur, un troisième garde une branche de trois mois dont personne ne sait si elle est morte ou vivante. Le dépôt reste techniquement valide, mais son historique cesse de raconter quoi que ce soit d'intelligible.
+
+Le premier principe est celui de la branche d'intégration unique. Toute la discipline d'équipe repose sur une règle simple : la branche principale est toujours dans un état publiable. Elle ne contient jamais un travail à moitié fait, jamais une compilation cassée, jamais un correctif non testé. Pour que cette garantie tienne, elle doit être protégée côté serveur : des contrôles obligatoires, une revue au moins, et l'interdiction formelle des poussées forcées. Tant que ce verrou n'est pas posé, les autres modèles ne sont que de la décoration.
+
+Le second principe concerne la durée de vie. Plus une branche vit longtemps, plus elle diverge, et plus la fusion finale coûte cher : conflits multiples, comportements observés sur une base périmée, test à refaire presque en entier. Une bonne branche tient en heures ou en jours, pas en semaines. Ce n'est pas un dogme gratuit : c'est la conséquence directe de la courbe de conflits, qui croît avec l'écart entre les deux lignes d'histoire. Mesurez-la une fois dans votre équipe en notant le nombre de conflits par fusion selon l'âge de la branche, et l'argument devient difficile à éluder.
+
+Le troisième principe est la séparation des responsabilités. Une branche porte un objectif, un rédacteur, un identifiant de tâche et une date de fin estimée. On évite les branches fourre-tout qui accumulent des correctifs sans rapport, parce qu'elles rendent la revue impossible et la régression indosable : quand quelque chose casse après la fusion, impossible de savoir lequel des dix changements est responsable. La contrepartie pratique est le découpage fin des tâches : une branche par changement indépendant, si possible déployable seule.
+
+```bash
+git switch -c feature/2041-panier-vide
+git push -u origin feature/2041-panier-vide
+# une branche, un objectif, un identifiant de tâche
+git switch main
+git pull --ff-only
+```
+
+Le quatrième principe est la fusion vers le haut. Une branche de correctif naît de la version en production, reçoit le strict nécessaire, et son contenu est réintégré au développement par un mécanisme explicite. Une branche de fonctionnalité naît de la branche principale, vit peu, et disparaît dès la fusion. On évite les fusions en cascade, où une branche en absorbe une autre qui en absorbe une troisième : chaque niveau ajoute une difficulté de lecture et une occasion de casser quelque chose sans le vouloir. La topologie idéale ressemble à une étoile, avec la branche principale au centre.
+
+Le dernier principe est la suppression. Une branche fusionnée est supprimée immédiatement, sur le serveur comme en local, parce qu'une branche morte qui traîne multiplie les fausses bonnes idées : un collègue repart d'elle par mégarde, un outil l'affiche dans ses suggestions, et personne ne sait plus si elle est fusionnée. La plup des plateformes offrent la suppression automatique à la fusion, à activer sans hésiter. Inversement, une branche vivante mais inactive depuis longtemps doit être soit relancée, soit abandonnée publiquement, jamais laissée dans un entre-deux.
+
+## Git flow : le modèle à versions
+
+Git flow, formalisé en 2010 par Vincent Driessen, structure le travail autour de versions publiées. Il définit deux branches de flux permanentes et deux types de branche au long cours. La branche principale, main ou develop selon les implémentations, représente l'état du prochain développement ; develop rassemble les fonctionnalités terminées en attente de la prochaine version. Chaque version officielle naît d'une branche de préparation nommée release suivie du numéro, où l'on ne fait plus que des correctifs, des mises à jour de documentation et des ajustements de configuration. Enfin, chaque version publiée donne une branche de maintenance nommée hotfix ou maintenance suivie du numéro, seule autorisée à produire des correctifs d'urgence.
+
+Le cycle se déroule en cinq temps. Une fonctionnalité ouvre une branche issue de develop et y est fusionnée une fois terminée. Quand develop contient l'ensemble prévu pour la version, on ouvre une branche de préparation, on la stabilise, puis on la fusionne à la fois dans develop et dans main, avec une étiquette marquant le numéro de version. Une version de maintenance, elle, naît de main, reçoit le correctif, est fusionnée dans main pour publication immédiate, puis réintégrée dans develop pour éviter qu'elle ne réapparaisse à la version suivante.
+
+```bash
+git switch develop
+git switch -c feature/inventaire
+# ... travaux puis fusion vers develop
+git switch -c release/1.4 develop
+# ... correctifs de finition, documentation
+git switch main && git merge --no-ff release/1.4
+git tag -a v1.4 -m "version 1.4"
+git switch develop && git merge --no-ff release/1.4
+```
+
+Ce modèle porte des forces réelles. Il donne une cartographie immédiate du dépôt : le nom de la branche dit quel type de travail il contient, et un nouveau venu peut se repérer en quelques secondes. Il gère proprement le cas, très fréquent en logiciel embarqué ou en bibliothèque partagée, où plusieurs versions doivent rester supportées simultanément : la branche de maintenance de la version 1.2 vit encore quand la version 1.4 est sortie, et ses correctifs sont réintégrés sans ambiguïté. Il fournit aussi des points d'arrêt naturels pour la communication : la création d'une branche de préparation annonce une version, l'étiquette en marque la livraison.
+
+Ses limites apparaissent dès que la fréquence de publication augmente. Le modèle suppose des versions planifiées, avec une date de gel et une phase de stabilisation ; dans une équipe qui déploie chaque jour, cette mécanique devient de la bureaucratie. Il impose des fusions multiples pour chaque version, en main et en develop, d'où un risque d'erreur et une charge de synchronisation. Et il repose sur une discipline exigeante : des fusions sans fast-forward obligatoires, des réintégrations systématiques, des numéros de version tenus à jour. Une seule branche de maintenance oubliée dans develop produit un correctif perdu à la version suivante, accident classique du modèle.
+
+Il faut aussi mesurer le coût de sa complexité. Git flow comporte cinq types de branches et des règles de fusion croisées ; l'expliquer à un nouveau membre prend une heure, le faire respecter toute l'année en prend davantage. C'est pourquoi son auteur lui-même a précisé, sept ans plus tard, qu'il convenait aux logiciels à versionnement classique et non aux applications déployées en continu. Retenons la leçon de bon sens : Git flow est excellent quand vous livrez des versions numérotées que vos clients installent, et surdimensionné quand vous poussez en production plusieurs fois par jour.
+
+## Trunk-based : livrer souvent, de manière sûre
+
+Le développement à trunk unique, ou trunk-based development, part de l'hypothèse inverse : la branche principale est le seul lieu de travail durable, et les branches de fonctionnalité, si elles existent, vivent moins de vingt-quatre heures. Les développeurs y intègrent leur travail plusieurs fois par jour, directement ou par une branche très courte, et c'est l'intégration continue qui garantit que la ligne principale reste saine. L'historique devient une suite de petits pas, chacun étant potentiellement livrable, et les fusions de fin de sprint qui mobilisent toute l'équipe disparaissent.
+
+Le modèle tient par trois piliers. Le premier est la protection de la branche principale avec des contrôles automatiques : compilation, tests, analyse statique, parfois une vérification de performance. Un commit qui casse l'un de ces contrôles est rejeté avant même d'être intégré, ce qui rend le verrou crédible. Le second pilier est la modularisation du travail : tant qu'une fonctionnalité ne peut être fondue qu'en une semaine de modifications dispersées, le trunk-based est impossible ; il faut découper en incréments indépendants, derrière des drapeaux de fonctionnalité ou des API versionnées. Le troisième est la qualité des tests : sans une suite rapide et fiable, pousser plusieurs fois par jour revient à jouer à la roulette russe.
+
+Les drapeaux de fonctionnalité sont l'outil qui rend le modèle praticable. Une fonctionnalité inachevée est intégrée au code mais désactivée par une variable de configuration : elle ne modifie pas le comportement observable, donc elle peut vivre sur la branche principale sans risque. Quand elle est prête, on ouvre le drapeau pour tout le monde, puis on supprime le code mort dans les jours qui suivent. Le revers de la médaille est la dette que cela crée : des drapeaux oubliés, des branches conditionnelles qui se cumulent et finissent par rendre le code illisible. Une discipline de nettoyage est aussi importante que la discipline d'ouverture.
+
+```yaml
+# Extrait de configuration d'un drapeau de fonctionnalité
+flags:
+  panier-v2:
+    enabled: false
+    rollout_percent: 0
+    owner: equipe-paiement
+    expires: 2026-04-30
+    description: Nouveau calcul du panier, activation progressive.
+```
+
+La fusion vers le trunk se fait dans un ordre précis. On récupère la dernière version de la branche principale, on rebasede sa courte branche dessus pour résoudre les conflits au lieu de les reporter, on relance les tests localement, puis on pousse. La plateforme rejette la poussée si les contrôles échouent, et l'auteur doit corriger immédiatement, car ralentir l'équipe entière est considéré comme un incident. Cette obligation de réactivité est la contrepartie du modèle : personne ne peut travailler trois jours sur une branche qui ne compile plus.
+
+Les bénéfices sont mesurables. Les conflits deviennent petits et fréquents plutôt que rares et dévastateurs, parce que l'écart entre le travail local et l'intégration reste minime. Le temps de fusion, souvent chronométré dans les équipes matures, passe de plusieurs heures à quelques minutes. La livraison cesse d'être un événement pour devenir une routine, ce qui réduit le stress des mises en production et rend les régressions faciles à localiser : avec un correctif par pas, le coupable se trouve en une régression logique. En contrepartie, le modèle exige une maturité en tests et en outillage rarement atteinte du premier coup.
+
+## Merge ou rebase : trancher au quotidien
+
+La question revient à chaque synchronisation : pour intégrer les changements d'autrui, préférer la fusion ou le rebase ? Les deux aboutissent, à quelques détails près, au même contenu dans le dépôt, mais ils ne produisent pas le même historique, et c'est là que se joue le choix. La fusion conserve la vérité du passé : elle ajoute un nœud qui dit que deux lignes se sont rencontrées à cet instant, avec leurs deux parents. Le rebase réécrit le passé : il rejoue vos commits sur la nouvelle base et fabrique des identifiants neufs, si bien que plus rien ne mentionne l'existence de la branche d'origine.
+
+Cette différence a des conséquences pratiques. La fusion conserve l'information, donc elle résiste aux poussées forcées et se passe de coordination ; elle est le choix par défaut sûr pour les branches déjà partagées. Elle produit en revanche des historiques en graphe, avec des points de fusion qui parasitent les recherches et les lectures, surtout quand les synchronisations sont nombreuses. Le rebase donne une ligne droite, aisément lisible avec un affichage linéaire, idéale pour une branche personnelle ; il impose en contrepartie de réécrire des identifiants, donc de ne jamais l'appliquer à une branche que d'autres ont récupérée.
+
+En pratique, une règle unique suffit à 90 pour cent des situations. Avant publication, la branche vous appartient : rebasedez-la autant que vous voulez pour la rendre lisible. Après publication, elle appartient à l'équipe : fusionnez, ou rebasedez seulement si tout le monde est informé et prêt à réaligner son clone. La frontière est la première poussée sur le serveur. Avant, vous êtes seul responsable de votre historique ; après, chaque réécriture impose un coût à vos collègues, et ce coût n'est presque jamais justifié.
+
+Le tableau suivant résume les arbitrages dans les situations courantes.
+
+```table
+| Situation | Recommandation | Raison |
+| --- | --- | --- |
+| Branche personnelle jamais poussée | rebase | historique propre, aucun coût pour l'équipe |
+| Branche partagée, retours de revue | fusion ou rebase coordonné | réécriture dangereuse sans accord |
+| Synchronisation avant une fusion vers main | rebase court sur l'origine | conflits résolus une fois, pas à la fusion |
+| Branche de maintenance intégrée | fusion --no-ff | trace explicite du moment de l'intégration |
+| Rattrapage d'une branche très ancienne | rebase --onto ou abandon | réduire l'écart avant qu'il ne soit ingérable |
+```
+
+Les fusions sans fast-forward méritent une note, car elles sont souvent désactivées par défaut. Un simple git merge main peut déplacer la pointe de la branche principale sans créer de commit, ce qui fait disparaître la trace de la fusion dans l'historique. L'option --no-ff force la création d'un nœud, conservant l'information que deux lignes se sont rencontrées à ce moment précis. Les équipes qui recherchent un historique lisible et auditable l'utilisent pour les fusions de fonctionnalités et de versions, tout en laissant les synchronisations internes en mode fast-forward.
+
+Dernier point : le débat fusion contre rebase oppose rarement deux camps tranchés, mais deux cultures. Une équipe qui livre des versions à date fixe aime l'information complète laissée par les fusions. Une équipe qui pousse plusieurs fois par jour préfère la lisibilité du rebase et s'appuie sur des outils qui affichent l'ensemble des changements d'un intervalle plutôt que la structure du graphe. Essayez les deux trois semaines chacun, chronométrez le temps de fusion et le nombre de conflits, puis tranchez sur des faits. La bonne réponse est celle que votre équipe peut tenir durablement.
+
+Les deux premières leçons de ce chapitre ont mis en place l'outil : Git pour l'historique, les branches pour l'organisation. Manque le lien qui transforme ces conventions en résultats mesurables. Une équipe peut adopter les plus belles stratégies de branches et livrer quand même une fois par mois, après une soirée de compilations manuelles et de correctifs de dernière minute. La différence entre cette équipe et une équipe performante tient presque toujours à un même dispositif : une chaîne d'intégration et de livraison continues, déclenchée à chaque changement, qui compile, teste et met en préproduction sans intervention humaine.
+
+Cette leçon présente ce dispositif dans ses trois dimensions. D'abord les principes : ce que l'intégration continue exige réellement, au-delà du slogan, et ce qu'elle apporte quand elle est installée pour de bon. Ensuite l'outil de référence du monde GitHub, les workflows décrits en YAML et exécutés par des contrôleurs hébergés. Puis les grandes familles de pipelines, selon ce qu'ils déclenchent et ce qu'ils produisent. Enfin la fondation sur laquelle tout repose : les tests automatisés, sans lesquels une intégration continue ne fait qu'accélérer la diffusion des régressions.
+
+La méthode reste celle des leçons précédentes, avec une montée en charge. Pour les commandes Git, un dépôt jetable suffisait ; ici, il vous faudra un compte sur une plateforme d'hébergement et un dépôt vide poussé en ligne, afin de voir vos premiers workflows s'exécuter. Prédisez avant chaque exécution : d'abord ce que la chaîne va faire, ensuite le temps qu'elle mettra, enfin l'issue. Quand votre prédiction est fausse, l'écart vous apprend davantage que le succès. Si vous ne voulez pas encore publier, prévoyez un dépôt public sans contenu sensible : la majorité des plateformes offre des minutes gratuites pour les dépôts publics.
+
+Un cadre enfin sur ce que la continuité n'est pas. Elle n'est pas une obligation de déployer en production à chaque commit, et cette confusion nuit gravement à son adoption : livrer souvent et publier à chaque instant sont deux décisions distinctes, la seconde relevant de la confiance dans les tests et dans les outils de retour arrière. Elle n'est pas non plus un produit que l'on achète : les serveurs d'exécution, les orchestrateurs et les tableaux de bord ne créent aucune valeur tant que la chaîne ne reflète pas des vérifications que votre équipe juge réellement bloquantes. Ce qu'elle demande, en revanche, c'est la discipline de garder la chaîne verte : une chaîne cassée depuis deux jours est déjà une chaîne morte.
+
+## L'intégration continue : principes et bénéfices
+
+L'intégration continue, née dans les ateliers de fabrication et importée dans le logiciel au début des années deux mille, repose sur une idée simple : le travail de chacun est intégré dans la ligne principale plusieurs fois par jour, et chaque intégration est validée par une exécution automatique complète. L'objectif n'est pas la vitesse, c'est la réduction du risque. Plus l'intervalle entre deux intégrations est court, plus l'anomalie détectée se trouve proche de sa cause, et plus la correction est facile. Une divergence de deux semaines signifie des milliers de lignes modifiées entre-temps : retrouver l'auteur d'une régression devient une enquête ; une divergence de deux heures se résout en lisant les trois derniers commits.
+
+Le premier principe à appliquer est la fréquence. Intégrez au moins une fois par jour, idéalement à chaque poussée. Cette règle force une conséquence utile : les tâches doivent être découpées en incréments qui compilent et passent les tests seuls. Une branche de trois semaines qui ne peut être fusionnée qu'en bloc est le symptôme d'un découpage raté, et l'intégration continue rend ce symptôme visible très tôt. Le second principe est l'automatisation totale de la validation : compilation, tests, analyse statique, vérification du format et construction des artefacts s'exécutent sans exception humaine, car toute étape manuelle devient, à force, une étape sautée.
+
+Le troisième principe est l'immédiateté du retour. Une chaîne qui répond en quarante minutes n'informe plus personne : le développeur a changé de tâche, a oublié ce qu'il a poussé, et le diagnostic se fait dans de mauvaises conditions. Visez moins de dix minutes pour le cœur de la chaîne, et poussez les vérifications longues, comme les tests d'intégration ou d'analyse de sécurité, dans un pipeline séparé qui répond en parallèle. Le quatrième principe est la visibilité : l'état de la dernière exécution doit être visible sur la page du dépôt, et une défaillance doit notifier l'équipe, non un individu. Une chaîne verte ignorée vaut moins qu'une chaîne rouge affichée.
+
+```bash
+# Boucle locale qui reproduit ce que fera la chaîne distante
+npm ci
+npm run lint
+npm run build
+npm test -- --coverage
+docker build -t mon-api:$(git rev-parse --short HEAD) .
+```
+
+Les bénéfices se mesurent sur des indicateurs concrets. Le temps de fusion se réduit, car les conflits sont petits et les validations déjà faites. Le nombre d'anomalies en production diminue, puisqu'une part importante des régressions est captée avant l'intégration. Le temps de retour arrière se raccourcit aussi : si chaque livraison est petite, une livraison fautive se répare en désactivant un drapeau ou en redéployant la version précédente, au lieu d'ouvrir une nuit d'astreinte. Enfin, la charge cognitive baisse : personne ne garde en tête la liste des vérifications à faire avant de pousser, parce que la chaîne les exécute et les rappelle.
+
+Un coût existe et doit être assumé. Installer et maintenir une chaîne demande du temps : des machines d'exécution, des secrets à renouveler, des dépendances à figer, des tests à fiabiliser. Les premières semaines sont souvent plus lentes qu'avant, car les défauts cachés du projet remontent en masse. C'est le signe que la chaîne travaille. Le retour sur investissement vient ensuite, et il est durable à une condition : que l'équipe traite une chaîne rouge comme une priorité absolue, au-dessus de toute nouvelle fonctionnalité en cours.
+
+## GitHub Actions : décrire un pipeline en YAML
+
+GitHub Actions est le système d'automatisation intégré à GitHub. Un workflow est un fichier YAML placé dans le répertoire .github/workflows du dépôt, décrivant un ou plusieurs jobs, leurs déclencheurs, l'environnement d'exécution et les étapes à enchaîner. Au plus un événement correspond un déclenchement : une poussée sur une branche, l'ouverture d'une demande de fusion, un calendrier, un événement externe ou une exécution manuelle. Chaque job tourne sur une machine fraîche, éphémère, lancée puis détruite, ce qui garantit que deux exécutions ne se contaminent pas.
+
+L'unité d'exécution est l'étape, command. Une étape reçoit le code, installe ce qui manque, exécute une commande, et cède la main à la suivante ; la moindre erreur interrompt le job. Entre les étapes, les fichiers persistent, mais rien ne subsiste d'un job à l'autre : si un premier job produit une application compilée, il faut l'enregistrer en artefact pour que le suivant la récupère. Ce modèle, simple et strict, impose de penser la chaîne comme une série d'étapes courtes et reproductibles, chacune capable de fournir un message d'erreur compréhensible.
+
+```yaml
+name: validation
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+  livraison:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/publish.sh
+        env:
+          CLE_API: ${{ secrets.CLE_API }}
+```
+
+Le premier déclencheur, push sur main, valide les intégrations. Le second, pull_request, ajoute une validation à chaque demande de fusion, y compris lorsqu'elle est mise à jour : c'est là que la revue de code trouve une compilation fiable. La clé needs établit une dépendance entre jobs, si bien que la livraison n'a lieu qu'après le succès des tests. La condition if limite la livraison à la branche principale, évitant qu'une branche expérimentale ne publie des artefacts. Chaque job tourne sur ubuntu-latest, une machine virtuelle préparée à la volée.
+
+Les secrets méritent une attention particulière. Une valeur telle que la clé d'API ne doit jamais figurer dans le fichier du workflow ni dans le dépôt : elle se déclare dans les réglages du dépôt, puis se réinjecte à l'exécution via l'expression indiquée ci-dessus. Le serveur d'exécution les masque dans les journaux, mais rien n'empêche un code malicieux de les exfiltrer. Restreignez donc leur disponibilité aux seuls jobs qui en ont besoin, évitez les secrets sur les déclencheurs issus de demandes de fusion ouvertes par des contributeurs externes, et faites-les tourner régulièrement.
+
+Trois pratiques améliorent nettement la maintenabilité. La réutilisation, avec le mot-clé uses, permet d'appeler des actions existantes ou les vôtres plutôt que de réécrire des suites d'étapes identiques partout. Les déclencheurs limités aux chemins modifiés évitent de lancer la chaîne complète quand seule la documentation change. Enfin, la mise en cache des dépendances, comme l'option cache de l'action de configuration de Node, fait gagner des minutes à chaque exécution, ce qui rapproche le retour du seuil des dix minutes recommandé plus haut.
+
+## Types de pipelines : construire, tester, livrer
+
+Un pipeline désigne l'ensemble ordonné des opérations automatiques qui transforment un commit en un artefact exploitable, puis en une mise à disposition. Les équipes emploient souvent le même mot pour des chaînes différentes, ce qui brouille les discussions. Il est utile de distinguer trois familles, non pas comme des catégories exclusives, mais comme des étages d'un même immeuble : la chaîne de validation, la chaîne de livraison et la chaîne de déploiement.
+
+La chaîne de validation répond à une question : ce commit est-il intégrable ? Elle compile, exécute les tests unitaires et d'intégration, vérifie le format, lance l'analyse statique et parfois une analyse de dépendances. Elle produit peu d'artefacts durables et doit être la plus rapide possible. C'est elle qui bloque ou autorise une fusion, c'est donc elle qui porte la garantie de qualité. Ses caractéristiques attendues : moins de dix minutes, exécution à chaque demande de fusion, et un diagnostic clair indiquant l'étape fautive, pour que l'auteur corrige sans deviner.
+
+La chaîne de livraison répond à une autre question : que produit ce commit ? Elle construit l'application, la conteneurise, génère la documentation, produit les paquets et les binaires, puis les range en tant qu'artefacts versionnés par l'identifiant du commit. Elle tourne typiquement une fois par intégration réussie sur la branche principale, et son résultat doit être strictement reproductible : deux exécutions du même commit doivent donner le même contenu, ce qui suppose des dépendances figées, une horloge et un environnement de construction maîtrisés. Sans reproductibilité, impossible de garantir que ce qui a été testé est ce qui sera livré.
+
+```yaml
+name: livraison-conteneur
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: |
+            ghcr.io/equipe/api:${{ github.ref_name }}
+            ghcr.io/equipe/api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+La chaîne de déploiement répond à la dernière question : où ce contenu devient-il utilisable ? Elle pousse l'artefact vers un environnement, exécute les migrations, redémarre les services et vérifie que l'application répond. Les modèles de mise à disposition se distinguent par le moment et la fréquence du passage : déploiement continu applique chaque intégration validée en préproduction ; déploiement par étapes progresse d'un pourcentage d'utilisateurs à la fois, avec arrêt automatique si les indicateurs se dégradent ; déploiement à la demande, qui reste déclenché par un humain sur un artefact déjà construit, modèle prudent pour les environnements réglementés.
+
+Un bon découpage ajoute un maillon souvent oublié : la validation post-déploiement. Une chaîne qui s'arrête après la mise en service ne sait pas si le service fonctionne réellement. Ajoutez une étape de vérification fumée, qui appelle quelques parcours critiques, et une étape de surveillance pendant une fenêtre de quelques minutes. Si ces contrôles échouent, le mécanisme de retour arrière se déclenche sans intervention. Ce dernier maillon transforme la chaîne d'un dispositif de construction en dispositif de confiance : c'est lui qui rend acceptable d'automatiser la décision de livrer.
+
+Pour choisir votre assemblage, partez de votre contrainte dominante. Une application web à déploiement fréquent gagnera une validation rapide, une livraison conteneurisée et un déploiement par étapes. Une bibliothèque publiée sur un registre n'a pas besoin de la dernière étape, mais exige une livraison reproductible et une gestion stricte des numéros de version. Un service embarqué ou soumis à audit préférera un déploiement à la demande, compensé par des validations particulièrement poussées. Le pipeline est un outil au service du produit, pas l'inverse.
+
+## Tests automatisés : la garde-fou de la livraison
+
+Tout ce qui précède repose sur un socle : des tests automatisés, exécutés à chaque passage, dont le résultat décide de la suite. Sans eux, la chaîne ne fait qu'accélérer la propagation des régressions, et l'équipe finit par désactiver ce qu'elle ne peut plus supporter. Les tests se rangent classiquement en une pyramide, qui est moins une obligation qu'un repère d'équilibre : de nombreux tests unitaires, rapides et ciblés ; un nombre moyen de tests d'intégration qui vérifient les frontières entre modules ; quelques tests de bout en bout, lents et fragiles, qui parcourent l'application comme un utilisateur.
+
+Le test unitaire vérifie la plus petite unité logique, une fonction ou une méthode, en isolant ses dépendances. Il doit tourner en millisecondes, sans base de données, sans réseau, sans disque, ce qui suppose de concevoir le code pour l'injectabilité : préférez recevoir une ressource en paramètre plutôt que de la créer à l'intérieur. Un bon test unitaire décrit un comportement, pas une implémentation : si le test casse à chaque refactoring interne alors que le comportement observable n'a pas changé, il est trop couplé. Visez la stabilité plutôt que le pourcentage de couverture, un chiffre élevé ne prouvant rien si les assertions sont vides.
+
+Le test d'intégration vérifie le montage de plusieurs pièces : un service avec sa base, un client avec son serveur, un parseur avec ses entrées réelles. Il capte les défauts que les tests unitaires ne peuvent pas voir, tels qu'une mauvaise requête, un type de champ incohérent ou une erreur de gestion de transaction. Il demande de l'environnement : conteneurs éphémères, jeu de données isolé, réinitialisation entre chaque exécution. Le piège classique est le partage d'état entre tests, source d'échecs aléatoires que l'on apprend à ignorer au lieu de les corriger ; un test d'intégration doit pouvoir être exécuté seul, dans n'importe quel ordre.
+
+Le test de bout en bout simifie un parcours utilisateur complet, du navigateur jusqu'à la base, en passant par l'interface. Il donne une sécurité très lisible, mais son coût est élevé : il est lent, dépend d'interfaces qui bougent, et rate tout ce qu'il ne couvre pas explicitement. Limitez-en le nombre à quelques parcours critiques, le paiement, la connexion, la publication d'un contenu, et exécutez-les sur un environnement de recette isolé. Enfin, n'oubliez pas les tests non fonctionnels, seuils de performance, vérifications d'accessibilité et analyses de dépendances : ils protègent des régressions que l'utilisateur ressent immédiatement et que la couverture de code ne détecte pas.
+
+```bash
+npm test -- --runInBand --coverage
+# puis seuils bloquants dans la chaîne
+npx nyc check-coverage --lines 80 --branches 70
+npx playwright test --reporter=dot
+```
+
+La maintenance des tests est un travail continu, à part entière. Un test qui échoue sans qu'on comprenne pourquoi est pire que pas de test : il habitue l'équipe à cliquer sur relancer, c'est-à-dire à ignorer la chaîne. Appliquez la même exigence aux tests qu'au code de production : nommez-les selon le comportement vérifié, supprimez les doublons, extrayez les utilitaires communs, et traitez tout échec flaky comme une anomalie bloquante avec une date de résolution. Inversement, refusez la course au chiffre : une couverture imposée par décret produit des tests qui vérifient des détails insignifiants, alors que de vraies assertions sur les cas limites protègent davantage avec moins de lignes.
+
+Un dernier principe fait le lien avec tout ce qui précède : les tests définissent l'état intégré. C'est leur réussite, et non l'absence de conflit à la fusion, qui dit qu'une branche est prête. Cette définition permet à l'équipe d'appliquer sereinement les stratégies de branches vues plus tôt, puisqu'une branche courte qui passe la chaîne est toujours fusionnable, et de fréquemment pousser sur la branche principale sans crainte. Les tests ne sont donc pas une charge ajoutée à l'intégration continue : ils en sont la condition d'existence, et leur qualité décide de la vitesse que votre équipe pourra réellement atteindre.
+
+## À retenir
+
+Ce chapitre a tenu une promesse double : vous rendre à l'aise avec l'histoire du dépôt, puis avec l'automatisation qui la valide. Commençons par le récapitulatif des commandes, parce que la mémoire d'un outil en ligne de commande se construit par la répétition de gestes courts. Le rebase rejoue vos propres commits au-dessus d'une base plus récente, en mode interactif pour fusionner, renuméroter ou reformuler. Le cherry-pick transplante un seul correctif vers une autre branche, avec l'option -x qui conserve la trace de l'origine. Le stash suspend un travail inachevé dans une pile locale, avec un message explicite quand le doute est possible. Le reflog journalise tous les déplacements de vos références et permet de revenir à presque n'importe quel état récent.
+
+Le tableau suivant condense les décisions quotidiennes. Reportez-le dans votre cahier : il vous servira de mémo tant que les gestes ne seront pas automatiques.
+
+```table
+| Situation | Commande | Précaution |
+| --- | --- | --- |
+| Rendre une branche personnelle lisible | git rebase -i origin/main | uniquement avant la première poussée |
+| Synchroniser sans nœud de fusion | git pull --rebase | jamais sur une branche que d'autres utilisent |
+| Répliquer un correctif urgent | git cherry-pick -x identifiant | vérifier d'abord qu'il est absent |
+| Suspendre quelques minutes de travail | git stash push -u -m message | le stash n'est pas sauvegardé à l'extérieur |
+| Récupérer un travail cru | git reflog puis git branch | préférer une branche à une remise à zéro |
+| Pousser une branche réécrite | git push --force-with-lease | refuser le simple drapeau de force |
+```
+
+Sur l'organisation, retenons quatre idées. Une stratégie de branches est un contrat social qui nomme les branches, limite leur durée de vie et définit les fusions autorisées. La branche principale est toujours publiable, ce qui suppose une protection côté serveur, des contrôles obligatoires et l'interdiction des poussées forcées. Git flow structure le travail autour de versions planifiées avec des branches de préparation et de maintenance, quand le modèle à trunk unique raccourcit les branches à moins d'une journée et s'appuie sur les drapeaux de fonctionnalité. Enfin, la frontière entre rebase et fusion se situe à la première poussée : avant, vous êtes seul maître de votre historique ; après, il appartient à l'équipe.
+
+Sur l'automatisation, retenons également quatre idées. L'intégration continue vise la réduction du risque par la fréquence : plus les intégrations sont rapprochées, plus une anomalie se trouve près de sa cause. Un workflow se décrit en YAML, avec des déclencheurs, des jobs indépendants reliés par des dépendances, et des secrets qui ne figurent jamais dans le dépôt. Les pipelines se lisent en étages : validation qui répond à l'intégrabilité, livraison qui répond à la reproductibilité de l'artefact, déploiement qui répond à la mise en service, plus une vérification post-déploiement qui ferme la boucle. Et tout repose sur les tests, dont la qualité, non le pourcentage de couverture, décide de la vitesse réellement atteignable.
+
+Un dernier point mérite d'être souligné, car il relie les deux moitiés du chapitre. Les outils d'historique et les chaînes d'automatisation se renforcent mutuellement : un rebase propre réduit les conflits, donc raccourcit la chaîne ; une chaîne fiable autorise des branches courtes, donc rend le rebase inutile. À l'inverse, une équipe qui pousse tous les quinze jours sur une branche partagée verra sa chaîne saturée de conflits, et une équipe dont la chaîne prend quarante minutes cessera de pousser souvent. Améliorez les deux côtés progressivement, en mesurant : temps de fusion, durée de la chaîne, nombre de régressions en production.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus coûteuse, est la poussée forcée sur la branche principale. Elle arrive presque toujours dans un accident de parcours : une remise à zéro prononcée localement, un rebase mal cadré, puis une commande de poussée avec le drapeau de force pour faire passer ce que Git refuse. Le serveur accepte, la branche distante est réécrite, et chaque collègue qui récupère la suivante se retrouve avec un historique dupliqué ou perdu. Les commits remplacés existent encore techniquement, mais plus personne ne sait par quel identifiant les chercher. La parade est systémique : branche principale verrouillée côté serveur, poussée forcée interdite par les règles de protection, et --force-with-lease réservé aux branches personnelles.
+
+La seconde erreur est le rebase sur une branche partagée. Elle est plus insidieuse, parce que la commande semble anodine et réussit. Vous rebasedez votre branche de fonctionnalité sur la nouvelle base alors qu'un collègue y a déjà récupéré : vos anciens commits sont remplacés par des copies neuves, et son clone contient désormais les deux versions. Les fusions suivantes affichent des conflits portant sur des modifications identiques, et le journal des auteurs se troue de doublons. Le remède tient à la règle d'or déjà énoncée : réécrivez avant publication, fusionnez après. Si l'accident est arrivé, prévenez immédiatement l'équipe, publiez l'identifiant de l'état sain, et demandez à chacun de réaligner son clone plutôt que d'essayer de réparer chacun de son côté.
+
+La troisième erreur consiste à confondre historique personnel et historique collectif. Rebaser cent fois une branche que vous seul consultez est parfait ; le faire une seule fois après que la revue de code a commencé impose à chaque relecteur de réimporter son travail. Le même raisonnement s'applique aux amend, qui réécrivent le dernier commit, et aux réorganisations d'ordre avec le rebase interactif. Posez-vous la question avant chaque réécriture : quelqu'un d'autre a-t-il pu récupérer cet état ? Si la réponse est oui, ou même peut-être, préférez un nouveau commit qui annule ou complète le précédent, quitte à gâcher la propreté de l'historique.
+
+La quatrième erreur est le stash oublié. Le travail suspendu dort dans une pile locale que personne ne regarde, expire après quatre-vingt-dix jours, et disparaît avec la machine. Elle survient particulièrement lors des changements de contexte : une intervention urgente, des congés, un changement de projet. La parade est de deux ordres : pour les suspendus de quelques minutes, un message explicite à la création, et une revue de git stash list à chaque retour sur la branche ; au-delà, un commit de travail provisoire sur une branche jetable poussée sur le serveur. Notez aussi que le stash ne suit pas les fichiers non suivis sans l'option -u, ce qui laisse des fichiers visibles dans le répertoire de travail après une restauration.
+
+```bash
+# Diagnostic d'un historique réécrit par erreur
+git reflog --date=iso
+git branch --contains identifiant-ancien
+git fsck --lost-found
+# Rétablissement prudent : une branche d'abord, un reset ensuite
+git branch secours identifiant-ancien
+git log --oneline secours -5
+```
+
+La cinquième erreur porte sur les chaînes : laisser une chaîne rouge traîner. Quand personne ne prend la responsabilité de la réparer, l'équipe apprend très vite à contourner, à relancer, à merger malgré l'échec. En quelques jours, la chaîne a perdu toute autorité, et l'équipe se retrouve exactement là où elle était avant l'automatisation, mais avec en plus une machine à consommer des minutes. Une règle simple évite la dérive : la chaîne est prioritaire sur toute nouvelle tâche, et son état est visible de tous. Une équipe qui refuse cet engagement fera mieux d'automatiser moins de vérifications plutôt que de brader la signification du vert.
+
+La sixième erreur est de lancer trop de choses dans la chaîne dès le premier jour. Une installation ambitieuse, tests de bout en bout, analyse de sécurité, seuils de performance, déploiement automatique, produit des échecs fréquents, des diagnostiques lents et un sentiment d'impuissance. Inversez la marche : commencez par la compilation et les tests unitaires, mesurez la durée, ajoutez une vérification à la fois, et n'en branchez une nouvelle qu'une fois la précédente stable depuis plusieurs semaines. La sophistication vient avec la confiance, jamais avant.
+
+La septième erreur est de laisser les secrets se répandre. Clés copiées dans les fichiers de workflow, jetons dans les journaux d'exécution, mots de passe dans les scripts du dépôt : chacun de ces cas se retrouve régulièrement dans les audits, et chacun impose une rotation douloureuse. Gardez les secrets dans le coffre de la plateforme, limitez leur exposition aux seuls jobs concernés, interdisez les déclencheurs issus de contributions externes pour les étapes qui les manipulent, et faites tourner les valeurs périodiquement. La discipline coûte quelques minutes, la fuite coûte des semaines.
+
+La huitième erreur, plus douce mais pervasive, est de traiter les outils comme une fin. On rebasedez parce que c'est élégant, on maintient cinq types de branches parce que le modèle les prévoit, on ajoute des étapes parce qu'une autre équipe les a. Chaque habitude sans bénéfice mesuré devient une dette d'attention. Gardez deux ou trois indicateurs sous la main, temps moyen de fusion, durée de la chaîne, nombre d'incidents en production, et questionnez toute pratique qui n'améliore aucun d'eux.
+
+## Pour aller plus loin
+
+La première ressource reste la documentation officielle de Git, en particulier le guide de rebase et la page consacrée au reflog : écrits par les créateurs du système, ils sont brefs, exacts et suffisamment abstraits pour résister aux changements d'interface. Pour l'histoire interne, le livre Pro Git, disponible gratuitement en ligne, consacre deux chapitres remarquables à la façon dont Git stocke les objets et déplace les références ; les lire après avoir pratiqué les commandes donne un déclic durable. En français, les guides publiés par OpenClassrooms et par le site Git fr couvrent les mêmes notions avec des exemples pas à pas.
+
+Sur l'organisation de travail, le livre de Vincent Driessen qui a popularisé Git flow reste la référence primaire, à lire avec la mise au point postérieure de son auteur qui en précise les cas d'usage. Pour le modèle à trunk unique, les travaux de Google sur la monorepo et les publications du groupe DORA constituent la base factuelle la plus solide : elles relient la fréquence de livraison, la stabilité et la performance d'équipe, et donnent des ordres de grandeur mesurés sur des milliers d'ingénieurs. Prenez ces chiffres comme des repères, pas comme des cibles : votre contexte décide de ce qui est raisonnable.
+
+```yaml
+# Vue d'ensemble d'une chaîne complète, à adapter à votre projet
+stages:
+  - validation
+  - livraison
+  - mise-a-disposition
+validation:
+  regles:
+    - compile
+    - tests-unitaires
+    - tests-integration
+    - analyse-statique
+  budget-secondes: 600
+livraison:
+  declencheur: branche-principale
+  artefacts: conteneur, paquet, documentation
+  exigence: reproductible
+mise-a-disposition:
+  mode: etapes
+  verification-post-deploiement: fumee, metriques
+  retour-arriere: automatique-si-echec
+```
+
+Pour la pratique, rien ne remplace un dépôt d'entraînement que vous casserez volontairement. Simulez l'accident de poussée forcée sur un dépôt où personne ne travaille, puis ouvrez un second clone pour constater les dégâts vus par un collègue. Faites de même avec un rebase sur branche partagée. Ce genre d'expérience, vécu une fois sur du matériel jetable, vous marquera davantage que dix pages de mises en garde, et vous rendra définitivement prudent aux moments qui comptent.
+
+Côté automatisation, créez un dépôt public minimal, poussez-le, et ajoutez une chaîne en une seule étape, puis deux, puis quatre, en chronométrant chaque version. Cherchez le point où la durée devient gênante, puis identifiez ce qui la cause : installation des dépendances, démarrage d'un conteneur, attente d'un service tiers. Presque toujours, une mise en cache ou une exécution parallèle règle le problème. Portez ensuite l'attention sur les messages d'échec : une chaîne utile dit quelle étape a échoué et pourquoi, une chaîne inutile affiche quatre cents lignes de journal.
+
+Enfin, rejoignez la conversation. Les conférences sur l'intégration continue, les retours d'expérience d'équipes ouvertes et les dépôts de référence des grands projets montrent des solutions réelles à des problèmes que vous rencontrerez. Lisez-les avec un esprit critique : beaucoup de pratiques excellentes y sont présentées sans leur contexte, et un modèle qui fonctionne pour une équipe de cent cinquante personnes peut être absurde pour une équipe de trois. Votre objectif n'est pas d'appliquer un catalogue, mais de constituer, geste après geste, votre propre jugement.
+
+## Et maintenant : passez à l'exercice
+
+Vous avez désormais les commandes et le raisonnement ; il reste à les ancrer dans les gestes. L'exercice de ce chapitre est conçu pour vous obliger à prendre des décisions, pas à recopier une suite d'instructions. Il vous demande de mettre en place une chaîne d'intégration complète pour une petite application, puis de documenter les choix que vous avez tranchés en cours de route : type de branches, structure de la chaîne, tests retenus et règles de protection.
+
+Avant d'ouvrir le sujet, préparez votre terrain. Un dépôt d'entraînement vierge, un compte sur une plateforme d'hébergement, et une heure de temps continu, parce que l'exercice suppose d'observer plusieurs exécutions de bout en bout. Répartissez le travail en deux temps si besoin : d'abord la chaîne de validation, qui doit passer au vert sur une branche, ensuite la livraison, qui ne doit se déclencher qu'une fois la validation réussie. Chaque fois que la chaîne échoue, résistez à la tentation de relancer : lisez l'étape fautive, corrigez, poussez, et notez ce que l'erreur vous a appris.
+
+Trois pièges sont prévus dans l'énoncé, et vous les reconnaîtrez. Le premier porte sur l'interdiction de pousser directement sur la branche principale : la règle doit être posée côté serveur, pas seulement annoncée à l'équipe. Le second concerne la durée de la chaîne, qui doit rester dans un budget explicite que vous justifierez. Le troisième touche aux secrets, qui ne doivent figurer nulle part dans le dépôt. Si vous avez bien suivi la leçon, vous les éviterez sans difficulté ; s'il vous en coûte un contretemps, tant mieux : c'est le meilleur moment pour apprendre.
+
+Rédigez enfin un compte rendu court : la structure des branches retenue et pourquoi, le déroulé de la chaîne avec sa durée mesurée, la liste des vérifications bloquantes, et les deux angles morts que vous assumez en connaissance de cause. Ce document vaut plus que n'importe quelle configuration parfaitement copiée, car il révèle si vous maîtrisez les décisions derrière les fichiers. Ouvrez ensuite l'exercice, et abordez-le avec la même méthode que tout au long du chapitre : annoncez votre prédiction, exécutez, comparez, corrigez.

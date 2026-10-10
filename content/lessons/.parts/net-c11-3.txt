@@ -1,0 +1,213 @@
+## Configurer HAProxy : frontends, backends et ACL
+
+HAProxy organise sa configuration en trois blocs qui portent les noms de la chaîne qu'ils décrivent. Le bloc global règle le comportement du processus lui-même : journalisation, nombre maximal de connexions, emplacement de la socket d'administration. Le bloc defaults applique ses valeurs par défaut à tous les services déclarés ensuite : mode de fonctionnement, temporisations, politiques de reprise. Viennent ensuite les fronts d'entrée, qui écoutent sur une adresse et un port et décident vers quel arrière envoyer chaque requête, puis les arrières, qui décrivent les serveurs réels, leur contrôle d'état, leur algorithme et leurs limites. Comprendre cette séparation suffit à lire n'importe quelle configuration : on lit d'abord où le trafic entre, ensuite comment il est routé, enfin où il arrive.
+
+La décision de routage repose sur des ACL, de courtes expressions qui évaluent une propriété de la requête et renvoient vrai ou faux. On déclare une ACL avec un nom libre, puis on l'utilise dans une instruction conditionnelle. Le point important est que les ACL ne s'exécutent pas une par une en s'arrêtant à la première vraie : elles sont combinées, niées et réutilisées, ce qui permet d'exprimer des règles subtiles sans dupliquer de configuration. Dans l'exemple ci-dessous, une première ACL cible le chemin de l'API, une seconde exclut les robots, et une troisième décide du basculement HTTPS ; chaque instruction se lit de gauche à droite, comme une phrase conditionnelle.
+
+```text
+global
+    log /dev/log local0 info
+    maxconn 20000
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    daemon
+
+defaults
+    mode http
+    log global
+    option httplog
+    option forwardfor
+    option redispatch
+    retries 2
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend ft_web
+    bind 10.10.8.100:80
+    bind 10.10.8.100:443 ssl crt /etc/haproxy/certs/lilas.pem alpn h2,http/1.1
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    acl api_path path_beg /api/
+    acl static_path path_beg /static/
+    acl is_bot hdr_sub(User-Agent) Googlebot
+    use_backend bk_api if api_path and not is_bot
+    use_backend bk_static if static_path
+    default_backend bk_web
+
+backend bk_web
+    balance leastconn
+    cookie SRV insert indirect nocache
+    option httpchk GET /healthz
+    http-check expect rstatus (200|209)
+    default-server inter 2s fall 3 rise 10 maxconn 500
+    server web01 10.10.8.21:8080 check cookie web01
+    server web02 10.10.8.22:8080 check cookie web02
+    server web03 10.10.8.23:8080 check cookie web03 disabled
+```
+
+Cinq lignes méritent d'être lues une à une, car elles concentrent les décisions qui comptent. Le bind du port quatre cent quarante-trois termine le TLS sur le répartiteur et annonce HTTP/2 en priorité, ce qui centralise les certificats ; l'en-tête X-Forwarded-Proto conserve le schéma d'origine pour l'application. L'ACL api_path permet d'envoyer l'interface de programmation vers un pool différent, avec son propre algorithme et ses propres temporisations. La directive http-check attend un code deux cents ou deux cent neuf, ce qui distingue le serveur sain du serveur dont le port écoute mais dont l'application est cassée. Enfin, le serveur marqué disabled reste déclaré, prêt à être remis en service pendant une intervention, sans modification de configuration.
+
+La persistance mérite une décision explicite. L'insertion d'un cookie par le répartiteur garantit que le client revient vers le même membre tant que celui-ci est sain, sans dépendre de la mémoire du serveur ; l'option indirecte évite de conserver le cookie pour les requêtes statives, et nocache empêche un cache intermédiaire de figer le choix. Si l'application partage déjà sa session sur un stockage commun, cette persistance devient inutile et l'on préfère la supprimer, car elle dégrade la répartition quand un membre disparaît. Le bon réflexe est d'écrire la décision dans la configuration elle-même : persistance nécessaire parce que la session est locale, ou persistance supprimée parce que la session est partagée. Une configuration muette sur ce point sera un jour relue dans l'urgence.
+
+La mise en service passe par trois vérifications obligatoires, dans cet ordre. On valide d'abord la syntaxe du fichier avec l'option de contrôle, qui détecte les fautes d'orthographe et les références à des ACL inexistantes sans interrompre le service. On recharge ensuite le processus, qui accepte la nouvelle configuration et termine les connexions en cours sur l'ancienne. On observe enfin les statistiques pendant quelques minutes pour confirmer que tous les membres sont remontés à l'état sain. Une configuration rechargée sans contrôle et sans observation est la cause la plus fréquente des coupures de mise en production.
+
+```text
+$ haproxy -c -f /etc/haproxy/haproxy.cfg
+Configuration file is valid
+
+$ sudo systemctl reload haproxy
+
+$ echo "show stat" | socat /run/haproxy/admin.sock stdio | cut -d, -f1,2,18,19
+pxname,srvname,status,lastchg
+bk_web,web01,UP,18342
+bk_web,web02,UP,18342
+bk_web,web03,MAINT,37
+ft_web,FRONTEND,OPEN,18342
+```
+
+## Reverse proxy, terminaison TLS et affinité : nginx entre les mondes
+
+Le reverse proxy et l'équilibrateur de charge se recouvrent largement, mais leur intention diffère, et cette différence guide le choix d'outil. Un reverse proxy se place devant des applications pour leur rendre des services : terminer le chiffrement, ajouter le cache, compresser, réécrire les en-têtes, servir les fichiers statiques, protéger contre certaines requêtes mal formées. L'équilibrateur se concentre sur la répartition et la surveillance des membres. Dans une installation de taille moyenne, on retrouve les deux fonctions dans le même logiciel : nginx pour la partie applicative et la terminaison TLS, HAProxy pour la répartition fine, ou un outil unique quand la complexité reste contenue. La bonne question n'est pas quel est le meilleur logiciel, mais quelle décision doit prendre le composant que je place ici.
+
+nginx déclare ses serveurs dans un bloc upstream, qui porte le nom utilisé ensuite par proxy_pass. Le mot-clé least_conn choisit le membre ayant le moins de connexions actives, exactement comme le least connections vu précédemment. Les paramètres max_fails et fail_timeout pilotent le retrait après échec, et les temporisations d'amorçage de connexion évitent d'attendre indéfiniment un serveur qui ne répond pas. Le bloc server suivant illustre la chaîne complète : écoute chiffrée, certificats, en-têtes d'origine transmis à l'application, et politique de reprise qui déclare explicitement quelles erreurs déclenchent le passage au serveur suivant.
+
+```text
+upstream app_lilas {
+    least_conn;
+    server 10.10.8.21:8080 max_fails=3 fail_timeout=15s;
+    server 10.10.8.22:8080 max_fails=3 fail_timeout=15s;
+    keepalive 64;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name site-lilas.example.fr;
+
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        proxy_pass http://app_lilas;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+    }
+}
+```
+
+Trois points de vigilance ressortent de cette configuration. Le premier concerne la terminaison TLS : le certificat n'existe plus que sur le répartiteur, ce qui simplifie le renouvellement mais augmente la valeur de la machine ; protégez-la d'autant plus, et automatisez le renouvellement avec une alerte sur la date d'échéance. Le deuxième concerne l'adresse du client : sans l'en-tête X-Forwarded-For réécrit par le proxy, les journaux d'application voient tous la même adresse et les limites de débit deviennent inopérantes. Le troisième est proxy_next_upstream : par défaut, seules les erreurs de connexion basculent vers le serveur suivant ; en y ajoutant les codes cinq cent deux, cinq cent trois et cinq cent quatre, on accepte de perdre une réponse partielle plutôt que de la rendre à l'usager.
+
+L'affinité, enfin, se traite différemment selon l'outil et l'application. nginx propose dans sa version libre le hachage sur l'adresse source, ip_hash, qui est simple mais présente le défaut décrit plus haut : derrière un grand réseau, tous les clients convergent vers un seul membre. Sa version évoluée ajoute des cookies persistants, et la fonction se trouve aussi dans les équilibrateurs managés du cloud. La solution la plus robuste reste pourtant la même partout : externaliser la session dans un magasin partagé, base de données ou cache distribué, puis laisser la répartition libre. Quand l'application est sans état, l'affinité devient un luxe inutile ; quand elle ne l'est pas, c'est une contrainte d'architecture qu'aucun réglage de répartiteur ne corrigera réellement.
+
+Un dernier comparatif aide à choisir : l'arbre de décision tient en quatre questions. L'application parle-t-elle HTTP ? Sinon, il faut un répartiteur de couche 4. A-t-elle besoin de règles par chemin, par nom ou par cookie ? Si oui, la couche 7 s'impose. La session est-elle partagée ? Si non, il faut une persistance. Enfin, le volume justifie-t-il deux composants distincts ? Si oui, on termine le TLS sur le proxy applicatif et l'on confie la répartition au répartiteur dédié, en conservant le protocole PROXY ou l'en-tête d'origine pour que la chaîne reste traçable de bout en bout. Cette trace est indispensable : sans elle, impossible de savoir, dans les journaux, si une requête a été réécrite, retentée ou rejouée.
+
+## Deux répartiteurs : keepalived et VRRP
+
+Un équilibrateur unique est un point de défaillance unique, et doubler le pool derrière lui n'y change rien. La solution standard consiste à installer deux répartiteurs, de préférence sur deux machines distinctes, et à leur faire partager une même adresse virtuelle par le protocole VRRP. Vous avez déjà rencontré ce protocole dans le chapitre sur la redondance de passerelle, où deux routeurs se partageaient une passerelle virtuelle ; le principe est rigoureusement le même, seules la plateforme et le vocabulaire changent. Sous Linux, le démon keepalived implémente VRRP, gère l'élection et y ajoute une brique décisive : la possibilité d'observer un script local et d'ajuster la priorité en conséquence, si bien que l'actif n'est pas seulement le routeur le plus rapide à parler, c'est celui qui peut réellement servir.
+
+L'élection suit les règles que vous connaissez. Les deux instances échangent des messages de vœu à intervalle régulier ; celle qui détient la priorité la plus élevée devient maître et assume l'adresse virtuelle, les autres restent en attente. Dès que les messages cessent, l'attente prend le relais et publie l'adresse par une gratuit ARP, ce qui met à jour les tables de voisinage sans intervention des clients. La préemption rend ensuite le rôle à l'actif d'origine quand il redevient viable. Le script de contrôle apporte la logique métier : il vérifie que le processus de répartition tourne et qu'il répond, et retire des unités de priorité s'il échoue ; l'actif descend alors sous la priorité de son alterne et cède la place, exactement comme le suivi de lien le faisait sur les routeurs.
+
+```text
+! --- /etc/keepalived/keepalived.conf : instance principale ---
+vrrp_script chk_lb {
+    script "/usr/bin/pgrep -x haproxy > /dev/null"
+    interval 2
+    weight -60
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_WEB {
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass L1LAS51
+    }
+
+    virtual_ipaddress {
+        10.10.8.100/24 dev eth0
+    }
+
+    track_script {
+        chk_lb
+    }
+
+    notify_master "/usr/local/sbin/lb-state master.sh"
+    notify_backup "/usr/local/sbin/lb-state backup.sh"
+    notify_fault  "/usr/local/sbin/lb-state fault.sh"
+}
+```
+
+Le second répartiteur reçoit exactement la même configuration, à trois différences près : la priorité est abaissée, par exemple à cent dix, l'état déclaré reste BACKUP pour les deux machines, et la même clé d'authentification doit être employée. Une clé différente entre les deux instances produit le scénario classique de partition, où chacune se croit maîtresse et où deux serveurs répondent sur la même adresse, ce qui provoque des pertes de paquets que rien, côté usager, ne permet d'expliquer. Une même valeur de routeur virtuel est également obligatoire : elle identifie le groupe, et deux groupes différents ne se voient pas. Vérifiez ces trois points avant tout test de bascule.
+
+La vérification est rapide et doit devenir un réflexe. Sur la machine active, l'adresse virtuelle apparaît dans la configuration d'interface ; sur la machine en attente, elle est absente. Le journal du service montre les transitions, et un capture de paquets du protocole confirme l'émission régulière des vœux. Ces trois observations, exécutées avant et après chaque test, transforment une bascule subie en une bascule maîtrisée.
+
+```text
+$ ip -br addr show eth0
+eth0             UP             10.10.8.5/24 fe80::21/64
+
+$ ip -br addr show eth0        # sur l'alterne : pas de .100
+eth0             UP             10.10.8.6/24 fe80::22/64
+
+$ journalctl -u keepalived -n 20 --no-pager
+...Entering MASTER state (source priority 150)
+...Setting VI_WEB VIP to 10.10.8.100/24
+
+$ sudo tcpdump -ni eth0 vrrp
+10:41:07.114 IP 10.10.8.5 > 224.0.0.18: VRRPv2, prio 150, vrid 51, ...
+```
+
+La supervision s'applique à cette couche exactement comme aux autres : l'état VRRP est une métrique, et sa perte est une alerte. Branchez la socket d'administration du répartiteur à l'outil de collecte, alertez dès qu'un membre du pool sort, et alertez séparément dès que l'instance passive reste en maître pendant plusieurs minutes, signe qu'aucun des deux ne joue vraiment son rôle. Enfin, chronométrez la bascule : coupez le processus de répartition sur l'actif et mesurez le temps entre la dernière requête servie et la première servie par l'alterne. Ce chiffre, noté dans le runbook, est le seul qui prouve que la redondance existe réellement.
+
+## Liens multiples : ECMP, symétrie et deux liens opérateur
+
+Jusqu'ici, la redondance portait sur des machines ; elle porte maintenant sur les chemins. Deux directions se présentent, et elles se complètent. La première consiste à exploiter simultanément plusieurs liens de capacité égale vers une même destination, ce que l'on appelle ECMP, ou multipath à coût égal : la table de routage contient plusieurs next-hop pour le même préfixe, et le routeur répartit les flux entre eux. La seconde consiste à garder un lien principal et un lien de repli, avec une bascule déclenchée par l'échec d'une route ou d'une interface, comme le faisaient les objets de suivi vus dans le chapitre sur la redondance de passerelle. La première maximise l'utilisation, la seconde sécurise la continuité ; la plupart des réseaux utilisent les deux selon les destinations.
+
+L'ECMP repose sur un hachage de flux : le routeur calcule une fonction sur les adresses source et destination, parfois sur les ports et le numéro de protocole, puis il associe toujours le même flux au même chemin. Cette stabilité n'est pas un détail, c'est une exigence. Un flux TCP doit garder la même source et la même destination tout au long de sa vie ; si les paquets d'une même connexion prenaient des chemins de latence différente, on observerait des réordonnancements, des retransmissions intempestives et une dégradation que les outils de mesure peinent à expliquer. La conséquence pratique est que l'ECMP équilibre les flux, jamais les octets : avec quelques gros flux, la répartition peut rester très inégale.
+
+La symétrie devient critique dès qu'un composant étatique intervient, et c'est la difficulté la plus fréquente. Un pare-feu établit une session dans un sens ; si les réponses reviennent par un autre lien, elles ne trouvent pas de session et sont rejetées, si bien que le service tombe au moment précis où l'on essaie d'utiliser la seconde voie. Le même problème se produit avec la traduction d'adresses : la sortie et le retour doivent se faire par la même adresse publique, faute de quoi le correspondant voit des paquets qu'il n'a jamais demandés. Trois remèdes existent : conserver la symétrie par le hachage, activer la synchronisation d'état entre les deux passations quand l'équipement le permet, ou désigner un seul lien sortant pour tout ce qui est étatique et réserver l'ECMP aux trafics symétriques.
+
+Le cas d'une association disposant de deux liens opérateur illustre la décision à prendre. Chaque lien vient d'un fournisseur différent, avec son propre bloc d'adresses publiques et sa propre route dans l'Internet. La solution la plus courante consiste à définir des politiques : le trafic destiné au site en ligne part par le lien principal, le trafic de sauvegarde et les mises à jour logicielles partent par le second, et la bascule se déclenche dès que la route principale disparaît. Si les deux liens doivent servir en permanence, il faut une adresse publique mobile, ou bien déléguer la résolution du nom à un service qui suit l'état des liens et renvoie l'adresse qui répond. Sans cette pièce, vos serveurs sont redondés et votre service reste injoignable quand le seul lien annoncé tombe.
+
+```text
+Topologie a deux liens operateur (association Le Comptoir)
+
+   usagers                      serveurs
+      |                          .8.21 / .8.22
+      |                              |
+ +----+-----+                 +------+------+
+ | FAI A    |    routeur A    |             |
+ | 203.0.113.16/28 ----------|             |---- interne 10.10.8.0/24
+ +----------+                 |   pare-feu  |
+ +----------+                 |   multi-WAN |
+ | FAI B    |    routeur B    |             |
+ | 198.51.100.32/28 ---------|             |
+ +----------+                 +------+------+
+      |                              |
+      +----- bascule par suivi de route et politique par application
+
+$ ip route show
+default via 10.0.0.1 dev wan0 metric 100 proto static
+default via 10.1.0.1 dev wan1 metric 200 proto static
+10.10.8.0/24 dev lan0 proto kernel scope link
+
+$ ip route get 203.0.113.44
+203.0.113.44 via 10.0.0.1 dev wan0 src 10.0.0.2 uid 0
+```
+
+La vérification de ces liens suit la même discipline que pour les serveurs : on ne présume pas, on mesure. Pour chaque lien, on enregistre le temps de réponse vers une cible stable, le taux de perte et la gigue, sur plusieurs jours, afin de connaître la qualité moyenne et ses à-coups ; on déclenche ensuite une coupure volontaire et l'on chronomètre la reprise du trafic. Une bascule qui prend quarante secondes parce que le délai de détecteur est mal réglé produira des sessions coupées et des appels au support, alors qu'une bascule sous deux secondes passe inaperçue. Ces deux chiffres, la qualité continue et la durée de bascule, constituent la fiche d'identité de vos liens, et ils sont à conserver sous la main : c'est en les comparant à un SD-WAN que vous justifierez ou non son acquisition.

@@ -1,0 +1,102 @@
+Bienvenue dans le huitième chapitre du parcours Cybersécurité fondamentaux, consacré à l'investigation numérique : l'art de collecter des traces et de les transformer en constats défendables. Les sept chapitres précédents vous ont conduits à parcourir le paysage des menaces, à maîtriser les identités et les accès, à observer un réseau sous son angle défensif, à durcir des systèmes, à examiner des applications selon la méthode OWASP, puis à détecter et répondre aux incidents. Vous savez donc voir ce qui cloche et arrêter ce qui tourne mal. Ce chapitre change de perspective : il ne s'agit plus d'empêcher ni d'arrêter, mais de comprendre après coup ce qui s'est réellement passé, avec une exigence supplémentaire, beaucoup plus sévère que tout ce que vous avez rencontré jusqu'ici : vos conclusions devront pouvoir être relues par une personne qui n'était pas présente, et peut-être opposées à vous dans un litige.
+
+Les objectifs sont au nombre de trois et ils commandent tout le reste. Le premier consiste à collecter des preuves sans les altérer, ce qui se révèle beaucoup plus difficile qu'il n'y paraît, car le simple fait d'observer un système le modifie. Le deuxième consiste à reconstituer la chronologie d'un incident, c'est-à-dire à remettre des faits épars, provenant d'horloges différentes et de sources d'inégale fiabilité, dans un ordre unique et daté. Le troisième consiste à rédiger un constat opposable : un document écrit qui distingue ce qui est établi de ce qui est supposé, cite ses sources et résiste aux questions d'un contradictoire. Ces trois compétences forment une chaîne : une collecte bâclée rend la chronologie fausse, et une chronologie fausse rend le rapport inexploitable.
+
+Le fil rouge de ce chapitre est une petite structure associative nommée Les Ateliers du Faubourg : quatorze salariés, une vingtaine de postes Windows, un stockage en réseau partagé, une messagerie hébergée, un pare-feu de bord et une base de six cents adhérents. Un chargé de développement dépose sa démission et quitte l'association fin septembre ; quelques jours plus tard, la direction apprend qu'un fichier contenant la liste complète des adhérents, avec coordonnées et cotisations, circule chez un concurrent. Aucun serveur n'a été piraté, aucun rançongiciel ne s'est déclenché, aucune alerte n'a sonné : l'atteinte est venue de l'intérieur, par des gestes ordinaires, une clé USB et un message. C'est le cas le plus fréquent dans les petites structures, et celui où l'investigation repose presque entièrement sur des traces discrètes : journaux Windows, historique des supports amovibles, métadonnées de fichiers et journaux de messagerie.
+
+Un mot, enfin, sur la manière d'aborder ce chapitre. L'investigation s'apprend sur un cas simple, en respectant l'ordre des gestes, et en acceptant qu'une seule maladresse puisse ruiner des semaines de travail. Toute la leçon se situe du côté de l'enquêteur légitime, mandaté par sa direction et limité dans son périmètre.
+
+## Ce qu'est une trace : du bit à la preuve
+
+Une trace, c'est la marque laissée par une activité dans un système. Elle naît du fonctionnement même de l'ordinateur : écrire un fichier modifie le tableau des métadonnées du volume, ouvrir une session écrit une ligne dans un journal, brancher un périphérique inscrit son identifiant dans une zone du registre, envoyer un message fait circuler un horodatage chez le fournisseur de messagerie. Rien de tout cela n'est volontaire : les systèmes ne produisent pas des preuves, ils produisent des enregistrements, qui deviennent des preuves le jour où quelqu'un les récupère proprement et les interprète avec prudence. Distinguer ces trois niveaux est la première compétence du chapitre. La trace est la donnée brute, l'artefact est l'objet exploitable que vous extrayez, par exemple l'entrée du registre décrivant une clé USB, et la preuve est le fait que vous parvenez à établir grâce à un ou plusieurs artefacts recoupés. Un artefact isolé n'est presque jamais une preuve : c'est un indice.
+
+L'écart entre ce que la trace dit et ce que les gens croient qu'elle dit est la source des plus grands déboires. Un journal d'accès au partage indique qu'un compte a ouvert deux cent quatorze fichiers à 19 h 48 ; il n'indique pas qui était assis devant le clavier, ni si l'opération était autorisée, ni si elle servait à préparer une sauvegarde. Il établit un fait matériel rattaché à un compte, et c'est déjà beaucoup. Votre travail d'enquêteur tiendra donc dans une phrase : transformer des faits matériels datés en affirmations prudentes, sans jamais faire porter à la machine une conclusion qui appartient à l'humain.
+
+Les traces vivent dans des endroits très divers, et leur durée de vie varie de quelques secondes à plusieurs années, selon un ordre qu'il faut connaître par cœur. La mémoire vive disparaît à l'arrêt de la machine, avec elle les mots de passe en cours et les connexions ouvertes. Les journaux d'événements tournent sur une piste circulaire et sont purgés dès qu'ils atteignent une taille limite, souvent au bout de quelques jours sur un poste mal réglé. Les fichiers supprimés persistent tant que leur espace n'a pas été réécrit. Les journaux du système de fichiers, eux, sont plus tenaces : ils conservent l'historique des modifications des années en arrière, tant que personne n'a formaté le volume. Savoir ce qui meurt vite, c'est savoir quoi prélever en premier ; c'est tout l'objet de la section consacrée à l'ordre de collecte.
+
+Le support physique mérite qu'on s'y attarde, car il est le support ultime de toute la chaîne : plaques magnétiques, tableau des fichiers, fragments orphelins et journaux du système de fichiers y cohabitent. L'imagerie forensique consiste à reproduire ce contenu, bit pour bit, dans un fichier unique, sans jamais intervenir sur le support d'origine. C'est cette copie conforme, et elle seule, que vous analyserez ensuite : elle vous permet de recommencer autant de fois que nécessaire, de la confier à un confrère et de prouver que l'original n'a pas bougé.
+
+```text
+FAMILLES DE TRACES — ce qu'elles disent, ce qu'elles ne disent pas
+---------------------------------------------------------------
+1. Journaux d'authentification   qui a ouvert une session, d'où, à quelle heure
+                                 -> ne dit pas qui tenait le clavier
+2. Journaux de fichiers / USN    quels fichiers ont ete crees, modifies, renommes
+                                 -> ne dit pas pourquoi
+3. Metadonnees de fichiers       auteur, dates de creation et de modification,
+                                 taille, chemin precedent
+                                 -> se modifient quand on copie un fichier
+4. Registre des supports         premiere et derniere connexion d'une cle USB,
+                                 numero de serie, lettres attribuees
+ -> ne dit pas ce qui a ete copie, seulement que le support a ete branche
+5. Journaux messagerie           envois, destinataires, volumes, pieces jointes
+                                 -> horodates en UTC chez l'hebergeur
+6. Historique applicatif         documents ouverts recemment, raccourcis, corbeille
+ -> reference un fichier, pas son contenu
+```
+
+Le tableau ci-dessous résume, pour un parc de taille modeste, les familles de traces sur lesquelles une enquête d'exfiltration repose réellement, avec leur espérance de vie.
+
+| Famille de traces | Exemple concret | Durée de vie typique | Où la chercher |
+|---|---|---|---|
+| Mémoire vive | Connexions ouvertes, mots de passe, code malveillant chargé | Jusqu'à l'arrêt | Capture avant toute coupure |
+| Journaux d'événements | Ouvertures de session, accès aux objets | Quelques jours à plusieurs mois | Expérience des événements, serveur central |
+| Historique des supports | Clé USB branchée, numéro de série | Plusieurs mois, dans le registre | Clés USBSTOR, UMS |
+| Métadonnées et journal de fichiers | Création, modification, renommage | Vie du volume | Table des métadonnées, journal USN |
+| Journaux de messagerie | Envois et pièces jointes | De 30 jours à plusieurs mois | Console d'administration, suivi des messages |
+| Journaux réseau | Connexions, volumes, destinations | Quelques jours | Pare-feu, commutateur, système de détection |
+| Journaux du stockage en réseau | Accès aux dossiers partagés | Souvent moins de 30 jours | NAS ou serveur de fichiers |
+
+Toutes ces familles ont un point commun, et c'est le cœur du chapitre : elles se contredisent, se complètent et se confirment les unes les autres. Une seule source ne suffit jamais à conclure, non parce qu'elle ment, mais parce qu'elle ne voit qu'une facette. C'est en croisant une entrée de registre, une ligne de journal, une métadonnée et un envoi de messagerie qu'on obtient un faisceau cohérent, difficile à réfuter et honnête quant à ses limites.
+
+## Avant toute manipulation : le cadre, l'autorisation et la proportionnalité
+
+L'investigation numérique touche à trois choses que l'on ne doit jamais manipuler à la légère : les données d'une organisation, la vie privée des personnes et la valeur juridique des éléments recueillis. Avant même de penser à une commande, écrivez donc la règle qui commande tout le reste : aucune collecte ne démarre sans une autorisation écrite, datée, signée et limitée dans le temps. Dans une petite structure, une note d'une page suffit, rédigée par le dirigeant ou son représentant, mentionnant la finalité de la démarche, les personnes habilitées à y participer, les systèmes et comptes concernés, la période examinée et la date de fin. Conservez ce document avec les preuves : il fait partie du dossier, et son absence se remarque immédiatement.
+
+L'autorisation ne sert pas seulement à se couvrir : elle cadre le travail et empêche la dérive la plus classique de toute enquête, celle où l'on commence par un poste suspect et l'on finit par parcourir les courriers de tout le monde. La proportionnalité impose de ne collecter que ce qui est nécessaire à la question posée. Si l'on vous demande d'établir si des fichiers clients ont été copiés, vous avez besoin des journaux d'accès aux dossiers concernés, de l'historique des supports amovibles et des journaux d'envoi de la messagerie ; vous n'avez pas besoin des contenus de courriels personnels ni des fichiers sans rapport avec le périmètre. Chaque élargissement se justifie par écrit, à part, et se signale dans le rapport final.
+
+La question des messages mérite une attention particulière, car c'est là que se situent les maladresses les plus coûteuses. La correspondance d'un salarié n'est pas libre d'accès au motif qu'elle transite sur un équipement professionnel : l'accès aux messages obéit à des règles strictes, varie selon les juridictions, et distingue les messages professionnels des messages personnels, ces derniers étant protégés par le secret. Deux réflexes valent mieux que quinze heures de recherche : demander un avis juridique avant d'ouvrir ce que vous n'êtes pas sûr de pouvoir ouvrir, et vous limiter aux métadonnées, expéditeur, destinataire, heure, volume, pièce jointe, qui suffisent le plus souvent à établir l'exfiltration sans jamais en lire le contenu. Une investigation qui s'arrête aux métadonnées est rarement empêchée ; une investigation qui lit tout est souvent gênante pour son propre commanditaire.
+
+La recevabilité, elle, se joue sur la traçabilité. Une preuve numérique convainc un tiers à trois conditions : elle provient d'une source identifiée, elle a été manipulée selon une méthode décrite, et son intégrité a été vérifiée avant et après manipulation. Si vous ne savez pas dire qui a touché au fichier, quand, avec quel outil et avec quelle empreinte de départ, votre meilleur élément devient contestable au seul motif qu'on ne peut exclure qu'il ait été modifié. Toute personne qui interviendra après vous, collègue, direction, conseil, expert ou juridiction, jugera d'abord la rigueur de votre méthode, ensuite le contenu de vos découvertes.
+
+```text
+MANDAT D'ENQUETE INTERNE — modèle d'une page
+--------------------------------------------
+Structure    : Les Ateliers du Faubourg (association loi 1901)
+Demandeur    : la presidente du bureau
+Finalite     : etablir si des donnees d'adherents ont ete copiees ou
+               transmises hors de la structure entre le 1er et le 30 septembre
+Perimetre    : 3 postes nommes, comptes kerbrat et direction, partage Assoc,
+               journaux messagerie du 1er au 30 septembre
+Habilites    : D. Morel (referent informatique), A. Sow (assistante),
+               tout geste est realise a deux
+Exclusions   : contenus de courriers personnels, navigation privee,
+               postes appartenant a des personnes non citees
+Duree        : du 29 septembre au 13 octobre, puis cloture motivee
+Conservation : elements ranges sous scelle jusqu'a notification des personnes
+Signatures   : demandeur ..............  /  responsable technique .........
+```
+
+Un dernier point sur les personnes, qui est aussi un point de méthode : menez tout geste sensible à deux, ce que les praticiens appellent parfois le principe des deux paires d'yeux. L'un manipule, l'autre note l'heure, l'opération et le résultat. Ce dispositif simple décourage l'improvisation, fournit un témoin si la manipulation est contestée et vous oblige à verbaliser ce que vous faites au moment précis où vous le faites, ce qui constitue votre premier journal d'enquête. Une équipe de deux produit des documents plus solides qu'un enquêteur seul, parce que la contradiction est immédiate.
+
+## Les cinq principes de l'acquisition : ne rien altérer
+
+Le premier principe est d'une brutalité désarmante : l'état d'origine est sacré, et toute observation le modifie. Ouvrir une session écrit dans un journal. Naviguer dans un dossier déplace la date de dernier accès. Lancer un antivirus met à jour ses signatures et modifie le registre. Même éteindre une machine modifie l'état : elle efface la mémoire vive, ferme les connexions et vide les tampons. La conséquence pratique est que vous ne pouvez pas observer sans agir ; vous pouvez seulement limiter l'ampleur de vos actions, les choisir dans le bon ordre et les consigner. L'enquêteur rigoureux n'est pas celui qui ne touche à rien, c'est celui qui sait exactement ce qu'il a touché.
+
+Le deuxième principe découle du premier : on travaille sur des copies, jamais sur l'original. La copie d'un disque dur, appelée image, est une reproduction bit à bit du support, y compris les zones vides, le tableau de partition et les secteurs défectueux. Vous analysez ensuite cette image autant de fois que vous voulez, tandis que le disque d'origine est rangé et ne sert plus que de référence. Lorsque la saisie doit se faire sur la machine en fonctionnement, on limite le risque avec un bloqueur d'écriture ou avec une copie logicielle en lecture seule : ces techniques ne sont pas infaillibles, mais toutes sont préférables à l'analyse en direct.
+
+Le troisième principe est la vérification par empreinte. Avant de déplacer la moindre donnée, calculez une empreinte cryptographique du support ou du fichier, puis recalculez-la après l'opération. Si les deux valeurs sont identiques, le contenu n'a pas changé au cours de la manipulation ; si elles diffèrent, vous arrêtez tout et vous recommencez. L'empreinte ne prouve pas que l'original était honnête, elle prouve que votre copie est fidèle, ce qui est exactement ce qu'un contradictoire contestera : c'est pourquoi elle figure dans votre dossier avec l'outil utilisé et la date de calcul.
+
+Le quatrième principe est la documentation continue. Chaque geste est enregistré au moment où il se produit : heure à la seconde, personne qui agit, commande exécutée, fichier visé, résultat obtenu, empreinte calculée. Ce journal d'enquête se rédige pendant le travail, pas après, car la mémoire reconstitue toujours une version plus favorable de ce que l'on a fait. Prévoyez un simple fichier texte ou un cahier numéroté, une ligne par geste, et faites-le relire par la seconde personne présente. Vingt lignes prises dans la journée valent mieux qu'un rapport entier rédigé trois semaines plus tard.
+
+Le cinquième principe est la cohérence de l'ensemble : la chaîne de preuve. Une preuve isolée ne vaut rien ; elle doit être reliée à son origine par une suite ininterrompue de responsabilités, de la machine où elle a été prélevée jusqu'au dossier que vous présentez. Cette suite se matérialise par des numéros d'affaire, des scellés, des fichiers nommés de façon unique, des empreintes enregistrées et une fiche de manipulation par élément. Si un maillon manque, la question posée ne sera jamais « que contient ce fichier », mais « d'où vient ce fichier », et vous n'aurez pas de réponse. Le tableau suivant condense les cinq principes avec leur contre-mesure la plus simple.
+
+| Principe | L'erreur classique | La contre-mesure |
+|---|---|---|
+| Préserver l'état d'origine | Explorer la machine suspecte avant de la saisir | Décrire, photographier, puis agir dans l'ordre |
+| Travailler sur copie | Analyser directement sur le disque d'origine | Image complète, analyse sur une copie de travail |
+| Vérifier par empreinte | Copier sans comparer | Empreinte avant et après, outil et heure notés |
+| Documenter en continu | Raconter après coup | Une ligne par geste, prise sur le moment |
+| Tenir la chaîne de possession | Dossier constitué au fil des e-mails | Nommage unique, scellé, fiche par élément |
+
+Ces cinq principes tiennent en une seule phrase à retenir avant de passer à la suite : on ne démonte pas un bâtiment pour savoir comment il est construit, on en prend le plan, on le mesure, on le photographie, et on note ce qu'on a fait. Les sections suivantes traduisent ces principes en gestes concrets, d'abord en choisissant ce qu'il faut prélever et dans quel ordre, puis en fabriquant l'image du disque et en la scellant par une empreinte. Le cas des Ateliers du Faubourg vous montrera ensuite que la difficulté n'est jamais technique : elle est dans la patience qu'on met à ne rien brusquer.

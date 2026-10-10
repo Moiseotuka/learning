@@ -1,0 +1,616 @@
+Bienvenue dans le troisième chapitre du parcours Cybersécurité fondamentaux, entièrement consacré au réseau vu du côté défensif. Les deux chapitres précédents vous ont appris à reconnaître les attaquants et leurs vecteurs, puis à protéger les identités et les accès ; nous attaquons aujourd'hui le terrain sur lequel tout cela circule. Un réseau est à la fois la voie de circulation indispensable de votre organisation et le chemin d'approche privilegié de quiconque veut lui faire du tort : c'est par le réseau qu'un fichier malveillant se propage, qu'un mot de passe est capté en clair, qu'un poste oublié devient une porte dérobée vers le serveur comptable. Comprendre ce qui traverse un câble, ce qui est exposé, ce qui est filtré et ce qui est chiffré, c'est apprendre à voir le réseau comme le voit un défenseur : une carte de risques vivante plutôt qu'une simple boîte à internet. Ce chapitre ne suppose aucune connaissance préalable en réseaux : nous partons des notions les plus simples, adresse, port, service, et nous montons jusqu'à la chaîne de confiance TLS et la segmentation en réseaux virtuels.
+
+À la fin de cette leçon, vous saurez lire une règle de pare-feu comme on lit une phrase, identifier la source, la destination, le service et l'action, et en écrire en respectant le bon ordre et la bonne politique. Vous saurez vérifier le chiffrement TLS d'un service en interrogeant le certificat, en lisant la version du protocole et le chiffrement négocié, et en interprétant la chaîne de confiance jusqu'à son issue. Vous saurez distinguer les usages d'un VPN : accès distant pour un agent de télétravail, liaison entre deux sites, ou simple filtre de sortie quand un proxy suffit. Le fil rouge du chapitre est le parc informatique de la Médiathèque des Lilas : postes publics, postes de personnel, catalogue en ligne, imprimante partagée, réseau invités et salle technique. Nous prendrons ce décor à chaque section, parce qu'une règle de pare-feu n'a jamais de sens hors contexte : c'est en décidant pour un lieu réel qu'on apprend à raisonner en sécurité.
+
+Une recommandation avant d'entrer dans le vif du sujet. Les exemples de configuration que vous verrez sont des exemples illustratifs de familles de syntaxe : iptables et sa remplaçante nftables côté Linux, les listes de contrôle d'accès des routeurs Cisco, et quelques pseudo-syntaxes neutres inventées pour expliquer un principe. Ils se lisent et se comprennent, ils ne se copient pas : les mots-clés changent d'un fabricant à l'autre, et une règle recopiée sans réflexion peut ouvrir votre réseau au lieu de le fermer. Avant toute modification en production, testez dans un laboratoire, sauvegardez la configuration en place et prévoyez une marche arrière. Le fil rouge reste le parc de la Médiathèque des Lilas, et le chapitre se termine par un mini-projet : sa politique réseau, que vous rédigerez seul à l'exercice pratique.
+
+## Surface d'attaque réseau : ports, services exposés
+
+Un échange réseau se ramène toujours à une question simple : qui parle à qui, sur quel service, et cette conversation est-elle autorisée ? Pour répondre, deux numéros suffisent. L'adresse IP identifie la machine, comme le numéro d'une maison identifie le bâtiment ; le port identifie le service au sein de cette machine, comme le numéro de l'interphone indique le logement. Les ports vont de zéro à soixante-cinq mille cinq cent trente-cinq, et ils se répartissent entre deux protocoles de transport : TCP, qui garantit que rien n'est perdu ni réordonné, et UDP, qui expédie au plus vite sans promesse de livraison. Quand un logiciel attend des connexions, on dit qu'il écoute sur un port ; c'est cette écoute, et rien d'autre, qui crée un point d'entrée potentiel. Un service qui n'écoute nulle part est invisible : personne ne peut lui parler, donc personne ne peut l'exploiter à distance.
+
+Certaines numérotations sont devenues des conventions universelles : le port vingt-deux pour SSH, cinquante-trois pour les noms de domaine, quatre-vingts pour HTTP, quatre cent quarante-trois pour HTTPS, vingt-cinq pour le courrier, trois mille trois cent quatre-vingt-neuf pour le bureau à distance sous Windows, trois mille six pour MySQL. Retenez pourtant une nuance décisive : le numéro d'un port n'est qu'une convention de registre, pas une garantie de sécurité. Rien n'empêche un logiciel mal conçu d'écouter sur le port quatre cent quarante-trois, et un service parfaitement protégé déplacé sur un port exotique reste exposé s'il est joignable. La sécurité ne vient donc jamais du numéro : elle vient de l'état du logiciel, de la qualité de son authentification et des règles qui l'encadrent.
+
+Depuis l'extérieur, un port se trouve dans l'une de trois états, et les distinguer est la première compétence d'analyse. Un port ouvert répond : un service écoute et accepte la connexion. Un port fermé répond aussi, mais par un refus net : rien n'écoute, la machine est joignable mais le service absent. Un port filtré, lui, ne répond rien du tout : le paquet est jeté en route, et l'observateur ne peut même pas savoir si la machine existe derrière. Cette différence a une portée pratique immédiate. Un filtrage silencieux, dit par abandon, ralentit l'explorateur et ne lui donne aucune information ; un refus explicite, plus courtois pour vos utilisateurs légitimes, confirme à l'attaque qu'une adresse est vivante. Les deux attitudes sont défendables, mais elles doivent être choisies et documentées, jamais subies par défaut.
+
+```text
+ Poste public             Pare-feu de la médiathèque          Serveur catalogue
+ (VLAN 30)                       |                                |
+    |                            |                                |
+    |--- SYN, port 22 SSH ------>| Règle 1 : depuis VLAN 30,      |
+    |                            | SSH interdit -> ABANDON        |
+    |<-- pas de réponse ---------|                                |
+    |                            |                                |
+    |--- SYN, port 443 HTTPS --->| Règle 2 : depuis VLAN 30,      |
+    |                            | 443 vers catalogue -> AUTORISER|
+    |                            |--- SYN, port 443 ------------->|
+    |                            |<-- SYN-ACK ---------------------|
+    |<-- échange TLS poursuivi --|                                |
+    |                            |                                |
+    |--- SYN, port 3306 MySQL -->| Règle 3 : base de données      |
+    |                            | jamais exposée -> ABANDON      |
+    |<-- pas de réponse ---------|                                |
+```
+
+Le schéma ci-dessus résume le filtrage en trois tentatives : l'une est refusée, l'autre autorisée, la troisième refusée, chacune portée par une règle distincte. Pour décider ainsi de son propre terrain, cartographiez-le avec les mêmes outils qu'un attaquant, mais sur votre périmètre et avec une autorisation écrite.
+
+```text
+# Illustration d'une sortie d'outil de cartographie, mise en forme pour la leçon.
+# Réseau de la médiathèque, plage 192.168.30.0/24, exécuté depuis le poste
+# d'administration avec autorisation du responsable du parc.
+
+192.168.30.10   22/tcp    ouvert    ssh      OpenSSH 9.2 (bannière relevée)
+192.168.30.10   443/tcp   ouvert    https    serveur web interne
+192.168.30.15   80/tcp    ouvert    http     imprimante - interface d'admin
+192.168.30.15   9100/tcp  ouvert    jetdirect impression brute
+192.168.30.20   445/tcp   ouvert    smb      partage de fichiers
+192.168.30.25   3306/tcp  filtré    mysql    aucune réponse (pare-feu)
+192.168.30.40   443/tcp   ouvert    https    poste invité inconnu
+```
+
+Lecture de ce relevé : deux services attendus, une imprimante qui expose une interface d'administration en HTTP sur tout le réseau, un partage de fichiers ouvert, une base de données correctement filtrée, et surtout un poste invité inconnu qui parle HTTPS. Ce dernier point illustre la notion de surface d'attaque : l'ensemble des points qu'un attaquant peut tester sans avoir franchi aucun obstacle, chaque port ouvert, chaque service exposé, chaque compte par défaut, chaque interface d'administration accessible depuis un réseau non maîtrisé. Réduire cette surface, ce n'est pas supprimer ce qui est utile, c'est supprimer ce qui ne l'est pas : l'imprimante n'a aucune raison d'être atteignable depuis les postes publics, ni son interface d'administration depuis ailleurs que le réseau du personnel.
+
+La réduction de surface se joue en quelques gestes simples, qui coûtent peu et rapportent beaucoup. Inventoriez le parc, y compris les objets connectés que l'on oublie souvent : imprimantes, bornes, caméras, lecteurs de badges. Désactivez les services que personne n'utilise, fermez les ports inutiles, limitez les interfaces de gestion aux seuls réseaux d'administration, remplacez les mots de passe d'usine et mettez à jour les firmwares. Vérifiez qu'un service interne n'est pas publié par erreur sur l'interface exposée à internet. Une fois ce travail fait, votre carte de surface d'attaque devient courte, lisible et vérifiable, et c'est sur cette base seulement que la section suivante pourra écrire des règles de pare-feu utiles plutôt que décoratives.
+
+- Un port identifie un service, une adresse identifie une machine : toute conversation se ramène à ces deux numéros.
+- Un port ouvert répond, un port fermé refuse, un port filtré se tait : ces trois états se lisent différemment.
+- Le numéro d'un port est une convention, jamais une garantie de sécurité.
+- La surface d'attaque est l'ensemble des points testables sans obstacle : ports, services, comptes par défaut.
+- Cartographiez votre propre réseau avec autorisation, puis comparez la carte obtenue au périmètre attendu.
+- Chaque objet connecté compte : imprimante, borne, caméra et lecteur de badges ont une adresse IP.
+- Réduire la surface d'attaque, c'est fermer ce qui n'est pas utile, pas affaiblir ce qui l'est.
+
+## Pare-feu filtrant : politique, règles, ordre et implicites
+
+Le pare-feu est la porte de garde du réseau : il examine chaque paquet qui franchit une frontière et décide de le laisser passer ou de le retenir, en s'appuyant sur un ensemble de règles. Le pare-feu d'hôte protège une seule machine et décide ce qu'elle accepte d'écouter et vers quoi elle peut émettre ; le pare-feu de réseau, matériel ou logiciel, protège un périmètre entier, placé devant les serveurs, entre deux réseaux internes ou à la sortie vers internet. On utilise souvent les deux, parce qu'ils ne répondent pas à la même question : l'un empêche un intrus de se propager depuis un poste contaminé, l'autre empêche un service compromis d'être atteint de l'extérieur. C'est la défense en profondeur : une seule erreur ne suffit plus à tout compromettre.
+
+Avant d'écrire la moindre règle, il faut une politique, et c'est le point sur lequel la plupart des installations échouent. Une politique de filtrage est un document court : quelles zones existent, quels flux sont nécessaires au travail, lesquels sont interdits, qui décide des exceptions et à quelle fréquence elle est relue. Elle repose sur deux formules : filtrer par défaut ce qui n'est pas explicitement autorisé, et n'autoriser que le nécessaire, chaque ouverture justifiée par un besoin identifiable. On parle de moindre privilège : un poste de prêt n'a pas besoin d'atteindre le serveur de messagerie, un poste invité pas le catalogue interne. Une règle sans justification écrite est une dette : dans six mois, plus personne ne saura pourquoi elle existe, et tout le monde aura peur de la supprimer.
+
+Une règle se lit comme une phrase, et sa grammaire tient en cinq éléments. La direction indique si l'on examine un paquet entrant ou sortant. La source désigne l'adresse ou le réseau d'origine, la destination l'adresse visée, éventuellement complétée par le port, et le service précise le protocole de transport et son numéro. L'action décide du sort du paquet : accepter, abandonner silencieusement, ou refuser avec un message d'erreur. Une sixième pièce facultative mais précieuse est la journalisation, qui décide si l'événement est noté. Abandonner et refuser méritent d'être assumés : refuser répond immédiatement à l'émetteur, confortable pour l'utilisateur légitime mais qui confirme l'existence d'un service ; abandonner ne répond rien, plus discret mais qui peut faire patienter longtemps un logiciel légitime.
+
+```text
+EXEMPLE ILLUSTRATIF - ordre d'évaluation d'un jeu de règles, syntaxe neutre.
+Rappel : l'ordre change le résultat, et le premier accord conclu gagne.
+
+RÈGLE 1 | source : 192.168.30.0/24 (postes publics) | vers : 192.168.30.20:445 | ACTION : ABANDON
+RÈGLE 2 | source : 192.168.30.10                    | vers : 192.168.30.20:445 | ACTION : AUTORISER
+RÈGLE 3 | source : n'importe quelle adresse         | vers : 192.168.30.20:445 | ACTION : ABANDON
+RÈGLE 4 | source : 192.168.30.0/24                  | vers : 192.168.30.99:443  | ACTION : AUTORISER
+POLITIQUE IMPLICITE | toute autre correspondance                              | ACTION : ABANDON
+```
+
+Observez ce qui se passe quand l'ordre est modifié. Si la règle 1 est placée avant la règle 2, le serveur de fichiers refuse le serveur d'impression qui possède l'adresse .10 : le premier accord conclu l'emporte et la règle 2 n'est jamais consultée. Si la règle 3, très générale, arrive en tête, elle avale tout le trafic vers le port 445. Cette mécanique explique deux habitudes : placer les règles les plus spécifiques avant les plus générales, et relire un jeu de règles en cherchant la première règle qui s'applique à un paquet donné. Un test simple : prenez un trafic exemple, un poste du réseau invités qui veut joindre le serveur de catalogue, et faites-le cheminer dans l'ordre jusqu'à la première correspondance.
+
+Il existe toujours, en fin de jeu de règles, une règle qu'on ne voit pas : la politique par défaut, appliquée à tout paquet qu'aucune règle précédente n'a traité. Une politique permissive laisse passer tout ce que rien n'a refusé, ce qui transforme chaque oubli en faille ; une politique restrictive bloque tout ce que rien n'a autorisé, ce qui transforme chaque oubli en incident visible et réparable. L'indice est simple : si vous devez inventer des règles de refus sans fin, votre politique est permissive. Inversez-la, écrivez les autorisations nécessaires, et le reste est couvert par la règle implicite. Certaines familles l'affichent en toutes lettres, par exemple le mot clé deny à la fin d'une liste nommée ; d'autres la laissent implicite.
+
+Une deuxième mécanisme change radicalement le nombre de règles à écrire : le filtrage étatique. Un pare-feu étatique mémorise les connexions en cours et retient qu'une réponse appartient à une requête déjà autorisée : quand un poste ouvre une connexion vers le catalogue sur le port quatre cent quarante-trois, les paquets de retour passent sans règle supplémentaire. On écrit alors une règle unique pour autoriser la connexion et ses retours, au lieu de dupliquer chaque sens. L'écueil classique arrive quand l'état est désactivé ou quand deux pare-feux du chemin appliquent des vues différentes : le trafic de retour est bloqué, l'application semble tomber en panne, et l'on perd des heures à chercher une faute d'application qui est en réalité une règle asymétrique.
+
+La journalisation est la dernière pièce, souvent négligée à tort. Noter les refus permet de repérer un poste qui tente de joindre un service interne, une imprimante qui appelle un serveur inconnu ou un scannage qui traverse le périmètre ; noter les autorisations rares fait apparaître un flux que personne n'avait prévu. Deux précautions s'imposent : limiter le bruit, sinon vous accumulez des lignes identiques jusqu'à saturer le disque, et prévoir qui lit les journaux et quand, car un journal que personne ne consulte ne protège personne. Une règle sans journalisation reste une décision prise dans le noir ; nous reverrons l'exploitation de ces traces dans le chapitre sur la détection et la réponse.
+
+```table
+| Règle | Source | Destination et service | Action | Justification |
+| --- | --- | --- | --- | --- |
+| 1 | Poste de administration | Serveur de catalogue:22 | Autoriser | Maintenance à distance du personnel |
+| 2 | Postes publics | Serveur de catalogue:443 | Autoriser | Consultation du catalogue par les usagers |
+| 3 | Réseau invités | Serveur de catalogue:443 | Abandon | Accès web public uniquement, pas d'accès interne |
+| 4 | Tous les réseaux internes | Serveur de base de données:3306 | Abandon | Service jamais joignable depuis les postes |
+| 5 | N'importe quelle source | Interface d'administration des imprimantes:80 | Abandon | Gestion réservée au réseau du personnel |
+| 6 | N'importe quelle source | Tout le reste | Abandon | Politique par défaut restrictive |
+```
+
+Ce tableau constitue le premier jet de la politique de la médiathèque : six règles seulement, mais qui couvrent l'essentiel, parce qu'elles sont nées d'un inventaire des besoins et non d'un catalogue de possibilités. Notez l'absence volontaire de règles très larges : aucune ligne n'autorise n'importe quelle source vers n'importe quelle destination. C'est cette rigueur qui vous rendra service le jour où un poste public sera compromis : le champ d'action de l'intrus sera borné par les quelques autorisations dont il dispose.
+
+- Écrivez d'abord la politique, puis les règles : des règles sans politique deviennent rapidement contradictoires.
+- Une règle se lit en cinq temps : direction, source, destination, service, action.
+- Les règles les plus spécifiques passent avant les règles les plus générales, car le premier accord conclu gagne.
+- La politique par défaut, permissive ou restrictive, décide du sort de tout ce qu'aucune règle n'a traité.
+- Le filtrage étatique autorise les retours des connexions déjà ouvertes, ce qui allège le jeu de règles.
+- Abandonner éteint la connexion sans bruit, refuser répond et révèle : choisissez en connaissance de cause.
+- Journalisez les refus et les autorisations rares, avec limitation de bruit, et prévoyez qui les relit.
+
+## Exemples de règles commentées
+
+Avant toute chose, une mise en garde qui vaut pour toute cette section. Les trois blocs qui suivent sont des exemples illustratifs de familles de syntaxe : iptables et sa remplaçante nftables, et les listes de contrôle d'accès des routeurs Cisco. Ils servent à lire la logique d'une règle, source, destination, service, action et ordre, rien d'autre. Ne les recopiez jamais tels quels : les mots-clés, les options et les effets de bord varient selon le fabricant, la version et la distribution, et une commande exécutée à la mauvaise place peut verrouiller l'accès à votre machine ou ouvrir un service que vous croyiez fermé. Pratiquez sur un laboratoire, lisez la documentation de votre produit et conservez une voie de retour, par exemple une session locale ouverte en parallèle d'une modification à distance. Les adresses utilisées appartiennent aux plages privées réservées à la documentation : elles sont fictives.
+
+```bash
+# EXEMPLE ILLUSTRATIF - famille iptables (pare-feu historique de Linux).
+# Ceci est un artefact pédagogique à adapter, pas une commande à copier
+# sur un serveur réel sans revue ni test préalable.
+
+# 1. La boucle locale n'est jamais filtrée : les processus parlent entre eux.
+iptables -A INPUT -i lo -j ACCEPT
+
+# 2. Les réponses des connexions que j'ai moi-même ouvertes sont admises,
+#    ainsi que les flux associés à une connexion déjà acceptée.
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# 3. SSH n'est ouvert que depuis le réseau du personnel, pas depuis internet.
+iptables -A INPUT -p tcp --dport 22 -s 192.168.10.0/24 -j ACCEPT
+
+# 4. Le trafic web vers la machine elle-même est admis.
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# 5. Une tentative vers la base de données est abandonnée et journalisée.
+iptables -A INPUT -p tcp --dport 3306 -j LOG --log-prefix "REFUS-MYSQL "
+
+# 6. La politique par défaut de la chaîne entrante devient restrictive.
+iptables -P INPUT DROP
+```
+
+Lisez ce jeu de règles comme une phrase par numéro. La première admet la boucle de retour locale, indispensable au fonctionnement interne des logiciels. La deuxième admet les connexions déjà autorisées et les flux associés : c'est le filtrage étatique vu à la section précédente, résumé en une ligne. La troisième ouvre SSH depuis la seule plage du personnel, ce qui illustre le filtrage par source : depuis internet, la même tentative n'atteindra jamais la règle suivante. La quatrième ouvre le service web public. La cinquième journalise puis abandonne tout essai vers la base de données, et la dernière bascule la politique par défaut de la chaîne en restrictive. L'ordre est donc cohérent : spécifique avant général, exceptions avant politique implicite.
+
+```bash
+# EXEMPLE ILLUSTRATIF - famille nftables, successeur moderne d'iptables.
+# Même logique, autre vocabulaire : tables, chaînes, règles, politique.
+# À adapter impérativement à votre distribution et à votre noyau.
+
+table inet filtre {
+  chain entree {
+    type filter hook input priority 0; policy drop;
+
+    iif "lo" accept
+    ct state established, related accept
+
+    ip saddr 192.168.10.0/24 tcp dport 22 accept
+    tcp dport 443 accept
+
+    tcp dport 3306 log prefix "REFUS-MYSQL " limit rate 5/minute
+  }
+
+  chain sortie {
+    type filter hook output priority 0; policy accept;
+    # Politique permissive en sortie : le parc est à confiance modérée,
+    # mais un poste compromis pourrait alors exfiltrer des données.
+  }
+}
+```
+
+Cette version montre deux différences de fond avec la précédente. La première est la politique déclarée en tête de chaîne : ici, entrée restrictive, sortie permissive. Elle dispense de la ligne finale mais impose de comprendre où elle s'écrit, parce qu'elle décide du sort de tout ce qu'aucune règle n'a rattrapé. La seconde tient à la chaîne de sortie : laisser le trafic sortant libre convient à un poste de travail, mais sur un serveur sensible on préférera une sortie restrictive. Notez enfin la limitation de fréquence du journal, qui empêche une attaque par saturation de remplir le disque en quelques minutes.
+
+```text
+! EXEMPLE ILLUSTRATIF - famille ACL des routeurs Cisco IOS.
+! Syntaxe présentée pour sa logique, jamais pour être saisie sans adaptation.
+
+ip access-list standard BUREAU-STAFF
+ permit 192.168.10.0 0.0.0.255
+ deny   any
+!
+ip access-list extended VERS-SERVEURS
+ permit tcp 192.168.10.0 0.0.0.255 host 192.168.30.10 eq 443
+ permit tcp 192.168.20.0 0.0.0.255 host 192.168.30.10 eq 443
+ deny   ip any any log
+!
+interface Vlan30
+ description Serveurs du catalogue
+ ip access-group VERS-SERVEURS in
+```
+
+Trois leçons se dégagent de cette famille. La première tient aux masques : une liste standard compare une adresse source avec un masque inversé, écrit 0.0.0.255 pour désigner vingt-cinq-six adresses contiguës ; confondre ce masque avec le masque de sous-réseau est l'erreur la plus fréquente des débutants. La seconde tient à l'attachement : une liste n'a aucun effet tant qu'elle n'est pas rattachée à une interface et à un sens, entrant ou sortant. La troisième tient au refus final : une liste nommée se termine par un refus implicite qu'il est bon d'écrire en toutes lettres, avec journalisation, pour que l'intention soit visible par qui relira la configuration. Les familles de syntaxe diffèrent, les cinq éléments de la phrase restent identiques partout.
+
+- Ne recopiez jamais un exemple de syntaxe sur un équipement réel : les familles diffèrent, adaptez et testez.
+- Lisez une règle comme une phrase, dans l'ordre où le paquet la rencontre.
+- Politique par défaut restrictive en entrée, décisions de sortie assumées et documentées.
+- Le masque inversé des listes Cisco n'est pas le masque de sous-réseau : c'est la faute la plus fréquente.
+- Une liste non rattachée à une interface et à un sens ne filtre rien.
+- Datez, annotez et faites relire chaque règle ; sauvegardez avant, testez pendant, consignez après.
+
+## Segmentation : VLAN et DMZ à la médiathèque
+
+Imaginez le parc de la Médiathèque des Lilas constitué d'un seul grand réseau plat : postes publics, postes du personnel, serveurs, imprimantes, caméras et bornes Wi-Fi partagent la même plage d'adresses et la même diffusion de paquets. Un seul poste public compromis suffit alors pour joindre le serveur de catalogue, l'imprimante et le bureau du directeur, sans rencontrer le moindre obstacle : le pare-feu a beau être parfaitement réglé sur l'entrée d'internet, il ne voit rien de ce qui se passe à l'intérieur. C'est la faiblesse structurelle du réseau plat, qui fait de la segmentation le second pilier du réseau défensif après le pare-feu : découper le réseau en zones indépendantes, pour qu'une compromission localisée ne se propage pas librement.
+
+Le premier outil de segmentation est le VLAN, pour réseau local virtuel. Un commutateur compatible attribue à chaque port une étiquette, et les paquets qui portent cette étiquette ne circulent qu'entre les ports du même groupe, même s'ils sont câblés sur le même boîtier : le découpage est donc logique. Les machines d'un VLAN ne voient pas celles des autres, sauf si un routeur ou un pare-feu les relie explicitement, et la diffusion de paquets reste confinée dans chaque VLAN. Attention à une nuance décisive : un VLAN est une séparation de trafic, pas une barrière de sécurité absolue ; un commutateur mal configuré ou un lien non étiqueté peuvent rétablir la communication. La règle d'or est simple : si le trafic doit être bloqué, c'est le pare-feu inter-vlan qui doit le bloquer, jamais l'absence de règle.
+
+La DMZ, ou zone démilitarisée, répond à un besoin différent : héberger des services destinés au public sans mettre en danger le réseau interne. Elle se situe entre internet et le réseau privé, derrière un pare-feu qui règle les deux flancs séparément. Les serveurs qui y vivent, site web, serveur de courrier, passerelle de dépôt, sont atteignables de l'extérieur, mais le pare-feu limite strictement ce qu'ils peuvent émettre vers l'intérieur : un serveur public compromis doit pouvoir servir ses clients, pas interroger votre base de données ou vos postes. Pour une médiathèque, la DMZ est l'endroit naturel du catalogue en ligne : visible par tous, sans droit vers les réseaux internes.
+
+```text
+                        Internet
+                           |
+                     [ Pare-feu principal ]
+              (règles entre chaque zone : refus par défaut)
+                           |
+        -------------------+-------------------------
+        |                   |                       |
+   [ DMZ - VLAN 50 ]   [ Interne - routeur        |
+   |                 |   inter-vlan / pare-feu ]   |
+   | serveur         |        |          |         |
+   | catalogue 443   |   [VLAN 10]   [VLAN 20]     |
+   |                 |   personnel   postes de     |
+   |                 |   + admin     travail       |
+   |                 |        |          |         |
+   -------------------   [VLAN 30]   [VLAN 40]     |
+                         postes     invités Wi-Fi  |
+                         publics    (sortie        |
+                                    internet seule)|
+                                                   |
+```
+
+Le schéma met en évidence deux décisions distinctes : l'accès d'internet vers la DMZ, autorisé sur le seul port quatre cent quarante-trois, et les accès entre zones internes, qui ne sont pas automatiques mais réglés une par une sur l'équipement qui les relie. Chaque besoin exprimé en phrase devient une règle, et l'ensemble constitue la matrice de communication entre zones, résumée dans le tableau suivant.
+
+```table
+| Zone | VLAN | Usagers | Ce qui est autorisé | Ce qui est refusé |
+| --- | --- | --- | --- | --- |
+| Administration | 10 | Équipe technique | Postes, serveurs, imprimantes, gestion | Accès direct à internet non nécessaire |
+| Postes de travail | 20 | Personnel d'accueil | Catalogue interne, imprimer, courrier | Postes publics, réseau invités |
+| Postes publics | 30 | Usagers sur place | Catalogue public en HTTPS | Tout le reste du réseau interne |
+| Invités Wi-Fi | 40 | Visiteurs avec bornes | Internet uniquement, via le pare-feu | Toute adresse privée interne |
+| DMZ | 50 | Usagers d'internet | Service public sur 443 | Vers tous les réseaux internes |
+```
+
+Ce tableau est un extrait de la matrice que vous rédigerez dans le mini-projet : il tient sur une page et il se vérifie par essai, en tentant depuis un poste du VLAN concerné une communication interdite et en cherchant la trace du refus. La segmentation apporte aussi des bénéfices sans rapport avec la sécurité : la diffusion reste locale, les adresses sont attribuées par zone, la supervision devient lisible, et l'on sait de quelle zone vient un incident. Les contreparties sont un coût matériel, des commutateurs gérés et un plan d'adressage tenu à jour ; dans un petit établissement, on commence souvent par deux ou trois zones plutôt que par six, pour garder une configuration tenable.
+
+- Un réseau plat transforme une compromission locale en incident général : segmentez avant de raffiner les règles.
+- Le VLAN découpe le trafic logiquement ; c'est le pare-feu inter-vlan qui garantit réellement le refus.
+- La DMZ accueille les services publics sans leur donner accès au réseau interne.
+- La matrice de communication entre zones se rédige en phrases simples, puis se traduit en règles.
+- La segmentation se vérifie par essai : tentez la communication interdite et recherchez la trace du refus.
+- Commencez par peu de zones bien maîtrisées plutôt que par beaucoup de zones mal reliées.
+
+## Le TLS : certificats, chaîne de confiance et TLS 1.3
+
+Tout ce que nous avons vu jusqu'ici décide si un paquet circule ou non ; une question commence à peine : une fois le paquet admis, quelqu'un peut-il le lire ou le modifier en route ? C'est le problème que résout le chiffrement, dont le protocole de référence s'appelle TLS, pour sécurité de la couche transport. TLS s'intercale entre le transport et l'application : votre navigateur parle HTTP, mais cette conversation est emballée dans une enveloppe chiffrée que seul le serveur destinataire sait ouvrir. Le serveur et le port restent les mêmes, mais les octets qui circulent ne portent plus de texte lisible, ni d'identifiant, ni de mot de passe. TLS répond donc à deux exigences : le secret, personne d'autre ne lit, et l'intégrité, personne ne peut modifier sans que cela se voie.
+
+Le protocole assemble trois outils cryptographiques complémentaires. Le chiffrement symétrique, reposant sur des algorithmes comme AES en mode authentifié ou ChaCha20 accompagné de Poly1305, chiffre vite de grands volumes avec une clé unique partagée. Le chiffrement asymétrique, fondé sur une paire de clés publique et privée, sert à échanger cette clé secrète et à signer des informations sans jamais la transmettre. Enfin, les fonctions de hachage, comme SHA-256, résument un contenu en une empreinte sensible au moindre changement et vérifient qu'aucun octet n'a été altéré. L'essentiel tient en une formule : TLS chiffre de manière authentifiée, c'est-à-dire qu'il protège contre l'écoute, la falsification et l'usurpation de l'identité du serveur.
+
+Comment un client sait-il à qui il parle ? Par le certificat, et c'est ici que l'analogie document d'identité devient précise. Un certificat est un fichier signé qui contient le nom du site, sa clé publique, la durée de validité, un numéro de série, l'autorité qui l'a émis, et surtout une liste de noms auxquels il s'applique, appelée SAN pour sujet alternatif. C'est cette liste qui compte : si vous allez sur le catalogue d'une médiathèque et que le certificat ne mentionne pas ce nom, le navigateur doit refuser, quelle que soit la beauté du reste. Le certificat ne prouve pas qu'un site est honnête : il prouve qu'une autorité reconnue a vérifié le contrôle du nom de domaine et l'appartenance de la clé publique.
+
+La chaîne de confiance relie ce certificat à votre appareil. Le certificat que le serveur présente est généralement délivré par une autorité intermédiaire, elle-même certifiée par une autorité racine dont le certificat est préinstallé dans votre système ou votre navigateur. Pour valider, le client remonte la chaîne jusqu'à une racine qu'il connaît déjà, vérifie chaque signature, contrôle les dates et le nom demandé ; toute signature invalide, chaîne incomplète ou date dépassée fait afficher l'avertissement. Si une organisation inspecte le trafic chiffré, son propre certificat n'est accepté que si sa racine a été installée sur les postes, ce qui se fait en entreprise mais pas chez un usager. L'existence d'intermédiaires n'est pas un détail : elle permet de renouveler les clés sans remplacer les racines du monde entier.
+
+```text
+Établissement d'une connexion TLS 1.3 - vue simplifiée du dialogue
+
+ Client                                              Serveur
+   |                                                     |
+   | 1. Bonjour, je parle TLS 1.3, voici le nom demandé  |
+   |---------------------------------------------------->|
+   |                                                     |
+   | 2. Bonjour, voici mon certificat et ma signature     |
+   |    (négociation des algorithmes, clé éphémère)       |
+   |<----------------------------------------------------|
+   |                                                     |
+   | 3. Je vérifie la chaîne, les dates et le nom ;       |
+   |    je calcule puis j'envoie la clé de session        |
+   |    protégée par la clé publique du serveur           |
+   |---------------------------------------------------->|
+   |                                                     |
+   | 4. Accusé de réception dérivé de la clé de session   |
+   |<----------------------------------------------------|
+   |                                                     |
+   | 5. Conversation HTTP chiffrée de bout en bout        |
+   |<===================================================>|
+```
+
+La version 1.3 du protocole, publiée en 2018 et aujourd'hui attendue par défaut, mérite une place à part : elle a retiré les algorithmes vieillissants, imposé un échange de clés éphémères dit à parfaite confidentialité persistante, ce qui signifie que la clé de session n'est réutilisable pour personne même si la clé privée du serveur était volée plus tard, et réduit le dialogue d'établissement à un aller-retour. Un cas limite subsiste, la réutilisation des premières données : la phase qui suit la négociation peut emporter une requête envoyée avant la confirmation complète, ce qui l'expose à un rejeu ; les implémentations modernes limitent cet usage aux requêtes idempotentes. Deux habitudes complètent le tableau : refuser les versions 1.0 et 1.1, et exiger le 1.3 ou, à défaut, un 1.2 récent avec échange de clés éphémère.
+
+- TLS chiffre les échanges, authentifie le serveur et détecte toute altération en transit.
+- Le chiffrement symétrique protège le contenu, l'asymétrique sert à échanger les clés et à signer.
+- Le certificat associe un nom de domaine à une clé publique, sous la responsabilité d'une autorité.
+- La chaîne de confiance remonte du certificat présenté jusqu'à une racine préinstallée sur l'appareil.
+- C'est la liste des noms du certificat qui fait foi, pas la simple présence d'un cadenas.
+- TLS 1.3 impose l'échange de clés éphémères, supprime les algorithmes obsolètes et gagne un aller-retour.
+- Un certificat expiré bloque les usagers : le renouvellement automatique n'est pas une option de confort.
+
+## Vérifier un certificat et le chiffrement pas à pas
+
+Le cadenas du navigateur vous donne un verdict, pas un raisonnement. Pour vérifier un service comme le responsable technique de la médiathèque doit le faire, il faut répondre à quatre questions : quel certificat est présenté, qui l'a signé, jusqu'à quand est-il valable, et quelle version du protocole avec quel chiffrement a été négociée ? La réponse se obtient en deux minutes avec OpenSSL, une boîte à outils de référence présente sur la plupart des machines. La commande ci-dessous ouvre une connexion au service, demande son certificat et affiche le détail de la négociation. Considérez-la comme un examen clinique : vous ne changez rien, vous observez, vous notez.
+
+```bash
+# EXEMPLE ILLUSTRATIF - examen d'un service TLS avec OpenSSL.
+# www.example.com est un nom réservé à la documentation : remplacez-le
+# par le nom du service que vous contrôlez réellement.
+# La commande reste la même sur Linux, macOS et sous Windows depuis un
+# environnement qui fournit openssl ; seuls les retours à la ligne varient.
+
+openssl s_client -connect www.example.com:443 -servername www.example.com
+```
+
+L'option de connexion donne l'adresse et le port, l'option de nom permet d'envoyer le nom demandé pendant la négociation, ce qui est indispensable quand'un même serveur héberge plusieurs sites : sans lui, le serveur ne sait pas quel certificat présenter et renvoie souvent un certificat par défaut, source de faux espoirs. La sortie est longue, mais trois blocs suffisent. Le premier décrit le protocole et le chiffrement retenus. Le deuxième donne le résultat de validation de la chaîne, noté par un code numérique accompagné d'une phrase. Le troisième déroule le certificat et les certificats des autorités intermédiaires.
+
+```text
+# Exemple de sortie mise en forme pour la leçon (valeurs illustratives).
+# Recherchez d'abord le protocole et le chiffrement :
+Protocol   : TLSv1.3
+Cipher     : TLS_AES_256_GCM_SHA384
+
+# Recherchez ensuite le verdict de validation de la chaîne :
+Verify return code: 0 (ok)
+
+# Puis l'identité et la période de validité du certificat présenté :
+subject=CN = www.example.com
+issuer  = C = US, O = Let's Encrypt, CN = R3
+notBefore = Sep 12 00:00:00 2026 GMT
+notAfter  = Dec 11 23:59:59 2026 GMT
+```
+
+Trois lectures découlent de ces lignes. Le protocole annoncé doit être 1.3, ou à défaut une version 1.2 récente ; un retour en 1.1 ou pire signale un serveur négligé. Le chiffrement annoncé doit être un mode authentifié moderne, gcm ou chacha20 ; les modes historiques de type cbc appartiennent au passé. Le code de retour zéro signifie que la chaîne complète a été vérifiée jusqu'à une racine de confiance ; toute autre valeur appelle un examen, et il ne faut jamais s'habituer à cliquer à travers un avertissement. Vérifiez enfin les dates : un certificat qui expire dans trois jours est un incident en préparation.
+
+Pour aller au-delà de l'en-tête, on interroge le certificat lui-même. Les commandes suivantes extraient le sujet, l'émetteur, les dates et la liste des noms couverts, exactement les éléments qu'un auditeur vous demandera de produire. L'important est de contrôler la liste des noms : un certificat valide pour un autre domaine ne protège pas le vôtre, et un certificat qui couvre le nom court mais pas le nom complet avec sous-domaine produira des avertissements sur une partie du service.
+
+```bash
+# EXEMPLE ILLUSTRATIF - extraire les champs utiles d'un certificat.
+# Deux approches complémentaires, à adapter selon votre installation.
+
+# 1. Lire directement le certificat que le serveur vient de présenter.
+openssl s_client -connect www.example.com:443 -servername www.example.com \
+  2>/dev/null | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+
+# 2. Examiner un fichier de certificat déjà récupéré sur disque.
+openssl x509 -in certificat.pem -noout -text
+```
+
+La vérification manuelle a une limite : elle examine un instantané d'un serveur et ne teste ni la robustesse de la configuration, ni la qualité de la chaîne complète. Un service d'analyse en ligne fait alors gagner un temps considérable, dont le plus connu est celui de Qualys, à l'adresse https://ssllabs.com. Vous y soumettez un nom de domaine, et l'outil rend une note accompagnée d'un détail lisible : protocoles acceptés, versions refusées, caractéristiques de l'échange de clés, validité de la chaîne. Ce qui compte davantage que la note est la liste des points corrigés d'un passage au suivant. Ce test évalue la configuration du transport, pas la sécurité de l'application derrière.
+
+La plupart des certificats gratuits sont aujourd'hui délivrés par Let's Encrypt, une autorité de certification dont la spécification, appelée ACME, automatise toute la démarche : le service prouve que vous contrôlez le nom de domaine par un défi, émet le certificat, puis le renouvelle automatiquement. La validité est de quatre-vingt-dix jours, ce qui limite la durée d'exposition d'une clé compromise et impose un renouvellement périodique. L'outil le plus répandu pour piloter ce cycle s'appelle certbot, et la séquence ci-dessous en montre le principe.
+
+```bash
+# EXEMPLE ILLUSTRATIF - cycle de vie d'un certificat avec certbot et
+# Let's Encrypt. Les options dépendent du serveur web utilisé : lisez la
+# documentation de votre propre installation avant d'exécuter quoi que ce soit.
+
+# Obtenir un certificat pour un nom de domaine que vous maîtrisez.
+sudo certbot --nginx -d www.example.com
+
+# Vérifier que le renouvellement automatique fonctionne réellement.
+sudo certbot renew --dry-run
+
+# Consigner la date d'expiration dans votre suivi mensuel.
+# (commande de lecture, sans modification de configuration)
+```
+
+La ligne la plus importante de ce bloc n'est pas la première, c'est la deuxième : obtenir un certificat est facile, prouver que le renouvellement fonctionnera dans quatre-vingt-dix jours est le vrai travail. Un test périodique associé à une alerte sur les dates d'expiration vous épargnera l'incident le plus courant : un site qui affiche un avertissement de certificat expiré à tous ses usagers un lundi matin. Notez enfin dans votre procédure la date de la dernière vérification, le chiffrement constaté, la date d'expiration et le responsable du suivi.
+
+- Répondez à quatre questions : quel certificat, par qui signé, jusqu'à quand, avec quel chiffrement.
+- Le verdict de validation vaut zéro pour une chaîne complète ; toute autre valeur exige un examen.
+- Contrôlez la liste des noms couverts, la date de fin et le niveau de chiffrement annoncé.
+- Un outil d'analyse en ligne évalue la configuration globale, pas seulement l'instantané d'un serveur.
+- Let's Encrypt délivre gratuitement des certificats automatisés, valables quatre-vingt-dix jours.
+- Testez le renouvellement avant qu'il ne devienne urgent, et suivez les dates dans un registre.
+
+## HTTP et HTTPS : ce que TLS protège (et ne protège pas)
+
+HTTP et HTTPS ne sont pas deux protocoles concurrents : HTTPS est HTTP à l'intérieur de TLS, la seule différence étant l'enveloppe. Ce que l'on appelle sécurité en transit recouvre une promesse précise, et la première compétence consiste à savoir ce qu'elle couvre. TLS garantit trois choses. La confidentialité : un observateur sur le chemin voit des octets illisibles, pas les URLs consultées, ni les formulaires, ni les contenus. L'intégrité : toute modification en route casse la vérification de l'enveloppe et coupe la conversation. L'authentification du serveur : si la chaîne de confiance est valide, vous parlez bien au détenteur du nom de domaine. Sans ces trois piliers, il n'y a pas de HTTPS digne de ce nom, et c'est ce que le cadenas du navigateur résume en une icône.
+
+```text
+# Comparaison de ce qui est visible depuis le réseau, valeurs illustratives.
+
+# HTTP - le réseau voit tout, en clair
+GET /compte/membre HTTP/1.1
+Host: catalogue.mediatheque.local
+Cookie: session=abc123
+X-Identifiant: numero-de-lecture-4871
+
+# HTTPS - le réseau ne voit que l'enveloppe
+17 03 03 01 A4          <- longueur du paquet suivant
+2E 9F 4B 11 7C 8A ...   <- fragments chiffrés, illisibles
+(voir aussi : adresse IP de destination, port 443, dates, tailles)
+```
+
+Cette comparaison appelle la liste de ce que TLS ne protège pas, et elle est plus longue qu'on ne le croit. Le contenu reste lisible par le serveur, ses journaux et ses sauvegardes. Un certificat valide ne prouve pas la bonne foi : un site de fraude peut obtenir un certificat pour son propre nom, et le cadenas ne signifie alors que le nom affiché est bien celui visité. Le poste de l'utilisateur n'est pas protégé non plus : un logiciel espion lira le mot de passe au moment où il est tapé. Enfin, TLS ne répare pas une application vulnérable : injection de requêtes, scripts injectés, défaut de protection des formulaires transitent parfaitement dans un tunnel chiffré, et c'est à la famille OWASP, consultable sur https://owasp.org, qu'il revient de répondre.
+
+Un deuxième ensemble de limites porte sur les métadonnées, ces informations qui accompagnent la conversation sans en faire partie. Le paquet IP révèle l'adresse du serveur visité, le port révèle le type de service, la taille et le rythme des paquets permettent souvent de deviner la nature de l'échange, et le nom demandé pendant la négociation indique le domaine ciblé. Les requêtes de résolution de noms, elles, restent à l'extérieur de TLS tant qu'elles ne sont pas protégées par un mécanisme dédié. TLS protège donc le contenu de la conversation, pas le fait qu'elle ait lieu ni avec qui : une promesse d'anonymat complet fondée sur le seul HTTPS serait mensongère.
+
+Reste la question de la rétrogradation. Un attaquant qui se place sur le chemin peut tenter de vous servir la page en HTTP, en espérant que le navigateur accepte et que l'usager ne remarque pas l'absence de cadenas. Deux parades existent. La première consiste à rediriger systématiquement toute requête non chiffrée vers l'adresse chiffrée. La seconde, l'en-tête HSTS, déclare que le navigateur ne doit jamais accepter la version non chiffrée pour une durée donnée, y compris si l'attaquant essaie de la proposer. Tant que la redirection n'est pas en place, il faut aussi proscrire le contenu mixte, ces pages qui chargent une partie de leurs ressources en HTTP depuis une page HTTPS.
+
+```table
+| Ce que TLS garantit | Ce que TLS ne garantit pas |
+| --- | --- |
+| Le contenu de la conversation est lisible par le destinataire seul | Le serveur ne conserve ni ne revend aucun journal |
+| Aucune modification en route ne passe inaperçue | L'application derrière le chiffrement est exempte de failles |
+| Le serveur correspond bien au nom de domaine affiché | Le site est honnête, légal ou compétent |
+| Le navigateur refuse une chaîne de confiance invalide | L'adresse IP visitée, les tailles et les rythmes restent visibles |
+| Les mots de passe ne circulent plus en clair sur le réseau | Le poste de l'utilisateur n'est pas infecté |
+```
+
+- HTTPS est HTTP enveloppé dans TLS : la différence tient à l'enveloppe, pas aux requêtes.
+- TLS garantit le secret, l'intégrité et l'identité du serveur, sous réserve d'une chaîne valide.
+- Un certificat valide prouve le contrôle d'un nom, jamais l'honnêteté du site.
+- Les métadonnées, adresses, tailles, rythmes et noms de domaine, restent visibles.
+- Une application vulnérable reste vulnérable à l'intérieur d'un tunnel parfaitement chiffré.
+- Redirigez tout le HTTP vers le HTTPS et activez HSTS pour fermer la porte à la rétrogradation.
+
+## Le VPN : tunnel, chiffrement et usages légitimes
+
+Un VPN, ou réseau privé virtuel, répond à une situation très simple : des personnes ou des sites doivent partager un réseau privé alors que le chemin qui les sépare leur est étranger, l'internet public en tête. Plutôt que de câbler un lien dédié, on creuse un tunnel dans le réseau existant : les paquets du réseau privé sont emballés dans des enveloppes nouvelles, acheminés sur l'infrastructure publique, puis déballés à l'arrivée. L'usager voit un réseau local ; le transporteur du milieu ne voit que des paquets chiffrés dont il ne comprend ni la destination réelle ni le contenu. Ce décalage entre ce que l'on croit voir et ce que le réseau voit est la définition du virtuel dans réseau privé virtuel.
+
+Un tunnel ne vaut que par quatre mécanismes qui fonctionnent ensemble : l'encapsulation met les paquets d'origine dans une nouvelle trame, le chiffrement rend le contenu illisible à quiconque observe le chemin, l'intégrité garantit qu'aucune pièce n'a été modifiée pendant le trajet, souvent par une empreinte calculée à chaque paquet, et l'authentification des extrémités prouve que l'autre bout est bien celui que l'on prétend être. C'est ce dernier point qui distingue un vrai tunnel d'une simple promesse de confidentialité. Les familles de protocoles qui implémentent ces mécanismes sont multiples, par exemple IPsec accompagné de son échange de clés, OpenVPN construit sur TLS, ou WireGuard plus récent et plus concis : nous les citons comme des familles à explorer, pas comme des choix à trancher aveuglément, car leur déploiement dépend du matériel et des compétences disponibles.
+
+```text
+                  Réseau privé de la médiathèque
+ Poste du personnel                                 Serveur interne
+ (chez lui, réseau familial)                        (192.168.10.25)
+        |                                                   |
+        |  paquet interne vers 192.168.10.25                |
+        |                                                   |
+        v                                                   |
+ [ client VPN ] -- tunnel chiffré et authentifié ------- [ passerelle VPN ]
+        |             (vue de l'extérieur :                 |
+        |              un unique flux chiffré)              |
+        |                                                   |
+        +----> routeur domestique --> internet --> [ pare-feu de la médiathèque ]
+                                                    (autorise le tunnel,
+                                                     puis filtre à l'intérieur)
+```
+
+Les usages légitimes tiennent tous dans la même idée : étendre un service privé jusqu'à une personne autorisée, sans étendre le réseau privé jusqu'à tout le monde. Un agent de la médiathèque qui travaille chez lui doit atteindre l'outil de gestion des prêts, inaccessible depuis internet ; le tunnel lui donne cet accès sans exposer l'outil au monde entier. Deux établissements d'un même réseau de bibliothèques peuvent relier leurs réseaux pour partager un catalogue commun, et un administrateur qui intervient depuis son domicile peut emprunter le tunnel plutôt qu'ouvrir SSH sur internet. Dans tous les cas, le VPN est un moyen d'accès contrôlé, pas une fin en soi : quel besoin précis ce tunnel satisfait-il, et qui doit pouvoir l'utiliser ?
+
+L'authentification du tunnel mérite une attention particulière : c'est le point où l'usager rencontre la sécurité. Les implémentations sérieuses combinent un facteur que l'on possède, comme un certificat installé sur le poste, et un facteur que l'on sait, comme un mot de passe robuste, souvent accompagné d'un troisième transmis par une application. Exiger une double authentification pour un accès qui ouvre le réseau interne est un réflexe à prendre dès le départ, et limiter chaque compte aux seules ressources dont il a besoin évite qu'un identifiant volé ne devienne une passe-partout. Reste à choisir entre le tunnel complet, où tout le trafic du poste passe par l'organisation, et le tunnel partiel, où seuls les paquets destinés au réseau privé empruntent le tunnel : le premier supervise davantage, le second est plus léger mais laisse le reste du trafic hors de votre visibilité.
+
+Il faut enfin connaître les limites, pour ne pas vendre au VPN une protection qu'il n'apporte pas. Un VPN ne rend pas anonyme : le fournisseur du tunnel voit les échanges, et le site visité voit toujours votre adresse de sortie. Il ne protège pas le poste : un logiciel malveillant continue de fonctionner à l'intérieur du tunnel et pourra alors atteindre le réseau privé directement. Il transfère une part de responsabilité à l'équipement qui termine le tunnel, devenu une cible de choix, et il ajoute une dépendance : quand le tunnel tombe, le travail s'arrête, ce qui impose de documenter une procédure de secours.
+
+- Un VPN creuse un tunnel authentifié, chiffré et vérifié dans un réseau qui ne vous appartient pas.
+- Encapsulation, chiffrement, intégrité et authentification des extrémités forment un tout indivisible.
+- Chaque usager du tunnel reçoit l'accès le plus restreint compatible avec sa mission.
+- Un VPN ne rend pas anonyme, ne nettoie pas un poste infecté et dépend d'un équipement devenu critique.
+
+## VPN d'accès distant, VPN site-à-site et proxy : trois réponses différentes
+
+Le VPN d'accès distant concerne des individus et non des lieux. Chaque poste installe un client qui établit une session avec une passerelle, l'usager s'authentifie, et le réseau privé s'étend jusqu'à lui. C'est la solution du télétravail, de l'administration à distance et de la mobilité. Ses forces sont la souplesse et la granularité : chaque compte peut recevoir ses propres autorisations. Ses contraintes sont la gestion des postes que l'on ne maîtrise pas entièrement, la nécessité d'une double authentification, et la charge de maintenance des comptes, des certificats et des journaux de connexion. Dans la médiathèque, ce dispositif correspond exactement au besoin de l'équipe qui consulte l'outil de gestion depuis chez elle.
+
+Le VPN site-à-site relie des réseaux et non des personnes. Deux passerelles, une dans chaque site, établissent un tunnel permanent ou sur demande, et les machines des deux côtés se parlent comme si elles partageaient le même bâtiment. Aucun client n'est installé sur les postes, ce qui simplifie le quotidien des usagers, mais la configuration appartient tout entière à l'équipe technique, qui doit gérer les plages d'adresses sans chevauchement, le routage, la politique de filtrage à chaque extrémité et le suivi des certificats d'équipement. C'est la solution choisie pour relier une médiathèque annexe au réseau principal, ou pour interconnecter plusieurs établissements d'un même réseau.
+
+Le proxy n'appartient pas à la même famille : il s'interpose dans une conversation déjà en cours, reçoit la requête, la reformule au nom du client, puis renvoie la réponse. Un proxy de niveau application comprend les requêtes web : il peut filtrer par nom de site, mettre en cache des pages, anonymiser partiellement la source ou servir de routeur de sortie contrôlé. Il n'offre pas l'accès à l'ensemble des services d'un réseau, ne crée pas de tunnel chiffré et ne chiffre pas la conversation tant que le protocole de départ n'est pas lui-même chiffré. Un proxy inverse, lui, se place devant les serveurs pour terminer les connexions entrantes ou répartir la charge : il protège le serveur, pas les postes.
+
+```table
+Critère | VPN d'accès distant | VPN site-à-site | Proxy
+| --- | --- | --- | --- |
+| Ce qui se connecte | Une personne, un poste | Deux réseaux entiers | Une requête, un client applicatif
+| Où vit la configuration | Client installé et compte utilisateur | Passerelles dédiées | Réglage applicatif ou navigateur
+| Authentification | Identifiant, certificat, double authentification | Certificats d'équipement, clés partagées | Aucune, ou authentification d'usager |
+| Périmètre couvert | Ressources autorisées pour ce compte | Tout le périmètre convenu entre les sites | Principalement le web, selon les règles
+| Chiffrement | Oui, de bout en bout dans le tunnel | Oui, entre les passerelles | Pas par lui-même, sauf si le trafic est déjà chiffré
+| Cas typique | Télétravail, intervention à distance | Raccordement d'une annexe, réseau d'établissements | Filage, mise en cache, contrôle de sortie
+| Attention | Poste distant mal protégé, comptes à gérer | Chevauchement d'adresses, routage à maintenir | Ne résout ni l'écoute ni l'usurpation
+```
+
+Pour la Médiathèque des Lilas, l'arbitrage se fait en trois questions. D'abord, qui doit se connecter : des personnes qui se déplacent, ce qui impose un accès distant, ou des bâtiments qui dialoguent, ce qui impose un lien site-à-site ? Ensuite, quelle surface est acceptable : quelques comptes nominaux et journalisés, ou une interconnexion où tout poste d'un site peut joindre tout poste de l'autre ? Enfin, quel problème résout-on réellement : étendre le réseau, ou seulement contrôler et accélérer la sortie vers internet, auquel cas un proxy reste plus léger et plus lisible. Répondez à ces trois questions par écrit avant d'ouvrir un devis, et le choix s'imposera presque toujours de lui-même.
+
+- Choisissez l'outil à partir du besoin écrit, jamais l'inverse.
+- L'accès distant relie des personnes et impose des comptes nominatifs avec double authentification.
+- Le lien site-à-site relie des réseaux et transfère la charge vers la planification d'adresses.
+- Le proxy interpose un service sur des requêtes existantes : il filtre et met en cache, il ne chiffre pas par lui-même.
+- Documentez la décision, ses alternatives écartées et la raison de l'écart : ce document vaut preuve.
+
+## Menaces réseau courantes : interception, DNS piégé et Wi-Fi ouvert
+
+L'interception, ou attaque de l'homme du milieu, consiste à se placer silencieusement entre deux interlocuteurs qui croient parler ensemble. Sur un réseau local, la technique la plus courante repose sur la résolution d'adresses : l'attaquant diffuse des messages qui associent son adresse physique à l'adresse de la passerelle, et les postes, qui font confiance à ces annonces, lui envoient désormais tout leur trafic. Une variante attaque le service d'adressage automatique : un faux serveur distribue aux postes une passerelle et un serveur de noms qu'il contrôle, et tous les échanges partent dans la mauvaise direction sans qu'aucun symptôme n'apparaisse. Une troisième variante, fréquente en Wi-Fi, consiste à ouvrir un point d'accès au nom séduisant, puis à faire le relais entre les victimes et internet.
+
+```text
+ Schéma d'une interception et d'un nom de domaine piégé, valeurs illustratives
+
+  Poste de la médiathèque        Attaquant sur le même réseau        Vrai serveur
+        |                                   |                              |
+        | 1. faux message d'adressage :     |                              |
+        |    « je suis la passerelle »       |                              |
+        |---------------------------------->                              |
+        |                                   |                              |
+        | 2. « www.banque.example, c'est moi »                              |
+        |<----------------------------------|                              |
+        |                                   |                              |
+        | 3. connexion chiffrée vers le      | faux site, certificat        |
+        |    serveur piégé                   | d'un autre nom               |
+        |----------------------------------> X                            |
+        |                                   |                              |
+        | 4. si le navigateur compare le nom demandé au certificat,        |
+        |    l'attaque s'arrête ici : l'avertissement apparaît.            |
+```
+
+Le nom de domaine piégé mérite d'être détaillé, parce qu'il touche à une couche que l'on oublie souvent : la traduction des noms en adresses. Un attaquant peut falsifier une réponse de résolution, corrompre un cache intermédiaire, modifier le fichier local d'associations ou délivrer un serveur de noms par le faux service d'adressage. La conséquence est toujours la même : votre machine se rend à la mauvaise adresse, et si le site frauduleux possède un certificat valide pour son propre nom, le cadenas s'affiche malgré tout. Les parades sont complémentaires : faire valider les réponses signées ajoute une vérification cryptographique à la résolution, chiffrer la résolution réduit les écoutes, conserver des associations statiques pour les services critiques évite la dépendance, et surveiller les changements de serveur de noms repère l'anomalie.
+
+Le Wi-Fi ouvert, enfin, offre à l'attaquant une position de choix : il est physiquement présent, il observe tout ce qui circule, et il peut injecter des trames. Les risques concrets sont l'écoute des conversations non chiffrées, le détournement de session lorsque des identifiants circulent en clair, l'abus du portail de connexion captif, et l'interception des publicités de présence qui permettent de reconstituer la liste des appareils présents. À cela s'ajoute une contrainte propre aux lieux ouverts : le réseau accueille des gens dont vous ne contrôlez pas les machines. La parade n'est donc jamais technique seule : elle combine chiffrement exigeant, isolation, limitation du périmètre et clarté affichée aux usagers.
+
+- Une interception modifie le chemin ou la résolution, elle ne casse pas le chiffrement.
+- De faux messages d'adressage redirigent tout un réseau vers un attaquant présent sur place.
+- Un nom de domaine piégé envoie l'usager au mauvais endroit, parfois avec un cadenas valide.
+- Faites valider les réponses signées, chiffrez la résolution et gardez des entrées statiques pour l'essentiel.
+- Un réseau ouvert est un réseau peuplé d'inconnus : chiffrez, isolez, limitez et affichez les règles.
+
+## Le Wi-Fi de la médiathèque : WPA3 et réseau invités isolé
+
+Le Wi-Fi d'un lieu public part d'un désavantage structurel : les ondes franchissent les murs, et la passphrase, même robuste, doit être connue de tous ceux qui la saisissent. Le premier réflexe consiste donc à séparer deux populations. Le réseau du personnel reçoit une configuration exigeante, réservée aux appareils du parc, avec une phrase secrète connue des seuls agents et changée à chaque départ notable. Le réseau invités, lui, est pensé pour être partagé sans être dangereux : son danger n'est pas l'usager malveillant, c'est l'usager ordinaire dont l'appareil pourrait être infecté sans qu'il le sache.
+
+Le chiffrement de ces réseaux doit reposer sur la génération WPA3, qui remplace la négociation ancienne par un échange résistant aux attaques par dictionnaire hors ligne : même capturé, le trafic ne permet plus de tester des milliers de phrases secrètes sans le détecter. Lorsque des appareils très anciens persistent, on autorise une période de transition où les deux générations coexistent, en notant dans le registre la date de fin prévue. Pour le réseau du personnel, l'idéal va plus loin avec une authentification centralisée, où chaque appareil reçoit ses propres identifiants au lieu de partager une phrase secrète commune : plus de phrase à diffuser, plus d'accès à révoquer en masse lors d'un départ, mais un serveur d'authentification à mettre en place.
+
+L'isolement du réseau invités est la pièce maîtresse, et il se joue sur plusieurs plans à la fois. Au niveau du réseau, les postes invités sont placés dans une zone dédiée dont la seule sortie autorisée est internet ; toute tentative vers une adresse privée est abandonnée au pare-feu. Au niveau du point d'accès, l'isolement des clients empêche deux visiteurs de se parler directement, ce qui bloque l'écoute entre pairs. Au niveau du service, un portail de connexion attribue un accès à durée limitée, enregistre le début de session et coupe à l'échéance. S'y ajoutent des mesures de confort utiles à la sécurité : limitation de débit, résolution de noms orientée vers un service fiable, et conservation des journaux limitée dans le temps, parce qu'une trace conservée sans raison est un risque et une charge.
+
+```text
+# Arrêté de la politique Wi-Fi - version abrégée pour la leçon.
+# Chaque ligne deviendra un réglage vérifiable, pas une intention vague.
+
+RÉSEAU-PERSONNEL | WPA3, phrase secrète à 12 caractères minimum, connue des agents
+  isolement       | les postes du personnel se voient entre eux
+  sortie          | catalogue interne, imprimente, messagerie
+
+RÉSEAU-INVITES   | WPA3 avec période de transition tant que nécessaire
+  portail         | code valable 4 heures, renouvelable à l'accueil
+  isolement       | aucun poste invité ne voit un autre poste invité
+  sortie          | internet seul, refus de toute adresse privée
+  limitation      | débit encadré, aucune ressource interne atteignable
+```
+
+Quelques habitudes complètent la configuration. Désactivez les facilités qui ouvrent une porte dérobée, comme l'association rapide au contact ou la gestion à distance des points d'accès depuis internet. Tenez une liste des points d'accès autorisés : un boîtier inconnu émettant un nom proche du vôtre est un signal d'alerte, et la vigilance face aux réseaux aux noms presque identiques doit être expliquée aux agents. Ne réutilisez jamais la phrase secrète du réseau pour un compte d'administration. Enfin, vérifiez par essai : connectez-vous en tant qu'invité, tentez d'atteindre un poste interne, ouvrez une adresse privée, contrôlez que la coupure se fait bien à la date prévue. Une configuration Wi-Fi qui n'a jamais été éprouvée par un visiteur réel n'est qu'une hypothèse.
+
+- Séparez le réseau du personnel du réseau invités : populations, chiffrement et périmètres diffèrent.
+- WPA3 résiste aux attaques par dictionnaire hors ligne ; la période de transition se date et se surveille.
+- L'isolement des clients invités se vérifie en essayant d'atteindre un autre appareil du même réseau.
+- Un portail à durée limitée réduit le temps de présence et rend les accès traçables et révocables.
+- Désactivez les raccourcis d'association et la gestion à distance inutile, tenez la liste des points d'accès.
+
+## Mini-projet guidé : la politique réseau de la médiathèque
+
+Il est temps d'assembler toutes les pièces dans un livrable unique : la politique réseau de la Médiathèque des Lilas, un document d'une dizaine de pages qui permet à une nouvelle personne arrivée demain de comprendre le réseau, de le vérifier et de le défendre. Ce projet mobilise chacune des sections précédentes : inventaire de surface d'attaque, zones et matrice de communication, jeu de règles justifiées, procédure de vérification TLS, décision d'accès distant argumentée et politique Wi-Fi des invités. Le fil conducteur reste le même depuis le début : rien n'est écrit sans justification, sans responsable, ni sans moyen de vérification.
+
+Commencez par l'inventaire, qui conditionne tout le reste. Listez les zones, les adresses, les services réellement utilisés et les personnes responsables de chacun. Ce travail fastidieux est celui qui fait gagner le plus de temps ensuite : impossible d'écrire une règle pertinente quand on ignore ce qui tourne. Une fois l'inventaire posé, écrivez la matrice de communication entre zones sous forme de phrases, puis traduisez chaque phrase en règle, en conservant le numéro de la justification qui l'a fait naître.
+
+```text
+# EXEMPLE ILLUSTRATIF de format de règle commentée, syntaxe neutre.
+# Reprenez ce format dans votre document, avec vos propres valeurs.
+
+REGLE 03
+  QUAND     : un poste du réseau invités tente d'atteindre 192.168.10.0/24
+  ALORS     : abandon du paquet, journalisation du refus
+  JUSTIFIER : la matrice n'autorise aucun accès interne depuis les invités
+  VERIFIER  : depuis un poste invité, l'adresse du catalogue interne ne répond pas
+  DEMANDER  : direction technique, revue semestrielle
+```
+
+Ensuite, traitez le chiffrement avec la procédure complète apprise à la section correspondante : ouvrez la connexion TLS du service public, notez la version et le chiffrement, relevez le verdict de validation, extrayez la liste des noms couverts et la date d'expiration, faites passer le service par l'analyse en ligne, puis écrivez la date de la prochaine vérification et le responsable du suivi. Terminez par le test de renouvellement, parce qu'un certificat expiré faute de renouvellement annule tout le travail précédent pour l'usager. Vos constatations se notent dans le document, en clair, avec des dates : c'est cette traçabilité qui transforme une vérification ponctuelle en contrôle périodique.
+
+La décision d'accès distant se rédige de la même manière : d'abord le besoin, identifié par des personnes et des ressources, puis les options envisagées, puis le choix et ses raisons, enfin les mesures d'accompagnement, double authentification, comptes nominatifs, journalisation et révocation à chaque départ. Si vous optez pour un lien site-à-site, ajoutez le plan d'adresses et les flux autorisés entre les deux sites. Si vous optez pour un simple filtre de sortie, écrivez ce que la solution ne protège pas, pour éviter qu'elle ne soit prise à tort pour un tunnel sécurisé.
+
+Le volet Wi-Fi se termine par des réglages vérifiables plutôt que par des intentions : nom du réseau, génération de chiffrement, mode de portail, durée d'accès, isolement confirmé par un essai, limitation de débit et critère d'alerte sur un point d'accès inconnu. Prévoyez enfin la revue : qui relit le document, à quelle fréquence, quel événement déclenche une mise à jour, et où se trouve la version en vigueur. Un document non versionné n'est plus une politique, c'est un souvenir.
+
+```text
+# SQUELETTE DU DOCUMENT - à compléter chapitre par chapitre.
+
+1. En-tête            version, date d'approbation, responsable, prochaine revue
+2. Inventaire          zones, adresses, services, responsables, objets connectés
+3. Matrice             phrases de besoins entre chaque zone
+4. Règles              format commenté, justification, moyen de vérification
+5. Chiffrement         procédure, résultats, dates, prochaine vérification
+6. Accès distant       besoin, options, choix, raisons, accompagnement
+7. Wi-Fi               réglages, isolement, portail, alertes
+8. Revue               qui, quand, déclencheurs, archivage des versions
+```
+
+La dernière étape est le contrôle mutuel. Relisez le document en cherchant les phrases qui contiendraient un mot vague, comme si nécessaire ou selon les besoins, et remplacez-les par un nom, une adresse et une date. Vérifiez que chaque règle possède une ligne de vérification exécutable. Essayez ensuite, depuis un poste public, les trois communications interdites les plus importantes, et consignez le résultat : ce que vous n'avez pas pu tester est un risque, ce que vous avez pu tester est un savoir. Ce document est exactement ce que vous remettrez à l'exercice pratique de cette leçon.
+
+- Rassemblez le chapitre dans un livrable unique : inventaire, matrice, règles, chiffrement, accès, Wi-Fi, revue.
+- Chaque règle porte sa justification, son responsable et son moyen de vérification.
+- Argumentez le choix d'accès distant en écrivant aussi les options écartées et leurs raisons.
+- Versionnez le document, fixez sa revue et remplacez chaque adverbe flou par un fait précis.
+
+## À retenir
+
+- La surface d'attaque est l'ensemble des points testables sans obstacle : chaque port ouvert en fait partie. Un port ouvert répond, un port fermé refuse, un port filtré se tait ; le numéro n'a jamais protégé personne.
+- Une politique de filtrage précède les règles : filtrer par défaut, n'autoriser que le nécessaire.
+- Une règle se lit en cinq temps, direction, source, destination, service, action, et le premier accord conclu gagne ; la politique par défaut tranche le reste.
+- Le filtrage étatique reconnaît les réponses d'une connexion déjà autorisée et allège le jeu de règles.
+- Les exemples de syntaxe sont illustratifs : ils se lisent, s'adaptent et se testent, jamais ne se copient.
+- Un VLAN découpe le trafic, la DMZ héberge les services publics ; c'est le pare-feu inter-vlan qui bloque réellement les communications interdites.
+- TLS protège le secret, l'intégrité et l'identité du serveur ; c'est la liste des noms couverts du certificat qui fait foi.
+- TLS 1.3 impose l'échange de clés éphémères, retire les algorithmes obsolètes et gagne un aller-retour.
+- Ce que TLS ne protège pas est plus long que la liste de ce qu'il protège : métadonnées, serveur, poste, application.
+- Un VPN authentifie et chiffre un tunnel ; il ne rend pas anonyme et ne répare pas un poste infecté. Accès distant, site-à-site et proxy répondent à trois questions : personne, réseau, requête.
+- Le Wi-Fi invités se protège par le chiffrement, l'isolement des clients, le portail temporaire et la limitation.
+
+## Erreurs fréquentes
+
+- Piège : ouvrir un port parce que le numéro correspond au service attendu → Correction : justifiez chaque ouverture par un besoin et vérifiez l'état réel du port par un essai.
+- Piège : écrire les règles sans politique, puis empiler des exceptions contradictoires → Correction : rédigez d'abord les zones et la matrice de communication, traduisez ensuite.
+- Piège : placer une règle générale de refus avant une règle précise d'autorisation → Correction : hiérarchisez du spécifique vers le général, car le premier accord conclu gagne.
+- Piège : oublier la politique par défaut et croire que le pare-feu filtre tout → Correction : écrivez la valeur explicite de la politique par défaut et reliez-la à un journal.
+- Piège : déployer un exemple de syntaxe copié sur un équipement de production → Correction : adaptez dans un laboratoire, sauvegardez, testez, puis déployez avec une marche arrière.
+- Piège : segmenter en VLAN sans pare-feu inter-vlan, ce qui laisse les zones naturellement reliées → Correction : ajoutez l'équipement de filtrage entre zones et testez les communications interdites.
+- Piège : vérifier le cadenas sans regarder les dates ni la liste des noms du certificat → Correction : relevez protocole, chiffrement, verdict de chaîne, noms couverts et expiration.
+- Piège : obtenir un certificat automatisé sans jamais tester son renouvellement → Correction : exécutez un renouvellement d'essai et posez une alerte sur la date d'expiration.
+- Piège : donner la même phrase secrète au réseau du personnel et au réseau invités → Correction : deux réseaux, deux niveaux d'exigence, et un isolement vérifié par un essai réel.
+
+## Pour aller plus loin
+
+La référence la plus directe pour approfondir le chiffrement reste la documentation officielle d'OpenSSL, disponible sur https://openssl.org, qui décrit chaque option de commande et chaque champ de certificat avec une précision que les tutoriels n'atteignent généralement pas. Complétez-la par le service d'analyse de https://ssllabs.com : faites passer vos propres services dans la grille d'évaluation, puis lisez le détail des points faibles plutôt que la note, parce que c'est la liste des correctifs qui vous fera progresser. Pour le cycle de vie des certificats, https://letsencrypt.org explique la démarche automatisée et la validité courte, avec une documentation destinée autant aux administrateurs qu'aux développeurs.
+
+Du côté applicatif, https://owasp.org rassemble les recommandations qui manquent au chiffrement : contrôle des entrées, protection des sessions, gestion des formulaires, journaux d'erreurs. Vous y retrouverez le fameux Top 10, qui décrit les failles qui transitaient très bien à l'intérieur d'un tunnel parfaitement chiffré. Une dernière piste, moins technique mais décisive : recopiez votre politique réseau à la main, réécrivez-la avec vos propres mots, puis présentez-la à un collègue qui vous demandera pourquoi chaque ligne existe. Les questions qu'il vous posera révèleront les zones encore floues de votre compréhension.
+
+## Et maintenant : les prochaines étapes
+
+Vous disposez maintenant des trois leviers du réseau défensif : fermer ce qui n'est pas utile avec le pare-feu et la segmentation, chiffrer ce qui doit l'être avec TLS et ses certificats, et relier ce qui doit l'être avec des tunnels dont vous connaissez désormais les usages et les limites. La suite logique est l'exercice pratique qui suit cette leçon : vous y rédigerez seul la politique réseau complète de la médiathèque, avec vos règles justifiées, votre procédure de vérification TLS, votre arbitrage d'accès distant et votre politique Wi-Fi, puis vous vous corrigerez à l'aide des listes de contrôle des sections précédentes. Le quiz de quatre questions qui accompagne le chapitre vous permet en parallèle de vérifier les notions essentielles en quelques minutes.
+
+Passé cet exercice, le parcours bascule sur le durcissement d'un système : le réseau bien filtré ne sert à rien si la machine qui vit derrière reste à jour, mal configurée ou ouverte à tous. Vous verrez alors que les réflexes acquis ici, justifier, vérifier, documenter, se retrouvent à l'identique sur un poste ou un serveur, parce que la méthode est la même et seuls changent le périmètre et les commandes. Conservez donc la politique que vous allez produire : elle deviendra le document de référence que vous mettrez à jour à chaque événement, et elle vous servira de gabarit pour écrire celui d'un autre établissement.

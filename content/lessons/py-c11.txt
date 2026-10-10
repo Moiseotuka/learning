@@ -1,0 +1,537 @@
+Vous voici au onzième et dernier chapitre du parcours « Python : du premier script au projet complet ». Dix chapitres vous ont mené du premier print à un projet structuré : les bases, les décisions et les boucles, les fonctions, les structures de données, les fichiers, les exceptions, les modules et les packages, puis la mise en forme d'un projet complet au chapitre huit. Les chapitres neuf et dix ont changé de registre : l'asynchrone vous a appris à faire plusieurs choses en même temps sans perdre le fil, l'architecture et les tests vous ont appris à faire durer le code. Ce dernier chapitre achève le parcours sur une compétence que l'on attend d'un développeur confirmé : savoir répondre à la question « pourquoi est-ce lent ? » avec une mesure, et jamais avec une intuition.
+
+La performance a mauvaise réputation, et à tort. Elle est souvent associée à des micro-optimisations mystérieuses, à des astuces de concours, à un style de code tordu que personne n'ose relire. D'un autre côté, une idée répandue veut que Python soit « trop lent » et qu'il faille donc réécrire en C dès le premier ralentissement. Les deux extrêmes se rejoignent sur un même défaut : ils n'ont jamais mesuré quoi que ce soit. Un programme rapide n'est pas un programme écrit avec des techniques rares, c'est un programme dont on a identifié le goulot d'étranglement, corrigé ce goulot, puis vérifié le gain. Rien de plus, rien de moins. La lisibilité que vous avez appris à soigner aux chapitres trois et huit reste un actif : une optimisation qui rend le code illisible doit se justifier par un gain mesuré, chiffré, et écrit noir sur blanc.
+
+Nous allons suivre un cas unique du début à la fin, celui d'un logiciel de vie scolaire dont les rapports ralentissent. Dans un collège de six cents élèves, la secrétaire demande chaque trimestre le relevé de notes par classe, puis le tableau de bord des assiduités, puis la liste des absences à signaler aux familles. Au départ, le rapport de notes de la classe de cinquième B sort en trois secondes : personne ne se plaint. Six mois plus tard, avec quatre fois plus d'élèves et des colonnes supplémentaires, le même rapport met quarante-deux secondes, l'interface bloque pendant ce temps, et la secrétaire rafraîchit la page en croyant que le logiciel est tombé. Ce chapitre retrace ce diagnostic : mesurer, localiser, corriger, remesurer, avec à chaque étape l'outil approprié et le chiffre qui le justifie.
+
+La méthode de la leçon est aussi simple que sévère. Chaque section présente un outil ou un choix de structure, montre la commande exacte à taper, donne le résultat attendu et ce qu'il signifie. Les blocs de code sont faits pour être copiés chez vous, sur vos propres données ; les tableaux de complexité sont faits pour être gardés à portée de main quand vous écrirez votre prochaine fonction. Et la règle d'or, que vous relirez à chaque section : on mesure avant de modifier, on change une seule chose à la fois, puis on remesure dans des conditions identiques. Aucune optimisation n'entre dans un projet sans chiffre avant, sans chiffre après et sans test qui empêche la performance de dériver.
+
+## Pourquoi mesurer avant d'optimiser
+
+L'optimisation sans mesure repose sur trois illusions. La première est celle de l'intuition : « c'est sûrement la boucle imbriquée », dit-on, alors que le profilage montrera que la boucle consomme 4 % du temps et que le reste part dans une lecture de fichier faite ligne par ligne. La deuxième est celle de la lisibilité perçue : une ligne écrite d'une certaine façon « paraît » rapide, alors que le Python est compilé en bytecode puis exécuté par une machine virtuelle, et que le coût réel d'une ligne dépend du nombre d'appels de méthode et d'allocations qu'elle déclenche, pas de son élégance. La troisième est celle du gain espéré : on passe une heure à remplacer une compréhension de liste par une boucle explicite pour gagner vingt millisecondes sur un programme qui en consomme quarante mille. Heure perdue, code appauvri, résultat invisible.
+
+Mesurer, c'est répondre à trois questions dans un ordre strict. D'abord où part le temps : quelle fonction, appelée combien de fois, cumule combien de secondes. Ensuite où part la mémoire : quels objets grossissent, quand, et à quelle vitesse. Enfin comment le coût croît avec la taille des données : double-t-on le nombre d'élèves, double-t-on le temps, ou le multiplie-t-on par quatre. La première question appelle le profilage, la deuxième l'inventaire de mémoire, la troisième l'analyse de complexité. Répondre à la troisième avant les deux premières est une erreur classique : une complexité O(n²) sur douze élèves ne se voit jamais, elle se voit sur quatre cents.
+
+Le tableau suivant sert de répertoire : à chaque symptôme observé par un utilisateur, l'outil qui y répond et la question précise qu'il résout. Servez-vous-en pour choisir votre instrument avant d'ouvrir l'éditeur, car ouvrir l'éditeur est précisément ce qu'il ne faut pas faire en premier.
+
+```table
+| Symptôme rapporté | Outil de mesure | Question à laquelle il répond |
+|---|---|---|
+| Le rapport met longtemps, quelle que soit la taille des données | cProfile | Où part le temps d'exécution ? |
+| Deux écritures du même calcul coexistent | timeit | Laquelle est la plus rapide, et de combien ? |
+| La mémoire monte jusqu'à faire tomber le service | tracemalloc | Quels objets retiennent les octets ? |
+| Le temps explose quand les données grandissent | Complexité des structures | Quelle est la croissance du coût ? |
+| Un calcul numérique parcourt des millions de valeurs | NumPy et vectorisation | Combien gagne-t-on en sortant la boucle de Python ? |
+```
+
+
+L'instrument de mesure a lui-même un coût, et c'est la première limite à connaître. Un profileur ajoute un suivi à chaque appel de fonction : sur un programme de vingt secondes, cela se voit à peine ; sur une boucle de trois millisecondes, l'instrumentation peut être plus chère que le code mesuré. Deux conséquences pratiques. Mesurez toujours dans des conditions reproductibles : même machine, même interpréteur, même jeu de données, série préalablement réchauffée, plusieurs exécutions dont on retient la médiane plutôt que le minimum. Et méfiez-vous des chronométrages posés à la main avec time.time autour de quelques lignes : la résolution, la collecte des déchets et les tâches d'arrière-plan de la machine ajoutent un bruit plus grand que l'effet cherché.
+
+Le cas du collège illustre parfaitement le piège de l'optimisation opportuniste. Le premier développeur pressé, voyant le rapport de quarante-deux secondes, a réécrit l'affichage des notes en concaténant des chaînes « plus proprement », puis a remplacé trois f-strings par un formatage ancien. Le rapport est passé de quarante-deux secondes à quarante et une virgule huit. Il avait optimisé une part infime du coût total, sans savoir où allait le reste. Deux heures plus tard, un profilage sérieux révélait que trente-quatre secondes partaient dans une seule fonction, construire_lignes, dont le travail consistait à vérifier, pour chaque note, si l'élève figure dans une liste d'inscrits parcourue de haut en bas. La correction a pris douze lignes ; le gain a été de trente-neuf secondes.
+
+Une précision s'impose avant d'aller plus loin, car elle trompe souvent les débutants : le temps que l'utilisateur perçoit n'est pas le temps que le profileur mesure. Votre rapport peut consommer une seconde de processeur et mettre huit secondes à apparaître, si les données voyagent depuis une base distante, si une image se télécharge, si le navigateur attend qu'une requête expire. cProfile vous montre le travail effectué par votre processus ; il ne voit ni le réseau, ni l'attente d'un autre service, ni la file d'attente du serveur. Avant de conclure « mon code est rapide donc le problème est ailleurs », chronométrez l'expérience complète de bout en bout avec un chronomètre mural, puis entrez dans le détail avec le profileur. Les deux mesures sont complémentaires, et les confondre conduit à optimiser la mauvaise couche.
+
+Une deuxième confusion est fréquente : celle entre temps processeur et temps d'attente, que les outils modernes distinguent nettement. Un service web dont le traitement prend deux cents millisecondes mais qui attend une base de données pendant trois secondes n'a pas un problème de Python, il a un problème de requête ou de latence. Dans ce cas, la priorité passe aux index de la base, à la mise en cache du résultat ou à l'exécution asynchrone que vous avez étudiée au chapitre neuf, plutôt qu'à une réécriture du calcul. C'est pourquoi le premier réflexe reste toujours le même : mesurer l'ensemble, puis descendre d'un cran dans le détail jusqu'à isoler la couche fautive.
+
+Il existe une limite théorique à tout effort d'optimisation, formulée il y a plus de cinquante ans et toujours d'actualité : si une portion du programme ne représente que 5 % du temps total, la rendre deux fois plus rapide fait gagner 2,5 % à l'ensemble, quoi que vous fassiez. C'est la loi d'Amdahl, et elle justifie à elle seule l'ordre des opérations que nous suivrons : d'abord localiser la part dominante, ensuite l'attaquer, enfin seulement envisager de compliquer le code ailleurs. Un gain de deux sur quatre-vingt-dix-six pourcent du temps ne mérite aucune dette technique.
+
+Voici la métaphore qui doit vous rester. Un mécanicien qui entend un bruit anormal ne démonte pas le moteur au hasard : il branche un instrument, il écoute, il repère le cylindre, puis il démonte. L'oscilloscope du laboratoire joue ce rôle pour l'électronicien : il transforme une impression en une courbe lisible, avec une échelle. Le profileur fait de même pour votre programme.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/oscilloscope.jpg
+| Un oscilloscope affiche une mesure au lieu d'une supposition : c'est exactement l'état d'esprit à appliquer à un programme Python lent.
+```
+
+La conséquence pratique de tout ce qui précède tient en trois réflexes. Avant d'écrire une ligne d'optimisation, exécutez votre programme sous profileur et notez le nom de la fonction dominante. Avant de comparer deux variantes, écrivez un banc d'essai mesurable, fiable et jetable. Avant de valider votre correction, remesurez dans les mêmes conditions et consignez les deux chiffres dans le commentaire du correctif ou dans le ticket. Un gain non mesuré n'existe pas ; un gain mesuré une fois, sans être protégé par un test, disparaîtra au prochain refactor.
+
+## cProfile : voir où part le temps
+
+cProfile est le profileur livré avec l'interpréteur, et il suffit largement pour l'essentiel du travail. Il s'installe avec Python, il ne demande aucune dépendance, et il produit un tableau à trois colonnes : le nombre d'appels de chaque fonction, le temps qu'elle consacre exclusivement à son propre corps, et le temps cumulé qui inclut tout ce qu'elle appelle. La distinction entre temps propre et temps cumulé est la clé de lecture : une fonction dont le temps propre est élevé fait elle-même du travail ; une fonction dont le temps propre est minuscule mais dont le temps cumulé est énorme est un simple tour de passe-passe qui délègue à d'autres.
+
+Le lancement le plus simple ne demande aucune modification du code : on passe le script sur la ligne de commande et on demande un tri. L'option -s cumtime trie par temps cumulé décroissant, ce qui fait remonter les fonctions maîtresses ; l'option -s tottime trie par temps propre, ce qui fait remonter les fonctions qui calculent réellement. Toute la subtilité tient dans ce choix de tri, et il faut souvent faire les deux.
+
+```text
+$ python -m cProfile -s cumtime rapport.py classe=5eB trimestre=2
+```
+
+Le résultat tient sur un écran quand on limite le nombre de lignes, et il ressemble à ceci pour notre rapport scolaire, une fois la sortie tronquée aux douze premières fonctions :
+
+```text
+         1284731 function calls in 41.742 s
+
+   Ordered by: cumulative time
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.012     0.012   41.742   41.742 rapport.py:192(genérer_rapport)
+  400128   33.918    0.000   34.006    0.000 rapport.py:87(construire_lignes)
+  400128    6.411    0.000    6.411    0.000 <string>:1(<listcomp>)
+  400128    1.204    0.000    1.204    0.000 models.py:54(trouver_inscrit)
+      742    0.051     0.000    0.188    0.000 db.py:31(exécuter)
+        1    0.009     0.009    0.104    0.104 rapport.py:31(charger_effectif)
+```
+
+Lecture immédiate : le rapport consomme 41,742 secondes ; construire_lignes en explique 34,006 ; et surtout, elle est appelée 400 128 fois, avec un temps propre de 33,9 secondes, soit 0,000085 seconde par appel, ce qui paraît minuscule jusqu'à ce qu'on multiplie. La fonction trouver_inscrit est appelée exactement le même nombre de fois, signe mécanique d'une recherche effectuée à l'intérieur d'une boucle. À ce stade, le diagnostic n'est pas terminé, mais la direction est donnée : il faudra supprimer une recherche linéaire répétée quatre cent mille fois, pas réécrire l'affichage.
+
+Pour creuser sans rouvrir le script, on enregistre le profil dans un fichier puis on l'inspecte avec pstats, qui sait filtrer et trier. Le fragment suivant conserve les seules fonctions de votre projet, écarte les fonctions de la bibliothèque standard qui encombrent le tableau, et limite l'affichage à dix lignes :
+
+```python
+import pstats
+
+stats = pstats.Stats("rapport.prof")
+(
+    stats.strip_dirs()
+    .sort_stats("cumulative")
+    .print_stats(r"rapport|models", 10)
+)
+```
+
+Quand le script n'est pas exécutable directement, ou que vous voulez profiler une fonction précise plutôt que tout le programme, on recourt au module profile, qui fait le même travail en Python pur, avec un surcoût plus élevé mais une intégration plus souple. On place l'appel dans un bloc conditionnel de débogage, on le retire aussitôt après lecture, et surtout on ne le laisse jamais actif en production : un profileur permanent transforme un ralentissement en panne.
+
+```python
+import cProfile
+
+cProfile.run("genérer_rapport('5eB', 2)", "rapport.prof")
+```
+
+Trois usages professionnels méritent d'être connus dès maintenant. Le premier est l'intégration programmatique : la classe Profile du module profile s'utilise dans un test pour vérifier qu'une fonction dominante n'a pas repris du temps. Le second est la comparaison de deux exécutions : on profile la version d'avant, on profile la version d'après, et l'on compare les tableaux plutôt que de se fier à une impression de rapidité. Le troisième est la mise en garde inverse : un tableau dominé par des fonctions de la bibliothèque standard, comme json.dumps ou un appel réseau, indique que le goulot n'est pas dans votre code mais dans une dépendance, et qu'il faudra alors changer d'approche, par exemple en sérialisant moins ou en asynchrone.
+
+Les limites de cProfile doivent être connues pour ne pas le surinterpréter. Il mesure le temps processeur consommé par le processus Python : un appel réseau long ou une attente sur disque n'apparaîtra pas comme du temps propre, mais comme du temps cumulé dans la fonction qui attend. Son surcoût d'instrumentation rend ses chiffres inutilisables en valeur absolue sur des micro-boucles, seul le classement est exploitable. Et il ne dit rien de la mémoire : une fonction qui va vite mais qui alloue huit cents mégaoctets passera inaperçue, d'où la nécessité de l'outil suivant.
+
+La dernière discipline à installer avant de passer à la suite est celle de la trace écrite. Conservez la sortie du profilage dans le dossier du projet, avec la date, la taille du jeu de données et la version du code, puis reproduisez-la après correction. Un diagnostic qui ne laisse pas de trace se redécouvre à chaque réclamation, et personne ne peut prouver qu'un gain a réellement eu lieu. Dans le cas du collège, ce fichier, nommé profil-avant.txt, a été joint au ticket d'anomalie : trois mois plus tard, il a servi à vérifier qu'une évolution récente n'avait pas fait revenir la lenteur.
+
+## timeit : comparer deux écritures de façon fiable
+
+Le profilage vous dit où va le temps ; il ne vous dit pas laquelle de deux écritures du même calcul est préférable. Pour trancher, il existe un outil taillé pour cela : timeit. Il répète une instruction un très grand nombre de fois, désactive la collecte des déchets pendant la mesure, écarte le premier passage qui inclut la compilation du bytecode, puis divise le total par le nombre d'exécutions. Ce résultat, exprimé en secondes par exécution, est la seule base honnête pour dire « cette version est plus rapide que celle-là ».
+
+La première habitude à désapprendre est le chronométrage à la main. Écrire debut = time.time() avant un bloc puis afficher time.time() - debut donne un chiffre : c'est bien ça le danger. La résolution de l'horloge, la planification du système d'exploitation, une mise à jour qui démarre en arrière-plan, la collecte des déchets déclenchée au mauvais moment : tout cela s'ajoute au résultat. Sur un bloc qui dure une seconde, l'erreur peut atteindre plusieurs pourcents ; sur une boucle de vingt microsecondes, elle est simplement dominante. Le remède est de ne jamais mesurer une fois, mais de mesurer des centaines de milliers de fois et d'en tirer une moyenne stable.
+
+L'usage direct se fait en ligne de commande avec le module embarqué, ce qui évite d'écrire un script jetable. La syntaxe -n impose le nombre d'exécutions, -s fournit le code de préparation exécuté une seule fois, par exemple la construction des données de test. Le module répète ensuite l'instruction proprement dite, sans oublier que tout ce qui figure dans la première chaîne est compté, et rien de ce qui figure dans la seconde.
+
+```text
+$ python -m timeit -n 200000 -s "inscrits = list(range(4000))" "1999 in inscrits"
+200000 loops, best of 5: 41.3 usec per loop
+$ python -m timeit -n 200000 -s "inscrits = set(range(4000))" "1999 in inscrits"
+200000 loops, best of 5: 0.062 usec per loop
+```
+
+La mention « best of 5 » signifie que le module a lancé cinq séries et n'a conservé que la meilleure : cette convention réduit l'impact d'une interruption du système, mais elle favorise aussi artificiellement le chiffre le plus bas. Pour un travail sérieux, préférez timeit.repeat, gardez les cinq valeurs, observez leur dispersion, et retenez la médiane. Si vos cinq mesures varient de plus de quelques pourcents, la machine est occupée ou les deux variantes mesurées ne font pas exactement le même travail : dans les deux cas, la comparaison n'est pas recevable.
+
+Une comparaison honnête exige en effet que les deux variantes produisent exactement le même résultat, y compris les effets de bord. Remplacer un calcul par un autre qui valide moins, qui arrondit moins tôt ou qui ignore les cas limites ne produit pas une version plus rapide, mais une version différente. Avant de chronométrer, écrivez le test qui prouve l'équivalence ; après avoir chronométré, relancez ce test. C'est la raison pour laquelle la démarche raisonnable lie toujours optimisation et tests : les tests que vous avez appris à écrire au chapitre dix deviennent ici le filet de sécurité de la performance.
+
+Le cas de la concaténation de chaînes dans une boucle mérite une mesure explicite, tant il circule sous forme de conseil. On répète partout qu'il faut éviter de faire croître une chaîne avec + au profit d'une liste puis d'un join final. C'est un bon réflexe de lecture, mais le gain réel dépend de la version de Python : sur les versions récentes, l'opérateur += sur une chaîne alloue un nouveau tampon seulement quand la capacité disponible ne suffit pas, ce qui amortit fortement le coût. Mesurez avant de réécrire, puis replacez le gain dans son contexte :
+
+```python
+import timeit
+
+MOTS = ["rapport", "de", "notes"] * 166
+
+avant = timeit.repeat(
+    "s = ''; [s := s + m for m in MOTS]", globals=globals(), number=2000, repeat=5
+)
+apres = timeit.repeat(
+    "' '.join(MOTS)", globals=globals(), number=2000, repeat=5
+)
+print(f"concaténation : {min(avant) / 2000 * 1e6:7.1f} µs")
+print(f"join          : {min(apres) / 2000 * 1e6:7.1f} µs")
+```
+
+Le join l'emporte souvent d'un facteur deux à quatre sur ce gabarit, et c'est une amélioration légitime à appliquer au fil des relectures. Mais rapportée au rapport scolaire de quarante-deux secondes, elle représente quelques millisecondes : appliquée en premier, elle n'aurait rien changé pour l'utilisateur. C'est la démonstration par l'absurde de la règle d'or, et c'est aussi la raison pour laquelle ce banc d'essai appartient à la fin du travail, jamais au début.
+
+Le même banc d'essai s'écrit en Python quand on veut conserver les chiffres dans le dépôt ou comparer plusieurs variantes d'un coup. On utilise timeit.timeit avec une chaîne d'instructions et une chaîne de préparation, on répète plusieurs séries, puis on retient la médiane plutôt que le minimum, plus robuste contre une interruption du système. Le fragment ci-dessous est celui que vous devriez retrouver, sous une forme ou une autre, dans tout projet qui se prétend performant.
+
+```python
+import timeit
+
+INSCRITS_LISTE = list(range(4000))
+INSCRITS_ENSEMBLE = set(range(4000))
+
+for variante, code in (
+    ("liste", "1999 in INSCRITS_LISTE"),
+    ("ensemble", "1999 in INSCRITS_ENSEMBLE"),
+):
+    temps = timeit.repeat(code, globals=globals(), number=100000, repeat=5)
+    print(f"{variante:10s} {min(temps) / 100000 * 1e6:.3f} us par appel")
+```
+
+Les résultats, mesurés sur un ordinateur portable de milieu de gamme sous Python 3.12, donnent environ 41 microsecondes pour la liste et 0,06 microseconde pour l'ensemble, soit un facteur de près de sept cents. Le chiffre exact variera chez vous, le rapport, lui, ne variera pas. Notez cependant que cette comparaison est truquée si l'on oublie un point : construire un ensemble coûte du temps, et si la recherche n'a lieu qu'une seule fois, il faut amortir ce coût de construction. Le tableau suivant reprend la mesure pour plusieurs tailles et ajoute la ligne de la construction, afin que vous voyiez le croisement se déplacer.
+
+```table
+| Taille des données | Recherche dans la liste | Construction de l'ensemble | Recherche dans l'ensemble |
+|---|---|---|---|
+| 100 éléments | 1,1 µs | 8,5 µs | 0,06 µs |
+| 1 000 éléments | 9,8 µs | 88 µs | 0,06 µs |
+| 4 000 éléments | 41 µs | 350 µs | 0,06 µs |
+| 100 000 éléments | 1 050 µs | 9 100 µs | 0,07 µs |
+```
+
+
+La règle qui se dégage est d'une simplicité brutale : si vous cherchez un même élément plus d'une fois, construisez l'ensemble une fois, avant la boucle, et le coût de construction s'efface. Si vous ne cherchez qu'une fois dans une petite collection, la liste suffit et son empreinte mémoire moindre l'emporte. Le croisement se situe souvent autour de quelques dizaines d'éléments, mais il se déplace selon le processeur et la version de Python : c'est pourquoi l'on mesure au lieu de mémoriser.
+
+Il reste à avertir contre la micro-optimisation déplacée. Remplacer un f-string par un format, choisir un opérateur au lieu d'un autre, préférer x += 1 à x = x + 1 : autant de modifications dont la mesure montrera souvent un écart inférieur au bruit, surtout dans un programme dominé par des entrées-sorties. timeit est un instrument de précision, et l'on n'utilise pas un instrument de précision pour vérifier la température d'une pièce. Si votre programme dure quarante-deux secondes et que la variante testée intervient pour dix millisecondes, le facteur d'accélération, si spectaculaire soit-il, restera invisible pour l'utilisateur. Mesurez d'abord la part réelle de cette opération avec cProfile, puis seulement ouvrez timeit. L'ordre des instruments compte autant que leur précision.
+
+## tracemalloc : la mémoire, ce coût invisible
+
+Un programme peut être rapide et pourtant impossible à faire tourner : il dévore la mémoire jusqu'à déclencher la sortie du système ou l'exception MemoryError. Ce danger est particulièrement présent dans vos projets de data, où l'on charge volontiers un fichier entier dans une liste de dictionnaires « pour ne pas se compliquer la vie ». tracemalloc est l'outil standard qui répond à une question précise : quels objets retiennent les octets, et à quel endroit du code ont-ils été créés.
+
+Son principe est simple. On démarre le traçage au début de la zone suspecte, on déclenche le travail, on relève la mémoire tracée à deux instants, puis on compare un instantané du moment le plus gourmand à un instantané de référence. L'outil restitue les différences par bloc d'allocation, avec le chemin d'appel qui a produit l'objet : c'est ce dernier point qui le rend précieux, car il vous évite de deviner où les données s'accumulent.
+
+```python
+import tracemalloc
+
+tracemalloc.start()
+avant = tracemalloc.get_traced_memory()
+
+générer_rapport("5eB", 2)
+
+pendant = tracemalloc.get_traced_memory()
+print(f"mémoire tracée : {avant[0] / 1e6:.1f} -> {pendant[1] / 1e6:.1f} Mo")
+print(f"pic : {pendant[1] / 1e6:.1f} Mo")
+
+instantané = tracemalloc.take_snapshot()
+classement = instantané.compare_to(tracemalloc.take_snapshot(), "lineno")
+for ligne in classement[:10]:
+    print(ligne)
+tracemalloc.stop()
+```
+
+Le rapport de taille réelle du collège, exécuté avec ce dispositif, indiquait un pic de 780 mégaoctets pour un rapport de quatre cents élèves, dont 640 dans un seul bloc attribué à la construction de la liste lignes. La cause n'avait rien de mystérieux : chaque ligne de sortie était fabriquée puis conservée, puis toute la liste était réunie en une seule chaîne géante pour être écrite. La correction consistait à écrire chaque ligne dès qu'elle était prête et à ne jamais les accumuler, conformément à ce que vous avez appris sur les fichiers au chapitre cinq. Le pic est passé à 41 mégaoctets, sans changer une seule formule de calcul.
+
+Deux limites de tracemalloc doivent être connues pour interpréter correctement les chiffres. D'abord, il ne mesure que les allocations passant par l'allocateur de Python : les bibliothèques qui allouent leur propre mémoire, souvent les extensions natives comme NumPy lorsqu'elles travaillent sur de grands tampons, n'apparaîtront que partiellement. Ensuite, la mémoire tracée n'est pas la mémoire résidente du processus : la première indique ce que votre code retient, la seconde inclut l'interpréteur, les bibliothèques chargées et la fragmentation. Comparez toujours des chiffres relevés dans les mêmes conditions, et retenez le pic plutôt que la valeur finale, c'est le pic qui déclenche les pannes.
+
+Le diagnostic de mémoire suit alors la même discipline que le diagnostic de temps : mesurer, formuler une hypothèse, corriger un seul point, remesurer. Une méthode commode consiste à placer des repères de mémoire autour des grandes étapes, avec get_traced_memory, et à garder la plus forte. Dans la pratique, quatre familles de causes reviennent : une liste qui accumule au lieu d'écrire, un dictionnaire de cache qui grossit sans limite, une chaîne reconcaténée dans une boucle, et un générateur consommé en entier sous prétexte qu'il fallait une liste. Les trois premières se voient en un instantané ; la quatrième se voit en lisant le code avec un œil neuf.
+
+Voici le réflexe à installer dès votre prochain projet : une fonction qui traite un fichier volumineux doit pouvoir s'exécuter avec une mémoire bornée, c'est-à-dire indépendante du nombre de lignes du fichier. Si vous pouvez doubler la taille du fichier sans voir la mémoire doubler, l'architecture est saine. Si la mémoire suit la taille des données, elle finira par tomber, et le jour où quelqu'un chargera le fichier des six cents élèves au lieu des quatre cents, la panne se produira en production, un vendredi soir. tracemalloc sert à programmer ce jour-là soi-même, avant qu'il n'arrive.
+
+## Les structures de données et leur coût réel
+
+Vous connaissez depuis le chapitre quatre les listes, les dictionnaires et les ensembles. Ce chapitre leur donne une seconde lecture : non plus ce qu'elles représentent, mais ce qu'elles coûtent. En informatique, ce coût s'exprime en complexité, une notation qui décrit comment le temps de calcul croît quand la taille des données augmente, sans se soucier de la vitesse de la machine. O(1) signifie un coût constant, quel que soit le nombre d'éléments ; O(n) signifie un coût proportionnel ; O(n²) signifie que doubler les données quadruple le temps ; O(n log n) se situe entre les deux et décrit un tri. Ces quatre notations suffisent à lire l'essentiel du code que vous écrirez.
+
+La table suivante est celle que vous devez garder ouverte quand vous choisissez une structure. Elle ne donne pas des chiffres de microsecondes, qui varient d'une machine à l'autre, mais des ordres de grandeur qui, eux, ne changent pas : c'est la différence entre une photographie et un plan.
+
+```table
+| Opération | list | set / dict | deque | heapq |
+|---|---|---|---|---|
+| Ajouter en fin | O(1) amorti | O(1) | O(1) | O(log n) |
+| Ajouter ou retirer en tête | O(n) | O(1) pour ajouter | O(1) | non fourni |
+| Chercher un élément (in) | O(n) | O(1) en moyenne | O(n) | O(n) |
+| Accéder par index ou par clé | O(1) | O(1) par clé | O(1) aux extrémités | non fourni |
+| Insérer au milieu | O(n) | non fourni | O(n) | non fourni |
+| Parcourir tous les éléments | O(n) | O(n) | O(n) | O(n) |
+| Obtenir l'élément minimum | O(n) | non fourni | O(n) | O(1) |
+```
+
+
+Lire ce tableau à voix haute pour un cas concret est un exercice qui vaut mieux qu'une heure de théorie. Supposons que le rapport scolaire doit vérifier, pour quatre cents notes, si l'élève est inscrit dans une liste de quatre cents inscrits : quatre cents fois quatre cents comparaisons, soit cent soixante mille, pour un résultat qui se trouve en quatre cents opérations si l'on utilise un ensemble. Portez la même opération à six cents élèves et vous passerez de cent soixante mille à trois cent soixante mille comparaisons : le temps quadruple quand les données doublent. C'est exactement le symptôme observé au collège, où le rapport mettait trois secondes en début d'année et quarante-deux six mois plus tard.
+
+La notion d'amorti mérite qu'on s'y attarde, car elle explique pourquoi une liste reste rapide malgré ses insertions en fin. Quand la capacité interne d'une liste est atteinte, Python alloue un bloc plus grand et recopie les pointeurs : cette opération est O(n), mais elle est si rare que, rapportée à l'ensemble des insertions, le coût moyen par élément reste constant. Comprenez-en la conséquence pratique : insérer en fin de liste est bon marché, insérer en tête ne l'est pas, car chaque insertion décale tous les autres éléments. Si vous accumulez en tête, vous écrivez du O(n²) sans même prononcer le mot.
+
+Un réflexe simple permet de choisir sans hésiter. Vous avez besoin d'un ordre et d'un accès par position : c'est une liste. Vous avez besoin de savoir si quelque chose y figure, vite et souvent : c'est un ensemble. Vous avez besoin d'associer une clé à une valeur : c'est un dictionnaire. Vous retirez toujours par l'une des extrémités : c'est une file avec deque. Vous devez extraire le plus petit élément à chaque étape : c'est un tas avec heapq. Choisir une structure, ce n'est pas choisir une syntaxe, c'est écrire une partie de la complexité de votre programme à votre place.
+
+Enfin, n'oubliez pas que la meilleure structure ne sauve pas un algorithme mal pensé. Remplacer une liste par un ensemble fait passer une recherche de O(n²) à O(n), mais si votre fonction reconstruit cet ensemble à chaque itération d'une boucle extérieure, vous avez simplement déplacé le O(n²) dans une autre variable. La question à se poser avant chaque optimisation structurelle est toujours la même : qu'est-ce qui est construit une fois, et qu'est-ce qui est reconstruit mille fois ? La réponse à cette question, obtenue avec les outils des sections précédentes, décide du changement à apporter.
+
+## À chacun sa structure : list, set, dict, deque en pratique
+
+La table de complexité donne les ordres de grandeur ; cette section montre les décisions concrètes qu'elle impose. Première décision : séparer le stockage de l'index. Une liste d'inscrits sert à afficher les noms dans l'ordre, à les compter, à les parcourir une fois ; elle ne sert pas à répondre mille fois à la question « cet élève y figure-t-il ? ». Dès que la question se pose à l'intérieur d'une boucle, il faut un ensemble construit une seule fois, avant la boucle. Cette seule distinction explique la quasi-totalité des ralentissements que vous rencontrerez dans vos projets de données.
+
+Le cas du collège se réécrit en douze lignes. La version initiale, écrite au chapitre quatre avec les outils de l'époque, parcourt la liste des inscrits pour chaque note ; la version corrigée construit un ensemble au démarrage du rapport. Les deux produisent exactement le même fichier, ce que garantit un test de comparaison exécuté avant et après.
+
+```python
+# Avant : une recherche linéaire à chaque note, O(n × m)
+for note in notes:
+    if note.matricule in inscrits:          # inscrits est une liste
+        lignes.append(formater(note))
+
+# Après : un index construit une fois, O(n + m)
+index = set(inscrits)
+for note in notes:
+    if note.matricule in index:
+        lignes.append(formater(note))
+```
+
+Le tableau suivant chiffre la différence sur les volumes réellement rencontrés dans l'application du collège, avec le temps du rapport complet plutôt que celui de l'appel isolé, car c'est ce chiffre que l'utilisateur perçoit.
+
+```table
+| Élèves | Notes à traiter | Avant (liste) | Après (ensemble) | Facteur |
+|---|---|---|---|---|
+| 150 | 6 000 | 0,8 s | 0,3 s | ×2,7 |
+| 300 | 13 000 | 4,2 s | 0,7 s | ×6 |
+| 600 | 27 000 | 41,7 s | 1,1 s | ×38 |
+| 1 200 | 55 000 | estimation O(n²) hors mémoire | 2,3 s | — |
+```
+
+
+La croissance de la colonne de gauche suit le carré du nombre d'élèves ; la colonne de droite suit une droite. C'est la différence entre une complexité quadratique et une complexité linéaire, et elle ne se corrige pas par un micro-détail de syntaxe, seulement par le choix d'une structure.
+
+Deuxième décision : la file de traitement. Quand vous consommez des éléments dans l'ordre où vous les recevez et que vous retirez toujours par l'avant, list.pop(0) est un piège, car chaque retrait décale tous les autres éléments. deque.popleft() conserve la sémantique d'une file en O(1), et sa signature de mémoire est modeste. Le passage s'opère sans changer la logique du programme : on remplace la classe et l'on remesure.
+
+```python
+from collections import Counter, defaultdict, deque
+
+file = deque(lignes_brutes)
+while file:
+    ligne = file.popleft()
+    if ligne:
+        file.extend(lire_suite(ligne))
+
+par_classe = defaultdict(list)
+for eleve in effectif:
+    par_classe[eleve.classe].append(eleve.nom)
+
+absences = Counter(e.classe for e in eleves_absents)
+```
+
+Troisième décision : le regroupement. Un dictionnaire de listes bâti à la main, avec la vérification de clé absente écrite trois fois, est plus lent et plus brouillon que defaultdict, tandis que Counter répond directement à la question « combien de fois chaque valeur apparaît-t-elle », en une passe et en O(n). Ces deux classes de la bibliothèque standard ne sont pas des raccourcis de confort : elles déplacent la boucle dans du code C déjà testé par des millions d'utilisateurs, ce qui est à la fois plus rapide et plus lisible.
+
+L'écart entre list.pop(0) et deque.popleft() mérite d'être chiffré, car il illustre une leçon plus vaste : le choix d'une structure n'est pas un détail d'implémentation, c'est une décision d'algorithme. Sur une file de dix mille éléments vidée intégralement, la version basée sur la liste doit déplacer l'intégralité des pointeurs à chaque retrait, ce qui donne un coût quadratique ; la version basée sur deque conserve un coût linéaire. La mesure est stable d'une machine à l'autre, seul le facteur change.
+
+```python
+import timeit
+from collections import deque
+
+DONNEES = list(range(20000))
+
+def avec_liste():
+    copie = list(DONNEES)
+    while copie:
+        copie.pop(0)
+
+def avec_deque():
+    copie = deque(DONNEES)
+    while copie:
+        copie.popleft()
+
+print("pop(0)    ", min(timeit.repeat(avec_liste, number=20, repeat=3)) / 20)
+print("popleft() ", min(timeit.repeat(avec_deque, number=20, repeat=3)) / 20)
+```
+
+Quatrième décision, et non la moindre : garder la liste quand elle est la bonne réponse. Si vous devez afficher les résultats dans l'ordre, indexer le troisième élément, les trier, ou les parcourir une seule fois, la liste reste imbattable, y compris pour une recherche unique dans une petite collection. Le choix d'une structure n'est jamais une question de principe, c'est une question de fréquence : combien de fois la question se pose-t-elle, par rapport à combien d'éléments. Posez-vous ces deux chiffres avant de changer quoi que ce soit.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/python-logo.png
+| Le logo du langage Python : les structures de la bibliothèque standard suffisent à écrire un code rapide, à condition de les choisir selon leur coût réel.
+```
+
+## Compréhensions, générateurs et mémoire
+
+Les compréhensions de liste font deux choses à la fois : elles écrivent plus court et elles s'exécutent plus vite. La raison est interne : la boucle d'une compréhension est implémentée par des opcodes dédiés du bytecode, alors qu'une boucle explicite passe par l'appel répété de la méthode append, avec la recherche d'attribut qui accompagne chaque appel. Le gain n'est pas spectaculaire, souvent entre dix et trente pourcent sur une boucle simple, mais il est gratuit : il ne coûte ni lisibilité, ni maintenabilité.
+
+La mesure est facile à reproduire, et je vous invite à le faire plutôt qu'à me croire. Comparez la construction d'une liste de mille carrés par boucle avec append et par compréhension, dans des conditions identiques, avec le même nombre d'exécutions et la même sortie attendue.
+
+```python
+import timeit
+
+boucle = timeit.repeat(
+    "r = []\nfor i in range(1000):\n    r.append(i * i)",
+    number=2000, repeat=5,
+)
+comprehension = timeit.repeat("[i * i for i in range(1000)]", number=2000, repeat=5)
+print(f"boucle        : {min(boucle) / 2000 * 1e6:.0f} µs")
+print(f"compréhension : {min(comprehension) / 2000 * 1e6:.0f} µs")
+```
+
+Les compréhensions existent aussi pour les dictionnaires et les ensembles, avec la même économie de syntaxe et le même gain interne : une compréhension de dictionnaire bâtit un index en une passe, et une compréhension d'ensemble élimine les doublons sans écrire de boucle de gestion des clés. Attention toutefois au coût mémoire de ces formes : elles matérialisent le résultat complet, comme leur cousine de liste. Construire un ensemble de mille références est anodin ; en construire un de dix millions pour en tester l'appartenance une seule fois revient à payer la mémoire du tri à l'avance. Dans ce cas, si le tri est réellement nécessaire, il est justifié ; s'il ne sert qu'une fois, il faut revoir l'algorithme plutôt que la structure.
+
+La limite de la compréhension, c'est qu'elle construit toujours une liste complète en mémoire. Mille éléments ne posent aucun problème ; cinquante millions, oui, et c'est le moment où le code « rapide » devient un code qui plante. C'est là qu'interviennent les générateurs, dont vous avez découvert le principe quand vous avez parlé d'itérateurs : une fonction qui yield ne calcule une valeur que lorsqu'on la demande, et n'en conserve qu'une à la fois. Le coût devient constant, indépendant du nombre de lignes du fichier, au prix d'une contrainte simple : on ne peut parcourir un générateur qu'une seule fois.
+
+```python
+def lignes_valides(chemin):
+    """Parcourt le fichier une ligne à la fois, sans le charger en mémoire."""
+    with open(chemin, encoding="utf-8") as fichier:
+        for ligne in fichier:
+            if ligne.strip() and not ligne.startswith("#"):
+                yield ligne.rstrip("\n")
+
+total = sum(1 for _ in lignes_valides("effectif.csv"))
+```
+
+Le chiffre à retenir se mesure avec tracemalloc, et il est sans appel : charger effectif.csv de cent mille lignes dans une liste de chaînes consomme environ soixante mégaoctets, tandis que le générateur de l'exemple reste sous un mégaoctet, quel que soit le fichier. La vitesse, elle, est comparable, parfois légèrement en faveur du générateur puisqu'il n'alloue pas la liste entière. Le compromis est donc binaire : vous voulez parcourir une fois, travaillez en flux ; vous voulez trier, filtrer plusieurs fois ou connaître la longueur, il vous faut une liste, et vous assumez la mémoire.
+
+Le tableau suivant résume cette frontière pour trois situations typiques d'un projet de données. Il ne remplace pas une mesure sur vos propres fichiers, mais il indique de quel côté commencer.
+
+```table
+| Situation | Structure adaptée | Mémoire | Raison |
+|---|---|---|---|
+| Lire un fichier de cent mille lignes pour en calculer un total | Générateur | Bornée | Une seule ligne en mémoire à la fois |
+| Filtrer, trier puis réutiliser plusieurs fois | Liste | proportionnelle au résultat | Les données doivent exister physiquement |
+| Regrouper des milliers d'enregistrements par clé | dictionnaire de listes | proportionnelle aux groupes | Accès direct par clé, parcours unique des valeurs |
+```
+
+
+Deux pièges de lecture accompagnent les générateurs. Le premier est la tentative d'indexer ou de mesurer la longueur d'un générateur, qui lève une erreur : si vous en avez besoin, convertissez explicitement en liste et acceptez le coût. Le second est plus insidieux : reconstruire une structure coûteuse à l'intérieur du générateur. Une expression du type `x for x in donnees if x in index` ne pose aucun problème si index est construit une fois avant, mais devient un O(n²) désastreux si la construction de l'index figure dans la boucle elle-même ; la règle reste la même que précédemment, on bâtit l'index une seule fois, puis on l'utilise.
+
+Les itérateurs de la bibliothèque standard complètent la boîte à outils et se composent entre eux sans jamais construire la liste entière : chain réunit plusieurs sources, islice prélève une tranche, groupby regroupe des éléments déjà triés, zip_longest aligne des séquences de longueurs différentes. Combinés aux compréhensions, ils permettent d'écrire des traitements entiers en flux, lisibles d'une ligne à l'autre, et dont la mémoire reste bornée quelle que soit la taille des données. C'est l'architecture qui convient au rapport du collège, où l'on écrit ligne à ligne un fichier qui peut contenir cent mille notes.
+
+## Miser sur la mémoïsation : functools.lru_cache
+
+Certaines fonctions, rappelées avec les mêmes arguments, refont exactement le même travail. C'est fréquent dans vos calculs : une fonction qui détermine la classe d'une note, qui convertit un matricule en identifiant interne, qui applique une table de correspondance ou qui relit une configuration. lru_cache automatise la mémoire de ces résultats : le premier appel exécute la fonction et conserve le résultat dans un dictionnaire interne, les suivants renvoient directement la valeur conservée, sans refaire le calcul. L'acronyme LRU désigne la politique de remplacement retenue, « least recently used », qui écarte en priorité la valeur la plus anciennement consultée quand la limite est atteinte.
+
+L'usage tient en une ligne, et la limite de taille se règle par argument. Le choix du maxsize n'est pas anodin : trop petit, il impose des effacements répétés qui annulent l'intérêt de la mémoire ; trop grand, il laisse la mémoire croître librement. Si chaque entrée pèse quelques octets et que le nombre de clés est naturellement borné, une valeur de 1024 ou 4096 convient ; si les clés dépendent d'un fichier entier, réfléchissez deux fois avant de laisser la cache sans limite avec functools.cache.
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=2048)
+def mention(note):
+    """Calcule la mention d'une note — fonction pure, args hachables."""
+    if note >= 16:
+        return "Très bien"
+    if note >= 14:
+        return "Bien"
+    if note >= 12:
+        return "Assez bien"
+    if note >= 10:
+        return "Passable"
+    return "Insuffisant"
+
+print(mention.cache_info())
+# CacheInfo(hits=119987, misses=13, maxsize=2048, currsize=13)
+```
+
+Le rapport d'informations hits et misses est le vrai indicateur de qualité : une mémoïsation qui affiche plus de succès que de manques apporte quelque chose, une qui enregistre une nouvelle entrée à chaque appel ne fait que consommer de la mémoire. Mesurez-le, ne le supposez pas. Dans le rapport du collège, la fonction de classification des notes, appelée cent vingt mille fois pour douze valeurs différentes, est passée de 1,2 seconde à moins de dix millisecondes, sans changer une ligne de la logique métier.
+
+Trois conditions doivent être vérifiées avant d'ajouter ce décorateur, sous peine de produire un bug plutôt qu'un gain. D'abord la pureté : la fonction ne doit ni modifier ses arguments, ni écrire dans un fichier, ni afficher, ni dépendre du temps ou d'une variable globale changeante, car aucun de ces effets ne se reproduira aux appels suivants. Ensuite l'hachabilité : les arguments doivent pouvoir servir de clé, ce qui exclut les listes et les dictionnaires, qui leveront un TypeError explicite. Enfin l'immuabilité de l'entourage : si la fonction lit une table qui peut être modifiée pendant l'exécution, la cache conservera une valeur périmée, et il faudra appeler cache_clear() au bon moment, ce qui est exactement le genre de détail oublié trois mois plus tard.
+
+La mémoïsation est également sans effet quand la fonction n'est appelée qu'une fois, quand ses arguments sont toujours neufs, ou quand le coût réel vient d'un réseau ou d'un disque que la mémoire ne supprime pas : dans ce dernier cas, c'est un cache de résultats externes qu'il faut, avec une politique d'expiration que vous construirez vous-même. Enfin, une mémoïsation mal bornée se paie en mémoire : une fonction dont les arguments sont des tuples de données massives accumulera des entrées jusqu'à faire tomber le service. Vérifiez donc la taille courante avec cache_info() et surveillez-la comme vous surveillez le reste.
+
+La vérification finale est un test, et il doit être écrit avant la ligne décorateur. On exécute la fonction une première fois sans cache, on efface le cache, on appelle avec les mêmes arguments, puis on compare les deux résultats ; on répète l'opération sur un jeu d'arguments limites, valeurs négatives, zéro, bornes exactes d'un seuil. Ce test sert à deux choses : il prouve que la mémoïsation n'a pas altéré le comportement, et il documente le fait que la fonction est censée être pure. Si le test échoue parce que la fonction dépend d'un contexte extérieur, la bonne décision n'est pas de le contourner, c'est de retirer le décorateur.
+
+Voici la discipline complète, à appliquer dans l'ordre : profiler pour confirmer que la fonction domine réellement le temps ; vérifier qu'elle est pure et que son jeu d'arguments est petit ; ajouter le décorateur avec une taille bornée ; mesurer le nouveau temps et le ratio hits sur misses ; écrire un test qui prouve l'équivalence des résultats avec et sans cache. Si l'une des étapes échoue, revenez en arrière : une optimisation qui exige de contourner une garantie de correction n'en est pas une, c'est un défaut reporté.
+
+## NumPy : sortir de la boucle par la vectorisation
+
+Vous avez jusqu'ici optimisé du Python avec du Python : meilleures structures, compréhensions, mémoïsation. Un palier supplémentaire existe, et il change d'échelle. À chaque itération d'une boucle, l'interpréteur doit décoder une instruction, compter les références, résoudre un attribut, allouer éventuellement un objet : tout cela coûte plusieurs centaines de nanosecondes, multipliées par des millions d'itérations. Une bibliothèque comme NumPy regroupe les nombres dans un tampon contigu de mémoire géré en C, puis exécute l'opération entière dans une boucle compilée. On ne rend pas le calcul plus malin, on supprime le coût de pilotage, et les gains vont couramment de dix à cent fois sur les traitements numériques.
+
+Le cas type est l'agrégation d'une colonne de mesures : moyenne, écart-type, nombre de valeurs hors bornes, normalisation. Écrit en boucle Python, ce travail ressemble à tout autre code que vous avez écrit dans ce parcours. Écrit en NumPy, il devient une expression unique, plus courte et beaucoup plus rapide.
+
+```python
+import numpy as np
+import timeit
+
+valeurs = np.random.default_rng(0).normal(120, 15, 200_000)
+
+def moyenne_boucle(data):
+    total = 0.0
+    for x in data:
+        total += x
+    return total / len(data)
+
+def hors_bornes_boucle(data, bas, haut):
+    return sum(1 for x in data if x < bas or x > haut)
+
+print("boucle moyenne ", min(timeit.repeat(lambda: moyenne_boucle(valeurs), number=5, repeat=3)))
+print("numpy  moyenne ", min(timeit.repeat(lambda: valeurs.mean(), number=5, repeat=3)))
+print("boucle bornes  ", min(timeit.repeat(lambda: hors_bornes_boucle(valeurs, 90, 150), number=5, repeat=3)))
+print("numpy  bornes  ", min(timeit.repeat(lambda: np.count_nonzero((valeurs < 90) | (valeurs > 150)), number=5, repeat=3)))
+```
+
+Sur deux cent mille valeurs, la moyenne en boucle demande environ cinq millisecondes, celle de NumPy environ deux cent microsecondes, soit un facteur vingt-cinq ; la détection de valeurs hors bornes gagne un facteur cinquante, car le masque booléen évite également le coût de la fonction appelée à chaque élément. Le chiffre exact dépendra de votre machine, l'ordre de grandeur, lui, ne change pas.
+
+Les règles d'usage tiennent en peu de points, mais ils sont impitoyables. Créez vos tableaux une seule fois et réutilisez-les ; convertissez une liste en tableau à l'entrée du traitement, jamais à l'intérieur d'une boucle. Préférez les masques booléens et les fonctions d'ensemble aux accès élément par élément avec un index : `valeurs[i] = valeurs[i] * 1.5` dans une boucle Python annule presque tout l'avantage. Exploitez le report de forme pour appliquer une opération à une matrice sans la dupliquer, et utilisez les fonctions prévues, sum, mean, argmax, unique, plutôt que de réécrire leur logique. Enfin, sortez les résultats vers Python seulement quand c'est nécessaire : chaque aller-retour tableau vers liste a un coût.
+
+Les limites sont elles aussi claires. Sur de petits tableaux, de quelques dizaines d'éléments, le surcoût de construction du tableau peut dépasser le gain ; NumPy s'apprécie sur des volumes, pas sur trois valeurs. Le traitement de chaînes de caractères ou de structures hétérogènes relève rarement de NumPy, et une colonne d'objets Python contenus dans un tableau perd tout avantage. Et l'interchangeabilité avec vos outils du quotidien doit être vérifiée : un tableau ne se sérialise pas comme une liste, il ne s'insère pas tel quel dans un dictionnaire imbriqué, et vos tests devront le traiter en conséquence.
+
+Le lien avec le reste de la leçon est direct. Si cProfile désigne une boucle de calculs numériques comme dominante, la vectorisation est le premier levier, avant toute réécriture native. Si le profilage désigne, au contraire, une boucle sur des chaînes, des dictionnaires ou des appels réseau, NumPy n'apportera rien et vous ferait perdre du temps. L'ordre des instruments reste le même : mesurer, identifier la nature du goulot, choisir l'outil correspondant.
+
+## Cython, Numba et les extensions natives : le dernier recours
+
+Quand les structures sont justes, les mémoïsations posées et la vectorisation appliquée, il reste un cas : une boucle resserrée sur des nombres entiers ou des flottants dont Python ne peut pas s'approcher, faute de pouvoir compiler l'interprétation elle-même. C'est le moment d'envisager de sortir du pur Python. Ce moment doit rester rare, car il introduit une chaîne de construction, une plateforme à cibler et un code que peu de collègues pourront corriger.
+
+Cython est l'option la plus ancienne et la plus documentée. Vous écrivez un fichier .pyx, proche du Python classique, en ajoutant des déclarations de types sur les variables et les paramètres, puis vous le compilez en C, qui devient une extension chargée par l'interpréteur. Les déclarations sont le cœur du dispositif : elles permettent à Cython de générer du code C directement, sans passer par les objets Python ni par le comptage des références.
+
+```python
+# controle.pyx — somme de contrôle sur un tableau d'entiers
+def somme_controle(int[:] valeurs):
+    cdef long total = 0
+    cdef Py_ssize_t i
+    for i in range(valeurs.shape[0]):
+        total = (total + valeurs[i]) % 1000000007
+    return total
+```
+
+La compilation s'intègre dans un fichier de construction standard, et le module s'utilise ensuite comme n'importe quel autre import. Le gain constaté sur ce type de boucle va généralement d'un facteur cinq à un facteur trente, selon la nature du calcul et la qualité des déclarations ; l'erreur classique consiste à déclarer les paramètres mais pas les variables d'itération, ce qui laisse des objets Python au cœur de la boucle et annule une grande partie du bénéfice.
+
+Numba propose une autre voie, sans étape de compilation à intégrer : un décorateur analyse la fonction à la première exécution et la compile pour les types d'arguments rencontrés. Il convient merveilleusement aux boucles numériques écrites en Python standard, y compris celles qui exploitent un index, et il ne demande aucun fichier supplémentaire. Ses contraintes tiennent au fait qu'il ne connaît pas toutes les fonctions de Python : certaines constructions élevées, certains objets et certaines bibliothèques ne sont pas supportés, et le premier appel s'accompagne d'un temps d'analyse à mesurer séparément.
+
+Le choix entre les deux, et parfois l'abandon de l'un comme de l'autre, se décide sur trois critères. La nature du calcul d'abord : du numérique simple, c'est Numba ; des structures typées, des accès mémoire précis ou un mélange avec des bibliothèques C existantes, c'est Cython. L'environnement de déploiement ensuite : Numba évite la compilation à l'installation, Cython s'intègre mieux dans une chaîne de paquets existante. Enfin, l'équipe : une extension native qui ne peut être maintenue que par une seule personne est un risque, pas une optimisation.
+
+Des alternatives existent et complètent le panorama : une extension C écrite à la main et exposée via cffi ou ctypes quand la bibliothèque est déjà là, un port vers un autre interpréteur compatible Python, une implémentation externe appelée depuis votre programme, ou encore, pour les calculs purement numériques de grande ampleur, la délégation complète à une bibliothèque spécialisée. Chacune ajoute sa propre chaîne de construction et sa propre surface de maintenance.
+
+Le cas du collège illustre le dernier palier. Après le passage à l'ensemble, l'écriture itérative et la vectorisation des agrégats, le rapport tombait à 1,6 seconde ; le profilage restant désignait une somme de contrôle parcourant les vingt-sept mille notes, soit 1,1 seconde, en pur Python. La version Cython de cette unique fonction a ramené cette part à 0,15 seconde et le rapport complet à 0,9 seconde. Un facteur dix sur la fonction, un facteur quarante-six sur l'utilisateur final — et surtout, une seule fonction touchée, avec ses tests inchangés.
+
+## Optimiser avec méthode : le diagnostic avant et après
+
+Tous les outils sont entre vos mains ; il reste la discipline qui les rend utiles. Elle tient en un protocole court, que vous appliquerez dans cet ordre, sans jamais l'enchaîner autrement. D'abord, figez un jeu de référence : un fichier de données représentatif, une machine donnée, une version de Python notée. Ensuite, relevez une ligne de base en exécutant la mesure au moins cinq fois et en retenant la médiane. Corrigez un seul point. Remesurez dans les mêmes conditions. Consignez les deux chiffres, puis seulement, passez au point suivant.
+
+L'ordre des leviers n'est pas décoratif, il est hiérarchique. La complexité d'abord : passer d'un coût quadratique à un coût linéaire vaut toujours mieux que tout raffinement de constante, car elle décide du comportement aux grandes tailles. Ensuite la structure et l'algorithme : un index, un générateur, une mémoïsation bien placée. Puis la vectorisation, qui supprime le pilotage de l'interpréteur sur les calculs numériques. Enfin l'extension native, réservée au goulot qui subsiste. Inverser cet ordre, c'est accepter de compliquer le code pour un gain qui, dans la plupart des cas, se trouvait une ligne plus loin.
+
+Le banc de comparaison finale se lit comme une preuve, pas comme une démonstration. Exécutez les deux variantes dans le même script, sur les mêmes données, et affichez les deux nombres côte à côte : c'est ce que vous joindrez au correctif.
+
+```text
+$ python -m timeit -n 2000 -s "import rapport_old" "rapport_old.construire_lignes(NOTES, INSCRITS)"
+2000 loops, best of 5: 1.712 msec per loop
+$ python -m timeit -n 2000 -s "import rapport_new" "rapport_new.construire_lignes(NOTES, INDEX)"
+2000 loops, best of 5: 0.019 msec per loop
+```
+
+À partir de là, la performance doit être protégée comme n'importe quel autre comportement. Un script de référence, ajouté au dépôt et exécuté à l'occasion d'une livraison, suffit : il charge le jeu de données fixe, mesure les fonctions critiques et signale un dépassement de seuil en échouant. Vous n'avez pas besoin d'une plateforme de bancs d'essai pour un projet de cette taille, vous avez besoin d'un fichier qui compare un chiffre à un seuil et qui crie quand la marge est mangée. L'exercice d'architecture du chapitre dix vous a déjà donné les habitudes de test qu'il faut réutiliser ici.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/oscilloscope.jpg
+| Deux mesures superposées sur un oscilloscope, comme un avant et un après : c'est ainsi qu'un gain de performance se démontre.
+```
+
+Le bilan du collège se lit d'un coup d'œil dans le tableau suivant. Chaque ligne correspond à un outil de cette leçon, à un diagnostic produit par cet outil et à une correction unique, mesurée avant de passer à la suivante.
+
+```table
+| Étape du diagnostic | Outil utilisé | Temps du rapport |
+|---|---|---|
+| Version de départ, recherche d'inscrits dans une liste | cProfile | 41,7 s |
+| Index en ensemble construit avant la boucle | cProfile puis timeit | 2,4 s |
+| Écriture ligne à ligne, mémoire bornée | tracemalloc | 2,2 s |
+| Agrégats et seuils exprimés en vectorisé | timeit | 1,6 s |
+| Somme de contrôle compilée | cProfile puis Cython | 0,9 s |
+```
+
+
+Le dernier point de la méthode est de savoir s'arrêter. Un gain de trente pourcent sur une opération qui pèse une fraction de pourcent du temps total ne mérite ni son correctif, ni sa revue de code, ni la dette qu'il laisse derrière lui. Appliquez la question de contrôle à chaque candidat à l'optimisation : quelle part du temps total cette opération représente-t-elle, et quel est le gain absolu en secondes pour l'utilisateur ? Si la réponse est inférieure au bruit de mesure, si personne ne se plaint, si le code devient plus difficile à relire, n'intervenez pas. La performance n'est pas un but, c'est une contrainte parmi d'autres, et l'élégance d'un programme tient autant à ce qu'il ne fait pas qu'à ce qu'il fait vite.
+
+## À retenir
+
+- On mesure avant de modifier : un gain non chiffré n'existe pas, et un gain non protégé disparaît au prochain refactor.
+- cProfile répond à la question « où part le temps », en distinguant temps propre et temps cumulé, et se lit d'abord avec -s cumtime.
+- Les colonnes ncalls, tottime et cumtime indiquent respectivement la fréquence, le travail propre et le travail délégué.
+- timeit remplace le chronométrage à la main : beaucoup d'exécutions, série réchauffée, médiane plutôt que minimum.
+- Comparer deux variantes n'est valable que si les deux produisent exactement le même résultat, tests à l'appui.
+- tracemalloc mesure la mémoire tracée et localise les allocations ; c'est le pic qui déclenche les pannes.
+- La complexité prime sur toute micro-optimisation : O(n²) sur une recherche en boucle est la cause la plus fréquente des ralentissements.
+- Une liste sert à ranger et à parcourir, un ensemble à appartenir, un dictionnaire à accès par clé, une deque à une file.
+- Construisez l'index une seule fois, avant la boucle ; une structure reconstruite à chaque itération ne change rien.
+- Les compréhensions gagnent du temps et de la clarté, mais elles allouent la totalité du résultat ; les générateurs bornent la mémoire.
+- lru_cache accélère uniquement les fonctions pures à arguments hachables, et se vérifie par le ratio hits sur misses.
+- La vectorisation NumPy supprime le coût de pilotage de l'interpréteur ; Cython et Numba interviennent en dernier, sur un goulot déjà identifié.
+
+## Erreurs fréquentes
+
+- Optimiser avant de profiler → exécutez cProfile et notez la fonction dominante avant d'ouvrir l'éditeur.
+- Chronométrer avec time.time sur quelques lignes → utilisez timeit, répétez, et retenez la médiane des séries.
+- Comparer deux variantes qui ne calculent pas la même chose → écrivez d'abord le test d'équivalence, puis chronométrez.
+- Chercher dans une liste à l'intérieur d'une boucle → construisez un ensemble avant la boucle, c'est O(n²) sinon.
+- Reconstruire l'ensemble ou le dictionnaire à chaque itération → déplacez la construction hors de la boucle et remesurez.
+- Empiler les résultats dans une liste avant d'écrire le fichier → écrivez au fil de l'eau pour borner la mémoire.
+- Créer un décorateur lru_cache sur une fonction qui lit un fichier ou dépend du temps → vous cacherez un résultat périmé.
+- Utiliser list.pop(0) pour vider une file → passez à deque.popleft(), qui reste en O(1).
+- Réécrire en C une boucle qui représente 3 % du temps → appliquez la loi d'Amdahl et attaquez la part dominante.
+- Déclarer une optimisation sans chiffre d'après → conservez les deux mesures dans le correctif, avec le jeu de données utilisé.
+
+## Pour aller plus loin
+
+La documentation du module profile reste la porte d'entrée de tout ce qui précède : https://docs.python.org/3/library/profile.html. Elle détaille à la fois cProfile, son parent profile, les deux façons de lire un profil, la classe pstats et le tri sur la ligne de commande, ainsi que les différences de surcoût entre eux ; la section consacrée aux restrictions de tri et aux statistiques cumulées correspond exactement aux tableaux que vous avez lus dans cette leçon. Prenez également connaissance des limites d'instrumentation, afin de ne jamais comparer des profils réalisés dans des conditions différentes.
+
+Le module timeit a sa page dédiée, avec la description des options de la ligne de commande, la sémantique de best parmi plusieurs séries et le module time, offrant une horloge à plus haute résolution : https://docs.python.org/3/library/timeit.html. Pour la mémoire, la documentation de tracemalloc explique les domaines d'allocation, la prise d'instantanés et la comparaison de deux instantanés, ce qui vous permettra d'aller plus loin que l'exemple présenté ici : https://docs.python.org/3/library/tracemalloc.html.
+
+Pour la vectorisation, la référence officielle de NumPy rassemble le guide d'introduction, le manuel d'indexation et de report de forme, et le tableau des fonctions d'agrégation : https://numpy.org/doc/stable/. Enfin, pour les deux volets natifs, la documentation de Cython décrit les déclarations de type et le processus de compilation, tandis que celle de Numba décrit les décorateurs et les sous-ensemblles du langage pris en charge. Lisez-les après avoir terminé l'exercice, et non avant : une optimisation native tentée sans diagnostic préalable est la meilleure façon d'ajouter du code lent à maintenir.
+
+## Et maintenant : votre propre diagnostic
+
+La leçon est terminée, mais le raisonnement ne commence qu'au livrable. Votre mission consiste à reprendre le rapport du collège tel qu'il vous est fourni, à établir un diagnostic complet et à livrer un correctif justifié par des chiffres : profilage avant, correction, profilage après, comparaison des deux courbes. Vous ne devrez pas seulement rendre le programme plus rapide, vous devrez expliquer, en quelques lignes, pourquoi il l'était, ce que la mesure a montré et ce que vous avez choisi de ne pas toucher.
+
+Le script de référence attendu à la fin doit pouvoir s'exécuter en une commande, afficher le temps médian de la version d'avant et de la version d'après, et échouer si le gain promis n'est pas atteint. C'est ce fichier que vous ajouterez à votre dépôt, et c'est lui qui vous évitera, dans six mois, de voir la performance revenir sans qu'aucun test ne vous prévienne. Mesurez, corrigez une seule chose, remesurez, consignez : ce rythme, appliqué une première fois sur ce rapport, deviendra votre façon de travailler sur tous les programmes que vous écrirez ensuite.

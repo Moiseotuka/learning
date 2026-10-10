@@ -1,0 +1,671 @@
+Bienvenue dans le neuvième chapitre du parcours Développement web moderne, celui où votre code React cesse d'être correct pour devenir maîtrisé. Les chapitres précédents vous ont donné des gestes complets : déclarer un état, faire remonter une propriété, structurer des routes, lier un formulaire, charger une donnée au montage, puis mettre le résultat en production. Le site de l'atelier de la Médiathèque des Lilas est en ligne et il fonctionne. C'est précisément à ce moment-là que commencent les trois symptômes que ce chapitre soigne : la même logique écrite trois fois dans trois écrans, la même information qui redescend de composant en composant comme une chaîne de seaux, et des listes qui ralentissent dès qu'on ajoute un filtre.
+
+À la fin de cette leçon, vous saurez faire trois choses très concrètes. Vous saurez extraire un hook personnalisé : isoler un comportement complet — état, effets, gestionnaires — dans une fonction réutilisable, respecter les règles qui gouvernent les hooks, choisir ce qui mérite d'être extrait. Vous saurez partager un état avec le contexte sans provoquer de rendus inutiles : découper un contexte par préoccupation, stabiliser la valeur fournie, réserver la mémoïsation aux endroits où une mesure la justifie. Vous saurez enfin diagnostiquer un rendu avec le profiler React : enregistrer une interaction, lire une flamme, identifier le composant responsable, corriger, puis mesurer à nouveau.
+
+Le fil rouge reste le site de l'atelier, mais il a grandi. Il compte une page d'accueil avec le compte à rebours du prochain atelier, une page programme qui liste les séances, un formulaire d'inscription, une liste des inscrits consultable par l'organisateur, et un espace où la session de l'utilisateur doit rester visible d'un écran à l'autre. L'accueil et le programme affichent le même compte à rebours ; la liste des inscrits et la page programme partagent la même source de données ; la session circule partout. Chaque section prendra l'un de ces besoins, l'écrira d'abord comme on le ferait naïvement, constatera ce que cela coûte, puis l'écrira mieux : d'abord faire fonctionner, ensuite mesurer, enfin corriger avec un outil plutôt qu'avec une intuition.
+
+Un mot sur la manière d'aborder ce chapitre. React se juge à l'écran, pas à la lecture : ouvrez un éditeur, recopiez les blocs, cassez-les volontairement, regardez ce que la console affiche. Un rendu en trop ne se voit pas d'ordinaire, il se mesure, et c'est pourquoi la fin du chapitre est consacrée à un outil plutôt qu'à une technique. Avant toute optimisation, posez-vous la question d'un bon relecteur : qu'avez-vous mesuré, et que craigniez-vous exactement. La réponse ça semblait lent est le début d'une mauvaise correction ; la réponse le profiler montre cette liste qui se redessine à chaque frappe est le début d'une bonne.
+
+## Pourquoi extraire un hook personnalisé
+
+Un hook personnalisé, c'est une fonction ordinaire dont le nom commence par use et qui peut, à l'intérieur, appeler d'autres hooks. Son objet n'est pas d'afficher quelque chose : il regroupe un comportement — état, effets, gestionnaires, calculs dérivés — pour que plusieurs composants l'utilisent sans le réécrire. La frontière est simple à trancher. Si votre fonction ne fait que transformer des données, formater une date, trier une liste en mémoire, calculer un prix, elle reste une fonction classique, à placer dans un module d'utilitaires. Si elle contient useState, useEffect, useRef, useContext ou un autre hook, elle doit s'appeler use suivi d'un nom, parce que React et les outils de vérification ont besoin de la reconnaître comme telle.
+
+Le logo de React rappelle d'où vient cette mécanique : les hooks sont la fonctionnalité qui a permis d'utiliser état et effets dans des fonctions ordinaires, sans classe ni méthode de cycle de vie.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/react-logo.png
+| Le logo de React : un noyau central entouré de trois électrons bleus, emblème de la bibliothèque qui a rendu les hooks utilisables dans les composants fonctionnels.
+```
+
+Le premier bénéfice est la suppression des duplications, et sur le site de l'atelier la duplication est déjà visible. L'écran d'accueil affiche le nombre de jours restants avant la séance du samedi ; l'écran programme affiche la même information au-dessus de la liste. Copier-coller la logique produit deux versions qui divergeront dès la première correction : on corrigera le décompte sur l'accueil et on oubliera le programme. Extraire le comportement dans un hook unique crée un seul endroit à corriger, à tester et à documenter. La règle est celle de tout le reste du code : un comportement, une définition.
+
+Le deuxième bénéfice est la lisibilité du composant. Un composant qui charge une liste, gère trois états de requête, calcule un filtre et nettoie son intervalle tient quatre responsabilités dans cent lignes. Après extraction, il n'en tient qu'une : il appelle le hook et il dessine. La complexité n'a pas disparu, elle est rangée dans un fichier dont le nom annonce le contenu. Quand un collègue ouvre useInscriptions.js, il sait qu'il y trouvera le chargement, l'erreur et le rechargement ; quand il ouvre ListeInscrits.jsx, il sait qu'il y trouvera le balisage. Ce déplacement, et non la suppression, est la valeur réelle de l'extraction.
+
+Le troisième bénéfice est la concentration des pièges. Les difficultés d'un comportement asynchrone — annuler une requête tardive, ignorer une réponse d'un composant démonté, réinitialiser un minuteur — se logent toutes au même endroit. Écrivez la fonction de nettoyage une fois dans le hook, et tous les écrans en profitent ; laissez-les répétés et vous obtiendrez la liste qui se remplit deux fois dans un écran et jamais dans l'autre. Un hook est aussi un contrat : il expose une forme de retour stable, décrivable en une phrase, ce qui rend la revue de code et les tests plus simples.
+
+Le tableau ci-dessous confronte les deux approches sur les besoins réels du site. Servez-vous-en comme d'une grille de décision avant d'extraire quoi que ce soit.
+
+```table
+| Besoin du site | Approche par copier-coller | Approche par hook personnalisé |
+|---|---|---|
+| Compte à rebours du prochain atelier | Calcul dupliqué dans deux écrans, dérive progressive | useProchainAtelier, une définition, deux utilisations |
+| Liste des inscrits | Trois états recopiés, nettoyage oublié d'un côté | useInscriptions, requête annulée, états nommés |
+| Formulaire d'inscription | Gestionnaires et erreurs réécrits pour chaque champ | useFormulaire, validation injectée, remise à zéro fournie |
+| Filtre de la liste | État local plus variable dispersée dans le rendu | useFiltre, debounce et URL restent dans le hook |
+| Session de l'utilisateur | Prop drilling sur quatre niveaux | useSession via le contexte, une seule lecture |
+```
+
+
+Il faut aussi dire ce qu'un hook ne fait pas, parce que les attentes excessives coûtent cher. Un hook n'accélère rien : extraire une logique dans une fonction ne réduit pas le nombre de rendus, cela les organise. Il ne supprime pas non plus les dépendances de données : si le parent continue de créer un nouveau tableau à chaque rendu, les enfants se redessineront malgré tout. Il n'est pas gratuit non plus, puisqu'il ajoute un fichier, un nom et une API à maintenir. C'est pourquoi on extrait après, et non avant.
+
+Cette remarque commande la discipline d'écriture du chapitre. Faites fonctionner le comportement dans le composant où il est né, refaites-le fonctionner une seconde fois ailleurs, extrayez seulement à la troisième apparition, quand la forme du besoin s'est stabilisée. Extraire au premier essai revient à figer une API trop générale ou trop étroite, que l'on refactorisera en bout de course. Le duplicata temporaire est un moindre mal ; la mauvaise abstraction est un fardeau durable.
+
+## Les règles des hooks, à connaître par cœur
+
+Deux règles gouvernent tout ce qui suit, et elles ne se négocient pas. Premièrement, un hook s'appelle au niveau supérieur du composant ou du hook personnalisé : jamais dans une condition, jamais dans une boucle, jamais après un return, jamais dans un callback ou une fonction événementielle. Deuxièmement, un hook s'appelle uniquement depuis un composant React ou depuis une autre fonction dont le nom commence par use. Une règle comprise n'est plus oubliée : voyons donc pourquoi elles existent.
+
+Le pourquoi tient dans la façon dont React mémorise les hooks. Pour chaque composant affiché, React maintient une liste interne indexée par ordre d'appel : le premier useState occupe la case zéro, le deuxième la case un, le useEffect suivant la case deux, et ainsi de suite. Chaque rendu rejoue la même séquence et React retrouve l'état de chaque case par sa position. Si vous appelez un hook dans une condition, l'ordre change d'un rendu à l'autre, et React associe alors l'état d'une case à un hook qui n'est pas celui qui l'a créé. Le composant ne rate pas toujours bruyamment : parfois il affiche simplement la mauvaise valeur, ce qui est bien plus long à diagnostiquer.
+
+Considérez l'exemple suivant, où un composant affiche la session de l'organisateur seulement quand elle existe. L'écriture par naturel — conditionner l'appel — est fausse, même si elle semble fonctionner tant que la condition ne bascule jamais.
+
+```jsx
+function EspaceOrganisateur({ session }) {
+  const [filtre, setFiltre] = useState("");
+
+  if (session) {
+    const [visible, setVisible] = useState(true); // interdit : hook dans une condition
+  }
+
+  return <input value={filtre} onChange={(e) => setFiltre(e.target.value)} />;
+}
+```
+
+La correction ne consiste pas à supprimer l'état, mais à déplacer la décision. On déclare tous les hooks dans le même ordre à chaque rendu, puis on décide de ce qu'on en fait après. Une donnée conditionnelle s'initialise à une valeur neutre ; un effet qui ne doit rien faire retourne tôt à l'intérieur de sa fonction, ce qui ne change pas le compte des hooks ; un écran qui dépend d'une condition rend un composant différent plutôt que de sauter des appels.
+
+```jsx
+function EspaceOrganisateur({ session }) {
+  const [filtre, setFiltre] = useState("");
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    if (!session) return;
+    document.title = `Organisateur — ${session.nom}`;
+    return () => {
+      document.title = "Ateliers";
+    };
+  }, [session]);
+
+  if (!session) return <p>Connectez-vous pour gérer les inscriptions.</p>;
+  // autorisé : ce return vient APRÈS tous les hooks
+  ...
+}
+```
+
+Les retours anticipés restent donc possibles, à une condition : ils interviennent après le dernier appel de hook. Réservez le début du composant pour les appels, dans un bloc continu, puis placez les décisions d'affichage. Quand un composant réunit six hooks et trois retours conditionnels, l'ordre devient fragile ; le bon réflexe est alors de le scinder : un parent qui décide, deux enfants qui appellent chacun leurs hooks.
+
+Les boucles posent le même problème sous une autre forme. Déclarer un état par inscrit placerait un hook dans une boucle et ferait varier l'ordre avec les données. La bonne réponse consiste à remonter la boucle dans l'enfant : le parent rend une liste de composants, chacun appelle ses propres hooks. Ce déplacement n'est pas une contrainte subie, c'est l'architecture même de React : l'état vit là où il est utilisé.
+
+Les erreurs produites par une violation se reconnaissent, et il vaut mieux les connaître avant de les rencontrer. Le message Rendered fewer hooks than expected signifie qu'un rendu a appelé moins de hooks que le précédent, à cause d'un return trop tôt ; son contraire signifie qu'un appel est apparu dans une branche nouvelle. L'erreur la plus sournoise, elle, est silencieuse : l'état d'un hook se retrouve remplacé par celui d'un autre et l'application affiche une valeur plausible mais fausse. Dès qu'un état se comporte comme s'il appartenait à un autre composant, suspectez l'ordre d'appel.
+
+La troisième règle est conventionnelle : un hook personnalisé porte le préfixe use. Ce préfixe est lu par l'analyseur de code, qui vérifie alors les deux règles précédentes à l'intérieur de votre fichier, et par vos collègues, qui savent qu'une telle fonction peut appeler d'autres hooks et ne doit être appelée qu'au niveau supérieur. Renommer useInscriptions en chargerInscriptions ne casse rien à l'exécution, mais fait perdre la vérification automatique.
+
+La vérification mécanique se met en place en une ligne dans la configuration de l'éditeur et de l'intégration continue, avec l'extension dédiée d'ESLint. Elle impose deux règles : celle qui interdit les appels hors du niveau supérieur, et celle qui exige la liste complète des dépendances d'un effet. Activez-la avant vos premiers hooks personnalisés : elle transforme les règles de cette section d'une mémoire à retenir en un avertissement à la ligne exacte de la faute.
+
+Un dernier point sur le mode strict de développement. Avec StrictMode, React exécute volontairement certains effets deux fois au montage, pour révéler les nettoyages manquants : un abonnement qui se cumule ou une requête envoyée deux fois, voilà ce que ce double appel met au jour. Ce n'est pas un dysfonctionnement à corriger, c'est un test offert — si votre effet survit au double appel, c'est qu'il nettoie correctement.
+
+```table
+| Geste dans un composant | Verdict | Raison |
+|---|---|---|
+| Appeler useState avant toute condition | Obligatoire | L'ordre d'appel indexe l'état interne |
+| Appeler un hook après un return anticipé | Interdit | Le nombre de hooks changerait d'un rendu à l'autre |
+| Appeler un hook dans un gestionnaire d'événement | Interdit | La liste n'existe qu'au niveau du composant |
+| Déclarer un hook dans une boucle | Interdit | Le compte varie avec les données |
+| Appeler un hook dans un hook personnalisé | Autorisé | C'est même tout l'objet des hooks personnalisés |
+| Déclarer un return conditionnel à l'intérieur d'un effet | Autorisé | Le compte des hooks ne change pas |
+```
+
+
+## Votre premier hook personnalisé : useProchainAtelier
+
+Prenons un besoin réel et modeste : afficher le temps restant avant la prochaine séance. Sur le site de l'atelier, l'écran d'accueil le place sous le titre, l'écran programme le répète au-dessus de la liste. La logique est identique des deux côtés : une date cible, une soustraction, un rafraîchissement périodique parce que le jour tourne à minuit, et une forme de sortie stable — jours, heures, minutes, ou la mention atelier terminé. Voici d'abord le hook, qui tient en une vingtaine de lignes et qui centralise les trois décisions : état initial, effet périodique, nettoyage.
+
+```jsx
+import { useEffect, useState } from "react";
+
+const JOUR = 60 * 60 * 1000;
+
+export function useProchainAtelier(dateCible) {
+  const [reste, setReste] = useState(() => calculerReste(dateCible));
+
+  useEffect(() => {
+    const minuteur = setInterval(() => {
+      setReste(calculerReste(dateCible));
+    }, 60 * 1000);
+    return () => clearInterval(minuteur);
+  }, [dateCible]);
+
+  return reste;
+}
+
+function calculerReste(dateCible) {
+  const ecart = new Date(dateCible).getTime() - Date.now();
+  if (ecart <= 0) return { termine: true, jours: 0, heures: 0, minutes: 0 };
+  return {
+    termine: false,
+    jours: Math.floor(ecart / JOUR),
+    heures: Math.floor((ecart % JOUR) / (60 * 60 * 1000)),
+    minutes: Math.floor((ecart % (60 * 60 * 1000)) / (60 * 1000)),
+  };
+}
+```
+
+Quatre décisions méritent d'être commentées, car elles valent pour tous les hooks que vous écrirez. L'état initial utilise une fonction d'initialisation, pour que la première image affichée soit juste dès le montage sans recalcul à chaque rendu. L'effet ne dépend que de dateCible : si la cible ne change pas, le minuteur reste le même. Le nettoyage détruit le minuteur, sans quoi un composant démonté continuerait de pousser un état sans destinataire. Enfin, la sortie est un objet nommé plutôt qu'un tableau de trois nombres : les champs lisibles survivent à un réordonnancement des valeurs.
+
+L'utilisation dans un composant se réduit à un appel et à un affichage. Aucun des écrans ne connaît l'existence du minuteur, ni la formule, ni le cas limite ; ils reçoivent un objet et le dessinent. C'est exactement le contrat recherché : l'écran décide de la mise en forme, le hook décide du temps qui passe.
+
+```jsx
+import { useProchainAtelier } from "./useProchainAtelier";
+
+function Accueil({ prochaineSeance }) {
+  const reste = useProchainAtelier(prochaineSeance);
+
+  if (reste.termine) {
+    return <p className="encadre">L'atelier a commencé — inscriptions closes.</p>;
+  }
+
+  return (
+    <p className="encadre">
+      Prochain atelier dans {reste.jours} jour{reste.jours > 1 ? "s" : ""},{" "}
+      {reste.heures} h {String(reste.minutes).padStart(2, "0")} min.
+    </p>
+  );
+}
+
+function Programme({ prochaineSeance }) {
+  const reste = useProchainAtelier(prochaineSeance);
+  return <h2>Séances à venir ({reste.jours} jours)</h2>;
+}
+```
+
+Le choix de la forme de retour est une décision d'API, pas un détail. Un tuple — le hook retourne un tableau que l'on déstructure — se lit bien quand la fonction renvoie deux ou trois valeurs simples dont l'ordre ne changera plus. Un objet se lit mieux dès que les valeurs ont un sens propre, car l'ordre cesse d'avoir une importance. Une troisième forme, à privilégier dès que le hook grossit, regroupe données et actions : { reste, recharger } ou { valeurs, erreurs, changer, soumettre }. Elle autorise l'ajout d'un champ sans casser les appels existants, ce qui est la principale qualité d'une API stable.
+
+Le cas limite mérite une ligne de test plutôt qu'une confiance aveugle. Une date passée doit renvoyer l'état terminé sans jamais afficher de nombres négatifs. Un fuseau horaire se comporte correctement tant que la date cible est fournie comme instant absolu et non comme chaîne ambiguë : préférez la construction par composants de date. Si enfin le serveur et la machine de l'utilisateur divergent, tranchez en une phrase dans le code : c'est l'heure du client qui compte pour l'affichage, et l'heure du serveur qui compte pour l'ouverture des inscriptions.
+
+La vérification finale tient en quatre gestes. Chargez l'écran et confirmez que l'affichage est juste dès la première image, sans flash de valeur par défaut. Laissez la page ouverte jusqu'au passage à minuit, ou simulez-le en avançant la date, et vérifiez le rafraîchissement. Naviguez vers un autre écran, revenez, et assurez-vous qu'aucun minuteur résiduel ne fait clignoter le contenu. Débranchez enfin l'affichage pendant une minute : si le composant devient opaque, c'est que le hook devrait renvoyer davantage de métadonnées, par exemple la date formatée, plutôt que de forcer chaque écran à la recalculer.
+
+Le comportement extrait est maintenant partagé : une seule définition, deux écrans, un endroit à corriger. Cette victoire est modeste, mais elle prépare la suivante. Le prochain hook à extraire n'est plus un calcul local : c'est un chargement de données, avec ses états d'attente, ses erreurs et ses réponses tardives, et c'est là que les règles du premier chapitre deviennent réellement payantes.
+
+## Un hook de données : useInscriptions
+
+Trois écrans du site chargent une liste : la page programme charge les séances, l'espace organisateur charge les inscrits, l'accueil charge les prochains ateliers. Dans chacun, la mécanique est identique — un état d'attente, un état d'erreur, la donnée elle-même et une fonction pour relancer la requête. Copiée trois fois, elle dérive : l'un des écrans oublie d'effacer l'erreur au nouveau chargement, l'autre laisse une réponse tardive écraser une donnée plus récente. Extraire ce comportement dans useInscriptions revient à écrire une seule fois la politique des quatre états, puis à l'appliquer partout.
+
+```jsx
+import { useCallback, useEffect, useState } from "react";
+
+export function useInscriptions(url) {
+  const [etat, setEtat] = useState({ statut: "repos", liste: [], erreur: null });
+  const [recherche, setRecherche] = useState(0);
+
+  const recharger = useCallback(() => setRecherche((n) => n + 1), []);
+
+  useEffect(() => {
+    const controleur = new AbortController();
+    setEtat((e) => ({ ...e, statut: "chargement" }));
+    fetch(url, { signal: controleur.signal })
+      .then((reponse) => {
+        if (!reponse.ok) throw new Error("HTTP " + reponse.status);
+        return reponse.json();
+      })
+      .then((liste) => setEtat({ statut: "succes", liste, erreur: null }))
+      .catch((erreur) => {
+        if (erreur.name === "AbortError") return;
+        setEtat({ statut: "erreur", liste: [], erreur: erreur.message });
+      });
+    return () => controleur.abort();
+  }, [url, recherche]);
+
+  return { ...etat, recharger };
+}
+```
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/js-logo.png
+| Le logo JavaScript : un carré jaune marqué des lettres JS noires, l'alphabet dans lequel s'écrivent les hooks et les modules qu'ils exportent.
+```
+
+La première décision est la forme de l'état. Un objet unique portant un champ statut aux valeurs nommées — repos, chargement, succes, erreur — remplace avantageusement trois booléens qui, eux, autorisent des combinaisons absurdes comme en chargement et en erreur en même temps. La donnée reste dans le même objet, ce qui garantit qu'elle est remise à zéro quand la requête échoue : un écran ne peut pas afficher une liste périmée tout en annonçant une erreur. Cette discipline se retrouve dans chaque écran : quatre affichages possibles, un seul état courant.
+
+La seconde décision est l'annulation. Le contrôleur transmis à fetch interrompt la requête au démontage ou dès qu'une nouvelle la remplace ; sans lui, deux réponses concurrentes s'écrivent l'une l'autre au gré de leur temps de réseau, et c'est la plus rapide qui gagne, pas la plus pertinente. Le test sur AbortError évite d'afficher une erreur causée par l'annulation elle-même. C'est exactement le piège que StrictMode expose au montage : deux requêtes lancées, une annulée aussitôt — si le nettoyage manque, la liste se remplit deux fois.
+
+La troisième décision porte sur le tableau des dépendances. L'effet dépend de l'adresse demandée et du compteur de rechargement : quand l'organisateur tape un filtre et que l'adresse change, une nouvelle requête part ; quand il clique sur réessayer, seul le compteur change et le même effet repart. Notez que recharger est enveloppé dans useCallback avec un tableau vide : la fonction ne change jamais d'identité, ce qui évite qu'un composant mémoïsé la prenne pour une nouvelle callback à chaque rendu. Le hook offre ainsi une action stable, ce qui est la moindre des choses pour un bouton.
+
+La consommation côté écran tient en une ligne et un balisage. L'écran ne sait plus où vivent les états, les promesses ni les annulations ; il sait qu'il reçoit une liste, un statut et une action. Le chapitre précédent vous a appris à distinguer chargement, erreur, vide et succès : ce sont désormais les quatre branches d'un simple conditionnel sur statut, sans aucun état local à déclarer.
+
+```jsx
+function ListeInscrits() {
+  const { statut, liste, erreur, recharger } = useInscriptions("/api/inscrits");
+
+  if (statut === "chargement") return <p>Chargement des inscrits…</p>;
+  if (statut === "erreur")
+    return (
+      <p role="alert">
+        {erreur} <button onClick={recharger}>Réessayer</button>
+      </p>
+    );
+  if (liste.length === 0) return <p>Aucune inscription pour l'instant.</p>;
+  return <ul>{liste.map((i) => <li key={i.id}>{i.nom}</li>)}</ul>;
+}
+```
+
+Vérifiez le hook sur le terrain avant de le réutiliser partout. Chargez l'écran : le chargement doit apparaître immédiatement, sans blanc écran. Coupez le service : le message d'erreur s'affiche avec un bouton de reprise qui fonctionne réellement. Filtrez vite dans la liste : seule la dernière réponse doit rester, sans mélange des deux. Naviguez pendant la requête : aucun avertissement de composant démonté ne doit paraître dans la console. Ces quatre tests coûtent deux minutes et valent pour chaque hook de données que vous écrirez ensuite.
+
+## Un hook de formulaire : useFormulaire
+
+Le formulaire d'inscription du site porte quatre champs, une validation, un statut d'envoi et une remise à zéro. L'écran d'ajout d'une séance, dans l'espace organisateur, présente la même ossature avec des champs différents. Plutôt que de dupliquer gestionnaires et erreurs, on extrait un hook de formulaire qui reçoit la configuration — valeurs initiales et fonction de validation — et qui fournit la mécanique. Le composant, lui, se contente de décrire ses champs et son message de confirmation.
+
+```jsx
+export function useFormulaire(config) {
+  const { initiales, valider, envoyer } = config;
+  const [valeurs, setValeurs] = useState(initiales);
+  const [erreurs, setErreurs] = useState({});
+  const [saisies, setSaisies] = useState({});
+  const [statut, setStatut] = useState("repos");
+
+  function changer(nom, valeur) {
+    const suivantes = { ...valeurs, [nom]: valeur };
+    setValeurs(suivantes);
+    if (saisies[nom] || statut === "erreur") setErreurs(valider(suivantes));
+  }
+
+  async function soumettre(evenement) {
+    evenement.preventDefault();
+    const trouvees = valider(valeurs);
+    setSaisies(Object.fromEntries(Object.keys(valeurs).map((n) => [n, true])));
+    setErreurs(trouvees);
+    if (Object.keys(trouvees).length > 0) { setStatut("erreur"); return; }
+    setStatut("envoi");
+    try { await envoyer(valeurs); setStatut("confirme"); setValeurs(initiales); }
+    catch (erreur) { setStatut("echec"); }
+  }
+
+  return { valeurs, erreurs, statut, changer, soumettre };
+}
+```
+
+Tout l'intérêt du hook tient à ce qu'il ignore le contenu du formulaire. Il ne sait ni ce qu'est une adresse électronique, ni combien de places restent pour l'atelier : ces règles arrivent dans valider, une fonction pure qui reçoit les valeurs et renvoie un objet d'erreurs. Deux avantages en découlent. La même validation peut être appelée au changement d'un champ déjà touché, à la soumission, et dans un test unitaire sans aucun rendu ; et le hook reste identique pour un formulaire de contact ou de réservation.
+
+La notion de champ saisi mérite une précision, car elle distingue un bon formulaire d'un formulaire pénible. Afficher l'erreur d'une adresse dès la première frappe du visiteur est agressif et faux en pratique : on n'a pas encore fini de taper. Le hook mémorise donc les champs déjà touchés et n'affiche l'erreur que si le champ a été modifié après une tentative, ou si la soumission a échoué. C'est ce comportement que l'utilisateur décrit par la phrase j'ai eu le temps de finir ma phrase avant qu'on me reprenne.
+
+La forme de retour suit la même logique que pour les hooks précédents : un objet unique, extensible, dont chaque champ a un nom explicite. Un écran qui a besoin d'une remise à zéro complète peut l'ajouter plus tard sans casser les appels existants. Attention en revanche à ne pas y ranger l'adressage : si le formulaire doit inscrire l'utilisateur puis rediriger vers un écran, la navigation appartient au composant, après l'appel, dans la continuité de la promesse — le hook doit rester muet sur ce que fait l'application après l'envoi.
+
+Deux limites doivent être dites pour éviter l'abus. D'abord, un formulaire très spécifique — glisser-déposer de fichiers, étapes successives avec reprise — paiera plus cher une couche générique qu'une écriture directe. Ensuite, le hook suppose que la soumission est une promesse unique : si l'envoi doit faire progresser une barre ou autoriser plusieurs tentatives simultanées, il faut enrichir le statut ou renoncer à l'extraction. Un hook doit rester plus petit que le problème qu'il résout.
+
+## Nommer, documenter et tester un hook
+
+Un hook personnalisé est une API interne : vos écrans en sont les consommateurs, et la qualité du nom décide de la qualité de l'usage. La convention est courte : le nom commence par use, il est au singulier, il désigne un comportement et non une donnée. useInscriptions annonce ce que le hook fournit ; useData ne dit rien ; chargerLesInscriptions, sans le préfixe, ment sur la nature de la fonction. Le nom du fichier doit être identique à celui de la fonction exportée, pour que la recherche dans l'arborescence aboutisse en une seconde.
+
+La documentation d'un hook tient en cinq lignes placées au-dessus de la fonction, et elle répond à cinq questions : ce que le hook fait, ce qu'on lui donne, ce qu'il renvoie, les effets de bord qu'il produit, et ce qui se passe en cas d'erreur. Sans cette notice, un collègue doit lire le corps de la fonction pour savoir s'il peut l'appeler dans un composant qui se démonte souvent. Avec elle, il lit le contrat et passe à autre chose. La notice devient également la référence des tests : on y décrit le comportement attendu, pas l'implémentation.
+
+```jsx
+/**
+ * Charge une liste depuis une adresse et expose ses quatre états.
+ * @param {string} url - adresse de la ressource, relue à chaque changement
+ * @returns {{statut: "repos"|"chargement"|"succes"|"erreur", liste: object[],
+ *            erreur: string|null, recharger: () => void}}
+ * Effet de bord : requête réseau annulée au démontage ou à chaque nouvelle adresse.
+ * En cas d'échec, la liste est vidée et le message du serveur est conservé.
+ */
+export function useInscriptions(url) { /* ... */ }
+```
+
+Le test d'un hook ne demande pas de l'écran : la bibliothèque de tests React fournit une fonction de rendu dédiée, qui monte le hook dans un composant jetable et met à jour ses états. On teste alors le comportement — un état passe de chargement à succes, une erreur vide le tableau, la fonction de rechargement relance l'effet — et jamais la structure interne de l'objet d'état. Deux précautions : simulez le temps avec une horloge contrôlée quand le hook contient un minuteur, et annulez le fetch factice pour que le test ne dépende ni du réseau ni de l'adresse.
+
+```jsx
+import { renderHook, waitFor } from "@testing-library/react";
+import { useInscriptions } from "./useInscriptions";
+
+test("passe en succès avec la liste renvoyée", async () => {
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => [{ id: 1, nom: "Amina" }],
+  });
+
+  const { result } = renderHook(() => useInscriptions("/api/inscrits"));
+  expect(result.current.statut).toBe("chargement");
+
+  await waitFor(() => expect(result.current.statut).toBe("succes"));
+  expect(result.current.liste).toHaveLength(1);
+});
+```
+
+Le rangement compte aussi. Un dossier hooks regroupe les fichiers, un fichier par comportement, sans mélanger avec les composants ni avec les utilitaires purs. Ce classement rend visible ce qui est extrait et facilite la revue : on voit d'un coup d'œil quel comportement l'application partage. Un hook que plus personne n'appelle se supprime sans remords ; la conservation d'une API morte coûte plus cher que sa réécriture, parce qu'elle impose à chacun de vérifier s'il s'agit encore de la bonne entrée.
+
+Enfin, l'extraction se juge à une question unique, et le tableau suivant sert de grille avant d'ouvrir un nouveau fichier. Si vous hésitez sur deux lignes, écrivez d'abord le comportement dans le composant : les hooks naissent d'une répétition constatée, jamais d'une anticipation.
+
+```table
+| Question à se poser | Réponse qui justifie l'extraction | Réponse qui doit vous retenir |
+|---|---|---|
+| Combien d'écrans utilisent ce comportement ? | Deux au minimum, avec la même logique | Un seul écran, une seule configuration |
+| Contient-il des hooks ou des effets ? | Oui : état, effet, abonnement ou minuteur | Non : une simple transformation de données |
+| Sa forme de retour tiendra-t-elle dans une phrase ? | Liste et rechargement, valeurs et soumission | Un objet qui dépend de huit écrans différents |
+| Peut-on le tester sans afficher d'écran ? | Oui, avec un rendu de hook isolé | Il se confond avec la mise en forme |
+| Le comportement change-t-il à chaque projet ? | Il exprime une règle métier stable | Il reflète un choix propre à un écran |
+```
+
+
+## Le contexte : distribuer un état sans le propager
+
+La session de l'organisateur doit être visible dans le bandeau, dans la navigation, dans la page des inscrits et dans le pied de page. Sans mécanisme dédié, elle descend de proche en proche : le composant racine la reçoit, la transmet à l'en-tête, qui la transmet à la navigation, qui la transmet au lien de déconnexion. À quatre niveaux, la prop drilling n'est pas seulement pénible à écrire, elle est dangereuse : un composant intermédiaire qui oublie la propriété dans ses props casse un écran éloigné, sans lien apparent avec son code.
+
+Le contexte répond à cela par un mécanisme différent. Plutôt que de descendre la valeur de composant en composant, on la déclare une fois dans un contexte, on l'expose depuis un fournisseur placé au sommet de l'application, et chaque composant qui en a besoin va la chercher directement, à n'importe quelle profondeur. La valeur ne transite plus par les étages ; elle est disponible sur place. C'est le même principe que le chauffage central : on ne porte pas un radiateur de pièce en pièce, on branche chacune des pièces sur une distribution unique.
+
+```jsx
+import { createContext, useContext } from "react";
+
+const SessionContext = createContext(null);
+
+export function FournisseurSession({ session, enfants }) {
+  return (
+    <SessionContext.Provider value={session}>{enfants}</SessionContext.Provider>
+  );
+}
+
+export function useSession() {
+  const session = useContext(SessionContext);
+  if (session === null) {
+    throw new Error("useSession doit être utilisé sous FournisseurSession");
+  }
+  return session;
+}
+```
+
+Trois règles gouvernent cette écriture. Le contexte se crée en dehors du composant, sinon chaque rendu en fabriquerait un nouveau et romprait les liens. Le fournisseur expose une valeur — jamais le contexte lui-même comme composant d'accès. Et la lecture passe par un hook personnalisé qui vérifie la présence du fournisseur : sans ce contrôle, la valeur par défaut silencieuse de createContext se contente de renvoyer null et l'erreur apparaît bien plus loin, sur une propriété introuvable au milieu d'un écran.
+
+La question de savoir quand recourir au contexte se résout en deux critères. Le premier est la portée : la valeur est-elle nécessaire à des composants séparés par plusieurs niveaux ou à des écrans entiers ? La session, le thème, la langue et la préférence d'affichage répondent oui. Le second est la stabilité : cette valeur change-t-elle rarement ? Si elle change à chaque frappe, le contexte propage cette frappe à tous les lecteurs, et vous venez d'acheter un ralentissement. À l'inverse, une valeur utilisée par un seul composant n'a aucun besoin du contexte : gardez-la locale, elle sera plus simple à tester.
+
+Notez enfin que le contexte et les hooks personnalisés sont complémentaires, non concurrents. Le contexte transporte la valeur ; le hook useSession lui donne un nom, un contrat et un message d'erreur exploitable. Les écrans n'importent jamais le contexte brut : ils appellent le hook, ce qui vous laisse modifier l'emplacement du fournisseur ou la forme de la donnée sans toucher à quinze fichiers. Cette séparation — transport d'un côté, interface de l'autre — est exactement celle que vous avez instaurée entre écrans et données dans la section précédente.
+
+## Découper le contexte pour ne pas tout redessiner
+
+Le premier réflexe face à la prop drilling consiste à créer un contexte unique qui regroupe tout ce qui doit être partagé : session, langue, thème, filtres de la liste, dernière page consultée. L'application démarre, tout fonctionne, et au bout d'une journée l'organisateur constate que la liste des inscrits clignote dès qu'il déplace la souris sur la navigation. La cause est mécanique : le fournisseur recrée sa valeur à chaque rendu, la valeur change, et comme elle change, tous les lecteurs du contexte se redessinent — y compris ceux qui ne s'intéressent qu'à la session. Un contexte unique et volatile transforme un changement local en travail global.
+
+La parade consiste à découper. Chaque préoccupation reçoit son contexte, son fournisseur et son hook de lecture, et les préoccupations à rythmes différents ne vivent plus dans le même objet. La session change deux fois par jour : elle peut porter la langue et rien d'autre. Le thème change à la préférence de l'utilisateur. Les filtres de la liste changent à chaque frappe : ils n'ont rien à faire dans un contexte partagé, et la section suivante y reviendra. Ce découpage n'est pas une coquetterie d'architecture, c'est la condition pour qu'un changement de frappe reste local.
+
+```jsx
+// contexte/session.jsx
+import { createContext, useContext } from "react";
+
+const SessionContext = createContext(null);
+
+export function FournisseurSession({ session, enfants }) {
+  return <SessionContext.Provider value={session}>{enfants}</SessionContext.Provider>;
+}
+
+export function useSession() {
+  const session = useContext(SessionContext);
+  if (session === null) throw new Error("useSession hors fournisseur");
+  return session;
+}
+
+// contexte/theme.jsx
+const ThemeContext = createContext("clair");
+
+export function FournisseurTheme({ theme, changerTheme, enfants }) {
+  const valeur = { theme, changerTheme };
+  return <ThemeContext.Provider value={valeur}>{enfants}</ThemeContext.Provider>;
+}
+
+export function useTheme() {
+  return useContext(ThemeContext);
+}
+```
+
+L'assemblage au sommet reste lisible : les fournisseurs s'imbriquent une fois, dans un composant dédié, et les écrans n'en connaissent rien. Un composant imbriqué de composition — qui accepte un tableau de fournisseurs et les applique dans l'ordre — évite la cascade d'accolades gauche et droite qui rend l'arborescence illisible à mesure que les contextes s'accumulent. L'ordre des fournisseurs compte aussi : celui qui fournit la session doit être au-dessus de celui qui en dépend, et un rendu de repli doit pouvoir lire la session sans que le thème soit encore prêt.
+
+```jsx
+function Application() {
+  const [session, setSession] = useState(null);
+  const [theme, setTheme] = useState("clair");
+
+  return (
+    <FournisseurSession session={session}>
+      <FournisseurTheme theme={theme} changerTheme={setTheme}>
+        <Bandeau />
+        <MonEcran />
+      </FournisseurTheme>
+    </FournisseurSession>
+  );
+}
+```
+
+La granularité a ses limites dans les deux sens. Trop gros, le contexte impose ses changements à tous ses lecteurs ; trop fin, vous multipliez les fournisseurs jusqu'à ce que l'enveloppe du rendu tienne en un écran entier et que la moindre nouvelle préoccupation impose trois fichiers. Deux critères permettent de trancher. Regroupez ce qui change ensemble : la session et l'identité de l'utilisateur ont la même durée de vie. Séparez ce qui change à des rythmes différents : une valeur modifiée à chaque frappe n'appartient jamais à un contexte partagé. Un troisième réflexe complète la règle : si un seul écran lit une valeur, elle reste dans cet écran, même si elle paraît importante.
+
+La vérification ne demande aucun outil particulier. Ajoutez temporairement un log au rendu de chaque composant lecteur, déplacez la souris, modifiez un filtre, déconnectez-vous, et regardez la console. Un changement de session qui redessine quatre composants est normal ; un changement de frappe dans la barre de recherche qui redessine le bandeau est un défaut. Retirez les logs une fois le constat fait : ils servent à observer, pas à voyager en production. Ce réflexe d'observation prépare directement la mesure plus fine du profiler, qui vous dira le même résultat en chiffres.
+
+## Valeurs mémorisées et sélecteurs de contexte
+
+Même avec des contextes découpés, un fournisseur qui se redessine souvent peut coûter cher, parce qu'il recrée sa valeur à chaque rendu. L'expression value={ { session, langue } } construit un objet neuf même si ses contenus n'ont pas bougé ; l'égalité de référence échoue alors, React considère que la valeur du contexte a changé, et il redessine tous les lecteurs. La mémoïsation du tableau des valeurs, au contraire, conserve la même référence tant que rien ne change réellement, et les lecteurs ne sont pas dérangés.
+
+```jsx
+function FournisseurSession({ session, langue, deconnexion, enfants }) {
+  const valeur = useMemo(
+    () => ({ session, langue, deconnexion }),
+    [session, langue, deconnexion],
+  );
+  return <SessionContext.Provider value={valeur}>{enfants}</SessionContext.Provider>;
+}
+```
+
+La naïveté à éviter consiste à mémoïser une valeur puis à l'exposer dans un objet littéral englobant, construit à chaque rendu du fournisseur : l'objet neuf redonne aussitôt une nouvelle référence et annule la mémoïsation. La correction tient à un objet unique, propriétés comprises, construit une seule fois. Cette subtilité a une morale plus large : la mémoïsation du contexte ne fonctionne que si toutes les routes d'accès à la valeur conservent la même référence, y compris les fonctions que vous transmettez.
+
+La question du coût se pose ensuite. Un tableau mémoïsé n'est pas gratuit : il impose une comparaison de dépendances à chaque rendu du fournisseur et retient en mémoire une valeur jusqu'à ce que ses dépendances changent. Le gain n'apparaît que si le fournisseur se redessine souvent et si les lecteurs sont nombreux ou coûteux. Sur un site à quatre écrans, la différence est imperceptible ; sur une liste de mille lignes dont chaque ligne lit le contexte, elle se voit immédiatement. Comme toujours, la mémoïsation est une réponse à une mesure, pas une habitude de départ.
+
+Quand le découpage ne suffit plus, la seconde technique consiste à donner à chaque lecteur seulement la part qui le concerne. On parle de sélecteur : une fonction qui extrait une tranche de la valeur du contexte, et l'on ne redessine le lecteur que si cette tranche change. La bibliothèque standard ne fournit pas de sélecteur intégré ; plusieurs bibliothèques de l'écosystème l'ajoutent en exposant une fonction de lecture paramétrée. Avant d'en ajouter une, essayez la solution gratuite : si personne ne lit la tranche concernée à part un écran, sortez cette donnée du contexte.
+
+```table
+| Symptôme observé | Cause probable | Remède |
+|---|---|---|
+| Le bandeau se redessine à chaque frappe d'un filtre | Filtre et session dans le même contexte | Sortir le filtre, le garder local ou dans son contexte |
+| Tout redessine dès que le fournisseur se redessine | Objet recréé à chaque rendu | Construire un seul objet mémoïsé, fonctions comprises |
+| Un composant ignore pourtant le champ modifié | Lecture entière du contexte | Découper ou introduire un sélecteur |
+| La valeur partagée change vingt fois par seconde | État volatile rangé trop haut | Rapprocher l'état du composant qui l'utilise |
+| Le contexte ne contient que des constantes | Aucun partage réel nécessaire | Supprimer le contexte et passer par des modules |
+```
+
+
+La troisième solution reste souvent la meilleure : rapprocher l'état. Si un filtre ne sert qu'à un écran, il n'a aucune raison de vivre au sommet de l'application ; s'il doit survivre à la navigation entre deux écrans voisins, il peut être porté par leur composant de disposition commun plutôt que par un contexte global. Le contexte apparaît alors comme la dernière étape d'une hiérarchie — état local d'abord, état partagé par composition ensuite, contexte enfin — et non comme l'entrée par défaut de toute donnée commune. C'est cette hiérarchie qui vous évitera de construire une architecture de contextes destinée à ne jamais servir.
+
+## React.memo, useMemo et useCallback : mesurer avant d'optimiser
+
+Les trois outils de mémoïsation de React se ressemblent dans la syntaxe et se distinguent dans leur office. React.memo enveloppe un composant et annule son rendu si ses propriétés sont superficiellement identiques d'un rendu à l'autre. useMemo conserve la valeur calculée entre deux rendus d'un même composant. useCallback conserve l'identité d'une fonction. Aucun des trois ne rend le travail plus rapide : ils suppriment ou évitent un travail, et ce faisant, ils ajoutent une comparaison, une consommation mémoire et un risque d'oubli dans les dépendances.
+
+React.memo est l'outil le plus visible et le plus souvent mal employé. Il compare les props par valeur : primitives égales, références d'objets et de tableaux égales, fonctions de même identité. Si une seule prop change d'identité — un objet littéral ou une fonction créés dans le rendu du parent — la comparaison échoue et le composant se redessine malgré tout. Le résultat est doublement négatif : le coût de la comparaison a été payé, le gain n'a pas été obtenu. D'où la première règle d'usage : React.memo ne vaut que si le parent transmet des props stables, ce qui suppose souvent d'avoir d'abord stabilisé le parent.
+
+```jsx
+const LigneInscrit = React.memo(function LigneInscrit({ inscrit, onSupprimer }) {
+  return (
+    <li>
+      {inscrit.nom} — {inscrit.courriel}
+      <button onClick={() => onSupprimer(inscrit.id)}>Retirer</button>
+    </li>
+  );
+});
+
+function ListeInscrits({ inscrits }) {
+  const supprimer = useCallback((id) => {
+    setInscrits((liste) => liste.filter((i) => i.id !== id));
+  }, []);
+  return <ul>{inscrits.map((i) => <LigneInscrit key={i.id} inscrit={i} onSupprimer={supprimer} />)}</ul>;
+}
+```
+
+Dans ce bloc, mémoïser la ligne n'a de sens que parce que la fonction de suppression est stable. Si elle était déclarée dans le corps du composant parent, chaque rendu du parent lui donnerait une nouvelle identité, React.memo comparerait, concluerait à une différence et redessinerait mille lignes pour rien. C'est le cas le plus fréquent en pratique : on enveloppe un enfant, on oublie de stabiliser les props, on constate aucun changement, puis on retire l'enveloppe en concluant que la mémoïsation ne sert à rien. Mesurez avant et après, et non avant ou après.
+
+useMemo répond à un autre besoin : éviter un calcul coûteux dont les résultats dépendent d'un ensemble réduit de valeurs. Trier mille inscrits, filtrer une longue liste, agréger des statistiques à chaque rendu sont de bons candidats ; formater une date ou concaténer deux chaînes n'en sont pas. La comparaison des dépendances a un coût, et l'oubli d'une dépendance produit un résultat périmé qui passe inaperçu jusqu'à la mise en production. Utilisez useMemo quand vous avez identifié un calcul dans un profil, pas parce qu'il pourrait un jour être lent.
+
+useCallback protège l'identité d'une fonction, et il ne sert que là où l'identité est lue : en dépendance d'un effet, en prop d'un enfant mémoïsé, en valeur de contexte. Une fonction transmise à un simple gestionnaire d'événement n'a aucun besoin d'être mémoïsée, personne ne la compare. Là encore, la tentation est d'encastrer des useCallback partout au nom de la performance ; le résultat est un code plus verbeux, plus difficile à relire, et souvent plus lent, parce que chaque hook ajoute son évaluation. La règle tient en une phrase : on mémoïse ce qu'un autre code compare.
+
+```table
+| Outil | Ce qu'il fait réellement | Quand l'utiliser | Quand il ne sert à rien |
+|---|---|---|---|
+| React.memo | Compare les props et saute le rendu | Enfant coûteux, parent fréquent, props stables | Props recréées à chaque rendu, enfant très léger |
+| useMemo | Conserve une valeur calculée | Calcul mesuré comme coûteux, dépendances étroites | Opération bon marché, dépendances nombreuses |
+| AsyncCallback | Conserve l'identité d'une fonction | Prop d'un mémoïsé, dépendance d'effet, valeur de contexte | Gestionnaire simple, fonction jamais comparée |
+```
+
+
+Le dernier mot revient à la mesure. Avant d'envelopper quoi que ce soit, ouvrez le profiler, reproduisez l'interaction lente et relevez le composant dominant, sa durée réelle et la raison de son rendu. Enveloppez, recalculez, comparez les deux captures. Si le gain est inférieur à la marge de mesure, retirez la mémoïsation : elle ne vous a rien fait gagner et elle a ajouté un endroit où le code peut mentir. L'outil de la section suivante est fait pour rendre cette démarche routinière.
+
+## Diagnostiquer un rendu avec le profiler React
+
+Le profiler React est un outil d'observation, pas d'opinion. Il s'installe comme extension de navigateur, s'ouvre sur un onglet dédié, enregistre une interaction réelle de l'application et restitue ce qui s'est passé composant par composant. Deux modes d'emploi coexistent : l'extension, pratique pour explorer une application de développement, et le composant de profilage intégré, qui écrit des chiffres directement dans votre code — à condition de livrer une construction de production où le profilage a été activé, puisqu'il est désactivé par défaut dans les constructions ordinaires. Commencez toujours par l'extension : elle demande aucune modification et suffit à localiser un problème.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/npm-logo.png
+| Le logo npm : un paquet rouge portant les lettres blanches npm, le gestionnaire de paquets qui installe React, ses outils de test et les bibliothèques de l'écosystème.
+```
+
+Le déroulement d'une séance tient en cinq gestes. Ouvrez le profiler, activez le repérage des mises à jour pour voir surlignés les composants qui se redessinent, puis appuyez sur l'enregistrement. Reproduisez l'interaction suspecte — un frappe dans le filtre, un clic sur une date, l'ouverture d'un menu — et arrêtez l'enregistrement. Triez les commits par durée, repérez la barre dominante, puis demandez pourquoi ce composant s'est rendu. Corrigez, relancez un enregistrement et comparez : sans cette dernière mesure, vous ne saurez jamais si la correction a servi à quelque chose.
+
+La lecture du graphe en flamme obéit à une convention simple. L'axe horizontal représente le temps, la largeur d'une barre la part du commit qu'elle occupe, et sa profondeur l'arborescence des composants. Une barre large en haut et ses enfants étroits signifient un parent qui travaille beaucoup et des enfants peu chargés : le gain se trouve dans le parent. Des barres égales alignées signifient un parent qui redessine toute sa descendance. En mode couleur, la teinte indique la part du temps consacrée au rendu ; les teintes froides sont rapides, les teintes chaudes méritent une inspection.
+
+```jsx
+import { Profiler } from "react";
+
+function mesurerRendu(id, phase, tempsReel) {
+  console.log(id, phase, tempsReel);
+}
+
+export function EcranInscrits() {
+  return (
+    <Profiler id="Inscrits" onRender={mesurerRendu}>
+      <Filtre />
+      <ListeInscrits />
+    </Profiler>
+  );
+}
+```
+
+Le composant de profilage livré avec React enveloppe un sous-arbre et reçoit à chaque rendu un rappel portant l'identifiant de la section, la phase — mise en place ou mise à jour — et la durée réelle du rendu. Branchez-le sur un tableau de bord, une console ou un envoi vers votre service de suivi, et vous disposez d'une mesure permanente des écrans sensibles. Attention à la destination : dans un projet de production, ces chiffres ne doivent jamais être journalisés publiquement, et un envoi de télémétrie suppose l'accord des personnes concernées.
+
+La question la plus utile du profiler reste la raison d'un rendu, et elle en comporte quatre. Le composant s'est rendu parce qu'une prop a changé, parce qu'un état interne a changé, parce qu'un contexte qu'il lit a changé, ou parce que son parent s'est rendu et qu'il n'était pas protégé par mémoïsation. Dans le dernier cas, la correction appartient au parent ou à la mémoïsation de l'enfant ; dans le troisième, elle appartient à la stabilité de la valeur du contexte ; dans les deux premiers, elle est normale. Un rendu n'est pas un défaut : un rendu inutile, mesuré comme tel, l'est.
+
+Deux pièges d'interprétation restent courants. Le premier concerne le mode de développement : React y ajoute des vérifications supplémentaires, un double appel des effets et des messages détaillés, si bien que les durées affichées sont très supérieures à celles de l'application réelle. Servez-vous du développement pour localiser, et d'une construction de production prévue pour le profilage pour quantifier. Le second concerne la confusion entre durée réelle et durée de base : la première inclut le travail de rendu proprement dit, la seconde estime ce que le rendu coûterait sans mémoïsation ; comparer l'une à l'autre permet de savoir si un composant mémoïsé est réellement protégé ou s'il se redessine malgré tout.
+
+La méthode complète se résume ainsi : enregistrer une interaction, lire la barre dominante, demander la raison du rendu, corriger la cause unique identifiée, réenregistrer, comparer. Cette boucle, répétée trois ou quatre fois sur un écran, produit toujours la même amélioration, parce qu'elle remplace la devinette par un chiffre. Elle vous rend aussi un service indirect : vous découvrez que tel composant, que vous croyez coûteux, se redessine deux fois par seconde sans gêne personne, pendant que tel autre, discret, absorbe l'essentiel du budget.
+
+## Mini-projet guidé : le panneau de l'atelier
+
+L'espace organisateur du site est l'endroit où tout se rassemble : la session doit rester visible dans le bandeau, la liste des inscrits doit se filtrer sans rechargement, et la page doit rester fluide quand plusieurs centaines de lignes sont affichées. Le projet se déroule en trois temps, dans cet ordre obligatoire : d'abord extraire le chargement dans un hook, ensuite partager la session par le contexte, enfin mesurer et ne corriger que ce que le profiler désigne. Chaque étape se vérifie avant de passer à la suivante, parce qu'une correction appliquée sur une base instable ne prouve rien.
+
+Premier temps, le chargement. Le panneau appelle useInscriptions avec l'adresse de la ressource et n'écrit aucun état local de requête. Le filtre, lui, reste strictement local : il ne sert qu'à cet écran, il change à chaque frappe et il n'a donc aucune raison de vivre dans un contexte partout lu. Cette séparation — donnée partagée dans le hook, saisie locale dans le composant — est la décision d'architecture la plus importante du projet, et elle règle à elle seule la moitié des problèmes de rendu.
+
+```jsx
+function PanneauInscrits() {
+  const session = useSession();
+  const { statut, liste, erreur, recharger } = useInscriptions("/api/inscrits");
+  const [requete, setRequete] = useState("");
+
+  const visibles = liste.filter((i) =>
+    i.nom.toLowerCase().includes(requete.trim().toLowerCase()),
+  );
+
+  if (statut === "chargement") return <p>Chargement…</p>;
+  if (statut === "erreur")
+    return <p role="alert">{erreur} <button onClick={recharger}>Réessayer</button></p>;
+
+  return (
+    <section>
+      <h2>Inscrits ({visibles.length})</h2>
+      <p>Connecté en tant que {session.nom}</p>
+      <input
+        value={requete}
+        onChange={(e) => setRequete(e.target.value)}
+        placeholder="Rechercher un inscrit"
+      />
+      <ul>
+        {visibles.map((inscrit) => (
+          <LigneInscrit key={inscrit.id} inscrit={inscrit} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+Deuxième temps, la session. Elle est fournie au sommet de l'application par un fournisseur dont la valeur ne contient que des données stables ; le panneau la lit par le hook useSession et ignore d'où elle vient. Vérifiez immédiatement les deux comportements attendus : déconnectez-vous, l'écran doit basculer vers le message de reprise plutôt que d'afficher undefined dans la console ; reconnectez-vous, seule la ligne concernée doit changer de texte, sans que la liste se recharge pour autant. Si la liste se recharge, c'est que la session déclenche l'effet de données, donc le tableau des dépendances contient une valeur qui change à chaque rendu.
+
+Le balisage de l'écran suit la même discipline. Le champ de recherche n'a ni état global ni contexte : il écrit dans un useState local, et le filtrage s'effectue au rendu sur la liste déjà chargée, ce qui convient tant que le volume reste raisonnable. Au-delà de quelques milliers d'entrées, le filtrage déplacera côté serveur, avec la requête dans l'adresse pour que le lien reste partageable — le changement se fera alors dans l'argument du hook, et l'effet repartira tout seul. Anticipez cette évolution dans le code en gardant l'adresse de la ressource unique : c'est elle qui porte les paramètres, pas le composant.
+
+Troisième temps, la mesure. Enveloppez le panneau dans le composant de profilage, enregistrez une interaction de filtrage et relevez deux chiffres : la durée du commit et le nombre de composants rendus. Notez-les, puis appliquez la mémoïsation à la ligne de liste — React.memo sur LigneInscrit — et stabilisez la fonction de suppression avec useCallback. Relancez l'enregistrement dans des conditions identiques. Si le nombre de lignes rendues baisse et que le temps suit, la correction est justifiée et vous en disposez la preuve ; si rien ne bouge, c'est que la prop change encore d'identité, et le profiler vous montrera laquelle.
+
+```jsx
+const mesures = [];
+
+function relever(id, phase, duree) {
+  mesures.push({ id, phase, duree, horodatage: Date.now() });
+}
+
+function PanneauProfile() {
+  return (
+    <Profiler id="PanneauInscrits" onRender={relever}>
+      <Panneau />
+    </Profiler>
+  );
+}
+```
+
+Ce petit collecteur suffit à comparer deux sessions de mesure : gardez les cinq dernières valeurs, en écartez la première, qui paie le réchauffement, et retenez la médiane. Une mesure prise une seule fois ne prouve rien, parce que la première exécution charge les modules, remplit les caches et paie le travail de mise en place. Notez aussi la phase associée à chaque relevé : un rendu de mise en place et un rendu de mise à jour n'ont pas le même coût, et comparer l'un à l'autre fausserait le diagnostic.
+
+Le tableau de vérification finale reprend les critères du chapitre. Chaque ligne doit pouvoir être cochée sur une version de production, pas seulement en développement.
+
+```table
+| Vérification attendue | Geste qui la prouve |
+|---|---|
+| Quatre états de la liste affichés | Couper le service, vider la ressource, recharger, réussir |
+| Aucune requête résiduelle | Naviguer pendant le chargement, regarder la console |
+| Session lue sans prop drilling | Compter les niveaux de propriétés entre la racine et le panneau |
+| Filtre local et non global | Déplacer la souris hors du champ et compter les rendus du bandeau |
+| Mémoïsation justifiée | Comparer deux captures du profiler avant et après |
+| Hooks appelés dans le même ordre | Supprimer une donnée et chercher une erreur d'ordre dans la console |
+```
+
+
+Une dernière habitude clôt le projet : la note de refactoring. En trois lignes, écrivez ce qui a été extrait, ce qui a été mesuré et ce qui a été laissé tel quel, avec la raison. Cette note est ce qui distingue une optimisation d'un changement heureux : elle permet à votre collègue, dans trois mois, de savoir pourquoi LigneInscrit est mémoïsée et pourquoi le filtre ne l'est pas. Sans elle, la prochaine personne appliquera une mémoïsation part par réflexe, et le code perdra en clarté ce qu'il a gagné en vitesse.
+
+## À retenir
+
+- Un hook personnalisé est une fonction nommée use qui regroupe état, effets et gestionnaires pour les partager entre écrans.
+- Une fonction sans hook reste une fonction classique : elle appartient dans un module d'utilitaires, pas dans le dossier des hooks.
+- Un hook s'appelle au niveau supérieur, jamais dans une condition, une boucle, un retour anticipé ou un gestionnaire d'événement.
+- React mémorise les hooks dans une liste indexée par ordre d'appel : c'est l'ordre qui compte, pas le nom.
+- Le préfixe use déclenche la vérification automatique des règles ; sans lui, plus de contrôle ni de signal d'intention.
+- Le retour anticipé reste permis après le dernier hook ; au besoin, scindez le composant plutôt que de sauter un appel.
+- Un comportement qui doit être partagé trois fois se déplace dans un hook ; un comportement propre à un écran y reste.
+- La forme de retour d'un hook est une API : un objet nommé évolue sans casser les appels existants.
+- Un hook de données expose quatre états — repos, chargement, succès, erreur — et annule toujours sa requête au démontage.
+- Un hook de formulaire reçoit la validation, jamais le contenu métier : la règle métier vit dans une fonction pure.
+- Un contexte transporte une valeur commune sans la faire transiter de composant en composant.
+- Le contexte se crée hors du composant, s'expose par un fournisseur et se lit par un hook qui vérifie sa présence.
+- Découpez le contexte par préoccupation : ce qui change ensemble se regroupe, ce qui change à des rythmes différents se sépare.
+- La valeur fournie doit garder la même référence : un objet reconstruit à chaque rendu redessine tous les lecteurs.
+- Sortez du contexte ce qui ne sert qu'à un écran ; rapprochez l'état de celui qui l'utilise avant de le partager.
+- React.memo compare les props et saute un rendu ; il ne sert que si les props sont réellement stables.
+- useMemo conserve un calcul coûteux, useCallback l'identité d'une fonction ; aucun des deux n'accélère par lui-même.
+- La mémoïsation est une réponse à une mesure, jamais une étape obligatoire d'écriture.
+- Le profiler distingue quatre raisons de rendu : prop changée, état changé, contexte changé, parent rendu.
+- Mesurez en développement pour localiser, mesurez en production pour conclure.
+
+## Erreurs fréquentes
+
+- Piège : appeler un hook dans une condition parce que la donnée n'existe pas toujours. Correction : déclarez le hook inconditionnellement et déplacez la décision dans le corps du rendu ou de l'effet.
+- Piège : écrire un return anticipé avant les hooks, puis observer un état qui saute d'un rendu à l'autre. Correction : regroupez tous les appels en tête de composant et testez ensuite.
+- Piège : renommer un hook sans le préfixe use et l'appeler depuis un gestionnaire d'événement. Correction : respectez la convention, elle porte la vérification automatique et l'intention de lecture.
+- Piège : extraire dès le premier écran, en anticipant une généralité qui ne viendra jamais. Correction : attendez la deuxième ou la troisième répétition du comportement.
+- Piège : oublier l'annulation d'une requête et laisser une réponse tardive écraser une donnée récente. Correction : annulez avec un contrôleur et ignorez explicitement l'erreur d'annulation.
+- Piège : construire un objet de contexte neuf à chaque rendu du fournisseur. Correction : mémorisez un seul objet, fonctions comprises, et vérifiez chaque route d'accès à la valeur.
+- Piège : ranger un filtre qui change à chaque frappe dans le contexte partagé. Correction : gardez-le local ou dans un contexte dédié à un seul écran.
+- Piège : ajouter React.memo sans stabiliser les props du parent. Correction : stabilisez d'abord les props, puis mesurez l'enveloppe ; sinon vous payez la comparaison pour rien.
+- Piège : mémoïser des calculs bon marché par réflexe. Correction : ouvrez le profiler, cherchez un calcul dominant, et n'optimisez que celui-là.
+- Piège : conclure à l'inutilité de la mémoïsation sans avoir comparé deux mesures identiques. Correction : enregistrez avant, corrigez, enregistrez dans les mêmes conditions.
+- Piège : lire des durées de développement comme si elles décrivaient la production. Correction : localisez en développement, chiffrez sur un build de production.
+- Piège : ignorer la raison d'un rendu parce que le rendu paraît normal. Correction : demandez-la au profiler : prop, état, contexte ou parent.
+- Piège : ne laisser aucune trace de ce qui a été mesuré et corrigé. Correction : annotez le code ou la fiche de tâche avec le chiffre avant et après.
+
+## Pour aller plus loin
+
+La documentation officielle de React reste la première adresse, et elle a l'avantage d'être écrite par les auteurs de la bibliothèque. Les pages consacrées aux règles des hooks listent les cas interdits avec des exemples de code faux et leur correction ; la page sur votre premier hook personnalisé détaille la convention de nommage et les motifs d'extraction. Les guides de rendu expliquent quand React décide de redessiner un composant et comment la mémoïsation intervient dans cette décision. On y trouve aussi la référence complète du composant de profilage, avec le sens exact de chaque champ remis au rappel de rendu. Adresse de départ : https://react.dev — suivez les guides avant de plonger dans la référence, la lecture sera plus efficace une fois le projet écrit.
+
+L'extension de développement du navigateur mérite une installation à part entière. Elle ajoute un onglet de composants pour explorer l'arborescence et ses propriétés, un onglet de profiler pour les enregistrements, et le repérage des mises à jour qui rend visibles les composants qui se redessinent. La page https://react.dev/learn/react-developer-tools décrit l'installation et les raccourcis utiles. Prenez le réflexe de l'ouvrir dès qu'un écran ralentit, avant même d'écrire un commentaire dans le code : l'observation d'une minute vous évitera souvent une heure de modification à l'aveugle.
+
+Côté vérification automatique, l'extension ESLint dédiée aux hooks impose les deux règles du chapitre dans votre éditeur et votre intégration continue ; elle est distribuée sous le nom eslint-plugin-react-hooks et s'ajoute à la configuration existante en une ligne. Elle signale également les dépendances manquantes dans les tableaux d'effets, ce qui est la seconde cause d'bugs silencieux après l'ordre des appels. Enfin, pour les notions de test, la documentation de la bibliothèque de tests React décrit le rendu de hook, l'attente d'une promesse et le nettoyage entre deux tests ; gardez ces pages sous la main au moment où vous écrirez les tests du formulaire partagé.
+
+La mesure de la performance du web, elle, se documente sur https://web.dev, dont les guides distinguent clairement ce qui relève du réseau et du fichier livré, ce qui relève du traitement JavaScript et ce qui relève du rendu — les trois domaines que ce chapitre a séparés. Quand votre panneau deviendra lent sur un poste réel et plus seulement sur le vôtre, cherchez d'abord la part qui vient du script exécuté, puis la part qui vient du nombre de composants redessinés : la première se réduit en réduisant le poids livré, la seconde en réduisant les rendus, et les remèdes n'ont rien à voir. La référence de la plateforme, https://developer.mozilla.org, reste enfin l'endroit où vérifier le comportement d'une API du navigateur — formats de date, stockage local, observateur d'éléments — avant de l'envelopper dans un hook.
+
+## Et maintenant : les prochaines étapes
+
+Vous disposez des trois leviers qui séparent un code React qui marche d'un code React que l'on peut maintenir. Le hook personnalisé regroupe un comportement et en fait un contrat testable ; le contexte distribue une valeur commune sans la faire transiter par les étages ; la mémoïsation, encadrée par la mesure, supprime le travail que personne ne demandait. Aucune de ces trois techniques n'est spectaculaire prises séparément, et c'est précisément leur combinaison qui donne à une application l'impression de ne jamais ralentir alors que ses écrans se multiplient.
+
+L'exercice qui accompagne ce chapitre vous demande d'appliquer la méthode complète sur le panneau de l'atelier : extraire le chargement, partager la session, stabiliser la valeur du contexte, mémoïsier la ligne de liste, puis produire la mesure avant et après. Le livrable attendu n'est pas seulement le code : il comprend la note de refactoring où vous décrivez ce que le profiler a montré, ce que vous avez corrigé et ce que vous avez volontairement laissé. Le quiz de quatre questions vérifie pour sa part les règles les plus souvent oubliées, celles que la console ne signale pas toujours.
+
+Une fois l'exercice rendu, deux chemins s'ouvrent. Le premier consiste à consolider : reprenez vos anciens écrans du parcours, cherchez-y une logique dupliquée, extrayez-la, mesurez avant et après, et jetez la mémoïsation qui ne change rien. Le second consiste à élargir : la même méthode s'applique à une liste virtualisée, à un cache de données partagé entre écrans ou à une préférence utilisateur persistée. Dans les deux cas, gardez le réflexe que ce chapitre a voulu installer : une affirmation sur la performance se mesure, se corrige, puis se remesure — sinon, ce n'est qu'une opinion sur le code.

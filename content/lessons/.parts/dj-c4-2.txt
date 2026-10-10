@@ -1,0 +1,128 @@
+## Groupes, permissions et mixins de permissions
+
+Nous avons vu comment personnaliser l'interface d'administration ; il faut maintenant la connecter au système d'autorisation de Django, car une interface sans autorisation n'est qu'une vitrine. Django modélise les autorisations par des permissions, qui sont des capacités nommées attachées à des modèles. Une permission s'exprime par une triplet : le code, en minuscules et sans espaces, comme changer_ouvrage ; le nom lisible, comme Peut modifier les ouvrages ; et le modèle auquel elle s'attache. Django crée automatiquement quatre permissions par modèle : ajouter, modifier, supprimer et consulter. Vos besoins métier dépassent souvent ce quota, et c'est ici que la définition de permissions personnalisées prend tout son sens.
+
+```python
+class Ouvrage(models.Model):
+    titre = models.CharField(max_length=200)
+    auteur = models.CharField(max_length=200)
+    disponible = models.BooleanField(default=True)
+
+    class Meta:
+        permissions = [
+            ("peut_cataloguer", "Peut créer et modifier le catalogue"),
+            ("peut_suspendre_abonne", "Peut suspendre un compte abonné"),
+        ]
+```
+
+Ces deux permissions personnalisées apparaissent dans l'interface d'administration, dans l'onglet des permissions de l'utilisateur et du groupe. Elles ne sont pas automatiquement liées à une action de l'interface : elles existent, elles peuvent être vérifiées, mais c'est à vous de les utiliser dans les vues et dans les templates. La permission peut_cataloguer sera vérifiée dans la vue de création d'ouvrage ; la permission peut_suspendre_abonne sera vérifiée dans la vue de suspension de compte.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/0/0a/User-group-solid.svg/960px-User-group-solid.svg.png
+| Icône d'un groupe d'utilisateurs, représentation visuelle des rôles qui reçoivent des permissions et auxquels on rattache les comptes.
+```
+
+Les groupes sont le second pilier. Plutôt que d'attribuer une à une les permissions à chaque utilisateur, on crée des groupes — bibliothécaire, responsable de section, abonné, administrateur — et on y attache les permissions. Un utilisateur hérite des permissions de tous les groupes auxquels il appartient. Cette organisation présente deux avantages : la gestion devient déclarative, et l'audit devient possible, car on peut se demander en une question quelles sont les permissions d'un groupe sans parcourir tous ses membres. Pour la Médiathèque, le groupe Bibliothécaire recevra les permissions d'ajout, de modification et de consultation des ouvrages ; le groupe Responsable recevra en plus la permission de suspension des abonnés ; le groupe Abonné ne recevra aucune permission sur le catalogue.
+
+La vérification des permissions dans une vue se fait par la méthode has_perm, disponible sur l'utilisateur, ou par les décorateurs et mixins que nous verrons plus loin. La méthode has_perm prend en argument une chaîne de permission au format etiquette_modele.permission, comme catalogue.ouvrage.peut_cataloguer, et retourne un booléen. Elle vérifie d'abord les permissions globales de l'utilisateur, puis celles héritées de ses groupes. Un superutilisateur possède toutes les permissions par défaut, sans qu'on ait besoin de les lui accorder explicitement — une commodité de développement qui devient un risque en production, et qu'il faut réserver aux comptes techniques.
+
+Dans les templates, les permissions sont accessibles via la variable perms, qui est un dictionnaire indexé par l'étiquette de l'application. Vous pouvez ainsi masquer un lien de suspension si l'utilisateur ne possède pas la permission correspondante, ou afficher un message explicite expliquant pourquoi une action est refusée. La vérification dans le template n'est pas une sécurité — la véritable vérification a lieu dans la vue —, mais elle est une question d'ergonomie : proposer une action que l'utilisateur ne peut pas exécuter est une promesse non tenue.
+
+```python
+# Dans un template, la variable perms est un dictionnaire.
+# perms.catalogue.peut_cataloguer vaut True ou False.
+# On l'utilise pour conditionner l'affichage :
+#   {% if perms.catalogue.peut_cataloguer %}
+#       <a href="{% url 'ouvrages:creer' %}">Nouvel ouvrage</a>
+#   {% endif %}
+```
+
+Les mixins de permissions étendent ce mécanisme aux vues basées sur les classes. Django fournit dans django.contrib.auth.mixins trois mixins essentiels : LoginRequiredMixin, qui exige une authentification ; PermissionRequiredMixin, qui exige une permission spécifique ; et UserPassesTestMixin, qui exige qu'une fonction de test renvoie vrai. Ces mixins s'appliquent avant la méthode de la vue, et refusent la requête avec une redirection vers la page de connexion ou une erreur 403.
+
+```python
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin
+from django.views.generic import UpdateView
+from .models import Ouvrage
+
+class OuvrageUpdateView(LoginRequiredMixin, PermissionRequiredMixin, UpdateView):
+    model = Ouvrage
+    fields = ["titre", "auteur", "disponible"]
+    permission_required = "catalogue.change_ouvrage"
+```
+
+La combinaison des deux mixins est la plus courante : LoginRequiredMixin vérifie que l'utilisateur est connecté, et PermissionRequiredMixin vérifie qu'il possède la permission. Si l'utilisateur est connecté mais ne possède pas la permission, Django lève une PermissionDenied, qui produit une réponse 403. La vue de modification d'ouvrage est donc protégée par la permission catalogue.change_ouvrage, ce qui est exactement la permission que le groupe Bibliothécaire reçoit.
+
+UserPassesTestMixin est le couteau suisse des vérifications complexes. Il permet de poser une condition qui ne s'exprime pas comme une permission simple : vérifier que l'utilisateur est le propriétaire de l'objet, que son compte est encore actif, qu'il appartient à la même section que l'ouvrage, ou que la requête est faite dans les horaires d'ouverture de la médiathèque. La méthode test_func reçoit l'utilisateur et les paramètres de la requête, et retourne un booléen.
+
+```python
+from django.contrib.auth.mixins import UserPassesTestMixin
+
+class PretCreateView(LoginRequiredMixin, UserPassesTestMixin, CreateView):
+    model = Pret
+    fields = ["ouvrage", "date_retour"]
+
+    def test_func(self):
+        return self.request.user.groups.filter(name="Abonné").exists()
+```
+
+Un point important sur l'ordre des mixins : LoginRequiredMixin doit toujours figurer dans la liste des classes parentes, et il doit figurer avant les mixins de permission, car une vérification de permission sur un utilisateur anonyme n'a pas de sens. Django lève d'ailleurs une erreur si LoginRequiredMixin n'est pas présent alors qu'un autre mixin de permission l'est, parce que la vérification des permissions d'un utilisateur anonyme donne toujours faux, ce qui rendrait la vue inaccessible à tous.
+
+La dernière brique du système est celle des permissions par objet, que Django ne gère pas nativement dans son cœur mais que des bibliothèques tierces comme django-guardian implémentent. Les permissions par modèle répondent à la question peut-il modifier des ouvrages ; les permissions par objet répondent à la question peut-il modifier cet ouvrage-ci. Pour la Médiathèque, si chaque section ne doit modifier que ses propres ouvrages, une permission par objet est la solution. Sans bibliothèque tierce, on peut coder la vérification dans la vue en comparant la section de l'objet à la section de l'utilisateur, mais il faut alors accepter de répéter ce contrôle dans chaque vue, ce qui est exactement le genre d'omission que les audits de sécurité relèvent.
+
+## Authentification : django.contrib.auth et le modèle User
+
+L'authentification est la pierre angulaire de tout ce qui précède : sans identité fiable, les permissions ne servent à rien. Django fournit dans django.contrib.auth un système complet, qui couvre la création des comptes, la vérification des mots de passe, la gestion des sessions, et l'intégration avec l'administration. Nous allons en examiner les pièces essentielles avant de construire la nôtre.
+
+Le modèle User par défaut possède un ensemble de champs qui couvre la plupart des besoins : username, first_name, last_name, email, password, is_active, is_staff, is_superuser, date_joined et last_login. Le champ password ne contient jamais le mot de passe en clair : il contient le haché, une valeur unidirectionnelle qui permet de vérifier un mot de passe sans pouvoir le reconstituer. Les trois champs booléens jouent des rôles distincts : is_active désactive un compte sans le supprimer, is_staff autorise l'accès à l'administration, et is_superuser accorde toutes les permissions sans attribution explicite.
+
+```python
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
+# Créer un utilisateur de façon basique (mot de passe en clair, déconseillé)
+user = User.objects.create_user(
+    username="marie.dupont",
+    email="marie.dupont@exemple.org",
+    password="un-mot-de-passe-solide",
+    first_name="Marie",
+    last_name="Dupont",
+)
+
+# Vérifier un mot de passe
+user.check_password("un-mot-de-passe-solide")  # True
+user.check_password("mauvais-mot-de-passe")    # False
+```
+
+La fonction create_user gère correctement le hachage du mot de passe, contrairement à create_superuser qui est réservé aux comptes d'administration système. La méthode check_password est la seule façon correcte de vérifier un mot de passe : elle lit le haché stocké, en extrait l'algorithme et les paramètres, haché le mot de passe fourni avec les mêmes paramètres, et compare les deux résultats en temps constant pour éviter les attaques par analyse temporelle. Ne comparez jamais le mot de passe fourni avec le haché stocké par vous-même.
+
+Le module contrib.auth fournit également les fonctions authenticate, login, logout et get_user. La fonction authenticate reçoit des identifiants et retourne l'utilisateur s'ils sont valides, ou None sinon. La fonction login attache cet utilisateur à la session courante en écrivant un cookie de session. La fonction logout supprime la session et le cookie. Ces trois fonctions forment le cycle de vie de la connexion, et nous les détaillerons dans la section suivante.
+
+```python
+from django.contrib.auth import authenticate, login
+
+def connexion(request):
+    if request.method == "POST":
+        username = request.POST["username"]
+        password = request.POST["password"]
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            login(request, user)
+            return redirect("tableau_de_bord")
+        messages.error(request, "Identifiants incorrects.")
+    return render(request, "connexion.html")
+```
+
+Un point souvent mal compris : l'authentification et l'autorisation sont deux étapes distinctes, et la fonction authenticate ne fait que la première. Elle vérifie les identifiants, rien de plus. L'autorisation — savoir si l'utilisateur peut faire telle action — est vérifiée à part, par les permissions que nous avons vues dans la section précédente. Un utilisateur peut être authentifié mais ne posséder aucune permission, et un utilisateur peut posséder une permission sans être authentifié au moment où il la requiert.
+
+Les backends d'authentification sont le mécanisme par lequel Django vérifie les identifiants. Par défaut, le backend ModelBackend vérifie les couples username-mot de passe et email-mot de passe dans la table des utilisateurs. Vous pouvez définir plusieurs backends, par exemple un backend qui accepte la connexion par numéro de carte de médiathèque en plus du nom d'utilisateur, et Django les essaiera dans l'ordre jusqu'à ce qu'un retourne un utilisateur. Cette extensibilité est utile quand l'organisation a déjà un annuaire existant, comme un LDAP ou un service d'identité externe.
+
+```python
+# Dans settings.py, la liste des backends d'authentification
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "compte.backends.CarteAbonneBackend",
+]
+```
+
+Enfin, le modèle User est conçu pour être étendu, et Django documente deux approches : le modèle proxy, quand vous souhaitez seulement ajouter des méthodes sans nouveaux champs, et le modèle personnalisé, quand vous souhaitez ajouter des champ. La section suivante détaille la seconde approche, qui est celle que la Médiathèque adoptera, car ses abonnés possèdent un numéro de carte qui n'existe pas dans le modèle par défaut.

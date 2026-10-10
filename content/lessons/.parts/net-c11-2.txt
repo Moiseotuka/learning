@@ -1,0 +1,97 @@
+## Load balancing : répartir la charge, effacer la panne
+
+Un équilibrateur de charge est un point d'entrée unique qui décide, pour chaque connexion ou chaque requête, vers quel serveur du groupe la diriger. L'usager ne connaît qu'une seule adresse, celle de l'équilibrateur ; les serveurs, eux, restent inconnus de l'extérieur et peuvent être ajoutés, retirés, réinstallés ou mis à jour sans que la configuration du client change. Cette propriété est la première raison d'être du dispositif : elle rend la taille de la ferme de serveurs indépendante de l'adresse annoncée. Le second bénéfice est immédiat : la répartition évite qu'un serveur unique ne sature pendant que son voisin reste inoccupé, ce qui allonge la durée avant le prochain investissement matériel. Le troisième est la dissimulation de la panne : quand un membre du groupe tombe, les requêtes suivantes vont aux autres, et l'usager ne perçoit qu'une requête lente ou relancée, pas une page d'erreur.
+
+L'histoire de la répartition est courte et instructive. On a commencé par la résolution de noms alternée, qui renvoie plusieurs adresses et laisse le client choisir : simple, gratuit, mais aveugle, car le client ignore l'état réel des serveurs et conserve souvent sa valeur mise en cache. Sont venus ensuite des appareils matériels spécialisés, puis des logiciels libres qui ont démocratisé la fonction : HAProxy, nginx, IPVS, et les équilibrateurs managés dans le cloud. Quel que soit l'outil, le vocabulaire reste identique : une adresse virtuelle, un ou plusieurs fronts d'entrée, un groupe de serveurs appelé pool, ses membres, un contrôle d'état, un algorithme de répartition et, si nécessaire, une règle de persistance de session.
+
+```image
+load-balancer
+| Schéma de load balancing : l'adresse virtuelle unique reçoit le trafic, le répartiteur le distribue vers plusieurs serveurs selon l'état de chacun.
+```
+
+Le schéma ci-dessous donne la structure réelle d'une installation logicielle, avec deux équilibrateurs qui partagent la même adresse virtuelle afin de ne pas reconstruire le dispositif autour d'un nouveau point de défaillance unique. Observez que la redondance est pensée à deux niveaux : les serveurs du groupe se remplacent entre eux, et les répartiteurs eux-mêmes se remplacent entre eux. Nous traiterons le second niveau en détail dans la section consacrée à keepalived.
+
+```text
+                    INTERNET
+                       |
+              +--------+--------+
+              |  adresse VIP    |
+              |  10.10.8.100    |
+              +---+---------+---+
+                  |         |
+             lb-01|         |lb-02   (keepalived : un seul actif)
+             .8.5 |         |.8.6
+                  |         |
+        +---------+---------+---------+
+        |         |         |         |
+     srv A     srv B     srv C     srv D
+    .8.21     .8.22     .8.23     .8.24
+   (pool web, controle d'etat toutes les 2 s)
+```
+
+Trois bénéfices complémentaires se mesurent dès la mise en service. Le déploiement sans coupure devient possible : on retire un serveur du pool, on le met à jour, on le remet dans le pool, puis on recommence sur le suivant ; l'usager ne voit jamais de fenêtre d'arrêt, à condition que l'application supporte que ses sessions soient réparties entre plusieurs instances. La montée en charge devient linéaire : ajouter un serveur au pool augmente le débit disponible sans toucher à l'annonce du service. Et la maintenance gagne un outil décisif, le mode drain, qui laisse les sessions existantes se terminer tout en refusant les nouvelles, si bien qu'une intervention planifiée ne coupe jamais un client en pleine transaction.
+
+Il faut cependant dire ce que l'équilibrateur ne fait pas. Il ne répare pas une application défaillante : il masque un membre défaillant pendant que l'équipe répare, ce qui change radicalement la nature de l'incident vécu par l'usager, pas sa cause. Il ne partage pas l'état : si la session du client n'existe que dans la mémoire d'un serveur, la répartition pure casse le parcours, d'où la nécessité d'une persistance ou d'une session externalisée. Il ne corrige pas une base de données mal dimensionnée, ni un disque lent, ni un verrouillage de tables. Enfin, il devient lui-même un maillon de la chaîne : un répartiteur unique est un point de défaillance unique, et il faut donc prévoir son redoublement dès la conception, pas après la première panne.
+
+## Répartiteurs en couche 4 et couche 7 : ce que chacun voit
+
+Le niveau OSI auquel travaille le répartiteur détermine tout le reste : ce qu'il voit, ce qu'il peut décider, ce qu'il coûte en ressources et ce qu'il cache à l'équipe d'exploitation. Un équilibrateur de couche 4 manipule des paquets et des connexions : il lit les adresses IP, les ports et l'état de la connexion TCP, il ouvre une socket vers un serveur du pool et transporte les octets sans jamais les interpréter. Un équilibrateur de couche 7 interprète le contenu : il termine le chiffrement TLS, lit la ligne de requête HTTP, les en-têtes, le chemin demandé, le cookie de session, puis décide à quoi cette requête précise doit servir. L'un est un routage rapide de flux ; l'autre est un agent d'application déguisé en routeur.
+
+La couche 4 possède des forces que l'on ne lui rend pas toujours justice. Elle est très rapide, puisqu'aucune déchiffrement ni aucune analyse de contenu n'est nécessaire ; elle est neutre vis-à-vis du protocole, ce qui permet de répartir du trafic qui n'est pas HTTP : bases de données, messagerie, jeux, tunnels, flux vidéo, protocoles propriétaires ; elle supporte des volumes très élevés avec une empreinte mémoire faible, car elle ne garde qu'une table de connexions. Ses limites sont celles de son ignorance : impossible de router vers l'arrière selon le chemin demandé, impossible de réécrire un en-tête, impossible de mettre en cache, impossible de détecter qu'une requête réussit alors que la page est vide. Elle peut tout au plus vérifier qu'un port accepte une connexion.
+
+La couche 7, elle, offre le contrôle dont l'application a besoin. On route selon le nom de domaine, ce qui permet de héberger plusieurs sites sur une même adresse ; on route selon le chemin, ce qui permet d'envoyer l'API vers un pool et le site statique vers un autre ; on route selon un en-tête ou un cookie ; on termine le TLS une seule fois et l'on chiffre à nouveau vers les serveurs, ce qui centralise les certificats et leur renouvellement ; on ajoute la compression, le caching et la limitation de débit. Le prix se paie en ressources et en responsabilité : le répartiteur doit déchiffrer, donc consommer du processeur ; il voit les contenus chiffrés, donc devient une cible à protéger ; et il intervient dans la sémantique HTTP, donc il doit évoluer avec le protocole.
+
+| Critère | Répartiteur couche 4 | Répartiteur couche 7 |
+|---|---|---|
+| Éléments examinés | Adresses IP, ports, état TCP ou UDP | Nom, chemin, en-têtes, cookie, corps de requête |
+| Chiffrement TLS | Transit ou déchiffrement en option | Terminaison et ré-encryption fréquentes |
+| Performance | Très élevée, mémoire réduite | Inférieure, coût processeur déchiffrement |
+| Routage | Par flux uniquement | Par contenu, par application, par session |
+| Services ajoutés | Aucun | Cache, compression, réécriture, limitation de débit |
+| Protocoles | N'importe lequel (TCP, UDP) | HTTP, HTTPS, HTTP/2, WebSocket, gRPC |
+| Usage typique | Bases de données, messagerie, flux, DNS | Sites web, API, services internes |
+
+Le choix entre les deux niveaux n'est d'ailleurs pas exclusif. On installe fréquemment un équilibrateur de couche 7 pour le site web et l'API, puis un équilibrateur de couche 4 pour les services qui n'ont rien à faire de HTTP, ou pour les connexions de maintenance vers des équipements qui ne supportent pas d'intermédiaire applicatif. La règle de décision tient en une phrase : on choisit le niveau le plus bas qui permet la décision que l'on doit prendre. Si la décision exige de lire un chemin ou un cookie, il faut monter en couche 7 ; si la décision se limite à un port et à un débit, rester en couche 4 économise du processeur et simplifie le diagnostic.
+
+## Algorithmes de répartition : sous le capot
+
+L'algorithme de répartition est la règle qui choisit, parmi les membres sains d'un pool, celui qui servira la prochaine connexion ou la prochaine requête. Il n'existe pas d'algorithme supérieur aux autres : chacun fait un compromis différent entre simplicité, équité et connaissance de l'application. Le tour de table, ou round-robin, distribue les connexions à tour de rôle dans l'ordre du pool. Il est d'une simplicité désarmante et parfaitement équitable quand les serveurs sont identiques et les requêtes de coût constant ; il devient naïf dès que les machines diffèrent, dès que certaines requêtes coûtent dix fois plus que d'autres, ou dès que les connexions vivent longtemps, car il ignore totalement la charge réelle de la cible choisie.
+
+La variante pondérée corrige l'inégalité de capacité : un serveur de 32 Go de mémoire reçoit le double de connexions qu'un serveur de 16 Go si on lui attribue un poids double. Le nombre de connexions le plus faible, ou least connections, abandonne l'ordre pour regarder l'état : chaque nouvelle requête part vers le membre qui a actuellement le plus petit nombre de connexions ouvertes. C'est l'algorithme de référence pour des sessions de durée variable, parce qu'il suit la charge réelle plutôt qu'une estimation. Sa version affinée, le temps de réponse le plus faible, ajoute la mesure : on préfère le serveur qui répond vite, ce qui écarte naturellement une machine en train de saturer son processeur ou d'attendre un disque. Le tableau ci-dessous compare ces familles et indique, pour chacune, le cas d'usage auquel elle répond.
+
+| Algorithme | Principe | Forces | Limites | Cas d'usage |
+|---|---|---|---|---|
+| Round-robin | Tour de table dans l'ordre du pool | Simple, équitable si homogène | Ignore la charge réelle et le coût des requêtes | Serveurs identiques, requêtes uniformes |
+| Round-robin pondéré | Tour de table au prorata du poids | Tient compte des différences de capacité | Le poids est fixé à la main, il vieillit | Matériel hétérogène |
+| Least connections | Vers le membre ayant le moins de connexions | Suit la charge réelle | Calcul plus coûteux, sensible aux sessions très courtes | Sessions longues ou coûteuses |
+| Least response time | Vers le membre le plus rapide mesuré | Détecte la saturation débutante | Dépend de la qualité des mesures | Applications à temps de réponse variable |
+| Hachage source ou URL | Même entrée, même serveur | Affinité sans état stocké | Distribution inégale si un client disparaît | Cache local, sessions dans la mémoire |
+| Aléatoire | Choix uniforme au hasard | Zéro hypothèse, très robuste | Aucune intelligence de placement | Repli, trafic parfaitement symétrique |
+
+Le piège classique de l'affinité mérite un développement, car il coûte des incidents incompréhensibles. Imaginez un hachage sur l'adresse source derrière un équilibrateur exposé à Internet : tous les clients d'un même grand réseau d'entreprise, une université ou un opérateur mobile, arrivent avec une seule adresse source et se retrouvent tous sur le même serveur, qui sature pendant que les autres dorment. Le remède est double : préférer least connections quand l'application le permet, et répartir sur une entrée à forte entropie, comme un identifiant de session réellement aléatoire plutôt qu'une adresse IP.
+
+Le cas d'une plateforme de commerce électronique permet de choisir sans hésiter. Les requêtes de consultation de page sont légères et peuvent être servies par n'importe quel membre ; la commande, elle, engage un panier et une authentification. On configure donc least connections pour l'ensemble du trafic, on ajoute la persistance par cookie pour que le panier suive le client, et l'on résout la session hors mémoire du serveur afin que la perte d'un membre ne perde pas le panier. Le round-robin resterait utilisable pour un annuaire statif, où chaque requête coûte le même prix ; il deviendrait dangereux pendant les soldes, quand la même site voit alterner des pages légères et des calculs de frais de port très coûteux.
+
+## Health checks : la vérité vient du service
+
+Un contrôle d'état est une question posée périodiquement par le répartiteur à chaque membre du pool, dont la réponse décide si la cible reçoit du trafic. C'est le composant le plus décisif de tout le dispositif : un algorithme parfait n'a aucune importance si le répartiteur continue d'envoyer des requêtes à un serveur dont l'application est morte. Or le défaut le plus répandu consiste à tester la connexion réseau et à en conclure à la bonne santé du service. Un port ouvert ne prouve rien : il prouve que le système d'exploitation écoute, pas que l'application répond, pas que la base est joignable, pas que l'espace disque n'est pas plein et pas que la licence n'est pas expirée. Le serveur mort complètement est le cas facile ; le serveur vivant mais incapable de servir est le cas qui coûte des heures de diagnostic.
+
+Les contrôles actifs, ceux que le répartiteur déclenche lui-même, se règlent par quatre paramètres à connaître par cœur : l'intervalle, qui fixe la fréquence de la question ; le nombre d'échecs consécutifs nécessaires au retrait, qui détermine la vitesse de détection ; le nombre de réussites consécutives nécessaires à la remise en service, qui évite les va-et-vient ; et le délai d'attente, au-delà duquel la question est comptée comme un échec. Des valeurs typiques sont une question toutes les deux secondes, trois échecs pour sortir et dix réussites pour entrer, avec une seconde d'attente. Trop serrées, ces valeurs provoquent des bascules en rafale dès qu'un ralentissement transitoire survient ; trop lâches, elles laissent le trafic partir dans le vide plusieurs dizaines de secondes.
+
+Les contrôles de niveau application posent la vraie question. Pour un service HTTP, on envoie une requête réelle vers une ressource conçue pour cela, par exemple une adresse qui vérifie la connexion à la base et le montage du stockage, et l'on attend un code de réponse précis : le code deux cents, ou un code deux cent quatre-vingt-dix-neuf destiné au répartiteur. On peut aller plus loin en exigeant un contenu attendu dans la réponse, ce qui détecte une page d'erreur déguisée en succès, ou en mesurant le temps de réponse et en déclenchant le retrait au-delà d'un seuil. Attention toutefois à ne pas transformer le contrôle en charge : une vérification qui interroge la base à chaque question ajoute de la charge exactement au moment où le service est fragile.
+
+```text
+Reglages types d'un controle d'etat applicatif
+  intervalle       2 s        (frequence de la question)
+  attente          1 s        (au-delà, c'est un echec)
+  echecs           3          (sortie du pool apres 6 s environ)
+  reussites        10         (retour progressif, evite le va-et-vient)
+  requete          GET /healthz
+  code attendu     200        (ou 209 pour le rechargement a chaud)
+  corps attendu    "status: ok"
+  observation      couche 7   (le code seul ne suffit pas toujours)
+```
+
+La synchronisation entre contrôles pose un problème subtil qu'il faut connaître avant de le rencontrer. Si le réseau entre le répartiteur et les serveurs est dégradé, le répartiteur déclare tout le pool défaillant et retire l'intégralité des membres alors que les serveurs fonctionnent parfaitement : c'est la partition de contrôle d'état. À l'inverse, si chaque répartiteur pose ses propres questions, l'un peut considérer un membre sain et l'autre défaillant. On traite ce risque en conservant un contrôle qui distingue la panne du serveur de la panne du chemin, en surveillant séparément le répartiteur lui-même, et en gardant une action manuelle capable de forcer un membre en service ou hors service sans attendre la détection automatique.
+
+La sortie de service propre, ou drain, est la dernière brique. Retirer brutalement un serveur du pool coupe les transactions en cours ; le mode maintenance le retire de la répartition tout en laissant ses connexions existantes se terminer. La procédure standard en devient mécanique : on met le membre en maintenance, on attend que son nombre de connexions tombe à zéro, on applique la mise à jour, on redémarre, on vérifie la réponse à la ressource de santé, puis on rend le membre au pool et l'on observe les statistiques pendant quelques minutes. Chaque étape produit un chiffre à noter dans le compte rendu, et c'est ce compte rendu qui, un jour, vous évitera de refaire la même manipulation à l'aveugle.

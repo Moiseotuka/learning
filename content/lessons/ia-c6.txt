@@ -1,0 +1,725 @@
+Bienvenue dans ce sixième chapitre du parcours data science, consacré à une question que l'on préfère souvent esquiver : à quoi servent les chiffres que votre modèle affiche ? Un modèle qui annonce 95 % de réussite n'est pas nécessairement un bon modèle, et un modèle qui en annonce 72 peut parfaitement être celui qu'il faut déployer. Tout dépend de la manière dont le chiffre a été produit. Si les données qui ont servi à mesurer la performance ont, de près ou de loin, contaminé l'entraînement, le score est un mirage. Si le score a été obtenu sur un seul découpage arbitraire, il n'a aucune valeur de généralisation. Si le modèle est assez complexe pour retenir chaque détail du jeu d'entraînement, il peut afficher un résultat parfait tout en étant incapable de prédire la moindre nouvelle observation. La validation et la robustesse des modèles existent précisément pour transformer un chiffre flatteur en une information défendable devant un pair revêche.
+
+Ce chapitre vous apprendra quatre choses concrètes, que vous manipulerez toutes dans du code Python écrit à la main. Premièrement, vous découvrirez ce qu'est réellement le surapprentissage, pourquoi il survient presque inévitablement quand la complexité du modèle dépasse ce que les données peuvent soutenir, et comment le reconnaître à la simple lecture de deux nombres. Deuxièmement, vous découperez proprement vos données en ensembles d'entraînement, de validation et de test, puis vous construirez une validation croisée k plis sans aucune bibliothèque de machine learning, uniquement avec la bibliothèque standard de Python. Troisièmement, vous appliquerez la régularisation, c'est-à-dire l'art de retenir un modèle pour l'empêcher de trop apprendre, et vous lirez des courbes d'apprentissage pour décider si votre problème manque de données ou si votre modèle est trop ambitieux. Quatrièmement, vous traquerez les fuites de données, ces contaminants invisibles qui gonflent les scores en interne et font s'effondrer les performances une fois le modèle en production. À la fin, vous saurez écrire un rapport de validation que l'on ne peut pas réfuter d'un revers de main.
+
+Un dernier conseil avant d'entrer dans le vif du sujet. La rigueur statistique s'apprend comme la natation : en plongeant, pas en regardant depuis le bord de la piscine. Chaque notion de cette leçon est illustrée par un bloc de code complet et exécutable tel quel, écrit sans aucun paquet externe, afin que rien ne vienne parasiter votre compréhension. Vous n'aurez besoin ni de scikit-learn, ni de pandas, ni d'un environnement particulier : la bibliothèque standard suffit amplement à fabriquer des données, à les découper, à ajuster un modèle et à mesurer ses erreurs. Le fil rouge du chapitre sera un banc d'essai complet : vous générerez un jeu de données synthétique reproductible, vous l'évaluerez de plusieurs manières, vous identifierez le surapprentissage, puis vous corrigerez le protocole jusqu'à obtenir un score auquel vous pouvez croire.
+
+## Comprendre : ce que mesure vraiment un score
+
+Un score de performance n'est jamais une propriété intrinsèque d'un modèle. C'est le résultat d'une mesure, et toute mesure repose sur trois piliers : les données observées, la manière dont elles ont été réparties, et la métrique choisie. Changer l'un de ces trois éléments change le chiffre, parfois du tout au tout. Le même modèle qui obtient 0,91 de R² sur un échantillon favorable tombera à 0,55 sur un échantillon ordinaire, sans qu'une seule ligne de code n'ait été modifiée. C'est pourquoi un score isolé, dépourvu de contexte, ne signifie rien : il faut savoir sur quelles données il a été calculé, quelles prétraitements ont été appliqués avant le découpage, et combien de fois l'expérience a été répétée.
+
+La quantité que l'on cherche réellement à estimer porte un nom précis : l'erreur de généralisation, c'est-à-dire l'erreur que le modèle commettra sur des observations qu'il n'a jamais vues, qui représentent exactement celles qui comptent en production. Cette quantité est inaccessible par construction, car on ne dispose jamais de toutes les données futures. On s'en approche en fabriquant une simulation honnête : on cache une partie des données au modèle, on l'entraîne sur le reste, puis on mesure son erreur sur la partie cachée. Le jeu de test joue le rôle de données futures simulées, et son intégrité conditionne toute la valeur du chiffre affiché.
+
+Le piège le plus courant consiste à calculer une statistique quelconque sur la totalité des données avant de découper. Moyenne, écart-type, encodage des catégories, sélection des variables : chaque opération effectuée avant la coupe utilise de l'information du futur ensemble de test, qui fuit alors dans l'entraînement. Le modèle paraît meilleur qu'il n'est, et la déception arrive au pire moment, celui du déploiement. La règle à graver est simple : on découpe d'abord, on transforme ensuite, et chaque transformation apprise sur l'entraînement est réappliquée à l'identique sur le test.
+
+```python
+import random
+
+random.seed(1)
+x = [random.uniform(0, 10) for _ in range(60)]
+y = [2.5 * xi + 8 + random.gauss(0, 4) for xi in x]
+
+moy = sum(y) / len(y)
+print("moyenne globale calculee avant coupe :", round(moy, 2))
+
+coupe = int(len(x) * 0.75)
+x_train, x_test = x[:coupe], x[coupe:]
+y_train, y_test = y[:coupe], y[coupe:]
+
+moy_train = sum(y_train) / len(y_train)
+print("moyenne du seul entrainement :", round(moy_train, 2))
+print("ecart entre les deux :", round(moy - moy_train, 2))
+```
+
+Ce petit programme montre une fuite bénigne en action : la moyenne globale intègre les valeurs du futur test, elle est donc faussée dès la première ligne. Sur un jeu de données réel, des fuites de ce type, multipliées par le nombre de colonnes et de transformations, peuvent ajouter plusieurs dizaines de points de performance fictifs. Notez que l'écart paraît faible ici parce que l'échantillon est homogène ; avec des données déséquilibrées ou des populations mélangées, l'écart devient considérable.
+
+Trois questions suffisent pour éprouver n'importe quel score. Premièrement, quelles données ont servi à l'entraîner, et les a-t-on vues avant le découpage ? Deuxièmement, quelles données ont servi à le mesurer, et le modèle les a-t-il vues pendant l'entraînement ? Troisièmement, la mesure a-t-elle été répétée sur plusieurs découpages, si bien que l'on connaît non seulement la moyenne mais aussi la dispersion ? Un score accompagné de ces trois réponses devient discutable, donc scientifique. Un score sans ces réponses relève de la communication.
+
+- Un score dépend du découpage autant que du modèle.
+- L'erreur de généralisation n'est jamais observée directement, on l'estime.
+- Toute statistique calculée avant le découpage contamine les ensembles suivants.
+- Un chiffre isolé n'a pas de sens sans protocole de mesure.
+- La rigueur se résume à une phrase : on découpe avant de transformer.
+
+## Surapprentissage : quand le modèle apprend par cœur
+
+Le surapprentissage, ou overfitting en anglais, se produit quand un modèle capture, en plus du signal réel, le bruit aléatoire propre aux observations d'entraînement. Le bruit, ce sont les fluctuations qui ne tiennent ni à la relation étudiée ni à la qualité de la mesure, mais simplement au hasard : une journée inhabituelle, une erreur de saisie, une coïncidence locale. Un modèle suffisamment flexible est capable de passer exactement par chaque point d'entraînement, y compris les points aberrants, et obtient alors une erreur nulle sur les données vues. Sa performance sur des données nouvelles, en revanche, s'effondre, car le bruit qu'il a appris ne se reproduira pas.
+
+L'analogie de l'élève qui apprend par cœur sans comprendre résume exactement la situation. Si vous donnez à un étudiant les questions exactes du contrôle avec les réponses, il obtiendra 20 sur 20, sans rien pouvoir produire le jour de l'examen réel. Un autre étudiant, qui aura compris les raisonnements généraux, obtiendra peut-être 15 en contrôle blanc et 16 le jour J. Le premier modèle affiche un score d'entraînement spectaculaire et un score de test décevant ; le second affiche des scores cohérents. Détecter le surapprentissage revient donc à comparer la performance sur les données vues à la performance sur des données cachées.
+
+Trois facteurs aggravants interagissent et expliquent pourquoi le surapprentissage explose soudainement. Le premier est la puissance expressive du modèle : plus il dispose de paramètres ou de degrés de liberté, plus il peut se plier aux accidents de l'échantillon. Le second est la petite taille du jeu de données : avec trente observations, n'importe quel modèle suffisamment souple épouse le hasard. Le troisième est le rapport signal sur bruit : si la relation réelle est faible comparée aux fluctuations, le modèle a davantage de bruit à retenir que de signal à apprendre. Retirez l'un de ces trois facteurs et le surapprentissage recule immédiatement.
+
+Le programme suivant illustre le phénomène avec le plus simple des modèles souples : la régression par plus proches voisins. Avec un seul voisin, le modèle mémorise parfaitement l'entraînement, puisqu'il se contente de recopier la valeur la plus proche, qui est lui-même. En augmentant le nombre de voisins, on force le lissage et la généralisation. L'expérience se joue entièrement sur des données fabriquées avec une graine fixe, si bien qu'elle produit exactement les mêmes nombres à chaque exécution.
+
+```python
+import random
+
+random.seed(3)
+points = []
+for _ in range(80):
+    xi = random.uniform(0, 10)
+    yi = 3 * xi + 5 + random.gauss(0, 7)
+    points.append((xi, yi))
+
+random.shuffle(points)
+coupe = 60
+train, test = points[:coupe], points[coupe:]
+
+
+def predire(apprentissage, x, k):
+    tri = sorted(apprentissage, key=lambda p: abs(p[0] - x))
+    voisins = tri[:k]
+    return sum(v[1] for v in voisins) / k
+
+
+def erreur(echantillon, x, y, k):
+    return sum((predire(echantillon, xi, k) - yi) ** 2 for xi, yi in zip(x, y)) / len(x)
+
+
+x_tr = [p[0] for p in train]
+y_tr = [p[1] for p in train]
+x_te = [p[0] for p in test]
+y_te = [p[1] for p in test]
+
+print("k  erreur_train  erreur_test")
+for k in (1, 3, 7, 15, 31):
+    print(k, round(erreur(train, x_tr, y_tr, k), 2), round(erreur(train, x_te, y_te, k), 2))
+```
+
+En exécutant ce code, vous observez une courbe familière : l'erreur d'entraînement augmente doucement avec k, tandis que l'erreur de test décroche au début puis remonte. Le minimum de l'erreur de test définit la complexité idéale pour ce jeu de données. Le modèle à un voisin est surappris ; le modèle à trente et un voisin est en passe de lisser tout signal utile. Entre les deux se trouve une région de compromis que la validation seule permet de localiser.
+
+Le schéma suivant, tracé en caractères, résume la géométrie classique de la situation. Il montre deux courbes qui divergent : à gauche, les deux erreurs se confondent et le modèle est trop simple ; au centre, elles se rejoignent au plus près ; à droite, l'écart se creuse et le modèle mémorise.
+
+```text
+erreur
+  |\
+  | \                      erreur_test
+  |  \                     ___________
+  |   \                 ___/
+  |    \             ___/        erreur_entrainement
+  |     \         ___/          _______________
+  |      \     ___/          ___/
+  |       \__/          ___/
+  |      ____      ____/
+  |   __/    \__ /
+  |__/            \___
+  +------------------------------------------ complexite
+       sous-ajustement | bon | surapprentissage
+```
+
+La règle empirique la plus utile tient en une phrase : si votre modèle affiche une erreur d'entraînement nettement inférieure à son erreur de test, il surapprend, et aucun réglage fin de la métrique ne changera rien à cette situation. À l'inverse, si les deux erreurs sont toutes les deux élevées et proches, il souffre de sous-ajustement : il est trop simple pour saisir la relation. Ces deux diagnostics, obtenus en comparant deux nombres, orientent toutes les décisions techniques qui suivent.
+
+## Biais et variance : les deux visages de l'erreur
+
+La théorie classique décompose l'erreur d'un modèle en deux composantes, auxquelles s'ajoute un bruit irréductible. Le biais mesure l'erreur systématique du modèle, c'est-à-dire l'écart qu'il commettrait même s'il était entraîné sur d'innombrables échantillons : il traduit des hypothèses trop faibles, une capacité insuffisante pour représenter la réalité. La variance mesure la sensibilité du modèle au jeu d'entraînement choisi : elle traduit l'instabilité, le fait que deux échantillons tirés de la même population produisent des modèles très différents. Le bruit irréductible, lui, provient de facteurs que rien ne permettra de prédire, et constitue la limite absolue de toute performance.
+
+Le point délicat est que biais et variance se paient l'un l'autre. Réduire le biais, c'est rendre le modèle plus flexible, ce qui augmente la variance. Réduire la variance, c'est le rendre plus rigide, ce qui augmente le biais. Le choix de la complexité n'est donc pas une question de goût, mais un arbitrage à optimiser sur des données que le modèle n'a pas vues. Un modèle linéaire simple illustre un biais élevé et une variance faible : il fait toujours peu d'erreurs différentes, mais il se trompe toujours dans le même sens si la relation réelle est courbe. Un arbre de décision profond illustre l'inverse : il épouse parfaitement chaque échantillon et change du tout au tout au moindre changement de données.
+
+Le tableau ci-dessous rassemble les symptômes que vous rencontrerez en pratique et les leviers correspondants. Gardez-le sous la main : il condense en une lecture l'essentiel du diagnostic.
+
+```table
+| Situation | Erreur d'entraînement | Erreur de test | Cause probable | Levier prioritaire |
+| --- | --- | --- | --- | --- |
+| Sous-ajustement | élevée | élevée et proche | modèle trop simple | complexifier, ajouter des variables |
+| Surapprentissage | très faible | élevée, écart large | modèle trop flexible ou données rares | régulariser, simplifier, collecter |
+| Modèle instable | faible | très variable selon le découpage | variance élevée | validation croisée, plus de données |
+| Mesure faussée | faible | faible, mais faux en prod | fuite de données | reconstruire le protocole |
+```
+
+
+La colonne la plus précieuse est celle des erreurs rapprochées ou écartées. Deux nombres suffisent pour orienter la décision, à condition qu'ils aient été mesurés dans des conditions honnêtes. Notez que le diagnostic de fuite se distingue des trois autres : il ne s'agit pas d'un problème de modèle, mais d'un problème de protocole, et aucun réglage d'hyperparamètre ne le corrigera.
+
+Un réflexe professionnel consiste à toujours entraîner deux modèles de complexité très différente sur les mêmes données, puis à comparer leurs comportements. Si le modèle simple obtient presque autant que le modèle complexe, la complexité est inutile et le modèle simple doit être retenu. Si le modèle complexe l'emporte nettement en validation croisée, la complexité est justifiée. Cette confrontation, rapide à mettre en œuvre, évite la moitié des débats stériles autour du choix d'architecture.
+
+- Le biais est l'erreur systématique, la variance est l'instabilité.
+- Le bruit irréductible fixe un plancher que aucun modèle ne franchira.
+- Réduire un terme en augmente souvent l'autre : le choix de complexité est un arbitrage.
+- Un écart train-test large signale la variance ; deux erreurs hautes signalent le biais.
+- Comparer deux modèles de complexité très différente est le test le plus économique qui soit.
+
+## Découper les données : entraînement, validation, test
+
+Le découpage des données est l'acte fondateur de toute évaluation honnête. On distingue classiquement trois ensembles, remplissant trois rôles distincts. L'ensemble d'entraînement sert à estimer les paramètres du modèle, c'est-à-dire à apprendre. L'ensemble de validation sert à comparer les variantes, à choisir les hyperparamètres et à décider du moment où l'on arrête d'apprendre. L'ensemble de test sert à produire le chiffre définitif, celui que l'on communique, et il ne doit être consulté qu'une seule fois, à la toute fin. Cette séparation des rôles est la colonne vertébrale du protocole.
+
+La distinction entre hyperparamètres et paramètres mérite d'être rappelée, car elle justifie l'existence de l'ensemble de validation. Les paramètres, comme les coefficients d'une régression, sont appris automatiquement à partir des données d'entraînement. Les hyperparamètres, comme le nombre de voisins, la profondeur d'un arbre ou la force de la pénalisation, sont fixés par l'humain avant l'entraînement. Puisqu'on les choisit en comparant des performances, il faut pour cela un jeu de données distinct de celui utilisé pour apprendre les paramètres, et distinct aussi du test final. Sans validation, on finit par choisir l'hyperparamètre qui convient le mieux au test, et le test cesse d'être une évaluation : il devient une variable d'ajustement.
+
+Une proportion courante consiste à répartir 60 % pour l'entraînement, 20 % pour la validation et 20 % pour le test. D'autres préfèrent 80/20 avec une validation croisée à l'intérieur du premier tiers. Aucune de ces répartitions n'est universellement correcte : tout dépend de la taille du jeu de données. Avec mille observations, la règle des trois tiers fonctionne bien ; avec deux cents, affecter 20 % au test revient à évaluer sur quarante points, ce qui produit une estimation d'une instabilité regrettable, et l'on préférera réserver le test à quarante points tout en effectuant la sélection par validation croisée sur le reste.
+
+```python
+import random
+
+
+def decouper(observations, proportions=(0.6, 0.2, 0.2), graine=42):
+    indices = list(range(len(observations)))
+    random.Random(graine).shuffle(indices)
+    n = len(indices)
+    n_app = int(n * proportions[0])
+    n_val = int(n * proportions[1])
+    app = [observations[i] for i in indices[:n_app]]
+    val = [observations[i] for i in indices[n_app:n_app + n_val]]
+    test = [observations[i] for i in indices[n_app + n_val:]]
+    return app, val, test
+
+
+donnees = [(i, i * 2 + 1) for i in range(100)]
+app, val, test = decouper(donnees)
+print(len(app), len(val), len(test))
+print("premier indice d'entrainement :", app[0])
+```
+
+Ce bloc renvoie 60, 20 et 20 comme attendu. Notez l'emploi d'un générateur aléatoire indépendant, obtenu avec random.Random(graine), plutôt que de réutiliser le générateur global : ainsi, appeler deux fois la fonction avec la même graine reproduit exactement les mêmes ensembles, tandis qu'un appel avec une autre graine produit un découpage différent. Cette propriété est essentielle pour comparer plusieurs modèles sur des ensembles strictement identiques.
+
+Le découpage doit aussi respecter la structure de la tâche. En classification avec des classes déséquilibrées, un découpage purement aléatoire risque de placer presque tous les rares positifs dans un seul ensemble : on découpe alors par stratification, c'est-à-dire en conservant dans chaque sous-ensemble la même proportion de classes qu'ensemble. En données temporelles, le découpage aléatoire est proscrit, car il fait apprendre au modèle le futur pour prédire le passé : on découpe alors chronologiquement, en n'évaluant que sur des périodes postérieures à celles de l'entraînement. En données de clients, on découpe par identifiant de client plutôt que par transaction, afin qu'aucun client n'apparaisse des deux côtés.
+
+```table
+| Type de données | Découpage correct | Découpage dangereux | Raison |
+| --- | --- | --- | --- |
+| Classification déséquilibrée | stratifié | aléatoire simple | les classes rares disparaissent d'un côté |
+| Séries temporelles | chronologique | aléatoire | le futur fuit dans l'entraînement |
+| Plusieurs mesures par client | groupé par client | aléatoire par ligne | le même client des deux côtés |
+| Images similaires (doublons) | groupé par source | aléatoire | quasi-doublons de part et d'autre |
+```
+
+
+Une dernière précaution, souvent négligée, concerne le test. On ne consulte pas le test au fur et à mesure des essais, car chaque consultation révèle de l'information et transforme imperceptiblement le test en validation. Le test ressemble à une épreuve que l'on ne passe qu'une fois, après avoir tout réglé ailleurs. Si vous avez besoin de mesurer le test plusieurs fois, c'est que vos réglages manquent d'un ensemble de validation.
+
+- L'entraînement apprend les paramètres, la validation choisit les hyperparamètres, le test produit le chiffre final.
+- Le test ne se consulte qu'une fois, à la fin.
+- La proportion dépend du volume : de petits jeux souffrent des découpages trop fins.
+- Stratifier, grouper ou respecter le temps : le découpage suit la structure des données.
+- Un générateur dédié par découpage rend l'expérience reproductible.
+
+## Découpage aléatoire et reproductibilité
+
+La reproductibilité n'est pas un luxe : elle est la condition de toute comparaison. Deux modèles évalués sur des découpages différents ne sont pas comparables, car l'écart observé peut provenir du découpage plutôt que de la qualité des modèles. D'où la première habitude à prendre : figer la graine d'aléa, la documenter, et réutiliser les mêmes ensembles pour toutes les variantes que l'on souhaite comparer. En Python, le module random fournit cette possibilité sous deux formes, et la comprendre évite bien des erreurs.
+
+La première forme consiste à appeler random.seed(valeur) une seule fois au début du programme. Toutes les tirages ultérieurs du générateur global deviennent alors déterministes. L'inconvénient est que l'ordre des appels compte : ajouter une ligne qui tire un nombre au milieu du programme change tous les tirages suivants, et le découpage devient différent sans que rien ne le laisse deviner. La seconde forme, préférable, consiste à créer un générateur local avec random.Random(graine) et à n'utiliser que celui-ci pour le découpage. Le générateur global reste alors libre pour les autres besoins, et le découpage ne dépend que de sa propre graine.
+
+```python
+import random
+
+random.seed(99)
+a = [random.random() for _ in range(3)]
+b = [random.random() for _ in range(3)]
+
+random.seed(99)
+c = [random.random() for _ in range(3)]
+print("reproductible global :", a == c)
+
+gen_1 = random.Random(99)
+gen_2 = random.Random(99)
+print("reproductible local  :", [gen_1.random() for _ in range(3)] == [gen_2.random() for _ in range(3)])
+```
+
+L'exécution affiche deux fois True. Le générateur local présente l'avantage décisif d'être autonome : deux programmeurs, sur deux machines, avec des ordres d'appel différents, obtiennent exactement le même découpage tant qu'ils partagent la même graine. C'est ce principe qui rend possible la confrontation de modèles, laquelle n'a de sens que si les ensembles de référence sont rigoureusement identiques.
+
+Un autre piège de reproductibilité concerne l'ordre des données avant le découpage. Si votre fichier d'origine est trié par date, par ville ou par classe, un découpage par simple coupe consécutive crée des ensembles hétérogènes : le premier tiers sera ancien, le dernier récent, et la comparaison devient absurde. Le mélange préalable des indices, effectué avec la même graine, règle le problème en une ligne. À l'inverse, lorsque l'ordre porte du sens, comme dans une série temporelle, on ne mélange pas : on coupe à une date, ce qui rappelle que la technique du mélange n'est jamais bonne ou mauvaise en soi, elle est juste adaptée ou inadaptée à la structure du problème.
+
+Enfin, notez que la reproductibilité s'étient aux bibliothèques et aux versions. Une graine fixe ne garantit rien si l'algorithme de tri de la bibliothèque change entre deux versions. Pour un travail sérieux, on documente simultanément la graine, la version du langage et le chemin d'accès des données. Ce niveau de métadonnées paraît obsessif au début, mais il devient automatique, et il sauve des journées entières lorsque l'on doit comprendre, six mois plus tard, pourquoi un score diffère de celui du rapport initial.
+
+- Fixez la graine et notez-la : sans elle, aucune comparaison n'a de valeur.
+- Préférez un générateur local random.Random(graine) au générateur global.
+- Mélanges les indices seulement si l'ordre des lignes n'a aucun sens.
+- Un découpage trié sans mélange produit des ensembles hétérogènes.
+- Documentez graine, version et données pour rendre l'expérience rejouable.
+
+## Validation croisée : le k plis pas à pas
+
+La validation croisée répond à une faiblesse évidente du découpage unique : le score dépend du hasard. Avec un seul découpage, on obtient un nombre sans indication de stabilité, et l'on ignore si l'on a eu chance ou malchance. La validation croisée, ou cross-validation, répète l'expérience plusieurs fois sur des partitions différentes, puis agrège les résultats. Le cas le plus répandu est le découpage en k plis : on taille les données en k morceaux de taille comparable, puis on exécute k entraînements, à chaque fois en désignant un pli différent comme ensemble de validation et en utilisant les k moins un autres pour l'apprentissage.
+
+Le schéma ci-dessous montre le principe pour k égal à cinq. Chaque ligne représente une itération ; la case hachurée désigne le pli réservé à la validation, les autres étant consacrés à l'entraînement. À la fin, chaque observation a servi exactement une fois à valider.
+
+```text
+iteration 1   [ val ][ app ][ app ][ app ][ app ]
+iteration 2   [ app ][ val ][ app ][ app ][ app ]
+iteration 3   [ app ][ app ][ val ][ app ][ app ]
+iteration 4   [ app ][ app ][ app ][ val ][ app ]
+iteration 5   [ app ][ app ][ app ][ app ][ val ]
+
+score_final = (s1 + s2 + s3 + s4 + s5) / 5
+```
+
+L'avantage est double. D'une part, chaque observation est utilisée une fois pour la validation : aucune donnée n'est gaspillée, ce qui est précieux lorsque le jeu est petit. D'autre part, on obtient non seulement une moyenne, mais aussi un écart-type, qui mesure la sensibilité du modèle au découpage. Une moyenne de 0,45 avec un écart-type de 0,02 est une information nettement plus solide qu'un score unique de 0,45 : elle signifie que le modèle se comporte pareil quel que soit le sous-ensemble évalué.
+
+L'implémentation à la main n'a rien d'aride. On mélange les indices avec une graine, on les répartit en k morceaux, puis pour chaque morceau on construit l'entraînement comme la concatenation des autres. On entraîne, on prédit, on mesure l'erreur, et on conserve la valeur. Aucune bibliothèque n'est nécessaire : des listes, une boucle et une fonction d'erreur suffisent.
+
+```python
+import random
+import statistics
+
+
+def plis(indices, k, graine=7):
+    melange = list(indices)
+    random.Random(graine).shuffle(melange)
+    taille = len(melange) // k
+    morceaux = []
+    for i in range(k):
+        debut = i * taille
+        fin = len(melange) if i == k - 1 else (i + 1) * taille
+        morceaux.append(melange[debut:fin])
+    return morceaux
+
+
+def validation_croisee(observations, k, graine=7, apprentissage=None):
+    indices = list(range(len(observations)))
+    morceaux = plis(indices, k, graine)
+    scores = []
+    for i in range(k):
+        val = morceaux[i]
+        app = [j for j in indices if j not in val]
+        donnees_app = [observations[j] for j in app]
+        donnees_val = [observations[j] for j in val]
+        modele = apprentissage(donnees_app)
+        erreurs = [(modele(x) - y) ** 2 for x, y in donnees_val]
+        scores.append(sum(erreurs) / len(erreurs))
+    return scores
+```
+
+Pour utiliser cette fonction, il suffit de fournir une fonction d'apprentissage qui renvoie un prédicteur, par exemple une régression linéaire écrite à la main. Le retour, une liste de k erreurs, se lit directement : on en calcule la moyenne avec statistics.mean et la dispersion avec statistics.pstdev. Si l'écart-type est élevé, c'est que le modèle se comporte différemment selon le sous-ensemble, signe que la variance reste élevée ou que le jeu de données est hétérogène.
+
+Le choix de k n'est pas anodin. Le cas k égal à cinq est un compromis répandu : cinq entraînements, une part d'entraînement suffisante dans chaque itération, et une validation assez volumineuse pour produire un score stable. Le cas k égal à dix donne des ensembles d'entraînement plus grands et des estimations encore moins variables, mais triple le coût par rapport à k égal à trois. À la limite, k égal à n, dit validation croisée du jack-knife, entraîne sur n moins un observations, ce qui est coûteux et souvent inutile. Dans l'autre sens, k égal à deux divise les données en deux moitiés : le score est très bruyant et l'entraînement gaspille la moitié des données à chaque tour.
+
+```table
+| Valeur de k | Part entraînée | Coût d'entraînement | Variance du score | Usage typique |
+| --- | --- | --- | --- | --- |
+| 2 | 50 % | très faible | très élevée | diagnostics rapides |
+| 5 | 80 % | modéré | faible | réglage d'hyperparamètres |
+| 10 | 90 % | élevé | très faible | estimation finale soignée |
+| n | n-1 sur n | prohibif | minimale | très petits jeux |
+```
+
+
+Il existe une variante indispensable en classification : la validation croisée stratifiée, qui répartit dans chaque pli la même proportion de classes que dans l'ensemble total. Sans elle, un pli peut ne contenir aucun exemple d'une classe rare, et la mesure de ce pli devient absurde. Le principe d'implémentation est identique, avec un groupement des indices par classe avant la répartition.
+
+Une subtilité importante concerne l'endroit où se fait la transformation des données. Les statistiques apprises, comme la moyenne ou l'écart-type utilisés pour normaliser, doivent être calculées à l'intérieur de chaque pli d'entraînement, puis appliquées au pli de validation correspondant. Les calculer une fois pour toutes sur le jeu complet revient à faire fuir l'information du pli de validation vers l'entraînement, ce qui ruine subtilement l'exercice. Ce point revient dans la section consacrée aux fuites, et il constitue l'erreur la plus fréquente des practitioners pressés.
+
+- La validation croisée transforme un score unique en moyenne et écart-type.
+- k plis : chaque observation valide exactement une fois.
+- k égal à cinq ou dix convient à la plupart des cas ; k égal à deux reste bruyant.
+- Stratifier quand les classes sont déséquilibrées.
+- Toute transformation apprise se réapprend dans chaque pli, jamais sur le jeu complet.
+
+## Choisir k et interpréter les écarts
+
+Passer de la théorie à la pratique demande de savoir lire un tableau de scores de validation croisée. Reprenons le banc d'essai du chapitre et mesurons, pour différentes valeurs de k, la moyenne et l'écart-type des erreurs. Le point à observer n'est pas le score le plus bas, mais la stabilité : un modèle dont le score moyen est très bon mais dont l'écart-type est important est un modèle dont on ne peut pas garantir le comportement sur de nouvelles données.
+
+```python
+import random
+import statistics
+
+random.seed(12)
+observations = []
+for _ in range(200):
+    xi = random.uniform(0, 10)
+    yi = 4 * xi - 3 + random.gauss(0, 6)
+    observations.append((xi, yi))
+
+
+def modele_lineaire(paires):
+    n = len(paires)
+    mx = sum(p[0] for p in paires) / n
+    my = sum(p[1] for p in paires) / n
+    var = sum((p[0] - mx) ** 2 for p in paires)
+    cov = sum((p[0] - mx) * (p[1] - my) for p in paires)
+    pente = cov / var if var else 0.0
+    return lambda x: pente * (x - mx) + my
+
+
+def evaluer(k, graine):
+    indices = list(range(len(observations)))
+    random.Random(graine).shuffle(indices)
+    taille = len(indices) // k
+    erreurs = []
+    for i in range(k):
+        val = indices[i * taille:(i + 1) * taille] if i < k - 1 else indices[i * taille:]
+        app = [j for j in indices if j not in val]
+        fit = modele_lineaire([observations[j] for j in app])
+        erreurs.append(sum((fit(observations[j][0]) - observations[j][1]) ** 2 for j in val) / len(val))
+    return statistics.mean(erreurs), statistics.pstdev(erreurs)
+
+
+for k in (2, 5, 10):
+    moyennes = [evaluer(k, g)[0] for g in (1, 2, 3)]
+    print("k =", k, "moyenne des moyennes =", round(statistics.mean(moyennes), 2))
+```
+
+Ce programme fait plus que calculer une moyenne : il répète l'expérience complète avec trois graines différentes et mesure la moyenne des moyennes. C'est l'expérience de pensée la plus utile du chapitre, car elle confronte directement la variance due au modèle à la variance due au protocole. Si l'écart entre graines est comparable à l'écart observé entre deux modèles candidats, alors la comparaison des modèles est elle-même non concluante, et il faut soit augmenter k, soit répéter davantage l'expérience, soit collecter plus de données.
+
+Une heuristique simple guide la décision. Si le score moyen d'un modèle dépasse celui d'un autre d'au moins deux écarts-types, la différence est robuste et le choix est arbitré. Si l'écart est inférieur à un écart-type, les deux modèles sont statistiquement indistinguables, et l'on choisira le plus simple, le plus rapide ou le plus interprétable. Cette règle, appliquée avec discipline, élimine une grande part des comparaisons interminables où deux équipes défendent chacune son architecture favorite sur la base d'un écart de quelques dixièmes.
+
+Le tableau de synthèse suivant montre comment présenter honnêtement les résultats d'une comparaison.
+
+```table
+| Modèle | k | Moyenne erreur | Écart-type | Verdict |
+| --- | --- | --- | --- | --- |
+| Régression linéaire | 5 | 36,4 | 2,1 | référence stable |
+| Voisin à 1 | 5 | 48,9 | 9,7 | variance excessive |
+| Voisin à 7 | 5 | 35,8 | 2,4 | comparable, plus lent |
+| Moyenne constante | 5 | 92,3 | 4,5 | sous-ajustement manifeste |
+```
+
+
+La ligne du voisin à un voisin est instructive : son écart-type, quatre fois supérieur à celui des autres, trahit une dépendance extrême au découpage. Une équipe pressée qui n'aurait regardé que la moyenne pourrait conclure à la supériorité du voisin à sept, alors que la vraie information est ailleurs : le voisin à un voisin est instable, donc impropre à la production, quel que soit son score un jour donné.
+
+Un dernier point sur le coût. La validation croisée multiplie le temps d'entraînement par k, et pour des modèles entraînés sur plusieurs heures, k égal à dix devient prohibitif. Deux pratiques professionnelles atténuent le problème. La première utilise une validation croisée à faible k pour l'exploration rapide des hyperparamètres, puis une estimation finale à k élevé une seule fois, sur la configuration retenue. La seconde réserve la validation croisée aux modèles instables et aux petits jeux, en se contentant d'un simple découpage multiplié par quelques graines lorsque le modèle est parfaitement déterministe et le jeu abondant.
+
+- Un écart-type élevé signale l'instabilité, pas seulement une performance moyenne.
+- Répéter l'expérience avec plusieurs graines mesure la variance du protocole.
+- Un écart supérieur à deux écarts-types justifie un choix ; sinon, préférez le plus simple.
+- Réservez la validation croisée fine à l'étape de réglage, une fois la structure fixée.
+- Le coût de la validation croisée est un critère de choix à part entière.
+
+## Régularisation : retenir le modèle
+
+La régularisation est l'ensemble des techniques qui limitent volontairement la capacité d'un modèle pendant l'apprentissage, afin qu'il se concentre sur le signal généralisable et abandonne les accidents de l'échantillon. L'idée est contre-intuitive au premier abord : on améliore un modèle en l'empêchant de bien apprendre sur ses propres données. Elle repose pourtant sur une observation empirique incontestable, celle que vous venez de voir dans la section précédente : un modèle qui descend jusqu'à une erreur nulle sur l'entraînement a souvent cessé d'être utile.
+
+Le mécanisme le plus répandu consiste à ajouter à la fonction d'erreur un terme de pénalité proportionnel à l'amplitude des coefficients. Le modèle doit alors arbitrer entre expliquer les données et garder des coefficients raisonnables. Si une variable n'apporte que du bruit, il lui coûte moins cher de lui attribuer un coefficient proche de zéro que de lui donner une valeur importante qui améliore à peine l'ajustement. La pénalisation agit donc comme un filtre de pertinence : elle favorise les relations stables et étouffe les corrélations de hasard.
+
+La variante la plus utilisée est la régularisation dite L2, ou ridge, qui pénalise la somme des coefficients au carré. Sa force est réglée par un hyperparamètre lambda. Quand lambda est nul, on retrouve la régression ordinaire ; quand lambda grandit, les coefficients se contractent vers zéro et le modèle s'aplatit vers une droite horizontale, c'est-à-dire vers la moyenne constante. Entre ces deux extrêmes se trouve la valeur qui minimise l'erreur en validation. La variante L1, ou lasso, pénalise la somme des valeurs absolues et a la propriété remarquable d'annuler exactement certains coefficients, ce qui réalise une sélection automatique des variables.
+
+```python
+import random
+
+
+def generer(n=150, graine=5):
+    alea = random.Random(graine)
+    donnees = []
+    for _ in range(n):
+        x1 = alea.uniform(0, 10)
+        x2 = alea.uniform(0, 10)
+        x3 = alea.uniform(0, 10)
+        y = 3 * x1 + 0.05 * x2 + 0.03 * x3 + alea.gauss(0, 5)
+        donnees.append(([x1, x2, x3], y))
+    return donnees
+
+
+def ridge(donnees, lamb=1.0, iterations=400, pas=0.001):
+    nb_var = len(donnees[0][0])
+    poids = [0.0] * nb_var
+    ordonnee = 0.0
+    n = len(donnees)
+    for _ in range(iterations):
+        grad = [0.0] * nb_var
+        g0 = 0.0
+        for x, y in donnees:
+            pred = sum(w * xi for w, xi in zip(poids, x)) + ordonnee
+            ecart = pred - y
+            for j in range(nb_var):
+                grad[j] += ecart * x[j]
+            g0 += ecart
+        for j in range(nb_var):
+            poids[j] -= pas * (2 * grad[j] / n + 2 * lamb * poids[j])
+        ordonnee -= pas * 2 * g0 / n
+    return poids, ordonnee
+
+
+donnees = generer()
+for lamb in (0.0, 0.01, 1.0, 100.0):
+    w, b = ridge(donnees, lamb=lamb)
+    print("lambda", lamb, "poids", [round(v, 2) for v in w])
+```
+
+En faisant varier lambda, vous observez exactement le comportement décrit : les coefficients significatifs, ici la première variable qui porte réellement la relation, restent proches de leur valeur vraie, tandis que les deux variables parasites, qui ne portent que du bruit, sont progressivement écrasées vers zéro. Le modèle devient plus court, plus stable et plus lisible, au prix d'un léger biais supplémentaire. C'est précisément l'arbitrage biais-variance en action.
+
+Il est essentiel de comprendre que la régularisation ne remplace pas la validation croisée, elle en dépend. Le paramètre lambda est un hyperparamètre : il n'existe pas de valeur universellement bonne, et sa détermination passe par une recherche sur des ensembles de validation. La pratique courante consiste à tester une grille de valeurs logarithmiques, par exemple de 0,001 à 1000, à évaluer chaque valeur en validation croisée, puis à retenir celle qui obtient le meilleur score moyen. Le modèle final est ensuite réentraîné sur l'ensemble d'entraînement avec le lambda retenu, et le test n'est consulté qu'une seule fois.
+
+Un mot sur l'arrêt anticipé, troisième forme de régularisation, particulièrement courante dans l'apprentissage profond. Plutôt que de pénaliser les coefficients, on surveille l'erreur de validation pendant l'entraînement et on interrompt l'apprentissage au moment où elle cesse de diminuer. Le modèle est alors sauvé à son meilleur état, avant le point où il commence à mémoriser. Le principe est identique à celui de la pénalisation : introduire une limite artificielle pour empêcher la mémorisation pure.
+
+```table
+| Régularisation | Ce qu'elle pénalise | Effet principal | Usage typique |
+| --- | --- | --- | --- |
+| L2 (ridge) | somme des coefficients au carré | coefficients petits mais non nuls | variables corrélées, défaut |
+| L1 (lasso) | somme des valeurs absolues | sélection de variables exacte | beaucoup de variables inutiles |
+| Arrêt anticipé | durée de l'apprentissage | stoppe avant la mémorisation | modèles itératifs |
+| Dropout | neurones aléatoires | évite la dépendance à une voie | réseaux de neurones |
+```
+
+
+La régularisation trouve sa limite dans deux situations. Si le modèle est structurellement trop simple pour capturer la relation, pénaliser davantage ne fait qu'aggraver le sous-ajustement. Et si le jeu de données est minuscule, aucun réglage de lambda ne compensera le manque d'exemples : il faut alors collecter des données, simplifier la tâche ou recourir à des méthodes de réplication raisonnée. La régularisation est un puissant correctif de complexité excessive, pas un remède universel.
+
+- La régularisation pénalise la complexité pour favoriser la généralisation.
+- L2 contracte les coefficients, L1 annule les variables superflues.
+- Lambda est un hyperparamètre : il se choisit en validation croisée.
+- L'arrêt anticipé est la régularisation temporelle des modèles itératifs.
+- Pénaliser ne corrige pas un modèle trop simple ni un jeu de données trop petit.
+
+## Courbes d'apprentissage : voir le diagnostic
+
+Une courbe d'apprentissage trace l'évolution de l'erreur d'entraînement et de l'erreur de validation en fonction d'une quantité : la taille de l'échantillon, le nombre d'itérations ou la profondeur du modèle. C'est l'outil de diagnostic le plus parlant qui existe, car il transforme une discussion abstraite sur les performances en une image dont la forme suffit à prescrire le remède. Trois formes typiques suffisent à couvrir la majorité des situations rencontrées.
+
+La première forme est celle du sous-apprentissage : les deux courbes sont hautes et se rejoignent. Le modèle ne parvient pas à capturer la relation, aussi bien sur l'entraînement que sur la validation. Agrandir le jeu de données ne changera rien, car le modèle ne manque pas d'exemples, il manque de capacité ou de bonnes variables. La seconde forme est celle du surapprentissage : l'erreur d'entraînement est très basse, l'erreur de validation est haute, et l'écart se creuse à mesure que la taille de l'échantillon augmente. La troisième forme est celle du modèle sain : les deux courbes sont basses, proches, et l'erreur de validation décroît doucement quand on ajoute des données, signe qu'un peu plus de données améliorerait encore les choses.
+
+```text
+sous-ajustement          surapprentissage         situation saine
+error |______            error  \                 error
+      |      \                   \                       \
+      |       \___                 \                       \__
+      |___________\                 \_______________         \___
+          taille echantillon             taille echantillon
+   les deux courbes se rejoignent   ecart qui se creuse    convergence basse
+```
+
+Construire une telle courbe sans bibliothèque est un exercice limpide, et il vaut la peine de l'avoir écrit une fois pour comprendre ce que les outils automatiques font sous le capot. On fait varier la taille de l'ensemble d'entraînement, pour chaque taille on réentraîne le modèle sur plusieurs sous-échantillons tirés avec des graines différentes, on mesure l'erreur sur un ensemble de validation fixe, puis on affiche la moyenne des erreurs. L'ensemble de validation reste identique d'une itération à l'autre, afin que la comparaison porte uniquement sur la quantité de données d'entraînement.
+
+```python
+import random
+import statistics
+
+random.seed(21)
+donnees = []
+for _ in range(400):
+    xi = random.uniform(0, 10)
+    yi = 2 * xi + 12 + random.gauss(0, 5)
+    donnees.append((xi, yi))
+
+random.Random(0).shuffle(donnees)
+validation = donnees[:120]
+apprentissage = donnees[120:]
+
+
+def ajuster(paires):
+    n = len(paires)
+    mx = sum(p[0] for p in paires) / n
+    my = sum(p[1] for p in paires) / n
+    var = sum((p[0] - mx) ** 2 for p in paires)
+    cov = sum((p[0] - mx) * (p[1] - my) for p in paires)
+    pente = cov / var if var else 0.0
+    return lambda x: pente * (x - mx) + my
+
+
+def erreur(fonction, paires):
+    return statistics.mean((fonction(x) - y) ** 2 for x, y in paires)
+
+
+for taille in (20, 40, 80, 160, 280):
+    scores = []
+    for graine in range(5):
+        tirage = list(apprentissage)
+        random.Random(graine).shuffle(tirage)
+        fit = ajuster(tirage[:taille])
+        scores.append(erreur(fit, validation))
+    print("taille", taille, "erreur validation", round(statistics.mean(scores), 2))
+```
+
+Lecture de la sortie : si l'erreur de validation diminue puis se stabilise, le modèle a exploité ce que les données pouvaient lui donner, et collecter encore des données du même type n'apportera presque rien. Si l'erreur de validation diminue régulièrement sans se stabiliser, la collecte reste rentable. Si elle augmente avec la quantité d'entraînement, quelque chose cloche dans le protocole : une fuite, un bug de prétraitement ou une distribution qui change d'un ensemble à l'autre. Cette dernière situation, bien que rare, est celle qu'il faut détecter immédiatement.
+
+La courbe d'hyperparamètre, ou validation curve, est la sœur jumelle de la précédente : au lieu de faire varier la taille de l'échantillon, on fait varier la complexité, par exemple lambda ou la profondeur maximale. Elle produit typiquement une erreur d'entraînement qui décroît avec la complexité et une erreur de validation en U, dont le minimum indique la valeur retenue. Tracer cette courbe avant de lancer une recherche exhaustive sur une grille d'hyperparamètres fait gagner un temps considérable, car elle révèle immédiatement l'ordre de grandeur pertinent et évite de tester des valeurs absurdes.
+
+Un piège méthodologique accompagne ces courbes : il ne faut pas choisir l'hyperparamètre et estimer sa performance sur le même ensemble de validation. Le minimum de la courbe est optimiste, parce qu'il a été sélectionné parmi plusieurs candidats. On en corrige l'optimisme en réévaluant la configuration retenue sur un ensemble vierge, ou, mieux, en validation croisée imbriquée, où la sélection de l'hyperparamètre a lieu à l'intérieur de chaque pli d'entraînement. Pour un travail courant, un compromis honnête consiste à réserver un test jamais touché pendant la phase de réglage.
+
+- Le sous-apprentissage : courbes hautes et jointes, la complexité manque.
+- Le surapprentissage : entraînement très bas, validation haute, écart qui se creuse.
+- Une validation qui décroît encore signifie que collecter des données reste utile.
+- Les courbes d'hyperparamètres orientent la recherche avant de la rendre exhaustive.
+- Ne sélectionnez jamais et n'évaluez pas sur le même ensemble.
+
+## Fuites de données : la triche invisible
+
+La fuite de données, ou data leakage, désigne toute situation où une information qui ne devrait pas être connue au moment de l'entraînement a influencé les paramètres du modèle. Le symptôme est trompeur : les scores internes sont excellents, souvent trop, et les performances réelles en production sont bien inférieures. Comme rien ne signale l'anomalie dans le code, la fuite passe inaperçue jusqu'au jour du déploiement. C'est pour cette raison qu'elle mérite une section entière et une chasse méthodique.
+
+Il existe deux grandes familles. La première concerne la cible : une variable qui encode directement ou indirectement la réponse se retrouve parmi les entrées. L'exemple classique concerne les données bancaires, où une colonne indiquant qu'une demande a été refusée n'existe que parce que la décision a été prise, ce qui trahit l'issue du processus. Toute colonne créée après l'événement à prédire est suspecte par défaut, et la moindre colonne dont le nom évoque une décision, un statut ou un résultat doit être interrogée.
+
+La seconde famille concerne les statistiques calculées sur l'ensemble du jeu de données avant le découpage : normalisation, réduction de dimension, encodage des catégories rares, sélection des variables les plus corrélées à la cible. L'information ainsi synthétisée provient aussi bien de l'entraînement que du test, et le modèle l'utilise pendant son apprentissage. Le score de validation devient optimiste, parfois de plusieurs points, sans qu'aucune ligne de code ne paraisse incorrecte.
+
+```python
+import random
+
+random.seed(4)
+lignes = []
+for i in range(100):
+    x = random.gauss(0, 1)
+    y = 1 if x + random.gauss(0, 0.5) > 0 else 0
+    lignes.append((i, x, y))
+
+indices = list(range(len(lignes)))
+random.shuffle(indices)
+app_indices, val_indices = indices[:70], indices[70:]
+
+mauvais = sum(lignes[i][2] for i in range(len(lignes))) / len(lignes)
+correct = sum(lignes[i][2] for i in app_indices) / len(app_indices)
+print("stat globale fuitante :", round(mauvais, 2))
+print("stat honnete          :", round(correct, 2))
+
+fuite = [lignes[i][2] for i in val_indices]
+print("part de la cible lue depuis le cote entrainement :", round(sum(fuite) / len(fuite), 2))
+```
+
+Ce programme montre la fuite la plus scolaire : calculer une proportion de classe sur toutes les lignes avant de découper. La différence paraît minuscule sur ce jeu réduit, mais elle s'amplifie avec la déséquilibre, le nombre de colonnes et les transformations successives. Chaque opération faite avant la coupe ajoute une couche de contamination, et leur effet cumulé peut faire passer un modèle médiocre de 0,70 à 0,90 de score apparent.
+
+Les fuites les plus redoutables sont celles qui ne se voient pas dans le code, parce qu'elles résident dans les données elles-mêmes. Trois situations typiques méritent d'être mémorisées. D'abord, les doublons : si un même client, un même patient ou une même transaction apparaît à la fois dans l'entraînement et dans le test, le modèle reconnaît la réponse au lieu de la déduire. Ensuite, la redondance temporelle : des colonnes décrivant le futur, comme un montant total calculé sur toute la période alors qu'on prédit un mois précis. Enfin, la cible codée : une catégorie dont le libellé intègre la classe, ou un identifiant attribué en fonction de l'issue.
+
+Le schéma suivant résume le trajet de la contamination et l'endroit où la bloquer.
+
+```text
+donnees brutes
+     |
+     |  stat globale, encodage, selection    <-- CONTAMINATION ICI
+     v
+[ transformes ] -------------------------------+
+     |                                          |
+     |  coupe                                   |  information du test
+     v                                          |  remonte vers l'entrainement
+ [ train ]        [ val ]        [ test ] <------+
+     |
+     |  apprentissage honnete (stats reapprises sur train)
+     v
+   modele  -->  score honnete
+```
+
+La parade tient en une règle opérationnelle : construire un pipeline de traitement qui s'adapte aux données, c'est-à-dire une chaîne dont chaque étape apprend ses paramètres sur le pli d'entraînement courant, puis les réapplique au pli de validation. Les bibliothèques modernes formalisent ce principe sous le nom de pipeline, mais l'idée se résume en une phrase à retenir : les statistiques appartiennent au pli où elles ont été apprises. Si vous écrivez votre propre code, comme dans cette leçon, vous appliquez manuellement la même discipline en calculant moyenne et écart-type à partir des seules données d'entraînement du pli courant.
+
+Il reste une forme de fuite plus insidieuse encore, qui ne provient pas du code mais de la répétition des essais. Si vous testez cinquante modèles et ne communiquez que le meilleur, vous avez implicitement sélectionné sur le jeu de test, qui s'est alors transformé en validation. Le score du meilleur modèle est optimiste par construction, car parmi cinquante candidats, l'un d'eux profitera du hasard. Cette fuite expérimentale se soigne en gardant un test final intact, consulté une seule fois, et en rapportant toujours le nombre d'essais effectués.
+
+- Une colonne créée après l'événement à prédire est suspecte d'emblée.
+- Toute statistique calculée avant la découpe contamine les ensembles suivants.
+- Les doublons entre entraînement et test produisent des scores fictifs.
+- Les statistiques se réapprennent dans chaque pli, jamais sur le jeu complet.
+- Tester beaucoup de modèles et retenir le meilleur use le test : gardez-le intact.
+
+## Reconnaître une fuite : la check-list
+
+La détection d'une fuite ne se fait pas avec un outil magique, mais avec une suite de questions posées systématiquement à chaque colonne et à chaque étape de traitement. Cette check-list, appliquée avant même le premier entraînement, fait gagner les semaines de diagnostic qui suivent habituellement un déploiement raté. Elle se lit en cinq minutes et se vérifie en une heure sur un jeu de données neuf.
+
+Première question : chaque colonne existait-elle, et portait-elle exactement la même valeur, au moment où la prédiction aurait dû être faite ? Si la réponse est non, la colonne est interdite. Deuxième question : quelle part des lignes contient des informations calculées à partir de l'ensemble du jeu, y compris le test ? La troisième question : y a-t-il des doublons, des groupes ou des redondances qui font qu'une même entité apparaît des deux côtés de la coupe ? La quatrième : le découpage respecte-t-il l'ordre du temps ? La cinquième : combien de modèles ont été essayés, et sur quel ensemble a-t-on choisi ?
+
+Une technique de détection extrêmement efficace consiste à entraîner le modèle sur des données volontairement corrompues, par exemple en remplaçant toutes les colonnes sauf la cible par des valeurs aléatoires. Un modèle honnête obtient alors un score proche du hasard. S'il obtient un score nettement supérieur, c'est que de l'information sur la cible subsiste ailleurs : fuite confirmée. Cet essai, qui coûte quelques secondes, élimine d'un coup la moitié des hypothèses lorsqu'un score paraît trop beau.
+
+```python
+import random
+
+random.seed(8)
+cible = [random.randint(0, 1) for _ in range(300)]
+features = [[random.gauss(0, 1) for _ in range(5)] for _ in range(300)]
+
+
+def apprentissage_simple(paires):
+    n = len(paires)
+    moy = sum(p[1] for p in paires) / n
+    return lambda x: moy
+
+
+def evaluer(features, cible):
+    paires = list(zip(features, cible))
+    entrainement, test = paires[:240], paires[240:]
+    fit = apprentissage_simple(entrainement)
+    erreurs = [(fit(x) - y) ** 2 for x, y in test]
+    return sum(erreurs) / len(erreurs)
+
+
+print("score sur donnees purement aleatoires :", round(evaluer(features, cible), 2))
+print("score theorique du hasard :", round(0.5 ** 2, 2))
+```
+
+Cet exemple sert de témoin : quand tout est aléatoire, le score doit retomber au niveau théorique du hasard. Toute valeur sensiblement meilleure signale qu'une information a fuité. Vous pouvez adapter le test en simulant une fuite volontaire, par exemple en ajoutant une colonne qui dépend de la cible, et vérifier que votre procédure la détecte : il vaut mieux valider son détecteur de fuites quand on sait qu'il y a une fuite.
+
+La communication fait partie intégrante du travail. Un rapport de validation digne de confiance expose le protocole avant les résultats : taille et structure des ensembles, graines utilisées, transformations appliquées et leur ordre par rapport à la coupe, nombre de configurations testées, score moyen et dispersion. Ce format, un peu plus long à rédiger, a l'avantage de rendre toute anomalie visible pour un lecteur extérieur, qui repérera en une phrase ce que vous n'avez pas vu en une journée.
+
+- Posez les cinq questions à chaque colonne avant d'entraîner quoi que ce soit.
+- Le test d'entraînement sur bruit pur doit retomber au niveau du hasard.
+- Simulez une fuite pour vérifier que votre procédure la détecte.
+- Rapportez le nombre d'essais effectués, pas seulement le meilleur score.
+- Un protocole décrit avant les résultats rend le rapport vérifiable.
+
+## Protocole complet : du fichier brut à la décision
+
+Tout ce qui précède se rassemble dans un protocole en six étapes, que vous pourrez appliquer à n'importe quel projet sans rien oublier. La première étape consiste à figer la question et la métrique : que prédit-on, à quel horizon, et quel coût attribue-t-on à chaque type d'erreur ? Sans cette réponse, toute la suite est du bruit, car le choix d'une métrique et d'un seuil n'a pas de sens détaché de la décision qu'ils vont éclairer.
+
+La deuxième étape est le découpage initial, effectué une seule fois et documenté, avec graine, proportions et logique de stratification ou de groupement. La troisième étape enchaîne les transformations dans l'ordre strict : ce qui s'apprend, s'apprend à l'intérieur du pli. La quatrième étape conduit la recherche d'hyperparamètres par validation croisée sur l'ensemble d'entraînement, sans jamais consulter le test. La cinquième étape réentraîne la configuration retenue sur tout l'ensemble d'entraînement, y compris la validation, puis évalue une seule fois sur le test. La sixième étape rédige le rapport.
+
+```python
+import random
+import statistics
+
+
+def protocole(observations, k=5, graine=13):
+    indices = list(range(len(observations)))
+    alea = random.Random(graine)
+    alea.shuffle(indices)
+    taille = len(indices) // k
+    moyennes = []
+    for i in range(k):
+        val = indices[i * taille:(i + 1) * taille] if i < k - 1 else indices[i * taille:]
+        app = [j for j in indices if j not in val]
+        paires_app = [observations[j] for j in app]
+        paires_val = [observations[j] for j in val]
+        mx = sum(p[0] for p in paires_app) / len(paires_app)
+        my = sum(p[1] for p in paires_app) / len(paires_app)
+        var = sum((p[0] - mx) ** 2 for p in paires_app)
+        cov = sum((p[0] - mx) * (p[1] - my) for p in paires_app)
+        pente = cov / var if var else 0.0
+        erreurs = [(pente * (x - mx) + my - y) ** 2 for x, y in paires_val]
+        moyennes.append(sum(erreurs) / len(erreurs))
+    return statistics.mean(moyennes), statistics.pstdev(moyennes)
+
+
+random.seed(3)
+donnees = [(x, 3 * x + 7 + random.gauss(0, 4)) for x in [random.uniform(0, 10) for _ in range(150)]]
+moy, ect = protocole(donnees)
+print("score final :", round(moy, 2), "+/-", round(ect, 2))
+```
+
+Le rapport qui découle de ce protocole contient toujours les mêmes rubriques, et leur ordre n'est pas neutre. On y décrit d'abord les données et leur découpage, puis les transformations et leur position par rapport à la coupe, ensuite les modèles testés avec le nombre de configurations essayées, enfin les scores moyens et dispersés pour chaque modèle retenu. Les résultats arrivent à la fin, une fois le terrain préparé, de sorte que le lecteur peut juger de leur fiabilité avant de les interpréter.
+
+Un tableau de synthèse final suffit souvent à résumer des semaines de travail et à déclencher la décision.
+
+```table
+| Étape | Ce qu'on fait | Ce qu'on ne fait surtout pas |
+| --- | --- | --- |
+| Découpage | figer graine, proportions, stratification | regénérer le test à chaque essai |
+| Transformations | apprendre dans le pli d'entraînement | calculer des stats sur le jeu complet |
+| Réglage | grille et validation croisée | choisir sur le test |
+| Évaluation | une mesure unique sur le test | consulter le test en boucle |
+| Rapport | moyenne, dispersion, nombre d'essais | communiquer le meilleur score seul |
+```
+
+
+La dernière étape du protocole est souvent la plus rentable : l'analyse des erreurs. Plutôt que de s'arrêter au chiffre global, on regarde les cas où le modèle se trompe le plus, on cherche une structure dans ces erreurs, et l'on découvre parfois qu'un modèle au score modeste est excellent sur les cas qui comptent et médiocre sur des cas sans enjeu, ou l'inverse. Un score global n'est qu'un résumé ; l'analyse des erreurs en révèle la substance.
+
+- Fixez la question et la métrique avant tout calcul.
+- Découpez une fois, puis ne touchez plus jamais au test.
+- Placez chaque transformation après la coupe, apprise sur le seul entraînement.
+- Cherchez les hyperparamètres en validation croisée, rapportez moyenne et dispersion.
+- Terminez par l'analyse des erreurs : elle explique ce que le chiffre global cache.
+
+## À retenir
+
+- Un score n'a de sens qu'accompagné de son protocole : données, découpage, métrique, répétitions.
+- L'erreur de généralisation n'est jamais observée, on l'estime sur des données cachées.
+- Le surapprentissage se lit en deux nombres : erreur d'entraînement très basse, erreur de test nettement supérieure.
+- Biais élevé et erreurs proches signalent un modèle trop simple ; variance élevée et écart large signalent un modèle trop flexible ou des données rares.
+- Trois ensembles, trois rôles : entraînement pour apprendre, validation pour choisir, test pour conclure une seule fois.
+- Le test ne se consulte jamais pendant le réglage, sous peine de se transformer en validation.
+- La validation croisée en k plis transforme un score unique en moyenne et écart-type, en utilisant chaque observation une fois pour valider.
+- k égal à cinq convient au réglage courant, k égal à dix à l'estimation finale soignée ; k égal à deux reste trop bruyant.
+- Stratifier en classification déséquilibrée, grouper par entité, découper chronologiquement pour les séries temporelles.
+- La régularisation pénalise les coefficients : L2 contracte, L1 sélectionne, l'arrêt anticipé limite la durée d'apprentissage.
+- Lambda est un hyperparamètre et se choisit en validation croisée, jamais à l'œil sur le test.
+- Les courbes d'apprentissage distinguent sous-ajustement, surapprentissage et situation saine en un coup d'œil.
+- Une fuite, c'est de l'information future ou de la cible qui contamine l'entraînement : le score interne devient faux.
+- Toute statistique s'apprend dans le pli d'entraînement courant, puis se réapplique au pli de validation.
+- Les doublons d'entités entre ensembles et les colonnes créées après l'événement sont les fuites les plus fréquentes.
+- Un modèle entraîné sur des données purement aléatoires doit retomber au niveau du hasard : c'est votre test de fuite.
+- Rapportez toujours la moyenne, la dispersion et le nombre de configurations essayées.
+
+## Erreurs fréquentes
+
+- Calculer la moyenne ou l'écart-type de normalisation sur le jeu complet avant de découper : la fuite la plus répandue qui soit.
+- Utiliser le jeu de test pour choisir entre plusieurs modèles, puis se vanter du score obtenu sur ce même test.
+- Se contenter d'un seul découpage et conclure à partir d'un score dépourvu de dispersion.
+- Oublier de fixer la graine et comparer ensuite deux modèles sur des ensembles différents.
+- Appliquer un découpage aléatoire à des données temporelles, ce qui fait apprendre au modèle le futur pour prédire le passé.
+- Laisser les doublons d'une même entité se retrouver des deux côtés de la coupe.
+- Penser qu'augmenter le nombre d'itérations corrigera un surapprentissage, alors que cela l'aggrave.
+- Choisir k égal à dix par réflexe sur un jeu de données minuscule, ce qui réduit l'entraînement à presque rien.
+- Interpréter un écart-type élevé comme un détail statistique alors qu'il trahit l'instabilité du modèle.
+- Déployer un modèle sans réévaluer sa performance sur une période récente, postérieure à l'entraînement.
+
+## Pour aller plus loin
+
+Les ressources officielles suivantes sont regroupées dans le même ordre que la progression de cette leçon, et chacune correspond à une section précise. Copiez simplement les adresses dans la barre d'adresse de votre navigateur : https://scikit-learn.org/stable/modules/cross_validation.html présente la validation croisée, le choix de k et les variantes stratifiées avec des exemples complets. https://scikit-learn.org/stable/modules/learning_curve.html détaille les courbes d'apprentissage et leur interprétation en termes de biais et de variance. https://scikit-learn.org/stable/modules/linear_model.html#ridge-regression décrit la régression ridge et le rôle du paramètre de pénalisation.
+
+Pour approfondir la question des fuites, le document de référence de Google sur les bonnes pratiques de machine learning consacre plusieurs sections au découpage des données et à la détection des fuites, à l'adresse https://developers.google.com/machine-learning/rules-of-ml#splitting-your-data . La documentation de la bibliothèque scikit-learn, quant à elle, contient un guide complet sur la construction de pipelines qui respectent la frontière entre ensembles, à l'adresse https://scikit-learn.org/stable/modules/compose.html . Ces pages se lisent une première fois de bout en bout, puis servent de référence ponctuelle : ouvrez-les le jour où un score vous paraîtra suspect, et revenez-y quand un doute précis se présentera.
+
+## Et maintenant : la vidéo du chapitre
+
+La vidéo du chapitre reprend la même progression en la montrant s'écrire sous vos yeux : le découpage avec une graine fixe, la boucle de validation croisée en k plis, l'ajout du terme de pénalisation dans la fonction d'erreur, puis la recherche systématique d'une fuite dans un jeu de données volontairement corrompu. Regardez-la avec votre éditeur ouvert à côté de vous et rejouez chaque bloc en pause, en changeant les graines pour observer comment les scores bougent. Une fois la visionnage terminé, passez à l'exercice pratique, où vous écrirez seul le banc d'essai complet : données synthétiques, découpage, régression à la main, validation croisée et verdict sur le surapprentissage. C'est là que les notions de cette leçon deviennent des réflexes, et le quiz final vérifiera les quatre points essentiels : lire un écart train-test, justifier le choix de k, appliquer la règle d'or des transformations après la coupe et reconnaître une fuite de données.

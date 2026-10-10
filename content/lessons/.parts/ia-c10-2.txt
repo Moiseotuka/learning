@@ -1,0 +1,140 @@
+Une fois la série décomposée, reste une question plus modeste et plus fréquente : comment regarder une courbe sans se laisser abuser par ses accidents du jour ? C'est le rôle du lissage. Il ne s'agit pas encore de prévoir, mais d'isoler ce qui dure de ce qui clignote, pour que l'œil et les calculs portent sur la bonne chose. Le lissage est un outil d'exploration et un socle de prévision, mais c'est aussi un piège redoutable pour la détection d'anomalies, puisqu'il a exactement pour effet d'atténuer ce que vous cherchez peut-être à repérer. Employez-le donc en connaissance de cause, toujours en demandant à quoi il sert dans votre cas précis.
+
+## Moyennes mobiles : lisser sans trahir
+
+Le principe d'une moyenne mobile est d'araser les fluctuations brèves en remplaçant chaque valeur par la moyenne d'une fenêtre de valeurs voisines. Sur une série journalière, une fenêtre de sept jours remplace le mardi 14 par la moyenne du 8 au 14 : le pic ou la crevasse d'un seul jour disparaît, tandis que le niveau de la semaine reste. Plus la fenêtre est large, plus le lissage est fort ; plus elle est étroite, plus la courbe reste fidèle au détail. Toute la difficulté réside donc dans le choix de la largeur, qui n'est pas un réglage technique mais un choix de lecture : une fenêtre de 30 jours vous donne le mois, une fenêtre de 365 jours vous donne l'année, et il n'existe pas de valeur universelle.
+
+Deux variantes coexistent, et il faut savoir laquelle vous utilisez. La moyenne mobile centrée place la fenêtre de part et d'autre du point courant : la lecture est symétrique et ne décale pas la courbe, mais elle emprunte des valeurs futures, ce qui l'interdit dès qu'une prévision est en jeu. La moyenne mobile glissante, ou traînante, s'arrête au point courant et ne regarde que le passé : elle convient à toute chaîne de décision, au prix d'un léger retard sur les inflexions. Une décomposition faite à des fins d'analyse tolère la version centrée ; une baseline de prévision doit utiliser la version glissante, sans exception, sous peine de lire dans une boule de cristal.
+
+Trois effets de bord méritent d'être anticipés. Le premier est mécanique : les premiers et derniers points n'ont pas de fenêtre complète et la moyenne renvoie une valeur manquante. Le second est l'écrasement des pics : une promotion, un jour de canicule ou une fête de rue disparaît sous la moyenne, et si vous utilisez votre lissage comme référence pour alerter, l'événement ne déclenchera rien. Le troisième est le déphasage : une tendance qui s'infléchit aujourd'hui ne se voit dans la courbe glissante qu'au bout de plusieurs jours, délai égal à la moitié de la fenêtre. Connaître ces trois comportements suffit à éviter les mauvaises surprises d'interprétation.
+
+Le lissage exponentiel résout une partie de ces défauts en pondérant les valeurs d'autant moins qu'elles sont anciennes, avec un facteur de oubli constant appelé alpha. Plutôt qu'une fenêtre qui coupe net et où chaque valeur pèse autant, chaque observation reçoit un poids qui décroît géométriquement : les dix derniers jours comptent, les cent derniers pèsent encore un peu, le premier jour de l'historique est pratiquement oublié. Deux avantages découlent de cette construction : il n'y a plus de fenêtre arbitraire à fixer, et la moyenne réagit plus vite qu'une moyenne mobile de portée équivalente. Dans pandas, une seule ligne suffit, et alpha devient le seul paramètre à justifier.
+
+Comment choisir entre les deux familles ? Posez-vous la question de la mémoire que vous voulez accorder à la mesure. Si vous cherchez le niveau d'une semaine sans opinion sur le mois précédent, la moyenne mobile glissante de sept jours vous donne exactement cela, sans calcul supplémentaire et avec une lisibilité immédiate : tout le monde comprend la phrase « moyenne des sept derniers jours ». Si vous voulez une référence qui se souvient de tout l'historique tout en privilégiant le récent, le lissage exponentiel est plus propre, parce qu'il n'a ni bord à perdre ni fenêtre à justifier. Dans la pratique industrielle, on commence par la moyenne mobile parce qu'elle s'explique en réunion, puis on passe à l'exponentiel quand la série change de régime plus vite qu'une fenêtre fixe ne le permet.
+
+Le tableau suivant réunit les trois familles de lissage et dit à quoi chacune sert réellement.
+
+| Méthode | Principe | Effet principal | Usage recommandé |
+| --- | --- | --- | --- |
+| Moyenne mobile centrée | Moyenne de la fenêtre autour du point | Lisse sans décaler, mais lit le futur | Composante de tendance dans une décomposition |
+| Moyenne mobile glissante | Moyenne des n dernières valeurs | Lisse avec un retard d'environ n sur deux | Baseline, tendance en direct, contrôle qualité |
+| Lissage exponentiel | Pondération décroissante par alpha | Réagit vite, sans fenêtre coupée | Niveau stable, mesure de référence actualisée |
+
+```python
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(11)
+dates = pd.date_range("2025-01-01", periods=90, freq="D")
+t = np.arange(90)
+serie = pd.Series(
+    115 + 0.4 * t
+    + 12 * np.sin(2 * np.pi * t / 7)
+    - 45 * (dates.dayofweek == 0)
+    + rng.normal(0, 7, 90),
+    index=dates,
+    name="kwh",
+)
+
+glissante = serie.rolling(7, min_periods=1).mean()
+centree = serie.rolling(7, center=True, min_periods=1).mean()
+expo = serie.ewm(alpha=0.3, adjust=False).mean()
+
+ecart = serie - glissante
+print("ecart-type brut        :", round(serie.std(), 1))
+print("ecart-type apres lissage:", round(glissante.std(), 1))
+print("nombre de valeurs ignorees en tete :",
+      int(serie.rolling(7).mean().isna().sum()))
+print(ecart.abs().nlargest(3).round(1))
+```
+
+Exécutez ce bloc et regardez les trois nombres affichés. L'écart-type chute fortement après lissage : c'est l'effet recherché pour lire la tendance, et c'est exactement pourquoi un détecteur d'anomalies qui travaillerait sur la courbe lissée ne verrait plus rien. Les valeurs manquantes en tête confirment la perte aux bords. Les plus grands écarts entre la série brute et sa moyenne mobile tombent ici sur les lundis de fermeture : la moyenne mobile ignore le calendrier et marque donc un écart là où rien d'anormal ne se produit. C'est la raison exacte pour laquelle la détection se fera sur les résidus d'une décomposition, qui absorbe la saisonnalité, plutôt que sur le niveau brut.
+
+## La saisonnalité, mode d'emploi
+
+Repérer une saisonnalité est un exercice qui combine raison métier et vérification statistique, dans cet ordre. La raison métier vient d'abord : vous savez que votre commerce ferme le lundi, que le samedi est le jour fort, que décembre est chargé. Cette connaissance fixe la période sans le moindre calcul et évite de la découvrir dans un graphique. La vérification vient ensuite, pour confirmer qu'aucune autre période n'échappe à votre attention. Le moyen le plus rapide consiste à calculer la corrélation entre la série et elle-même décalée d'une semaine : si le coefficient est élevé, le motif hebdomadaire est fort ; en balayant les décalages de un à soixante, vous repérez les périodes secondaires, mensuelle ou annuelle, que l'intuition aurait pu omettre.
+
+Le décalage, ou lag, est l'outil diagnostique le plus économique de tout le chapitre. Aligner la série d'aujourd'hui sur celle de la semaine dernière, c'est poser la question concrète : lundi ressemble-t-il à lundi ? Si les deux courbes se superposent, votre saisonnalité est nette et une prévision naïve qui réutilise la semaine précédente sera déjà redoutable. Si elles divergent, soit la saisonnalité est faible, soit quelque chose a changé et mérite enquête avant toute modélisation. Ce simple superposé d'ailleurs fait gagner une heure de modélisation, car il révèle immédiatement si la période que vous croyez dominer l'est réellement.
+
+Une même série porte souvent plusieurs saisonnalités simultanées, et le bon modèle les emploie toutes. La saisonnalité hebdomadaire domine dans un commerce parce que le calendrier de la semaine structure la clientèle. La saisonnalité annuelle s'y ajoute : été creux, rentrée, fêtes, soldes. S'y ajoutent parfois des cycles plus courts, horaires dans les données de compteur, ou mensuels quand la paie tombe. Décomposer avec une seule période alors que deux sont présentes revient à attribuer à la tendance ce que la période annuelle explique pourtant très bien. Une pratique saine consiste à agréger la série à chaque échelle de temps pertinente avant de choisir la ou les périodes à modéliser.
+
+Attention enfin aux faux amis du calendrier : les dates mobiles et les événements non périodiques. Pâques, le Ramadan, les vacances scolaires selon les régions, un lundi de Pentecôte férié, une promotion commerciale lancée un mardi : tout cela bouge d'une année sur l'autre ou n'a pas de période du tout. Ces phénomènes ne relèvent pas de la saisonnalité fixe, ils relèvent de régresseurs explicatifs, c'est-à-dire de colonnes supplémentaires qui disent au modèle : ce jour-là, attendez-vous à ceci. Les traiter en saisonnalité revient à graver dans votre prévision un calendrier qui change tous les ans, et à produire une erreur systématique chaque fois que les dates bougent.
+
+```python
+import pandas as pd
+
+profil = serie.groupby(serie.index.dayofweek).mean().round(1)
+profil.index = ["lundi", "mardi", "mercredi", "jeudi", "vendredi",
+                "samedi", "dimanche"]
+print(profil)
+
+correlations = pd.Series({
+    lag: serie.corr(serie.shift(lag)) for lag in range(1, 15)
+}).round(2)
+print(correlations.sort_values(ascending=False).head(5))
+```
+
+Le profil par jour de la semaine donne en une ligne ce que la décomposition affiche en trois courbes : le niveau moyen de chaque jour et l'amplitude du motif. Les corrélations par décalage, elles, confirment ou invalident la période supposée. Un pic franc à sept, quatorze et vingt-et-un signe une saisonnalité hebdomadaire solide ; un pic unique à soixante-dix signe plutôt un effet mensuel ; un profil plat signe que votre série ignore la semaine et qu'il faut chercher ailleurs — la météo, par exemple, qui suit son propre rythme. Cette vérification dure trois secondes et vous évite de construire un modèle sur une hypothèse de calendrier inventée.
+
+Un mot sur la granularité, parce qu'elle conditionne aussi votre saisonnalité. Une série journalière ne peut pas voir un motif horaire, et une série horaire ne se lit pas sans comprendre son agrégation journalière. Avant de choisir une période, décidez l'échelle à laquelle la décision se prend : on commande des marchandises par semaine, on planifie le personnel par jour, on surveille le compteur par heure. Agréger une série horaire en totaux journaliers efface les pics de chaque heure mais révèle le niveau utile à la commande ; désagréger une série journalière, en revanche, est impossible sans données réellement plus fines. Le bon réflexe est de conserver la granularité la plus fine disponible pour l'analyse, puis d'agréger au moment de la décision, et jamais l'inverse.
+
+## Baselines de prévision : la référence à battre
+
+Une prévision de référence, ou baseline, est la prédiction qu'un analyste honnête produit sans modèle : une règle simple, écrite en une ligne, calculable à la main. Son rôle est de servir de barre. Tout modèle plus sophistiqué — régression avec variables calendaires, modèle de state space, réseau de neurones — n'a de raison d'être que s'il bat cette barre sur un jeu de test rigoureusement temporel. La leçon est brutale mais salutaire : un modèle qui n'égale pas la persistance n'a pas appris la dynamique de la série, il a appris à imiter le passé de travers. Commencer par la baseline n'est donc pas de la paresse, c'est de la rigueur, et c'est le signe qu'on sait ce qu'on fait.
+
+Quatre familles couvrent l'essentiel des situations. La persistance renvoie la dernière observation pour tous les horizons : elle bat souvent les modèles compliqués sur les séries très bruitantes. La moyenne historique renvoie le niveau moyen de l'ensemble de l'historique : elle convient aux séries stables sans tendance. La moyenne mobile glissante renvoie le niveau récent : elle suit une tendance lente. Et la persistance saisonnière, la plus utile dans notre cas, renvoie la valeur observée une période plus tôt, c'est-à-dire la semaine dernière pour un horizon hebdomadaire. Chacune s'exprime en une ligne de code, se teste en une seconde et fournit le chiffre que votre direction retiendra si vous ne la battez pas.
+
+Le tableau suivant compare les méthodes de prévision de base, de la plus naïve aux plus élaborées, avec leur moment d'emploi et leur faiblesse propre.
+
+| Méthode | Principe | Quand l'utiliser | Faiblesse |
+| --- | --- | --- | --- |
+| Persistance | Hier = aujourd'hui | Série bruitante, horizon court | Ignore toute tendance et saisonnalité |
+| Moyenne historique | Le niveau moyen du passé | Série stable, sans évolution | Réagit très lentement à un changement |
+| Moyenne mobile | Niveau des n derniers jours | Tendance lente, pas de saison | Déphasage et bords perdus |
+| Persistance saisonnière | Même jour la semaine dernière | Saisonnalité forte, horizon d'une semaine | S'effondre si le motif change |
+| Moyenne saisonnière | Moyenne des mêmes périodes passées | Motif stable, plusieurs années | Lisse les pics exceptionnels |
+| Régression calendaire | Tendance + jours + mois explicites | Saisonnalité nette, exogènes connues | Exige de coder le calendrier à la main |
+| ETS ou Holt-Winters | Niveau, tendance et saison estimés ensemble | Série à la fois tendue et saisonnière | Plus de paramètres, plus de risque |
+
+```python
+import numpy as np
+import pandas as pd
+
+def baseline_persistante(historique, horizon):
+    return np.repeat(historique.iloc[-1], horizon)
+
+def baseline_saisonniere(historique, horizon, periode=7):
+    derniere = historique.iloc[-periode:].values
+    blocs = int(np.ceil(horizon / periode))
+    return np.tile(derniere, blocs)[:horizon]
+
+def baseline_moyenne_saisonniere(historique, horizon, periode=7):
+    modele = historique.groupby(historique.index.dayofweek).mean()
+    jours = [(historique.index[-1] + pd.Timedelta(days=k + 1)).dayofweek
+             for k in range(horizon)]
+    return modele.reindex(jours).values
+
+test = serie.iloc[-14:]
+pred = pd.Series(baseline_saisonniere(serie.iloc[:-14], 14),
+                 index=test.index)
+print("MAE persistance saisonniere :", round(np.abs(test - pred).mean(), 1))
+print("MAE moyenne historique       :",
+      round(np.abs(test - serie.iloc[:-14].mean()).mean(), 1))
+```
+
+Une baseline digne de ce nom s'accompagne d'un petit rituel : le journal de prévision. Chaque soir, vous écrivez la prévision que vous aviez faite pour le lendemain, la valeur réelle quand elle arrive, puis l'écart. Ce carnet de trois colonnes fait trois choses précieuses. Il mesure enfin votre performance sur du vrai avenir et non sur du passé déjà connu. Il montre à votre gérant, en une phrase, si le système tient ses promesses. Et il révèle très vite les régimes où votre méthode déraille — la fermeture de juillet, la promotion de novembre — que personne n'aurait signalés autrement. Sans ce journal, vous optimisez un modèle sur des métriques que vous seuls lisez.
+
+Il reste à donner à une prévision sa forme honnête, qui n'est jamais un nombre unique. Une prévision sans incertitude est un vœu : elle dit ce qui arrivera si le monde continue exactement comme avant, ce qui est précisément la chose qu'on ne sait pas. La pratique professionnelle consiste donc à publier un intervalle, une fourchette dans laquelle la valeur réelle devrait tomber avec une probabilité donnée, et à laisser cette fourchette s'élargir avec l'horizon, puisque plus on prévoit loin, moins on sait. Ce cône d'incertitude n'est pas un aveu de faiblesse, c'est la mesure honnête de ce que l'avenir contient encore d'inconnu, et il permet à un gérant de raisonner en scénarios plutôt qu'en chiffre unique.
+
+```image
+time-series
+| Série temporelle et sa prévision : les valeurs passées se lisent en trait plein, tandis que le cône d'incertitude de la prévision s'élargit avec l'horizon pour montrer que l'avenir devient d'autant moins certain qu'on le projette loin.
+```
+
+Trois réflexes concluent cette étape. D'abord, évaluez toujours votre modèle face à au moins deux baselines, la naïve et la saisonnière, car c'est la plus forte des deux qui compte. Ensuite, fixez l'horizon avant de chercher la méthode : prédire demain et prédire les douze mois prochains n'ont ni les mêmes contraintes ni les mêmes erreurs. Enfin, documentez la baseline dans le livrable, avec sa formule et son score : elle est le contrat qui dit à l'utilisateur ce que le système promet, et elle protège votre modèle du jugement superficiel d'une démonstration où tout semble toujours marcher.
+
+- Le lissage sert à lire et à servir de référence ; il écrase les pics, donc jamais à détecter une anomalie.
+- Choisissez la fenêtre et alpha selon la question posée, pas selon l'aspect du graphique.
+- La saisonnalité se confirme par le décalage hebdomadaire avant d'être modélisée ; les dates mobiles ne sont pas saisonnières.
+- Une baseline se code en une ligne et se teste avant tout modèle, faute de quoi vous ignorez si vous progressez.
+- Une prévision se publie avec un intervalle qui grandit avec l'horizon, pas comme un chiffre arrêté.

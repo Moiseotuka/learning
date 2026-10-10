@@ -1,0 +1,48 @@
+{
+  "exercise": "Vous administrez le site public d'une association culturelle, hébergé sur deux serveurs d'applications, app-01 et app-02, et desservi par deux liens opérateur distincts, FAI A et FAI B, chacun avec son propre bloc d'adresses publiques. Aujourd'hui, le nom du site est résolu vers l'adresse du seul lien A, un seul répartiteur tourne sur app-01, et la base de données est hébergée sur app-01, que les deux serveurs utilisent. Votre mission est d'éliminer les points de défaillance uniques sans changer de fournisseur ni dépasser le budget matériel existant. Décrivez d'abord la cartographie des SPOF de cette installation, puis l'architecture cible : répartiteur en double avec adresse virtuelle, contrôle d'état applicatif et persistance décidée, base répliquée avec mesure du décalage, double lien exploité avec politique de bascule et résolution du nom capable de suivre l'état des liens. Livrable : un dossier contenant les schémas avant et après, les configurations de répartition et de redondance, la politique de chemin, la liste des tests de bascule à exécuter avec les mesures attendues, et la liste des SPOF restants assumés.",
+  "resources": [
+    {
+      "label": "HAProxy — documentation de configuration : tutoriels sur les frontends, les backends, les ACL, les contrôles d'état et la persistance de session",
+      "url": "https://www.haproxy.com/documentation/haproxy-configuration-tutorials/"
+    },
+    {
+      "label": "Keepalived — site officiel du projet : guide utilisateur, page de configuration keepalived.conf(5) et études de cas de bascule",
+      "url": "https://www.keepalived.org/"
+    },
+    {
+      "label": "Cloudflare Learning — What is load balancing ? : algorithmes de répartition, suivi de santé des serveurs et bascule automatique",
+      "url": "https://www.cloudflare.com/learning/performance/what-is-load-balancing/"
+    },
+    {
+      "label": "Grafikart — Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns"
+    },
+    {
+      "label": "Grafikart — Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# Site de l'association : deux serveurs d'applications, deux liens operateur.\n# Completez les emplacements TODO, puis deployez sur app-01 et app-02.\nset -euo pipefail\n\nVIP=10.10.8.100\nSRV1=10.10.8.21\nSRV2=10.10.8.22\n\n# --- 1. Controle d'etat applicatif ---\n# TODO : ressource interrogee (GET /healthz) et code de reponse attendu.\n# TODO : intervalle, nombre d'echecs, nombre de reussites, delai d'attente.\n\n# --- 2. Repartition HAProxy ---\ncat > /etc/haproxy/haproxy.cfg <<'EOF'\nglobal\n    log /dev/log local0 info\n    maxconn 4096\ndefaults\n    mode http\n    timeout connect 5s\n    timeout client 30s\n    timeout server 30s\n\nfrontend ft_site\n    bind TODO:80\n    bind TODO:443 ssl crt TODO\n    # TODO : ACL qui dirige le chemin /api vers le pool bk_api\n    default_backend bk_web\n\nbackend bk_web\n    balance TODO\n    option httpchk TODO\n    http-check expect TODO\n    server app-01 TODO:8080 check\n    server app-02 TODO:8080 check\nEOF\n\n# --- 3. Redondance du repartiteur ---\ncat > /etc/keepalived/keepalived.conf <<'EOF'\nvrrp_script chk_lb {\n    script TODO\n    interval TODO\n    weight TODO\n}\nvrrp_instance VI_SITE {\n    state BACKUP\n    interface TODO\n    virtual_router_id TODO\n    priority TODO\n    advert_int 1\n    authentication { auth_type PASS auth_pass TODO }\n    virtual_ipaddress { TODO }\n    track_script { chk_lb }\n}\nEOF\n\n# --- 4. Deux liens operateur ---\n# TODO : suivi de route et priorites pour FAI A (100) et FAI B (200).\n# TODO : suivi de l'etat des liens et publication du nom du site.\n\n# --- 5. Tests de bascule a chronometrer ---\n# TODO : coupures a provoquer, temps de detection, temps de bascule, taux d'erreur.\n",
+  "solution_code": "#!/usr/bin/env bash\n# Site de l'association : deux serveurs, deux liens operateur, aucun SPOF evitable.\nset -euo pipefail\n\ninstall_configs() {\n  # --- Repartition : controles applicatifs, leastconn, persistance par cookie ---\n  cat > /etc/haproxy/haproxy.cfg <<'EOF'\nglobal\n    log /dev/log local0 info\n    maxconn 4096\n    stats socket /run/haproxy/admin.sock mode 660 level admin\n\ndefaults\n    mode http\n    log global\n    option httplog\n    option forwardfor\n    option redispatch\n    retries 2\n    timeout connect 5s\n    timeout client 30s\n    timeout server 30s\n\nfrontend ft_site\n    bind 10.10.8.100:80\n    bind 10.10.8.100:443 ssl crt /etc/haproxy/certs/site.pem alpn h2,http/1.1\n    http-request set-header X-Forwarded-Proto https if { ssl_fc }\n    acl api_path path_beg /api/\n    use_backend bk_api if api_path\n    default_backend bk_web\n\nbackend bk_web\n    balance leastconn\n    cookie SRV insert indirect nocache\n    option httpchk GET /healthz\n    http-check expect rstatus (200|209)\n    default-server inter 2s fall 3 rise 10 maxconn 400\n    server app-01 10.10.8.21:8080 check cookie app01\n    server app-02 10.10.8.22:8080 check cookie app02\n\nbackend bk_api\n    balance roundrobin\n    option httpchk GET /healthz\n    http-check expect status 200\n    server app-01 10.10.8.21:8080 check\n    server app-02 10.10.8.22:8080 check\nEOF\n\n  # --- Redondance : VRRP + script de controle, priorite 150 / 100 ---\n  cat > /etc/keepalived/keepalived.conf <<'EOF'\nvrrp_script chk_lb {\n    script \"/usr/bin/pgrep -x haproxy > /dev/null\"\n    interval 2\n    weight -60\n    fall 3\n    rise 2\n}\n\nvrrp_instance VI_SITE {\n    state BACKUP\n    interface eth0\n    virtual_router_id 51\n    priority 150\n    advert_int 1\n    authentication {\n        auth_type PASS\n        auth_pass ASSO51\n    }\n    virtual_ipaddress {\n        10.10.8.100/24 dev eth0\n    }\n    track_script {\n        chk_lb\n    }\n}\nEOF\n}\n\ndeploy() {\n  haproxy -c -f /etc/haproxy/haproxy.cfg\n  systemctl reload haproxy\n  systemctl enable --now keepalived\n  ip -br addr show eth0\n}\n\n# --- Deux liens operateur : suivi de route et bascule ---\n# Route principale FAI A en metric 100, repli FAI B en metric 200.\n#   ip route replace default via 10.0.0.1 dev wan0 metric 100\n#   ip route append default via 10.1.0.1 dev wan1 metric 200 track 10\n# Sur le routeur : track Fa0/0 line-protocol decrement 30  -> R2 devient actif si wan0 tombe.\n# Publication du nom : deux enregistrements A, un sondeur d'etat toutes les 30 s,\n# TTL 60, retrait de l'adresse du lien juge indisponible.\n\n# --- Tests de bascule, a executer et a chronometrer ---\ntest_bascule() {\n  echo \"== etat initial ==\"\n  ip -br addr show eth0\n  echo \"== coupure du repartiteur actif ==\"\n  systemctl stop haproxy\n  sleep 5\n  echo \"== apres coupure : la VIP doit avoir bascule ==\"\n  ip -br addr show eth0\n  journalctl -u keepalived -n 10 --no-pager\n  echo \"== coupure du lien FAI A : la route de repli doit s'installer ==\"\n  ip route del default via 10.0.0.1 dev wan0 || true\n  ip route show\n  echo \"== retablissement : retour a l'etat nominal ==\"\n  systemctl start haproxy\n  ip route replace default via 10.0.0.1 dev wan0 metric 100\n  sleep 15\n  ip -br addr show eth0\n}\n\ninstall_configs\ndeploy\ntest_bascule\n",
+  "concepts": [
+    "Qu'est-un réseau (câbles, boîtiers, voyants)",
+    "Réseau local vs étendu",
+    "Commutateur, routeur, point d'accès",
+    "Adresses IP (IPv4/IPv6)",
+    "Méthode de diagnostic 5 étapes"
+  ],
+  "lecon": "net-c11.txt",
+  "videos": [
+    {
+      "title": "Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration",
+      "channel": "Grafikart"
+    }
+  ]
+}

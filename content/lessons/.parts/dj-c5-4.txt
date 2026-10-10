@@ -1,0 +1,140 @@
+## Les signaux Django et leurs limites
+
+Les signaux Django sont un mécanisme de communication entre les composants de votre application. Ils permettent à un composant d'émettre un signal lorsque quelque chose se passe, et à d'autres composants de réagir à ce signal. Les signaux les plus courants sont pre_save, post_save, pre_delete, post_delete, qui sont émis lors de la sauvegarde ou de la suppression d'un objet.
+
+```python
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.core.mail import send_mail
+from monapp.models import Article
+
+@receiver(post_save, sender=Article)
+def notifier_nouvel_article(sender, instance, created, **kwargs):
+    if created:
+        send_mail(
+            'Nouvel article publié',
+            f'L\'article {instance.titre} vient d\'être publié.',
+            'noreply@exemple.fr',
+            ['admin@exemple.fr'],
+        )
+```
+
+Les signaux sont utiles pour découpler votre logique métier. Par exemple, vous pouvez envoyer des notifications, mettre à jour des compteurs, invalider du cache ou indexer des objets sans avoir à modifier les modèles eux-mêmes. Cependant, les signaux ont des limites qu'il faut connaître.
+
+## Les limites des signaux
+
+La première limite est l'impossibilité de savoir qui a déclenché le signal. Si vous modifiez un objet dans l'administrateur, dans une commande de gestion, dans une vue ou dans un script, le signal est émis de la même manière. Vous ne pouvez pas facilement distinguer les contextes.
+
+La deuxième limite est l'ordre d'exécution. Si plusieurs récepteurs sont connectés au même signal, l'ordre d'exécution n'est pas garanti. Si vous avez besoin d'un ordre précis, utilisez le décorateur receiver avec le paramètre dispatch_uid ou connectez les récepteurs explicitement.
+
+La troisième limite est la difficulté de test. Les signaux sont globaux et persistez entre les tests. Si vous testez une vue qui déclenche un signal, le récepteur sera exécuté même si vous n'avez pas importé le module qui le définit. Utilisez le décorateur override_settings ou déconnectez manuellement les récepteurs dans vos tests.
+
+## Profiling avec django-debug-toolbar
+
+django-debug-toolbar est un outil indispensable pour analyser la performance de vos vues en développement. Elle s'affiche sous forme de panneau latéral sur vos pages et vous donne accès à des informations détaillées : nombre de requêtes SQL, temps d'exécution, templates utilisés, signaux émis, cache utilisé, etc.
+
+```python
+# settings.py en développement
+INSTALLED_APPS = [
+    ...
+    'debug_toolbar',
+    ...
+]
+
+MIDDLEWARE = [
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
+    ...
+]
+
+INTERNAL_IPS = ['127.0.0.1']
+```
+
+Pour installer django-debug-toolbar, ajoutez-la à vos applications installées et à vos middlewares. Elle ne doit être activée qu'en développement, jamais en production. Utilisez l'onglet SQL pour identifier les requêtes lentes ou redondantes, et l'onglet Templates pour voir le temps de rendu de chaque template.
+
+## Le throttling avec Django REST Framework
+
+Si vous utilisez Django REST Framework pour exposer une API, vous devez protéger vos endpoints contre les abus. Le throttling vous permet de limiter le nombre de requêtes qu'un utilisateur ou une adresse IP peut effectuer dans une période donnée.
+
+```python
+# settings.py
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/heure',
+        'user': '1000/heure',
+    }
+}
+```
+
+AnonRateThrottle limite les utilisateurs anonymes en fonction de leur adresse IP. UserRateThrottle limite les utilisateurs authentifiés en fonction de leur compte. Vous pouvez créer des classes de throttling personnalisées pour des besoins spécifiques, comme des limites différentes pour différents endpoints ou des limites basées sur des critères métier.
+
+## Checklist de mise en production
+
+La mise en production d'une application Django nécessite une checklist rigoureuse pour éviter les problèmes. Voici un tableau récapitulatif des points à vérifier :
+
+```table
+| Catégorie | Vérification | Statut |
+|---|---|---|
+| Sécurité | DEBUG = False | À faire |
+| Sécurité | ALLOWED_HOSTS configuré | À faire |
+| Sécurité | SECRET_KEY externe | À faire |
+| Sécurité | HTTPS activé (SECURE_SSL_REDIRECT) | À faire |
+| Sécurité | CSRF_COOKIE_SECURE = True | À faire |
+| Base de données | Connexion sécurisée | À faire |
+| Base de données | Sauvegardes configurées | À faire |
+| Static |STATIC_ROOT et collectstatic | À faire |
+| Médias | Stockage sécurisé | À faire |
+| Logging | Configuration des logs | À faire |
+| Monitoring | Outils de surveillance | À faire |
+| Tests | Suite de tests complète | À faire |
+```
+
+Chaque élément de cette checklist est essentiel. DEBUG = False est la première chose à faire, car le mode debug expose des informations sensibles sur votre application. ALLOWED_HOSTS doit être configuré avec les noms de domaine autorisés pour prévenir les attaques par en-tête Host. SECRET_KEY doit être stockée dans une variable d'environnement, jamais dans le code source.
+
+## Les paramètres de sécurité en production
+
+Django propose plusieurs paramètres de sécurité que vous devez activer en production. SECURE_SSL_REDIRIGE toutes les requêtes HTTP vers HTTPS. SESSION_COOKIE_SECURE et CSRF_COOKIE_SECURE limitent l'envoi des cookies aux connexions HTTPS. SECURE_HSTS_SECONDS active HTTP Strict Transport Security, qui force les navigateurs à utiliser HTTPS pour les connexions futures.
+
+```python
+DEBUG = False
+ALLOWED_HOSTS = ['exemple.fr', 'www.exemple.fr']
+SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+X_FRAME_OPTIONS = 'DENY'
+```
+
+Ces paramètres doivent être définis dans un fichier de paramètres de production, distinct des paramètres de développement. Utilisez des variables d'environnement pour les valeurs sensibles et ne commitez jamais de secrets dans votre dépôt de code.
+
+## À retenir
+
+Les signaux Django permettent de découpler votre logique métier, mais ils ont des limites : impossibilité de connaître le contexte, ordre d'exécution non garanti, difficulté de test. django-debug-toolbar est un outil indispensable pour analyser la performance en développement. Le throttling DRF protège votre API contre les abus. Une checklist de mise en production rigoureuse est essentielle pour garantir la sécurité et la stabilité de votre application.
+
+## À retenir
+
+Les signaux Django permettent de découpler votre logique métier, mais ils ont des limites : impossibilité de connaître le contexte, ordre d'exécution non garanti, difficulté de test. django-debug-toolbar est un outil indispensable pour analyser la performance en développement. Le throttling DRF protège votre API contre les abus. Une checklist de mise en production rigoureuse est essentielle pour garantir la sécurité et la stabilité de votre application.
+
+## Erreurs fréquentes
+
+La première erreur est d'activer le mode debug en production. Le mode debug expose des informations sensibles sur votre application, y compris les requêtes SQL, les paramètres de configuration et les traces d'erreur. Désactivez toujours DEBUG avant de mettre en production.
+
+La deuxième erreur est de laisser la SECRET_KEY dans le code source. Si cette clé est compromise, un attaquant peut forger des cookies de session, des tokens CSRF et d'autres données signées. Stockez toujours la SECRET_KEY dans une variable d'environnement sécurisée.
+
+La troisième erreur est de négliger les sauvegardes de la base de données. En cas de perte de données, les sauvegardes sont votre dernier recours. Configurez des sauvegardes automatiques régulières et testez périodiquement leur restauration.
+
+Enfin, beaucoup de développeurs oublient de configurer le logging. Sans logs appropriés, vous ne pourrez pas diagnostiquer les problèmes en production. Configurez des logs structurés, avec des niveaux appropriés et une rotation des fichiers.
+
+## Pour aller plus loin
+
+Pour approfondir vos connaissances sur la mise en production de Django, consultez la documentation officielle sur le déploiement et la sécurité. Le livre « Django for Professionals » de William Vincent contient un chapitre complet sur la mise en production avec Docker. Enfin, explorez les outils de monitoring comme Sentry pour la capture d'erreurs et Prometheus pour les métriques de performance.
+
+## Et maintenant
+
+Vous avez maintenant une vision complète des tests, de la performance et du cache dans Django. Vous savez écrire des tests automatisés avec le Client de test et les factories, optimiser vos requêtes avec select_related et prefetch_related, mettre en cache vos données avec le framework de cache, analyser votre application avec django-debug-toolbar, protéger votre API avec le throttling DRF, et préparer votre application pour la mise en production. Il ne vous reste qu'à pratiquer ces concepts sur vos propres projets pour les maîtriser pleinement.

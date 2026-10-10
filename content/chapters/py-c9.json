@@ -1,0 +1,66 @@
+{
+  "exercise": "Une rédaction suit chaque matin dix pages de publications économiques et doit disposer du relevé avant neuf heures. On vous confie la tâche : écrivez collecte.py, un script asyncio qui récolte les dix URL fournies en parallèle avec aiohttp, dans une seule session ClientSession, en bornant les requêtes simultanées à quatre grâce à un asyncio.Semaphore et en imposant un délai total de dix secondes par requête. Chaque page inaccessible doit figurer dans un rapport d'échecs sans interrompre le lot : isolez les exceptions dans la coroutine elle-même plutôt que de les laisser remonter depuis gather. Pour chaque page obtenue, extrayez les titres hébergés par les balises h1 et comptez les mots du texte, puis écrivez une ligne par URL dans un fichier rapport.txt. Affichez enfin le nombre de pages réussies, le nombre d'échecs et la durée totale mesurée avec time.perf_counter. Livrable attendu : le script complet, un extrait de rapport.txt et une phrase justifiant le choix d'asyncio plutôt qu'un pool de threads pour ce scénario.",
+  "resources": [
+    {
+      "label": "Documentation Python — module asyncio : boucle, tâches, délais et annulation",
+      "url": "https://docs.python.org/3/library/asyncio.html"
+    },
+    {
+      "label": "Documentation Python — module concurrent.futures : pools de threads et de processus",
+      "url": "https://docs.python.org/3/library/concurrent.futures.html"
+    },
+    {
+      "label": "Documentation officielle d'aiohttp : sessions, connecteurs et délais de requête",
+      "url": "https://aiohttp.readthedocs.io/"
+    },
+    {
+      "label": "Grafikart — Python : bases, variables, structures de contrôle",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20bases%20tutoriel"
+    },
+    {
+      "label": "Grafikart — Python POO : classes, héritage, propriétés",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20poo"
+    },
+    {
+      "label": "Grafikart — Python : modules, packages, virtualenv",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20modules%20virtualenv"
+    },
+    {
+      "label": "Grafikart — Python : gestion d'erreurs, exceptions, logging",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20exceptions%20logging"
+    }
+  ],
+  "code_language": "python",
+  "starter_code": "import asyncio\nimport re\nimport time\nimport aiohttp\n\nLIMITE_SIMULTANE = 4\nDELAI_TOTAL = 10\n\nURLS = [\n    \"https://example.org/publication/1\",\n    \"https://example.org/publication/2\",\n    \"https://example.org/publication/3\",\n    \"https://example.org/publication/4\",\n    \"https://example.org/publication/5\",\n    \"https://example.org/publication/6\",\n    \"https://example.org/publication/7\",\n    \"https://example.org/publication/8\",\n    \"https://example.org/publication/9\",\n    \"https://example.org/publication/10\",\n]\n\nasync def recuperer(session, verrou, url):\n    # TODO 1 : prendre le verrou, envoyer la requete avec un delai total\n    # de DELAI_TOTAL secondes, verifier le code de statut, et renvoyer\n    # un tuple (url, texte) en cas de succes ou (url, message d'erreur)\n    # sinon. Les echecs ne doivent jamais interrompre le lot.\n    ...\n\ndef analyser(texte):\n    # TODO 2 : extraire les titres des balises h1 (expression reguliere\n    # ou html.parser), les nettoyer des eventuelles balises restantes,\n    # compter les mots du texte, et renvoyer (titres, nombre_de_mots).\n    ...\n\nasync def principal():\n    # TODO 3 : creer le verrou et une seule session ClientSession,\n    # lancer les dix taches, recolter avec gather, separer reussites\n    # et echecs, ecrire une ligne par URL dans rapport.txt, puis\n    # afficher le bilan et la duree totale avec time.perf_counter.\n    ...\n\nif __name__ == \"__main__\":\n    asyncio.run(principal())\n",
+  "solution_code": "import asyncio\nimport re\nimport time\nimport aiohttp\n\nLIMITE_SIMULTANE = 4\nDELAI_TOTAL = 10\n\nURLS = [\n    \"https://example.org/publication/1\",\n    \"https://example.org/publication/2\",\n    \"https://example.org/publication/3\",\n    \"https://example.org/publication/4\",\n    \"https://example.org/publication/5\",\n    \"https://example.org/publication/6\",\n    \"https://example.org/publication/7\",\n    \"https://example.org/publication/8\",\n    \"https://example.org/publication/9\",\n    \"https://example.org/publication/10\",\n]\n\nasync def recuperer(session, verrou, url):\n    async with verrou:\n        try:\n            delai = aiohttp.ClientTimeout(total=DELAI_TOTAL)\n            async with session.get(url, timeout=delai) as reponse:\n                if reponse.status != 200:\n                    return (url, None, \"statut %d\" % reponse.status)\n                texte = await reponse.text()\n        except Exception as erreur:\n            return (url, None, type(erreur).__name__)\n    return (url, texte, None)\n\ndef analyser(texte):\n    bruts = re.findall(r\"<h1[^>]*>(.*?)</h1>\", texte, re.I | re.S)\n    titres = [re.sub(r\"<[^>]+>\", \"\", t).strip() for t in bruts]\n    mots = len(re.findall(r\"\\w+\", texte))\n    return titres, mots\n\nasync def principal():\n    debut = time.perf_counter()\n    verrou = asyncio.Semaphore(LIMITE_SIMULTANE)\n    async with aiohttp.ClientSession() as session:\n        resultats = await asyncio.gather(\n            *(recuperer(session, verrou, url) for url in URLS)\n        )\n\n    reussies = 0\n    echecs = 0\n    with open(\"rapport.txt\", \"w\", encoding=\"utf-8\") as rapport:\n        for url, texte, erreur in resultats:\n            if erreur is not None:\n                echecs += 1\n                rapport.write(\"%s | ECHEC | %s\\n\" % (url, erreur))\n                continue\n            titres, mots = analyser(texte)\n            reussies += 1\n            rapport.write(\"%s | %d titres | %d mots\\n\" % (url, len(titres), mots))\n\n    duree = time.perf_counter() - debut\n    print(\"reussies : %d\" % reussies)\n    print(\"echecs   : %d\" % echecs)\n    print(\"duree    : %.2f s\" % duree)\n    return reussies, echecs\n\nif __name__ == \"__main__\":\n    asyncio.run(principal())\n",
+  "concepts": [
+    "Syntaxe Python de base",
+    "Variables et types (int, float, str)",
+    "Fonctions print()/input()",
+    "Conversion de types (int()/float())",
+    "Structures conditionnelles et boucles"
+  ],
+  "lecon": "py-c9.txt",
+  "videos": [
+    {
+      "title": "Python : bases, variables, structures de contrôle",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20bases%20tutoriel",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python POO : classes, héritage, propriétés",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20poo",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python : modules, packages, virtualenv",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20modules%20virtualenv",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python : gestion d'erreurs, exceptions, logging",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20exceptions%20logging",
+      "channel": "Grafikart"
+    }
+  ]
+}

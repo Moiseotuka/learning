@@ -1,0 +1,637 @@
+Bienvenue dans le neuvième chapitre du parcours Intelligence artificielle et Data Science, et dans le premier du bloc vision par ordinateur. Jusqu'ici, vos données tenaient dans un tableau : une ligne par observation, une colonne par variable. Vous avez exploré, nettoyé, régressé, classé, validé et déployé sur ce format, et vous avez acquis le réflexe qui domine tout le métier : découper avant de transformer, mesurer plusieurs fois, refuser le score isolé. Ce réflexe reste entièrement valable ici. Ce qui change, c'est la matière première : au lieu de dix colonnes, vous recevez une matrice de pixels, souvent plusieurs centaines de milliers de nombres par observation, et aucun de ces nombres n'est une variable au sens où vous l'entendez. Personne ne viendra vous dire que la luminosité du quadrant supérieur gauche est la caractéristique qui compte.
+
+Une photographie de 224 pixels de côté, en couleurs, contient 224 × 224 × 3 = 150 528 valeurs. Vous ne fabriquerez pas à la main une colonne par pixel, ni une statistique par zone de l'image. C'est précisément à cela que sert le réseau de neurones convolutif que vous allez étudier : il apprend lui-même quelles combinaisons locales de pixels sont utiles, puis il les combine en formes de plus en plus abstraites — un bord, une texture, une courbe, une tache, un défaut — jusqu'à produire une probabilité par classe. Le mot convolution désigne l'opération mécanique qui rend cet apprentissage abordable : au lieu de reliér chaque pixel à chaque neurone, on applique un petit motif pondéré un peu partout sur l'image, et l'on partage les mêmes poids d'un bout à l'autre du champ.
+
+Les trois objectifs annoncés pour ce chapitre sont concrets et chacun se vérifie en code. Premier objectif : entraîner un classifieur d'images, c'est-à-dire construire un réseau de bout en bout, suivre ses courbes d'apprentissage et l'évaluer en situation multiclasse, avec une matrice de confusion plutôt qu'un simple pourcentage. Deuxième objectif : augmenter les données pour éviter le surapprentissage, ce qui consiste à fabriquer mécaniquement des variantes réalistes de vos images d'entraînement afin qu'un modèle entraîné sur six cents photographies se comporte comme s'il en avait vu dix mille. Troisièmement : interpréter les cartes de caractéristiques, c'est-à-dire regarder ce que le réseau regarde réellement et produire une carte de chaleur qui montre sur quel morceau d'image il a fondé sa décision.
+
+Le fil rouge de ce chapitre sera un contrôle qualité industriel, le cas d'honnêteté le plus exigeant pour la vision. Une petite usine produit des pièces métalliques qui défilent sous une caméra : la caisse d'arrivée contient six cents photographies réparties entre la classe conforme et la classe défectueuse, avec un léger déséquilibre, un éclairage qui varie selon l'heure et un objet qui n'est jamais parfaitement centré. Vous disposerez de la matière première de tous les projets de vision réels : trop peu d'images, une variance nuisible et une conséquence métier si l'on se trompe. Nous reviendrons régulièrement à ce cas, mais les mêmes mécanismes s'appliquent à un classificateur de chats et de chiens, à des radios, à des plantes malades ou à des panneaux routiers. Un mot sur la manière de suivre le cours : les blocs de code sont faits pour être exécutés, pas seulement lus. Installez Keras ou PyTorch avant de commencer et gardez un éditeur ouvert à côté de vous.
+
+## Du tableau de pixels au tenseur d'entrée
+
+Une image numérique, pour la machine, est un tableau de nombres réguliers. En niveaux de gris, il s'agit d'une matrice deux dimensions où chaque case contient l'intensité mesurée par le capteur, généralement entre 0 et 255. En couleurs, ce sont trois de ces matrices empilées, une par canal — rouge, vert, bleu — qui décrivent la composition lumineuse de chaque point. L'unité fondamentale reste le pixel : un échantillon de la scène, pas une caractéristique calculée. La distinction est essentielle, car tout le travail d'extraction des caractéristiques, que l'on appelait autrefois à la main, est désormais délégué au réseau.
+
+Pour exploiter ces matrices en lot, on les empile dans un tenseur à quatre dimensions. TensorFlow et Keras rangent les axes hauteur, largeur, canaux, puis le lot : un lot de trente-deux images de 224 pixels carrés en couleurs mesure donc 32, 224, 224, 3. PyTorch place les canaux juste après le lot : 32, 3, 224, 224. Mélanger les deux conventions donne un tenseur apparemment valide mais faussé, dont les canaux sont lus comme des lignes d'image. Affichez toujours la forme avant la première itération d'entraînement, pas après une heure de calcul.
+
+Le prétraitement crée le contrat entre l'entraînement et la production. On redimensionne à une taille fixe — le réseau exige une forme constante —, puis on ramène les valeurs dans une plage commode : la division par 255, ou la normalisation par la moyenne et l'écart-type de chaque canal calculés sur ImageNet, soit 0,485, 0,456 et 0,406 pour le rouge, le vert et le bleu. Ce qui compte n'est pas le choix en soi, c'est l'identité stricte entre ce que vous faites à l'entraînement et à l'inférence : une image normalisée différemment en production est une image inconnue pour le modèle.
+
+La résolution a un coût quadratique : doubler le côté quadruple le nombre de pixels, la mémoire d'entrée et le temps de calcul de chaque couche. Le tableau suivant donne les ordres de grandeur pour un lot de trente-deux images en virgule flottante sur quatre octets ; servez-vous-en pour choisir votre taille d'entrée avant d'écrire la moindre ligne de modèle.
+
+```table
+| Taille d'entrée | Pixels par image | Mémoire du lot de 32 images | Observation typique |
+|---|---|---|---|
+| 96 × 96 × 3 | 27 648 | environ 3,5 Mo | Pratique pour un prototype rapide |
+| 160 × 160 × 3 | 76 800 | environ 9,8 Mo | Compromis courant sur GPU modeste |
+| 224 × 224 × 3 | 150 528 | environ 19,3 Mo | Standard des modèles préentraînés |
+| 416 × 416 × 3 | 519 168 | environ 66,4 Mo | Objets petits dans l'image |
+```
+
+
+Les étiquettes se traitent comme dans tout problème de classification, avec une nuance. Une étiquette entière, 0 ou 1, suffit pour l'entraînement ; la forme éparse, un vecteur avec un 1 à la position de la classe, sert aux couches de sortie softmax. La convention universelle est le dossier par classe : un répertoire train contenant un sous-dossier par étiquette, un répertoire val structuré à l'identique. Adoptez l'habitude qui vous sauvera : conserver la correspondance entre indices de classe et noms de dossiers dans un fichier, car l'ordre alphabétique ne correspond pas nécessairement à l'ordre attendu par votre code d'affichage.
+
+Un piège mérite d'être signalé avant même que vous n'écriviez un modèle : deux photographies du même exemplaire prises sous différents angles sont des observations presque identiques. Si elles atterrissent de part et d'autre du découpage, votre test contient des doublons de l'entraînement, le score s'envole et la déception arrive en production. La règle du chapitre six sur les entités se transpose sans concession : on découpe par objet ou par session de prise de vue, jamais au hasard des fichiers. Le bloc suivant place en tête de tout script les vérifications minimales de forme et d'échelle.
+
+```python
+import numpy as np
+
+chemins = ["usine/conforme/pièce-0001.png", "usine/defectueuse/pièce-0002.png"]
+etiquettes = [0, 1]
+
+for chemin, etiquette in zip(chemins, etiquettes):
+    with open(chemin, "rb") as fichier:
+        brut = fichier.read(8)
+    print(chemin, "en-tête lu :", brut[:4], "classe :", etiquette)
+
+lots = np.random.randint(0, 256, size=(32, 224, 224, 3)).astype("float32")
+entree = lots / 255.0
+print("forme du lot :", entree.shape, "plage :", entree.min(), entree.max())
+
+moyenne = np.array([0.485, 0.456, 0.406])
+ecart = np.array([0.229, 0.224, 0.225])
+normalise = (entree - moyenne) / ecart
+print("après normalisation ImageNet :", round(float(normalise.mean()), 4))
+```
+
+Ce bloc contient toute la discipline de la section : forme affichée avant tout calcul, plage de valeurs contrôlée, normalisation explicite. Les erreurs de débutant en vision sont presque toujours des erreurs de forme ou de mise à l'échelle, visibles en une seconde quand on les affiche.
+
+## Ce que le perceptron entièrement connecté ne voit pas
+
+La première réaction devant une image est souvent d'aplatir le tableau en un grand vecteur, puis d'empiler des couches denses comme au chapitre quatre. La méthode tourne : le réseau s'entraîne, la perte baisse, et le score d'entraînement devient spectaculaire. Elle échoue pour deux raisons structurelles qu'aucune astuce d'optimisation ne corrigera, et les comprendre vous évitera de régler un modèle qui n'avait aucune chance.
+
+Calculons l'ampleur du désastre arithmétique. Une image de 224 pixels carrés en couleurs donne après aplatissement un vecteur de 150 528 entrées. Une seule couche dense de 4 096 neurones reliée à ce vecteur compte 150 528 × 4 096 = 616 523 776 poids, auxquels s'ajoutent 4 096 biais. En virgule flottante sur quatre octets, ces poids seuls occupent environ 2,5 gigaoctets. Tenez-en compte : la moitié de votre mémoire vidéo disparaît avant même la seconde couche, et tout ce capital de paramètres doit être ajusté sur, au mieux, quelques milliers d'images.
+
+Le schéma suivant montre cette architecture, chaque neurone relié à tous ceux de la couche précédente : le nombre de connexions y explose et aucune d'elles ne porte d'information sur la position.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/neural-net.png
+| Schéma d'un perceptron multicouche : chaque neurone d'une couche est relié à tous les neurones de la couche précédente, ce qui multiplie rapidement le nombre de paramètres.
+```
+
+La deuxième raison est plus subtile et plus grave. Dans un vecteur aplati, l'entrée numéro 7 412 n'a plus d'emplacement : elle a été arrachée à sa position dans la matrice. Le réseau ignore donc que les pixels voisins sont voisins, qu'un bord est une suite de points contigus et qu'un décalage de deux pixels produit exactement la même forme, simplement déplacée. Pour repérer une rayure, un réseau dense devra réapprendre la même règle à chaque position possible de cette rayure : il mémorise des millions de configurations au lieu d'apprendre un petit nombre de règles réutilisables, et c'est exactement le profil qui produit un surapprentissage brutal dès que le jeu de données est modeste.
+
+Comparez les deux familles de couches. Le tableau ci-dessous ne sert pas de catalogue : il vous donne les cinq critères à examiner chaque fois qu'on vous proposera une architecture.
+
+```table
+| Critère | Couche dense, image aplatie | Couche convolutive |
+|---|---|---|
+| Structure exploitée | Aucune, le vecteur est sans ordre | Voisinage des pixels dans les deux dimensions |
+| Partage des poids | Chaque poids est propre à une entrée | Un même filtre s'applique à toute l'image |
+| Nombre de paramètres | Croît avec la taille de l'image | Indépendant de la taille de l'image |
+| Invariance | Absente, le décalage change tout | Partielle, le filtre détecte partout |
+| Rôle typique | Couche de sortie, décision finale | Extraction des caractéristiques |
+```
+
+
+La conséquence tient en une phrase : un modèle convolutif peut avoir moins de paramètres qu'un modèle dense tout en étant bien plus puissant, car il investit sur des règles réutilisables plutôt que sur des souvenirs de positions. Le calcul suivant compare les deux approches sans aucune bibliothèque ; modifiez la taille de l'image et observez l'écart se creuser.
+
+```python
+def params_denses(largeur, hauteur, canaux, couches):
+    entree = largeur * hauteur * canaux
+    total = 0
+    for couche in couches:
+        total += entree * couche + couche
+        entree = couche
+    return total
+
+
+def params_convolutifs(hauteur, largeur, canaux, filtres, noyau=5):
+    total = noyau * noyau * canaux * filtres[0] + filtres[0]
+    precedents = filtres[0]
+    for suivants in filtres[1:]:
+        total += noyau * noyau * precedents * suivants + suivants
+        precedents = suivants
+    return total
+
+
+entree = (224, 224, 3)
+denses = params_denses(*entree, [4096, 4096, 10])
+convo = params_convolutifs(*entree, [16, 32, 64])
+print("entree aplatie :", 224 * 224 * 3, "valeurs")
+print("MLP trois couches denses :", denses, "parametres")
+print("CNN trois blocs convolutifs :", convo, "parametres")
+print("rapport :", round(denses / convo, 1), "fois plus pour le MLP")
+```
+
+Sur ce gabarit, le perceptron dépasse le convolutif de plusieurs ordres de grandeur alors que sa capacité à reconnaître un défaut est bien moindre. Notez que les paramètres d'une couche convolutive dépendent du noyau, des canaux et du nombre de filtres, jamais de la taille de l'image : on peut donc entraîner à 128 pixels et inférer à 256 sans reconstruire le modèle. Que fait donc réellement une couche convolutive ?
+
+## La convolution, une opération locale et partageable
+
+La convolution, en vision, est une multiplication matricielle locale très simple. On choisit un petit carré de poids, le filtre ou noyau, de forme 3 × 3 ou 5 × 5. On le place sur un morceau de l'image de même taille, on multiplie chaque poids par le pixel qu'il recouvre, on somme les produits, et l'on écrit ce unique nombre dans la carte de sortie. On déplace ensuite le filtre d'un pas, la stride, et on recommence jusqu'à avoir balayé toute la surface. Un filtre produit ainsi une carte de caractéristiques, qui mesure à quel point le motif qu'il porte est présent en chaque point.
+
+Reprenons les chiffres. Une entrée de 32 × 32 pixels sur trois canaux, traitée par seize filtres de 5 × 5 appliqués sans marge d'attente, donne une sortie de 28 × 28 × 16, puisque 32 − 5 + 1 = 28. Le nombre de paramètres de cette couche est de 5 × 5 × 3 × 16 = 1 200 poids, plus seize biais, soit 1 216 au total. Comparez avec la couche dense de 616 millions de la section précédente : non seulement l'écart est gigantesque, mais ces 1 216 paramètres suffisent à détecter seize motifs distincts partout dans l'image. C'est le partage des poids qui opère ce miracle : le même filtre est utilisé à chaque position, donc ce que l'on apprend à un endroit vaut pour tous les autres.
+
+La marge d'attente, ou padding, ajoute une bordure de zéros autour de l'entrée pour que la sortie ne rétrécisse pas et pour que les pixels de bord soient traités comme les autres. Le pas, ou stride, indique de combien de cases on avance ; un pas de deux divise la taille de sortie par deux. La formule qui relie tout cela tient en une ligne : la sortie vaut l'entrée moins le filtre, plus deux fois la marge, le tout divisé par le pas, le résultat plus un. Retenez-la : elle vous épargnera la majorité des erreurs de dimensionnement, ces erreurs qui annoncent inopinément qu'un tenseur de forme 14 × 14 est attendu là où l'on produit 15 × 15.
+
+Le schéma suivant montre le mécanisme : un filtre glisse sur l'image d'entrée et écrit, case après case, la carte de caractéristiques qui devient l'entrée de la couche suivante.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/cnn-diagram.jpg
+| Schéma de la convolution : un filtre appliqué sur l'image d'entrée glisse fenêtre par fenêtre et produit une carte de caractéristiques par produit scalaire local.
+```
+
+Implémentons la convolution à la main, sans bibliothèque, sur une petite matrice. Ces trois boucles imbriquées sont exactement ce que votre bibliothèque exécute en C sous le capot, sur des millions de fenêtres et avec le calcul des dérivées. Lire cette version une fois, c'est comprendre la couche pour toujours.
+
+```python
+def convolution(Entree, noyau):
+    hauteur = len(Entree)
+    largeur = len(Entree[0])
+    taille = len(noyau)
+    sortie = []
+    for y in range(hauteur - taille + 1):
+        ligne = []
+        for x in range(largeur - taille + 1):
+            somme = 0.0
+            for i in range(taille):
+                for j in range(taille):
+                    somme += Entree[y + i][x + j] * noyau[i][j]
+            ligne.append(round(somme, 2))
+        sortie.append(ligne)
+    return sortie
+
+
+image = [
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+]
+
+bord_vertical = [
+    [-1, 0, 1],
+    [-1, 0, 1],
+    [-1, 0, 1],
+]
+
+carte = convolution(image, bord_vertical)
+for ligne in carte:
+    print(ligne)
+```
+
+La colonne allumée produit des valeurs positives là où le filtre trouve la transition qu'il cherche, et zéro ailleurs : la barre verticale est détectée, quelle que soit la ligne à laquelle elle apparaît. Changez le filtre en matrice de détection de bord horizontal, et la même image renverra zéro partout. Un filtre seul ne voit qu'un motif élémentaire ; c'est l'empilement des couches qui construira la complexité.
+
+Qu'est-ce qui produit l'apprentissage ? Les poids du filtre ne sont pas fixés par vous : ils sont des paramètres entraînables, initialisés au hasard, ajustés par rétropropagation comme les poids d'un réseau classique. Au début, les filtres détectent du bruit. Après quelques époques, les premières couches convergent vers des motifs familiers — des contours dans toutes les orientations, des dégradés de couleur, des textures —, puis les couches suivantes combinent ces contours en formes, et les couches profondes en parties d'objet. Personne n'a programmé cette hiérarchie : elle émerge du seul fait que chaque couche compose des règles de plus en plus larges.
+
+## Pooling : réduire sans ajouter de paramètres
+
+Après une couche convolutive, la carte de caractéristiques reste aussi large que l'image d'entrée. Si vous enchaînez dix convolutions de 3 × 3, la surface ne cesse pas de rétrécir d'elle-même, mais le volume de calcul, lui, reste énorme : multiplier trente-deux cartes de 224 × 224 coûte cher en multiplications et en mémoire vive. C'est là qu'intervient le sous-échantillonnage, généralement appelé pooling, littéralement mise en commun. Il s'agit d'une opération qui réduit la hauteur et la largeur des cartes sans introduire le moindre paramètre entraînable, donc sans rien ajouter au risque de surapprentissage.
+
+La variante la plus courante est le max pooling de facteur 2 : on découpe la carte en carrés de 2 × 2 pixels et on ne garde, dans chaque carré, que la valeur maximale. La carte de 224 × 224 devient une carte de 112 × 112, soit quatre fois moins d'éléments à traiter par la couche suivante. Aucune multiplication n'a lieu, aucun poids n'est appris : l'opération est purement directionnelle. C'est précisément ce qui la rend sûre. Là où une couche dense ajoute des dizaines de millions de paramètres, le pooling ajoute zéro, et il réduit au passage le nombre d'opérations de toutes les couches qui suivent.
+
+Deux effets se combinent donc : économie et tolérance. L'économie, on vient de la voir. La tolérance tient à la règle du maximum : si la caractéristique détectée, par exemple une arête vive, se déplace de quelques pixels, elle active presque toujours la même cellule de sortie, puisque seule la plus forte valeur compte à l'intérieur du carré. Le réseau devient ainsi insensible aux micros-décalages, ce qui équivaut à une petite invariance par translation. Rappelez-vous l'objectif du chapitre : reconnaître un défaut qu'il faut détecter où qu'il soit sur la pièce. Le pooling est un des mécanismes qui rend ce vœu réalisable sans multiplier les exemples d'entraînement.
+
+Le maximum n'est pas le seul choix. L'average pooling conserve la moyenne du carré, ce qui lisse la carte et convient mieux aux zones de réponse diffuse ; le global average pooling, lui, résume toute une carte en une seule valeur, ce qui remplace avantageusement les grandes couches denses de sortie. C'est ce dernier qui a tué les couches de 400 millions de poids des premières architectures : en calculant une moyenne par carte, on obtient directement un vecteur de taille égale au nombre de filtres, prêt pour la couche de classification, avec une dizaine de fois moins de paramètres. La règle empirique est la suivante : max pooling pour les cartes de caractéristiques intermédiaires, global average pooling pour condenser avant la sortie.
+
+Il existe un coût, et il est proportionnel à l'usage que vous faites des petits détails. Chaque pooling de facteur 2 divise par deux la résolution : après trois étapes, une image de 224 pixels est réduite à 28, et un défaut de quatre pixels de large n'existe plus nulle part dans la représentation finale. Pour des objets grossiers — un chat, une feuille malade, une silhouette —, cette perte est sans conséquence. Pour un éclat de deux pixels sur une pièce métallique, elle est fatale. Avant d'ajouter un pooling, demandez-vous toujours si la caractéristique qui décide de la classe survit à la réduction ; sinon, réduisez la profondeur, utilisez un pas de convolution plus tardif, ou conservez la résolution plus longtemps.
+
+Le tableau suivant compare les pratiques de réduction que vous rencontrerez.
+
+```table
+| Méthode | Ce qu'elle conserve | Paramètres | Effet sur la résolution | Emploi typique |
+|---|---|---|---|---|
+| Max pooling 2 × 2 | La réponse la plus forte | Aucun | Divise par deux | Blocs convolutifs intermédiaires |
+| Average pooling 2 × 2 | La moyenne du bloc | Aucun | Divise par deux | Cartes à réponse diffuse |
+| Global average pooling | Une moyenne par carte | Aucun | Réduit à 1 × 1 | Juste avant la couche de sortie |
+| Convolution à pas 2 | Une valeur calculée | Oui | Divise par deux | Remplace le pooling, gain net |
+```
+
+
+Le bloc ci-dessous implémente le max pooling à la main, exactement comme pour la convolution : aucune bibliothèque, trois boucles, et la certitude de savoir ce qui se passe dans la couche que vous appelez sans y penser.
+
+```python
+def max_pooling(carte, facteur=2):
+    hauteur = len(carte)
+    largeur = len(carte[0])
+    sortie = []
+    for y in range(0, hauteur, facteur):
+        ligne = []
+        for x in range(0, largeur, facteur):
+            bloc = [
+                carte[y + i][x + j]
+                for i in range(facteur)
+                for j in range(facteur)
+                if y + i < hauteur and x + j < largeur
+            ]
+            ligne.append(max(bloc))
+        sortie.append(ligne)
+    return sortie
+
+
+carte = [
+    [0.1, 0.9, 0.3, 0.2],
+    [0.8, 0.4, 0.7, 0.1],
+    [0.5, 0.2, 0.6, 0.4],
+    [0.3, 0.1, 0.9, 0.8],
+]
+reduite = max_pooling(carte)
+for ligne in reduite:
+    print(ligne)
+print("dimension :", len(carte), "->", len(reduite))
+```
+
+La carte de 4 × 4 devient une carte de 2 × 2 en conservant, par quadrant, la réaction la plus forte. Si vous modifiez une valeur faible sans toucher au maximum du quadrant, la sortie ne change pas du tout : vous venez de constater de visu l'insensibilité aux petites variations dont parlait le paragraphe précédent.
+
+## Anatomie d'un réseau convolutif, couche par couche
+
+Un réseau convolutif moderne suit toujours le même schéma directeur : des blocs alternant convolution, fonction d'activation et réduction de résolution, suivis d'une étape de condensation, puis d'une couche de décision. Dans chaque bloc, la convolution extrait des caractéristiques, la fonction d'activation introduit la non-linéarité qui manque à une simple somme pondérée, et le pooling ou le pas supérieur compresse. Le bloc terminal, lui, transforme les cartes de caractéristiques en vecteur puis en probabilités. Si vous retenez une seule image mentale de ce chapitre, que ce soit celle-ci.
+
+L'activation mérite une phrase à elle seule. Les premiers réseaux utilisaient la sigmoïde, qui sature aux deux extrémités et ralentit l'apprentissage dès que les entrées s'éloignent de zéro. La fonction relu, définie par le maximum entre zéro et l'entrée, ne sature pas dans le sens positif, coûte une comparaison au lieu d'une exponentielle et laisse passer le gradient sans l'écraser. Ses défauts — neurones qui peuvent mourir définitivement si leur entrée reste négative — ont produit des variantes comme elu ou leaky relu, mais relu reste le défaut raisonnable. Une activation non linéaire entre deux convolutions est indispensable : sans elle, empiler dix convolutions équivaut mathématiquement à une seule, et la profondeur n'apporterait rien.
+
+Deux couches supplémentaires apparaissent presque toujours dans les blocs modernes, et il faut savoir ce qu'elles font. La normalisation par lot mesure, pour chaque canal, la moyenne et l'écart-type du lot en cours, puis replace les activations autour de zéro avec une échelle apprise ; elle stabilise l'entraînement, autorise des taux d'apprentissage plus élevés et tient lieu de léger effet régulateur. Le dropout met aléatoirement une fraction des sorties à zéro pendant l'entraînement, puis se retire entièrement à l'inférence : il force le réseau à ne pas dépendre d'un seul neurone. Retenez une conséquence pratique, utile plus loin : la normalisation par lot se comporte différemment selon qu'elle est en mode entraînement ou en mode inférence, et c'est précisément ce détail qui pose problème lorsqu'on gèle un modèle préentraîné.
+
+La profondeur, elle, construit une hiérarchie de sens. Les premières couches reconnaissent des bords, des dégradés et des textures simples, souvent quel que soit le sujet traité : elles se ressemblent d'un entraînement à l'autre. Les couches intermédiaires combinent ces éléments en motifs reconnaissables — un cercle, une grille, une fourche, le bord arrondi d'un rivet. Les couches profondes, enfin, répondent à des combinaisons abstraites qui n'ont de sens que pour la tâche : la présence d'une rayure, la texture d'une peinture écaillée, l'absence d'un composant. C'est cette composition progressive qui permet au réseau de généraliser : il ne mémorise pas des images, il apprend des briques réutilisables.
+
+L'histoire des architectures se lit comme une suite de réponses à des problèmes précis. Le tableau suivant résume les cinq modèles qu'il faut connaître de nom, parce que vous les verrez dans n'importe quelle documentation de transfert.
+
+```table
+| Modèle | Année | Couches avec poids | Paramètres | Entrée | Ce qu'il a apporté |
+|---|---|---|---|---|---|
+| LeNet-5 | 1998 | 7 | environ 60 000 | 32 × 32 | Le schéma convolutive, pooling puis dense |
+| AlexNet | 2012 | 8 | environ 61 millions | 227 × 227 | ReLU, dropout, entraînement sur GPU |
+| VGG-16 | 2014 | 16 | environ 138 millions | 224 × 224 | Empiler des filtres 3 × 3 petits et profonds |
+| ResNet-18 | 2015 | 18 | environ 11,7 millions | 224 × 224 | Connexions résiduelles, réseaux très profonds |
+| MobileNetV2 | 2018 | 53 | environ 3,4 millions | 224 × 224 | Convolution factorisée, léger, pour mobile |
+```
+
+
+Deux leçons ressortent de ce tableau. La première est que les paramètres ne suivent pas la profondeur : ResNet-18 est plus profond que VGG-16 et possède douze fois moins de poids, parce qu'il a déplacé le calcul vers des convolutions peu coûteuses et supprimé les grandes couches denses. La seconde est que la taille d'entrée reste fixe à 224 × 224 depuis VGG, ce qui a standardisé les prétraitements et rendu possible le transfert d'un modèle à l'autre, sujet de la leçon suivante.
+
+Pour construire votre propre réseau, quelques heuristiques suffisent. Le nombre de filtres double généralement à chaque fois que l'on divise la résolution par deux, par exemple 16, 32, 64, 128, de sorte que le volume de calcul reste constant d'un bloc à l'autre. Le filtre de 3 × 3 est le standard, car il offre la plus bonne combinaison entre champ de vision et coût. La couche dense de sortie compte un neurone par classe, suivie d'une activation softmax. Enfin, la taille totale du modèle doit rester compatible avec vos données : un réseau de dix millions de paramètres entraîné sur six cents images surapprendra sans la moindre surprise.
+
+```python
+import tensorflow as tf
+
+modele = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(224, 224, 3)),
+    tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu"),
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(64, activation="relu"),
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(2, activation="softmax"),
+])
+
+modele.summary()
+```
+
+Exécutez ce bloc et lisez la colonne des paramètres : la majorité du poids du modèle se trouve dans la couche dense finale, et non dans les convolutions, précisément parce que le global average pooling a supprimé la couche aplatie qui, autrement, aurait englouti des dizaines de millions de poids. C'est l'effet que nous annoncions dans la section précédente, visible en une ligne de sortie.
+
+## Entraîner un classifieur en Keras : le pipeline complet
+
+L'entraînement d'un classifieur d'images diffère de celui d'un modèle tabulaire en un point principal : les données sont trop volumineuses pour tenir en mémoire. On ne charge donc jamais toutes les images ; on construit un flux qui lit les fichiers par lots, les décode, les redimensionne, les augmente éventuellement et les remplace dans un tenseur, juste à temps. En Keras, la fonction image_dataset_from_directory construit ce flux directement à partir de l'arborescence de dossiers, en appliquant le redimensionnement, en mélangeant le jeu d'entraînement et en préchargeant les lots dans la mémoire de l'accélérateur.
+
+La compilation fixe trois choix : l'optimiseur, la fonction de perte et les métriques suivies. Adam est l'optimiseur raisonnable par défaut, avec un taux d'apprentissage de 0,001 que vous réduirez si la perte oscille sans converger. Pour deux classes, la sortie softmax associée à l'entropie croisée binaire ou catégorielle fonctionne toutes deux ; pour des dizaines de classes, seule la version catégorielle convient, sauf si vous encodez les étiquettes en entiers, auquel cas vous utiliserez la variante sparse et dispenserez vos étiquettes d'être vectorsées. La métrique d'exactitude n'est qu'un indicateur de confort : c'est la perte de validation qui dira si le modèle apprend encore.
+
+Les rappels, ou callbacks, transforment un entraînement aveugle en expérience contrôlée. Le premier arrête l'entraînement quand la perte de validation cesse de s'améliorer, préservant ainsi les poids du meilleur passage — c'est l'arrêt anticipé du chapitre six, appliqué ici à chaque époque. Le second enregistre le meilleur modèle sur disque, de sorte qu'un entraînement trop long ne détruit pas le travail accompli. Le troisième réduit le taux d'apprentissage quand la perte se fige, ce qui permet souvent de décrocher une dernière amélioration. Ces trois rappels coûtent trois lignes et vous évitent de deviner le nombre d'époques.
+
+La déséquilibre des classes mérite une attention particulière en contrôle qualité, où il est fréquent d'avoir quatre cents pièces conformes pour cent vingt défectueuses. Un modèle qui prédit toujours conforme atteint déjà 77 % d'exactitude et n'a aucun intérêt industriel. Deux réponses existent : pondérer la perte en passant le dictionnaire class_weight à la méthode d'entraînement, ce qui rend une erreur sur la classe rare plus coûteuse qu'une erreur sur la classe commune, ou rééquilibrer le flux d'échantillonnage. La première est plus simple et se combine avec l'augmentation.
+
+Le script complet ci-dessous réunit tout ce qui précède : découpage des répertoires, flux d'images, modèle, compilation, rappels et entraînement. Adaptez les chemins et le nombre de classes, puis exécutez-le tel quel sur votre premier jeu de données.
+
+```python
+import tensorflow as tf
+
+# modele construit dans le bloc precedent de cette section
+chemin = "data/usine"
+jeu = tf.keras.utils.image_dataset_from_directory(
+    chemin,
+    validation_split=0.2,
+    subset="training",
+    seed=1337,
+    image_size=(224, 224),
+    batch_size=32,
+)
+validation = tf.keras.utils.image_dataset_from_directory(
+    chemin,
+    validation_split=0.2,
+    subset="validation",
+    seed=1337,
+    image_size=(224, 224),
+    batch_size=32,
+)
+noms = jeu.class_names
+jeu = jeu.map(lambda x, y: (x / 255.0, y))
+validation = validation.map(lambda x, y: (x / 255.0, y))
+
+poids = {0: 1.0, 1: 3.0}
+rappels = [
+    tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),
+    tf.keras.callbacks.ModelCheckpoint("meilleur.keras", save_best_only=True),
+    tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2),
+]
+
+modele.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-3),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+histoire = modele.fit(
+    jeu,
+    validation_data=validation,
+    epochs=40,
+    class_weight=poids,
+    callbacks=rappels,
+)
+```
+
+Lisez la sortie époque par époque, et non seulement la dernière ligne. Tant que la perte de validation descend avec la perte d'entraînement, le modèle apprend quelque chose de généralisable. Dès que la perte d'entraînement continue de chuter pendant que la perte de validation remonte, vous êtes face au surapprentissage, et le rappel d'arrêt anticipé vous a déjà rendu le meilleur des poids observés. Si les deux restent hautes et proches, le modèle n'apprend rien : réduisez alors sa taille ou augmentez le jeu. Ces deux diagnostics, appris au chapitre six, sont la base de toute lecture de courbes en vision.
+
+Deux disciplines complètent le script. La première est la reproductibilité : fixez la graine du générateur de mélange et, si votre environnement le permet, activez les modes de détermination, sinon deux exécutions emploieront des lots différents et vous attribuerez au hasard un gain qui n'existe pas. La seconde est la sévérité de l'évaluation : le jeu de test, découpé dès le départ dans un répertoire distinct, ne sert que dans la dernière ligne du travail, une seule fois, après le choix de l'architecture, du taux d'apprentissage et du nombre d'époques. Si vous consultez son score à chaque essai, il est devenu un jeu de validation, et votre rapport de fin de projet reposera sur une mesure faussée.
+
+## Évaluer en multiclasse : la matrice de confusion et ses voisines
+
+L'exactitude, seule, cesse d'être un indicateur honnête dès que l'on quitte la classification binaire équilibrée. Si votre usine aligne 900 pièces conformes pour 100 défectueuses, un modèle qui répond toujours conforme affiche 90 % de réussite et ne sert à rien. En multiclasse, le phénomène se dédouble : le déséquilibre fausse le pourcentage global, et la proximité entre classes masque des confusions systématiques qu'un même chiffre global ne distingue pas. Une exactitude de 82 % peut cacher un modèle parfait sur huit classes et aveugle sur les deux qui comptent réellement. Le rapport d'évaluation d'un classifieur d'images commence donc par la structure des erreurs, pas par leur total.
+
+La matrice de confusion est cet outil de départ. Chaque ligne correspond à la classe réelle, chaque colonne à la classe prédite, et chaque case contient le nombre d'observations concernées. La diagonale porte les réussites ; tout ce qui s'en écarte est une erreur, et sa position dit immédiatement laquelle. Deux classes se confondent-elles ? Vous verrez deux blocs symétriques hors diagonale. Une classe est-elle systématiquement absorbée par une autre ? Vous verrez une ligne presque vide et une colonne gonflée. Aucun pourcentage ne remplace cette lecture : en contrôle qualité, savoir que les éraflures sont prises pour des reflets, et non l'inverse, change la consigne donnée à l'opérateur.
+
+Les métriques par classe découlent de cette matrice et se répondent trois questions. La précision demande : parmi ce que j'ai prédit comme défectueux, combien l'étaient vraiment ? Le rappel demande : parmi les vrais défectueux, combien ai-je trouvés ? Le score F1 combine les deux en moyenne harmonique. Pour une pièce dangereuse, le rappel est la métrique retenue : rater un défaut est plus grave que de faire vérifier une pièce saine. Pour une ligne qui s'arrête à chaque fausse alerte, la précision devient tout aussi critique. La moyenne macro calcule la moyenne arithmétique des scores de chaque classe et traite donc toutes les classes à égalité ; la moyenne pondérée, elle, laisse les classes nombreuses peser davantage. En situation de déséquilibre, la première dit la vérité sur les classes rares, la seconde amplifie les classes dominantes.
+
+Une matrice se lit aussi en version normalisée, où chaque ligne est divisée par son total : les proportions deviennent comparables d'une classe à l'autre, même si l'une compte cinq cents images et l'autre trente. Cette variante est la seule à afficher quand les classes sont déséquilibrées, car la version en nombres bruts laissera toujours dominer la classe majoritaire. Dans notre cas d'usine, une ligne de la classe défectueuse qui montrerait 80 % de réussite et 20 % de pièces jugées conformes signifierait qu'un défaut sur cinq part sans être vu : c'est un chiffre qui déclenche une décision, alors que l'exactitude globale, elle, n'en déclenche aucune.
+
+Le tableau suivant range les quatre lectures que vous utiliserez dans un rapport.
+
+```table
+| Mesure | Ce qu'elle quantifie | Quand la retenir | Piège associé |
+|---|---|---|---|
+| Exactitude | Part des prédictions justes | Classes équilibrées, vue d'ensemble | Masque une classe ignorée |
+| Rappel par classe | Part des vrais positifs retrouvés | Coût élevé d'un manqué | Tombe si la classe est rare |
+| Précision par classe | Fiabilité d'une alerte | Coût élevé d'une fausse alerte | Chute dès que la classe est rare |
+| Entropie croisée | Qualité de la probabilité prédite | Comparaison de modèles, calibration | N'est pas interprétable seule |
+```
+
+
+Deux compléments font gagner en finesse. L'exactitude en top-k autorise la prédiction correcte dans les k réponses les plus probables : utile quand les classes se ressemblent beaucoup, trompeur quand k approche le nombre de classes. L'entropie croisée de validation, elle, pénalise une prédiction juste mais trop assurée, ce qui intéresse dès que l'on veut seuiller une probabilité pour déclencher une inspection. Notez au passage que ces métriques se calculent sur des prédictions du jeu de test, en une seule passe, une fois le modèle figé.
+
+```python
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+
+reels = [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1]
+predits = [0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0]
+
+matrice = confusion_matrix(reels, predits, labels=[0, 1])
+print("lignes = reels, colonnes = predits")
+print(matrice)
+
+vrais_positifs = matrice[1, 1]
+faux_negatifs = matrice[1, 0]
+rappel = vrais_positifs / (vrais_positifs + faux_negatifs)
+print("rappel de la classe defectueuse :", round(rappel, 2))
+
+print(classification_report(reels, predits, target_names=["conforme", "defectueuse"]))
+```
+
+Exécutez ce bloc avec vos propres étiquettes : la matrice affichée, ligne par ligne, vous dira toujours plus que le pourcentage global. Complétez-la par un examen visuel des erreurs — afficher treize images mal classées en vaut plus que trois métriques — car la cause d'une confusion se trouve dans l'image, pas dans le chiffre.
+
+## Surapprentissage en vision : le diagnostic en trois signes
+
+Le surapprentissage en vision est la même maladie qu'au chapitre six, avec un terrain plus favorable : un modèle convolutif compte des dizaines de milliers de paramètres et dispose, dans un petit jeu d'images, de quelques centaines d'exemples seulement. Le rapport entre capacité et données y est bien plus défavorable qu'en tabulaire, et il faut peu d'époques pour qu'un réseau apprenne à reconnaître par cœur les photographies qu'on lui présente. Le premier signe est donc un entraînement qui atteint la perfection suspecte très vite, souvent en trois ou quatre époques, pendant que la validation plafonne loin derrière.
+
+Le deuxième signe est l'écart entre les deux courbes de perte, plus parlant que l'écart entre les deux exactitudes. Tant que la perte de validation descend en suivant la perte d'entraînement, le modèle affine une règle valable. Quand la perte d'entraînement continue de chuter tandis que celle de validation remonte, le modèle se met à exploiter des détails qui n'existent que dans son jeu d'entraînement : l'éclairage d'une prise de vue, la texture du fond, la position de l'objet sur le tapis. Le troisième signe est négatif et plus inquiétant : un modèle entraîné sur des étiquettes prises au hasard doit afficher exactement le niveau du hasard. S'il obtient mieux, quelque part de l'information de la cible fuit dans les entrées, par exemple une image dupliquée entre ensembles ou un nom de fichier porteur de l'étiquette.
+
+Le bloc suivant fabrique les deux courbes à partir de l'historique renvoyé par la méthode d'entraînement, puis les dessine : c'est le graphique que vous présenterez dans un rapport, avec les deux axes annotés et la métrique indiquée.
+
+```python
+import matplotlib.pyplot as plt
+
+perte_entrainement = histoire.history["loss"]
+perte_validation = histoire.history["val_loss"]
+
+epoques = range(1, len(perte_entrainement) + 1)
+plt.plot(epoques, perte_entrainement, label="entrainement")
+plt.plot(epoques, perte_validation, label="validation")
+plt.xlabel("epoque")
+plt.ylabel("perte")
+plt.legend()
+plt.title("Diagnostic : les deux courbes se separant apres l'epoque 6")
+plt.show()
+
+ecart = perte_validation[-1] - perte_entrainement[-1]
+print("ecart final perte validation - entrainement :", round(ecart, 3))
+```
+
+Avant d'enchaîner sur les remèdes, notez ce que vous devez consigner à chaque expérience, sous peine de ne pouvoir comparer deux entraînements. Trois lignes suffisent : l'exactitude et la perte de validation de la meilleure époque, l'écart final entre les deux pertes, et le nombre d'époques exécutées avant l'arrêt. À ces chiffres, ajoutez la taille du jeu de validation et sa graine de découpage. Un jeu de validation de vingt images produit des sauts de plusieurs points d'une époque à l'autre, purement statistiques : ne lisez jamais un écart de ce genre comme une régression du modèle sans avoir répété l'expérience sur un autre découpage.
+
+Les remèdes s'appliquent dans un ordre strict, du moins coûteux au plus lourd. Premier : l'arrêt anticipé, qui récupère les meilleurs poids sans rien changer au modèle. Deuxième : le dropout et le poids de décroissance, qui limitent la dépendance aux neurones individuels. Troisième : la réduction de la capacité, moins de filtres et moins de couches, à essayer dès que le jeu compte moins de mille images. Quatrième : l'augmentation de données, qui augmente la matière première sans rien modifier au réseau, et à laquelle la section suivante est entièrement consacrée. Cinquième : le transfert d'apprentissage, qui part d'un modèle déjà riche en expérience, traité dans le dernier bloc du chapitre.
+
+Soyez précis sur les ordres de grandeur, afin de savoir quand vous demandez l'impossible. Quelques dizaines d'images par classe ne suffisent pas à entraîner un réseau from scratch : vous obtiendrez un modèle qui reconnaît vos clichés, pas vos objets. Quelques centaines commencent à rendre possible un entraînement court, fortement régularisé et augmenté. Quelques milliers permettent d'espérer une généralisation honnête. Au-delà de dix mille, les écarts d'architecture priment sur la quantité. Ces chiffres ne sont pas des lois, mais ils vous éviteront de passer trois jours à régler un entraînement qui n'avait aucune chance.
+
+Appliqué à notre ligne d'usine, le diagnostic tient en peu de mots. Six cents photographies, dont quatre cent quatre-vingts pour l'entraînement et cent vingt pour la validation, donnent un jeu de contrôle suffisant pour voir une tendance mais trop petit pour la mesurer au point près. Si la courbe d'entraînement atteint 100 % d'exactitude en quatre époques tandis que la validation reste bloquée à 78 %, il ne s'agit pas d'un mauvais réglage d'optimiseur : le réseau a mémorisé les conditions de prise de vue. On agit alors sur la donnée et la régularisation, jamais en ajoutant des époques, qui ne feraient qu'accentuer l'écart.
+
+## Augmenter les données : fabriquer la variété qui manque
+
+L'augmentation de données consiste à produire, à partir de chaque image du jeu d'entraînement, des variantes qui changent l'image sans changer son étiquette. Une pièce photographiée vue de gauche reste la même pièce légèrement pivotée ; un chat retourné horizontalement reste un chat. En appliquant ces transformations de façon aléatoire à chaque époque, vous ne créez pas un jeu de données figé plus grand, vous créez un flux infini de versions différentes : le réseau revoit la même photographie sous un angle nouveau à chaque passage, et ne peut donc pas la mémoriser sous une forme unique. L'augmentation est la réponse la plus économique au surapprentissage, parce qu'elle agit sur les données et non sur le modèle.
+
+Le principe directeur est l'invariance : n'ajoutez que des transformations qui, dans votre domaine, laissent la classe inchangée. C'est une décision métier, pas un réglage par défaut. Le retournement horizontal est neutre pour un défaut de surface, une bille ou une feuille ; il l'est beaucoup moins pour une lettre ou un panneau routier, où il fabrique une classe fausse. La rotation de quelques degrés imite les variations de positionnement sur un tapis roulant ; une rotation de 90 degrés, elle, peut changer la nature de l'objet observé. L'éclairage, lui, doit être varié avec prudence : si votre classe se définit justement par une couleur, un assombrissement excessif fabrique du bruit d'étiquette.
+
+Le tableau suivant sert de point de départ réglable plutôt que de recette figée.
+
+```table
+| Transformation | Plage raisonnable | Invariance visée | Avertissement |
+|---|---|---|---|
+| Retournement horizontal | Probabilité 0,5 | Position gauche-droite | Interdit si la classe a un sens directionnel |
+| Retournement vertical | Rare | Position haut-bas | Souvent interdit, inverse le sujet |
+| Rotation | ± 10 à 15 degrés | Positionnement de l'objet | Au-delà, l'étiquette devient fausse |
+| Translation | Jusqu'à 10 % de la largeur | Défaut hors centre | Recadrage possible, perte de contexte |
+| Zoom | 0,9 à 1,1 | Distance de la caméra | Trop de zoom détruit les petits défauts |
+| Luminosité et contraste | ± 20 % | Variations d'éclairage | Peut effacer un défaut sombre |
+```
+
+
+En Keras, la meilleure pratique actuelle consiste à placer l'augmentation dans le modèle lui-même, sous forme de couches. Elle est alors appliquée uniquement pendant l'entraînement, elle est incluse dans le graphique sauvegardé, et surtout elle ne peut pas contaminer la validation par accident. Le bloc suivant construit ce préprocesseur augmenté puis l'intègre au modèle.
+
+```python
+import tensorflow as tf
+
+augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.04),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.2),
+], name="augmentation")
+
+model_augmente = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(224, 224, 3)),
+    augmentation,
+    tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(2, activation="softmax"),
+])
+
+model_augmente.summary()
+```
+
+Les couches d'augmentation présentent trois avantages qu'il ne faut pas négliger : elles consomment très peu de temps puisqu'elles travaillent sur un lot déjà chargé, elles sont sauvegardées avec le modèle, donc la cohérence entre entraînement et inférence est garantie par construction, et elles ne peuvent pas écrire une variante dans le jeu de validation par simple erreur de copier-coller. La solution alternative, qui consiste à générer à l'avance des milliers de fichiers dérivés sur disque, reste utilisable quand la mémoire est insuffisante ou quand l'on doit partager un jeu de données figé avec une autre équipe ; elle expose en revanche les deux écueils classiques : un disque enflé et une frontière entre ensembles beaucoup plus facile à franchir par inadvertance.
+
+Dans notre cas d'usine, les choix se justifient par la géométrie de la ligne. Les pièces arrivent dans une orientation libre, donc le retournement horizontal est admis ; elles ne sont jamais présentées à l'envers, donc aucun retournement vertical. Les défauts apparaissent à n'importe quelle position angulaire, ce qui autorise une rotation de dix degrés sans changer l'étiquette. L'éclairage varie entre le matin et l'après-midi, d'où une variation de luminosité et de contraste de l'ordre de 15 %. En revanche, aucune translation excessive : le défaut doit rester entier dans le cadre, sinon vous apprenez au modèle à deviner ce qu'on lui a coupé.
+
+La règle d'or qui accompagne toute augmentation est un ordre d'opérations, et il est impitoyable. On découpe d'abord les fichiers en ensembles d'entraînement, de validation et de test, sur la base des objets ou des sessions de prise de vue, puis on n'augmente que le jeu d'entraînement. Si vous fabriquez des variantes avant le découpage, une photographie et sa voisine retournée se retrouvent de part et d'autre de la coupe : votre validation mesure alors la capacité à reconnaître une copie, pas à généraliser, et votre score est aussi fiable qu'un examen dont on aurait distribué les sujets la veille. Le test, lui, ne subit jamais aucune transformation, sinon vous ne mesurez plus vos performances réelles.
+
+L'ajustement de la force d'augmentation se fait en validation, comme un hyperparamètre de plus. Une transformation trop faible laisse le modèle mémoriser ; une transformation trop forte crée des images que l'humain ne reconnaîtrait plus comme appartenant à la classe et dégrade l'apprentissage. Commencez doucement, observez la fenêtre d'écart entre les deux courbes, puis durcissez seulement si l'écart se creuse encore. Une technique complémentaire, l'augmentation à l'inférence, applique plusieurs variantes d'une même image de validation et moyenne les prédictions : elle améliore légèrement le score sans toucher à l'entraînement, à condition de rester rigoureusement hors du calcul des métriques d'entraînement.
+
+## Transfer learning : emprunter ce que d'autres ont appris
+
+Le transfert d'apprentissage repose sur une observation empirique, vérifiée des milliers de fois : un réseau entraîné sur un million d'images apprend des caractéristiques qui ne lui sont pas propres. Ses premières couches reconnaissent des bords, des textures, des dégradés et des formes élémentaires ; ses couches intermédiaires combinent ces éléments en motifs valables pour presque tout sujet photographié. Ces briques, vous pouvez les récupérer sans les réapprendre. C'est ce qui change radicalement la donne sur un petit jeu de données : là où un réseau initialisé au hasard doit découvrir la notion de contour à partir de six cents images, un modèle préentraîné la connaît déjà depuis longtemps et ne doit apprendre que ce qui est spécifique à votre tâche.
+
+L'opération se déroule en deux temps distincts. Premier temps : on charge un modèle entraîné sur ImageNet, on remplace sa couche de sortie — mille neurones, adaptés à mille catégories sans rapport avec votre problème — par une couche adaptée à vos classes, puis on fige l'ensemble du corps du modèle et on n'entraîne que la nouvelle couche. Le réseau ne modifie aucun poids des couches convolutives : il se contente de produire des vecteurs de caractéristiques, et votre couche dense apprend à les séparer. Deuxième temps, facultatif : on débloque les dernières couches du corps et on relance un entraînement avec un taux d'apprentissage très bas, afin d'ajuster légèrement les caractéristiques au vocabulaire visuel de votre domaine. On appelle cela le réglage fin, ou fine-tuning.
+
+Le tableau suivant vous aidera à choisir entre les deux positions.
+
+```table
+| Critère | Corps figé, extraction de caractéristiques | Réglage fin des dernières couches |
+|---|---|---|
+| Paramètres entraînés | Nouvelle couche de sortie seule | Sortie plus une partie du corps |
+| Jeu de données requis | Quelques centaines d'images suffisent | Préférable au-delà d'un millier |
+| Taux d'apprentissage | 0,001 acceptable | Dix fois plus bas, souvent 0,0001 |
+| Durée et coût | Très courts, sur CPU | Plus longs, GPU conseillé |
+| Risque de surapprentissage | Faible | Réel si le jeu est petit |
+| Moment d'emploi | Première ligne de base, référence | Quand la base plafonne trop haut |
+```
+
+
+Trois détails techniques décident du succès. Le premier est le prétraitement : chaque modèle préentraîné attend une normalisation précise, souvent celle d'ImageNet, parfois une mise à l'échelle entre −1 et 1. Employer la normalisation de l'un avec les poids de l'autre coûte plusieurs points de performance, sans le moindre message d'erreur. Le deuxième est le mode de la normalisation par lot : une couche figée reste en mode inférence et garde les statistiques enregistrées à l'entraînement, ce qui est exactement ce que l'on veut tant qu'on ne l'entraîne pas ; dès que l'on débloque, il faut décider si l'on met à jour ces statistiques ou si on les fige. Le troisième est le taux d'apprentissage : réapprendre des poids déjà bons avec le taux d'un modèle vierge les détruit en quelques itérations.
+
+Le bloc suivant montre les deux temps, en Keras, avec les deux compilations correspondantes. La première phase est volontairement rapide : elle vous donne une baseline en quelques minutes, souvent très au-dessus de ce qu'un petit réseau from scratch obtient en une heure.
+
+```python
+import tensorflow as tf
+
+corps = tf.keras.applications.MobileNetV2(
+    input_shape=(224, 224, 3),
+    include_top=False,
+    weights="imagenet",
+)
+corps.trainable = False
+
+entree = tf.keras.layers.Input(shape=(224, 224, 3))
+x = tf.keras.applications.mobilenet_v2.preprocess_input(entree)
+x = corps(x, training=False)
+x = tf.keras.layers.GlobalAveragePooling2D()(x)
+x = tf.keras.layers.Dropout(0.2)(x)
+sortie = tf.keras.layers.Dense(2, activation="softmax")(x)
+transfert = tf.keras.Model(entree, sortie)
+
+transfert.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+transfert.fit(jeu, validation_data=validation, epochs=5)
+
+# phase 2 : deblocage progressif des dernieres couches
+corps.trainable = True
+for couche in corps.layers[:-40]:
+    couche.trainable = False
+
+transfert.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-4),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+transfert.fit(jeu, validation_data=validation, epochs=10)
+```
+
+Deux remarques sur ce script. Les couches débloquées sont les dernières uniquement : les premières restent figées parce qu'elles portent les briques les plus génériques, dont la réécriture n'apporterait rien sur un petit jeu. Et la recompilation entre les deux phases n'est pas une coquetterie : en Keras, la liste des variables entraînables est figée à la compilation, si bien qu'oublier de recompiler laisse l'optimiseur ignorer les couches que vous venez d'exposer.
+
+Le gain mesuré dépend de la distance entre votre domaine et ImageNet. Sur des objets photographiés en lumière naturelle — animaux, aliments, pièces industrielles, symptômes cutanés —, la ressemblance est forte et l'écart avec un entraînement depuis zéro atteint facilement vingt points d'exactitude sur quelques centaines d'images. Sur des données très éloignées, comme des spectres ou des images pseudo-colorées de radiographies, les premières couches restent utiles mais les couches profondes doivent beaucoup se réapprendre : le réglage fin devient alors indispensable, et la comparaison honnête exige les deux expériences, pas la seule qui vous arrange.
+
+## Interpréter les cartes de caractéristiques et les décisions
+
+Un classifieur qui affiche 94 % d'exactitude n'a pas encore prouvé qu'il regarde ce que vous croyez. Il peut atteindre ce score en observant le numéro d'inventaire imprimé sur le fond, la couleur du tapis transporteur ou le reflet d'une diode, et s'effondrer le jour où l'éclairage change. L'interprétation n'est donc pas un supplément décoratif : c'est le contrôle qui vérifie que la décision repose sur l'objet, et non sur un raccourci contingent. Deux familles d'outils servent à ce contrôle, l'une regardant ce que le réseau produit, l'autre ce qu'il consulte pour produire.
+
+Le premier outil est la visualisation des cartes de caractéristiques intermédiaires. On construit un modèle intermédiaire qui s'arrête à la couche voulue, on y fait passer une image et on affiche les cartes obtenues comme une planche d'images. Sur les premières couches, vous verrez des contours dans toutes les orientations, des dégradés et des textures ; sur les couches intermédiaires, des motifs plus structurés, souvent répétitifs ; sur les couches profondes, des cartes quasiment binaires, où seule une zone reste active. Des cartes entièrement noires signalent des filtres morts, une activité uniforme signale des entrées mal normalisées, et des cartes qui réagissent au fond plutôt qu'à l'objet vous alertent avant la défaillance en production.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+intermediaire = tf.keras.Model(
+    inputs=modele.inputs,
+    outputs=[couche.output for couche in modele.layers[:6]],
+)
+exemple = np.expand_dims(image_test / 255.0, axis=0)
+cartes = intermediaire.predict(exemple)
+
+fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+for axe, carte in zip(axes.flat, cartes[0][:8]):
+    axe.imshow(carte[:, :, 0], cmap="viridis")
+    axe.axis("off")
+plt.show()
+```
+
+Le second outil répond à une autre question : quelle zone de l'image a réellement pesé dans la décision ? La méthode Grad-CAM utilise les gradients de la probabilité de la classe prédite par rapport aux cartes de la dernière couche convolutive, les moyenne pour obtenir un poids par carte, puis compose une carte de chaleur superposée à l'image. Là où la chaleur est forte, le réseau a puisé son information ; là où elle est absente, la zone n'a pas influencé le résultat. Dans notre usine, cette carte dira en une seconde si la décision porte sur la rayure ou sur le bord du tapis.
+
+Appliquée à un cas concret, l'interprétation devient un outil de correction. Une carte de chaleur qui entoure systématiquement le numéro d'inventaire imprimé à côté de la pièce signale que le réseau exploite un raccourci de prises de vue ; la correction n'est pas de rajouter des couches, mais de recadrer les images, de varier le fond ou d'ajouter des photographies où le numéro est absent. Une carte qui reste diffuse sur toute la surface signale un modèle qui n'a pas trouvé de critère stable : il manque de la donnée ou de la résolution. L'interprétation transforme ainsi un constat d'échec en consigne de collecte, ce qu'aucun pourcentage ne fait.
+
+Gardez pourtant la juste défiance. Une carte de chaleur montre une corrélation entre une zone et une décision, pas une preuve de raisonnement ; elle peut être bruitée et changer d'une image à l'autre pour un même modèle. Elle ne remplace ni l'analyse des erreurs, qui révèle les cas systématiquement ratés, ni le test d'occlusion, qui masque une zone puis mesure la variation de la probabilité. Employez ces trois lectures ensemble, puis validez à la main sur un échantillon : l'œil humain reste le meilleur juge de la cohérence d'un modèle de vision.
+
+## Du prototype à la ligne de production
+
+Passer du notebook à la ligne suppose de figer un contrat. Le modèle n'est jamais seul : il est accompagné de son prétraitement, de l'ordre des classes, de la taille d'entrée et du seuil de décision. La première étape d'industrialisation consiste donc à empaqueter ces quatre éléments ensemble, dans un format standard — le modèle sauvegardé de TensorFlow, un fichier ONNX ou un script TorchScript —, puis à le versionner comme vous versionneriez du code. Un modèle sans numéro de version et sans fiche de prétraitement est un modèle injoignable : personne ne pourra reproduire son comportement six mois plus tard.
+
+Le chemin d'inférence doit rejouer exactement l'entraînement : même redimensionnement, même normalisation, même ordre des classes. Mesurez ensuite ce qui compte réellement — latence par image, débit en images par seconde, mémoire occupée. Un modèle qui répond en 40 millisecondes sur GPU et en 900 sur processeur n'est pas le même produit. Quand le gabarit est trop lourd, trois leviers se présentent dans cet ordre : réduire la résolution d'entrée, employer une architecture conçue pour l'embarquement comme celles du tableau du deuxième bloc, puis appliquer une quantification en virgule sur huit bits, qui divise par quatre la mémoire au prix de quelques dixièmes de point.
+
+Une fois déployé, le modèle doit être surveillé, car son environnement bouge sans lui : l'ampoule de la caméra vieillit, la peinture du tapis s'use, un fournisseur change la teinte de la pièce. Faites relabeler périodiquement une petite partie du flux et recalculez la matrice de confusion sur cette fenêtre : une baisse du rappel de la classe défectueuse déclenche une nouvelle collecte. Prévoyez enfin un seuil de confiance sous lequel la décision est refusée et l'image part en revue humaine ; mieux vaut un avis « je ne sais pas » qu'une erreur silencieuse sur une pièce dangereuse.
+
+Le tableau suivant condense la chaîne complète, du fichier brut à la décision, avec le livrable et le contrôle de chaque étape.
+
+```table
+| Étape | Livrable | Contrôle exigé |
+|---|---|---|
+| Collecte et découpage | Trois répertoires d'images | Aucun objet commun aux ensembles |
+| Augmentation | Couches appliquées à l'entraînement | Validation et test intacts |
+| Entraînement | Poids et courbes datés | Écart des deux pertes maîtrisé |
+| Évaluation | Matrice de confusion et métriques par classe | Rappel de la classe critique atteint |
+| Interprétation | Planche de cartes et cartes de chaleur | Décision portant sur l'objet |
+| Mise en production | Modèle versionné et fiche de prétraitement | Latence et métriques surveillées |
+```
+
+
+Cette chaîne est exactement celle que vous écrirez seul dans l'exercice du chapitre, sur des photographies de pièces défectueuses. Les sections précédentes vous ont donné chaque maillon ; il reste à les assembler dans le bon ordre, à documenter chaque décision, puis à défendre le résultat devant quelqu'un qui vous demandera pourquoi vous avez choisi ce seuil plutôt qu'un autre.
+
+## À retenir
+
+- Une image est un tenseur à quatre dimensions ; la forme, la plage de valeurs et la normalisation se contrôlent avant toute ligne de modèle.
+- Le perceptron aplati gaspille les paramètres et ignore le voisinage : il perd sur les deux plans à la fois.
+- La convolution applique un même filtre partout : partage des poids et localité, d'où la faiblesse du nombre de paramètres.
+- La taille de sortie vaut entrée moins filtre, plus deux fois la marge, divisée par le pas, le tout augmenté de un.
+- Le pooling réduit la résolution sans aucun paramètre et apporte une tolérance aux micros-décalages ; trop de pooling détruit les petits défauts.
+- Une activité non linéaire entre deux convolutions est indispensable, sinon la profondeur ne sert à rien.
+- Le global average pooling remplace les gigantesques couches denses de sortie et fait s'effondrer le nombre de paramètres.
+- Les paramètres d'une couche convolutive dépendent du noyau, des canaux et du nombre de filtres, jamais de la taille de l'image.
+- La perte de validation est la métrique qui décide ; l'exactitude ne sert qu'à communiquer.
+- En multiclasse, la matrice de confusion précède toujours le pourcentage, et le rappel de la classe critique prime sur le global.
+- Le surapprentissage en vision se lit en deux courbes qui divergent, souvent dès la quatrième époque.
+- L'augmentation crée une variété infinie d'exemples distincts mais correctement étiquetés ; elle agit sur les données, pas sur le modèle.
+- On découpe d'abord, on augmente ensuite : l'inverse fabrique des jumeaux répartis de part et d'autre de la coupe.
+- La force d'augmentation est un hyperparamètre qui se règle en validation, pas une valeur sacrée.
+- Le transfert d'apprentissage part d'un modèle préentraîné : corps figé d'abord, réglage fin facultatif ensuite.
+- Débloquer des couches impose un taux d'apprentissage dix fois plus bas et une recompilation explicite.
+- Les cartes de caractéristiques et les cartes de chaleur vérifient que la décision porte sur l'objet, pas sur le fond.
+- Un modèle de production emporte son prétraitement, l'ordre des classes, son numéro de version et son seuil de refus.
+
+## Erreurs fréquentes
+
+- Aplatir une image et la passer dans des couches denses, puis s'étonner d'un score d'entraînement parfait et d'un test médiocre.
+- Oublier de diviser par 255 ou d'appliquer la normalisation attendue par le modèle préentraîné : aucune erreur n'est levée, seul le score chute.
+- Générer les variantes augmentées avant le découpage, ce qui place des jumeaux de la même photographie dans deux ensembles.
+- Évaluer sur un jeu de validation qui subit lui aussi les transformations, et conclure sur un chiffre qui ne mesure plus la réalité.
+- Empiler trois ou quatre couches de pooling sur une image à basse résolution, et perdre le défaut que la mission demandait de trouver.
+- Utiliser un retournement vertical ou une rotation à 90 degrés sur une classe pour laquelle l'orientation porte sens.
+- Se contenter de l'exactitude globale sur des classes déséquilibrées, et déclarer bon un modèle qui ignore la classe rare.
+- Choisir entre corps figé et réglage fin au hasard, ou débloquer tout le corps avec le taux d'apprentissage de l'entraînement initial.
+- Oublier de recompiler après avoir rendu des couches entraînables, et constater que rien ne bouge.
+- Interpréter une carte de chaleur comme une preuve, au lieu de la croiser avec l'analyse des erreurs et un échantillon relu à la main.
+- Déployer sans fiche de prétraitement ni numéro de version, et ne plus jamais pouvoir reproduire le comportement observé.
+- Ne jamais réévaluer le modèle une fois en service, alors que l'éclairage et le matériel changent en silence.
+
+## Pour aller plus loin
+
+Les trois adresses qui suivent accompagnent directement les sections de cette leçon et se lisent avec le code sous les yeux. https://keras.io/examples/vision/image_classification_from_scratch/ déroule un pipeline complet en Keras, du chargement par répertoires à l'entraînement augmenté, avec les bonnes pratiques de prétraitement. https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html montre les deux phases du transfert d'apprentissage en PyTorch, gel du corps puis réglage fin, en insistant sur la mise à jour ou la gelée des normalisations par lot. https://docs.pytorch.org/vision/main/models.html référence les architectures préentraînées disponibles dans torchvision, avec leurs poids, leurs tailles d'entrée et les transformations de prétraitement associées.
+
+Pour aller au-delà du cadre de ce chapitre, trois pistes méritent votre temps. La documentation d'Albumentations, bibliothèque d'augmentations alignées sur les tâches de détection et de segmentation, vous montrera des transformations que Keras n'intègre pas encore. Les articles fondateurs sur Grad-CAM et ses successeurs détaillent le calcul des cartes de chaleur et leurs limites expérimentales. Enfin, les guides d'évaluation de modèles de vision insistent tous sur un point que nous avons souligné : la constitution d'un jeu de test représentatif, tenu à l'écart jusqu'à la dernière ligne du projet, est le facteur qui sépare un prototype flatteur d'un modèle défendable.
+
+## Et maintenant : passez du schéma à la ligne de contrôle
+
+La vidéo du chapitre reprend la même progression en la montrant s'écrire : convolution et pooling posés à la main, construction du réseau couche par couche, lecture des deux courbes de perte, mise en place des couches d'augmentation, puis deux phases du transfert d'apprentissage avec le changement de taux d'apprentissage entre elles. Regardez-la avec votre éditeur ouvert et rejouez chaque bloc en modifiant une seule valeur à la fois, de préférence la taille du jeu de validation, pour mesurer combien vos conclusions dépendent du découpage. Ensuite, prenez l'exercice : vous construirez seul le classifieur de pièces défectueuses, du découpage par session de prise de vue jusqu'à la matrice de confusion en passant par l'augmentation et le modèle préentraîné. Le quiz de quatre questions vérifiera les points qu'on confond le plus souvent : le rôle réel du pooling, l'ordre entre découpage et augmentation, la différence entre corps figé et réglage fin, et la lecture d'une matrice de confusion.

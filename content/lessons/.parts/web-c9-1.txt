@@ -1,0 +1,170 @@
+Bienvenue dans le neuvième chapitre du parcours Développement web moderne, celui où votre code React cesse d'être correct pour devenir maîtrisé. Les chapitres précédents vous ont donné des gestes complets : déclarer un état, faire remonter une propriété, structurer des routes, lier un formulaire, charger une donnée au montage, puis mettre le résultat en production. Le site de l'atelier de la Médiathèque des Lilas est en ligne et il fonctionne. C'est précisément à ce moment-là que commencent les trois symptômes que ce chapitre soigne : la même logique écrite trois fois dans trois écrans, la même information qui redescend de composant en composant comme une chaîne de seaux, et des listes qui ralentissent dès qu'on ajoute un filtre.
+
+À la fin de cette leçon, vous saurez faire trois choses très concrètes. Vous saurez extraire un hook personnalisé : isoler un comportement complet — état, effets, gestionnaires — dans une fonction réutilisable, respecter les règles qui gouvernent les hooks, choisir ce qui mérite d'être extrait. Vous saurez partager un état avec le contexte sans provoquer de rendus inutiles : découper un contexte par préoccupation, stabiliser la valeur fournie, réserver la mémoïsation aux endroits où une mesure la justifie. Vous saurez enfin diagnostiquer un rendu avec le profiler React : enregistrer une interaction, lire une flamme, identifier le composant responsable, corriger, puis mesurer à nouveau.
+
+Le fil rouge reste le site de l'atelier, mais il a grandi. Il compte une page d'accueil avec le compte à rebours du prochain atelier, une page programme qui liste les séances, un formulaire d'inscription, une liste des inscrits consultable par l'organisateur, et un espace où la session de l'utilisateur doit rester visible d'un écran à l'autre. L'accueil et le programme affichent le même compte à rebours ; la liste des inscrits et la page programme partagent la même source de données ; la session circule partout. Chaque section prendra l'un de ces besoins, l'écrira d'abord comme on le ferait naïvement, constatera ce que cela coûte, puis l'écrira mieux : d'abord faire fonctionner, ensuite mesurer, enfin corriger avec un outil plutôt qu'avec une intuition.
+
+Un mot sur la manière d'aborder ce chapitre. React se juge à l'écran, pas à la lecture : ouvrez un éditeur, recopiez les blocs, cassez-les volontairement, regardez ce que la console affiche. Un rendu en trop ne se voit pas d'ordinaire, il se mesure, et c'est pourquoi la fin du chapitre est consacrée à un outil plutôt qu'à une technique. Avant toute optimisation, posez-vous la question d'un bon relecteur : qu'avez-vous mesuré, et que craigniez-vous exactement. La réponse ça semblait lent est le début d'une mauvaise correction ; la réponse le profiler montre cette liste qui se redessine à chaque frappe est le début d'une bonne.
+
+## Pourquoi extraire un hook personnalisé
+
+Un hook personnalisé, c'est une fonction ordinaire dont le nom commence par use et qui peut, à l'intérieur, appeler d'autres hooks. Son objet n'est pas d'afficher quelque chose : il regroupe un comportement — état, effets, gestionnaires, calculs dérivés — pour que plusieurs composants l'utilisent sans le réécrire. La frontière est simple à trancher. Si votre fonction ne fait que transformer des données, formater une date, trier une liste en mémoire, calculer un prix, elle reste une fonction classique, à placer dans un module d'utilitaires. Si elle contient useState, useEffect, useRef, useContext ou un autre hook, elle doit s'appeler use suivi d'un nom, parce que React et les outils de vérification ont besoin de la reconnaître comme telle.
+
+Le logo de React rappelle d'où vient cette mécanique : les hooks sont la fonctionnalité qui a permis d'utiliser état et effets dans des fonctions ordinaires, sans classe ni méthode de cycle de vie.
+
+```image
+react-logo
+| Le logo de React : un noyau central entouré de trois électrons bleus, emblème de la bibliothèque qui a rendu les hooks utilisables dans les composants fonctionnels.
+```
+
+Le premier bénéfice est la suppression des duplications, et sur le site de l'atelier la duplication est déjà visible. L'écran d'accueil affiche le nombre de jours restants avant la séance du samedi ; l'écran programme affiche la même information au-dessus de la liste. Copier-coller la logique produit deux versions qui divergeront dès la première correction : on corrigera le décompte sur l'accueil et on oubliera le programme. Extraire le comportement dans un hook unique crée un seul endroit à corriger, à tester et à documenter. La règle est celle de tout le reste du code : un comportement, une définition.
+
+Le deuxième bénéfice est la lisibilité du composant. Un composant qui charge une liste, gère trois états de requête, calcule un filtre et nettoie son intervalle tient quatre responsabilités dans cent lignes. Après extraction, il n'en tient qu'une : il appelle le hook et il dessine. La complexité n'a pas disparu, elle est rangée dans un fichier dont le nom annonce le contenu. Quand un collègue ouvre useInscriptions.js, il sait qu'il y trouvera le chargement, l'erreur et le rechargement ; quand il ouvre ListeInscrits.jsx, il sait qu'il y trouvera le balisage. Ce déplacement, et non la suppression, est la valeur réelle de l'extraction.
+
+Le troisième bénéfice est la concentration des pièges. Les difficultés d'un comportement asynchrone — annuler une requête tardive, ignorer une réponse d'un composant démonté, réinitialiser un minuteur — se logent toutes au même endroit. Écrivez la fonction de nettoyage une fois dans le hook, et tous les écrans en profitent ; laissez-les répétés et vous obtiendrez la liste qui se remplit deux fois dans un écran et jamais dans l'autre. Un hook est aussi un contrat : il expose une forme de retour stable, décrivable en une phrase, ce qui rend la revue de code et les tests plus simples.
+
+Le tableau ci-dessous confronte les deux approches sur les besoins réels du site. Servez-vous-en comme d'une grille de décision avant d'extraire quoi que ce soit.
+
+| Besoin du site | Approche par copier-coller | Approche par hook personnalisé |
+|---|---|---|
+| Compte à rebours du prochain atelier | Calcul dupliqué dans deux écrans, dérive progressive | useProchainAtelier, une définition, deux utilisations |
+| Liste des inscrits | Trois états recopiés, nettoyage oublié d'un côté | useInscriptions, requête annulée, états nommés |
+| Formulaire d'inscription | Gestionnaires et erreurs réécrits pour chaque champ | useFormulaire, validation injectée, remise à zéro fournie |
+| Filtre de la liste | État local plus variable dispersée dans le rendu | useFiltre, debounce et URL restent dans le hook |
+| Session de l'utilisateur | Prop drilling sur quatre niveaux | useSession via le contexte, une seule lecture |
+
+Il faut aussi dire ce qu'un hook ne fait pas, parce que les attentes excessives coûtent cher. Un hook n'accélère rien : extraire une logique dans une fonction ne réduit pas le nombre de rendus, cela les organise. Il ne supprime pas non plus les dépendances de données : si le parent continue de créer un nouveau tableau à chaque rendu, les enfants se redessineront malgré tout. Il n'est pas gratuit non plus, puisqu'il ajoute un fichier, un nom et une API à maintenir. C'est pourquoi on extrait après, et non avant.
+
+Cette remarque commande la discipline d'écriture du chapitre. Faites fonctionner le comportement dans le composant où il est né, refaites-le fonctionner une seconde fois ailleurs, extrayez seulement à la troisième apparition, quand la forme du besoin s'est stabilisée. Extraire au premier essai revient à figer une API trop générale ou trop étroite, que l'on refactorisera en bout de course. Le duplicata temporaire est un moindre mal ; la mauvaise abstraction est un fardeau durable.
+
+## Les règles des hooks, à connaître par cœur
+
+Deux règles gouvernent tout ce qui suit, et elles ne se négocient pas. Premièrement, un hook s'appelle au niveau supérieur du composant ou du hook personnalisé : jamais dans une condition, jamais dans une boucle, jamais après un return, jamais dans un callback ou une fonction événementielle. Deuxièmement, un hook s'appelle uniquement depuis un composant React ou depuis une autre fonction dont le nom commence par use. Une règle comprise n'est plus oubliée : voyons donc pourquoi elles existent.
+
+Le pourquoi tient dans la façon dont React mémorise les hooks. Pour chaque composant affiché, React maintient une liste interne indexée par ordre d'appel : le premier useState occupe la case zéro, le deuxième la case un, le useEffect suivant la case deux, et ainsi de suite. Chaque rendu rejoue la même séquence et React retrouve l'état de chaque case par sa position. Si vous appelez un hook dans une condition, l'ordre change d'un rendu à l'autre, et React associe alors l'état d'une case à un hook qui n'est pas celui qui l'a créé. Le composant ne rate pas toujours bruyamment : parfois il affiche simplement la mauvaise valeur, ce qui est bien plus long à diagnostiquer.
+
+Considérez l'exemple suivant, où un composant affiche la session de l'organisateur seulement quand elle existe. L'écriture par naturel — conditionner l'appel — est fausse, même si elle semble fonctionner tant que la condition ne bascule jamais.
+
+```jsx
+function EspaceOrganisateur({ session }) {
+  const [filtre, setFiltre] = useState("");
+
+  if (session) {
+    const [visible, setVisible] = useState(true); // interdit : hook dans une condition
+  }
+
+  return <input value={filtre} onChange={(e) => setFiltre(e.target.value)} />;
+}
+```
+
+La correction ne consiste pas à supprimer l'état, mais à déplacer la décision. On déclare tous les hooks dans le même ordre à chaque rendu, puis on décide de ce qu'on en fait après. Une donnée conditionnelle s'initialise à une valeur neutre ; un effet qui ne doit rien faire retourne tôt à l'intérieur de sa fonction, ce qui ne change pas le compte des hooks ; un écran qui dépend d'une condition rend un composant différent plutôt que de sauter des appels.
+
+```jsx
+function EspaceOrganisateur({ session }) {
+  const [filtre, setFiltre] = useState("");
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    if (!session) return;
+    document.title = `Organisateur — ${session.nom}`;
+    return () => {
+      document.title = "Ateliers";
+    };
+  }, [session]);
+
+  if (!session) return <p>Connectez-vous pour gérer les inscriptions.</p>;
+  // autorisé : ce return vient APRÈS tous les hooks
+  ...
+}
+```
+
+Les retours anticipés restent donc possibles, à une condition : ils interviennent après le dernier appel de hook. Réservez le début du composant pour les appels, dans un bloc continu, puis placez les décisions d'affichage. Quand un composant réunit six hooks et trois retours conditionnels, l'ordre devient fragile ; le bon réflexe est alors de le scinder : un parent qui décide, deux enfants qui appellent chacun leurs hooks.
+
+Les boucles posent le même problème sous une autre forme. Déclarer un état par inscrit placerait un hook dans une boucle et ferait varier l'ordre avec les données. La bonne réponse consiste à remonter la boucle dans l'enfant : le parent rend une liste de composants, chacun appelle ses propres hooks. Ce déplacement n'est pas une contrainte subie, c'est l'architecture même de React : l'état vit là où il est utilisé.
+
+Les erreurs produites par une violation se reconnaissent, et il vaut mieux les connaître avant de les rencontrer. Le message Rendered fewer hooks than expected signifie qu'un rendu a appelé moins de hooks que le précédent, à cause d'un return trop tôt ; son contraire signifie qu'un appel est apparu dans une branche nouvelle. L'erreur la plus sournoise, elle, est silencieuse : l'état d'un hook se retrouve remplacé par celui d'un autre et l'application affiche une valeur plausible mais fausse. Dès qu'un état se comporte comme s'il appartenait à un autre composant, suspectez l'ordre d'appel.
+
+La troisième règle est conventionnelle : un hook personnalisé porte le préfixe use. Ce préfixe est lu par l'analyseur de code, qui vérifie alors les deux règles précédentes à l'intérieur de votre fichier, et par vos collègues, qui savent qu'une telle fonction peut appeler d'autres hooks et ne doit être appelée qu'au niveau supérieur. Renommer useInscriptions en chargerInscriptions ne casse rien à l'exécution, mais fait perdre la vérification automatique.
+
+La vérification mécanique se met en place en une ligne dans la configuration de l'éditeur et de l'intégration continue, avec l'extension dédiée d'ESLint. Elle impose deux règles : celle qui interdit les appels hors du niveau supérieur, et celle qui exige la liste complète des dépendances d'un effet. Activez-la avant vos premiers hooks personnalisés : elle transforme les règles de cette section d'une mémoire à retenir en un avertissement à la ligne exacte de la faute.
+
+Un dernier point sur le mode strict de développement. Avec StrictMode, React exécute volontairement certains effets deux fois au montage, pour révéler les nettoyages manquants : un abonnement qui se cumule ou une requête envoyée deux fois, voilà ce que ce double appel met au jour. Ce n'est pas un dysfonctionnement à corriger, c'est un test offert — si votre effet survit au double appel, c'est qu'il nettoie correctement.
+
+| Geste dans un composant | Verdict | Raison |
+|---|---|---|
+| Appeler useState avant toute condition | Obligatoire | L'ordre d'appel indexe l'état interne |
+| Appeler un hook après un return anticipé | Interdit | Le nombre de hooks changerait d'un rendu à l'autre |
+| Appeler un hook dans un gestionnaire d'événement | Interdit | La liste n'existe qu'au niveau du composant |
+| Déclarer un hook dans une boucle | Interdit | Le compte varie avec les données |
+| Appeler un hook dans un hook personnalisé | Autorisé | C'est même tout l'objet des hooks personnalisés |
+| Déclarer un return conditionnel à l'intérieur d'un effet | Autorisé | Le compte des hooks ne change pas |
+
+## Votre premier hook personnalisé : useProchainAtelier
+
+Prenons un besoin réel et modeste : afficher le temps restant avant la prochaine séance. Sur le site de l'atelier, l'écran d'accueil le place sous le titre, l'écran programme le répète au-dessus de la liste. La logique est identique des deux côtés : une date cible, une soustraction, un rafraîchissement périodique parce que le jour tourne à minuit, et une forme de sortie stable — jours, heures, minutes, ou la mention atelier terminé. Voici d'abord le hook, qui tient en une vingtaine de lignes et qui centralise les trois décisions : état initial, effet périodique, nettoyage.
+
+```jsx
+import { useEffect, useState } from "react";
+
+const JOUR = 60 * 60 * 1000;
+
+export function useProchainAtelier(dateCible) {
+  const [reste, setReste] = useState(() => calculerReste(dateCible));
+
+  useEffect(() => {
+    const minuteur = setInterval(() => {
+      setReste(calculerReste(dateCible));
+    }, 60 * 1000);
+    return () => clearInterval(minuteur);
+  }, [dateCible]);
+
+  return reste;
+}
+
+function calculerReste(dateCible) {
+  const ecart = new Date(dateCible).getTime() - Date.now();
+  if (ecart <= 0) return { termine: true, jours: 0, heures: 0, minutes: 0 };
+  return {
+    termine: false,
+    jours: Math.floor(ecart / JOUR),
+    heures: Math.floor((ecart % JOUR) / (60 * 60 * 1000)),
+    minutes: Math.floor((ecart % (60 * 60 * 1000)) / (60 * 1000)),
+  };
+}
+```
+
+Quatre décisions méritent d'être commentées, car elles valent pour tous les hooks que vous écrirez. L'état initial utilise une fonction d'initialisation, pour que la première image affichée soit juste dès le montage sans recalcul à chaque rendu. L'effet ne dépend que de dateCible : si la cible ne change pas, le minuteur reste le même. Le nettoyage détruit le minuteur, sans quoi un composant démonté continuerait de pousser un état sans destinataire. Enfin, la sortie est un objet nommé plutôt qu'un tableau de trois nombres : les champs lisibles survivent à un réordonnancement des valeurs.
+
+L'utilisation dans un composant se réduit à un appel et à un affichage. Aucun des écrans ne connaît l'existence du minuteur, ni la formule, ni le cas limite ; ils reçoivent un objet et le dessinent. C'est exactement le contrat recherché : l'écran décide de la mise en forme, le hook décide du temps qui passe.
+
+```jsx
+import { useProchainAtelier } from "./useProchainAtelier";
+
+function Accueil({ prochaineSeance }) {
+  const reste = useProchainAtelier(prochaineSeance);
+
+  if (reste.termine) {
+    return <p className="encadre">L'atelier a commencé — inscriptions closes.</p>;
+  }
+
+  return (
+    <p className="encadre">
+      Prochain atelier dans {reste.jours} jour{reste.jours > 1 ? "s" : ""},{" "}
+      {reste.heures} h {String(reste.minutes).padStart(2, "0")} min.
+    </p>
+  );
+}
+
+function Programme({ prochaineSeance }) {
+  const reste = useProchainAtelier(prochaineSeance);
+  return <h2>Séances à venir ({reste.jours} jours)</h2>;
+}
+```
+
+Le choix de la forme de retour est une décision d'API, pas un détail. Un tuple — le hook retourne un tableau que l'on déstructure — se lit bien quand la fonction renvoie deux ou trois valeurs simples dont l'ordre ne changera plus. Un objet se lit mieux dès que les valeurs ont un sens propre, car l'ordre cesse d'avoir une importance. Une troisième forme, à privilégier dès que le hook grossit, regroupe données et actions : { reste, recharger } ou { valeurs, erreurs, changer, soumettre }. Elle autorise l'ajout d'un champ sans casser les appels existants, ce qui est la principale qualité d'une API stable.
+
+Le cas limite mérite une ligne de test plutôt qu'une confiance aveugle. Une date passée doit renvoyer l'état terminé sans jamais afficher de nombres négatifs. Un fuseau horaire se comporte correctement tant que la date cible est fournie comme instant absolu et non comme chaîne ambiguë : préférez la construction par composants de date. Si enfin le serveur et la machine de l'utilisateur divergent, tranchez en une phrase dans le code : c'est l'heure du client qui compte pour l'affichage, et l'heure du serveur qui compte pour l'ouverture des inscriptions.
+
+La vérification finale tient en quatre gestes. Chargez l'écran et confirmez que l'affichage est juste dès la première image, sans flash de valeur par défaut. Laissez la page ouverte jusqu'au passage à minuit, ou simulez-le en avançant la date, et vérifiez le rafraîchissement. Naviguez vers un autre écran, revenez, et assurez-vous qu'aucun minuteur résiduel ne fait clignoter le contenu. Débranchez enfin l'affichage pendant une minute : si le composant devient opaque, c'est que le hook devrait renvoyer davantage de métadonnées, par exemple la date formatée, plutôt que de forcer chaque écran à la recalculer.
+
+Le comportement extrait est maintenant partagé : une seule définition, deux écrans, un endroit à corriger. Cette victoire est modeste, mais elle prépare la suivante. Le prochain hook à extraire n'est plus un calcul local : c'est un chargement de données, avec ses états d'attente, ses erreurs et ses réponses tardives, et c'est là que les règles du premier chapitre deviennent réellement payantes.

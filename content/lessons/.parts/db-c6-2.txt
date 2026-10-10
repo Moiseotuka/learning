@@ -1,0 +1,215 @@
+Voici le moment de tout assembler. Le script que nous allons écrire tient en une centaine de lignes, mais il concentre toutes les décisions prises dans la leçon précédente : huit tables, des clés primaires techniques, des clés étrangères nommées, des contraintes d'unicité, des contraintes de domaine et des index ciblés. Exécutez-le sur une base vide, ligne à ligne si besoin, et observez le message renvoyé après chaque bloc : un script qui réussit du premier coup est rare, et chaque échec vous apprendra plus que sa version corrigée. Nous garderons le même vocabulaire français que dans tout le parcours, en rappelant que les bases professionnelles anglophones emploient les mêmes structures avec d'autres noms.
+
+Un mot sur le dialecte SQL utilisé ici. Les types NUMERIC, TEXT, TIMESTAMP et les mots-clés CHECK et REFERENCES appartiennent au standard et sont compris par PostgreSQL, MySQL récent, MariaDB, SQLite et SQL Server avec de légères variations de syntaxe. Deux détails diffèrent fréquemment : la création d'un identifiant auto-incrémenté se fait avec GENERATED ALWAYS AS IDENTITY dans le standard, avec SERIAL dans PostgreSQL historique, avec AUTO_INCREMENT dans MySQL ; et les commentaires de bloc s'écrivent différemment. Adaptez ces deux points à votre moteur, tout le reste de la structure reste identique.
+
+L'ordre du script n'est pas décoratif. Nous créons d'abord les tables qui ne dépendent de personne, puis celles qui s'appuient sur elles, en terminant par les tables de transaction. Si vous inversez deux étages, le moteur vous préviendra immédiatement avec un message du type relation inexistante ou table de référence absente. Ce message n'est pas une erreur de débutant : c'est le moteur qui vous rappelle le graphe de dépendances que vous avez vous-même dessiné. Lire un script DDL dans l'ordre des dépendances est aussi une excellente façon de relire un modèle, car chaque clé étrangère est une phrase que l'on peut prononcer à voix haute.
+
+Enfin, avant de plonger dans le code, fixons une habitude de travail : exécutez toujours ce genre de script sur une base de test, jamais directement sur une base partagée, et gardez la possibilité de tout rejouer depuis zéro. Un schéma que l'on peut détruire et reconstruire en une seconde est un schéma que l'on peut apprisser sans crainte. C'est aussi la condition pour écrire des tests automatisés sur les rapports : des données de départ connues, un script déterministe, des résultats reproductibles.
+
+## Le script DDL complet : création dans le bon ordre
+
+Commençons par les deux tables sans aucune dépendance : clients et categories. Elles ouvrent le script parce que toutes les autres s'y réfèrent d'une manière ou d'une autre. Notez la présence systématique d'une clé primaire, de colonnes obligatoires marquées NOT NULL, et d'une contrainte UNIQUE sur les attributs qui servent d'identifiant de connexion ou de libellé de référence. La colonne mot_de_passe est de type TEXT : il ne faut jamais y stocker un mot de passe en clair, mais son empreinte calculée par un algorithme adapté, et cette précision appartient au schéma autant qu'au code applicatif.
+
+```sql
+CREATE TABLE clients (
+  identifiant     INTEGER PRIMARY KEY,
+  courriel        TEXT    NOT NULL UNIQUE,
+  mot_de_passe    TEXT    NOT NULL,
+  prenom          TEXT    NOT NULL,
+  nom             TEXT    NOT NULL,
+  telephone       TEXT,
+  professionnel   BOOLEAN NOT NULL DEFAULT FALSE,
+  cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE categories (
+  identifiant  INTEGER PRIMARY KEY,
+  libelle      TEXT    NOT NULL,
+  parent_id    INTEGER REFERENCES categories (identifiant),
+  chemin       TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX uq_categories_parent_libelle
+  ON categories (COALESCE(parent_id, 0), libelle);
+```
+
+La suite du script introduit produits, qui référence categories, puis adresses, qui référence clients. Le type monétaire NUMERIC(10, 2) fixe deux décimales, largement suffisantes pour des prix d'outillage et exactes pour des calculs de total. Le CHECK sur le prix interdit les valeurs négatives dès l'écriture, ce qui protège les rapports de sommation. Le drapeau actif permet de retirer un produit du catalogue sans supprimer l'historique de ses ventes, une suppression logique qui est toujours préférable à une suppression physique sur des tables de transaction.
+
+```sql
+CREATE TABLE produits (
+  identifiant     INTEGER PRIMARY KEY,
+  reference       TEXT    NOT NULL UNIQUE,
+  libelle         TEXT    NOT NULL,
+  description     TEXT,
+  prix_catalogue  NUMERIC(10, 2) NOT NULL CHECK (prix_catalogue >= 0),
+  poids_grammes   INTEGER CHECK (poids_grammes > 0),
+  categorie_id    INTEGER NOT NULL REFERENCES categories (identifiant),
+  actif           BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX ix_produits_categorie ON produits (categorie_id);
+
+CREATE TABLE adresses (
+  identifiant    INTEGER PRIMARY KEY,
+  client_id      INTEGER NOT NULL REFERENCES clients (identifiant),
+  libelle        TEXT    NOT NULL,
+  rue            TEXT    NOT NULL,
+  code_postal    TEXT    NOT NULL,
+  ville          TEXT    NOT NULL,
+  pays           TEXT    NOT NULL DEFAULT 'France',
+  par_defaut     BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE (client_id, libelle)
+);
+```
+
+Le cœur du schéma est la chaîne commandes, lignes_commande et paiements. La table commandes porte l'en-tête : identifiant, numéro lisible par le client, référence du client, date, statut contraint à une liste fermée, adresse livrée figée, montant total et note. La table lignes_commande porte le détail, avec une clé primaire composite sur commande et produit afin d'interdire deux lignes identiques, une quantité strictement positive et un prix unitaire figé. La table paiements détache l'encaissement, avec son propre statut et sa propre date, pour gérer remboursements et paiements échelonnés sans toucher à l'historique de vente.
+
+```sql
+CREATE TABLE commandes (
+  identifiant       INTEGER PRIMARY KEY,
+  numero            TEXT    NOT NULL UNIQUE,
+  client_id         INTEGER NOT NULL REFERENCES clients (identifiant),
+  cree_le           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  statut            TEXT    NOT NULL DEFAULT 'en_attente'
+                    CHECK (statut IN ('en_attente', 'payee', 'expediee', 'livree', 'annulee')),
+  adresse_livraison TEXT    NOT NULL,
+  montant_total     NUMERIC(10, 2) NOT NULL DEFAULT 0 CHECK (montant_total >= 0)
+);
+
+CREATE INDEX ix_commandes_client ON commandes (client_id);
+CREATE INDEX ix_commandes_date   ON commandes (cree_le);
+
+CREATE TABLE lignes_commande (
+  commande_id    INTEGER NOT NULL REFERENCES commandes (identifiant),
+  produit_id     INTEGER NOT NULL REFERENCES produits (identifiant),
+  quantite       INTEGER NOT NULL CHECK (quantite > 0),
+  prix_unitaire  NUMERIC(10, 2) NOT NULL CHECK (prix_unitaire >= 0),
+  remise         NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (commande_id, produit_id)
+);
+
+CREATE INDEX ix_lignes_produit ON lignes_commande (produit_id);
+
+CREATE TABLE paiements (
+  identifiant   INTEGER PRIMARY KEY,
+  commande_id   INTEGER NOT NULL REFERENCES commandes (identifiant),
+  regle_le      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  moyen         TEXT    NOT NULL CHECK (moyen IN ('carte', 'virement', 'cheque', 'especes')),
+  montant       NUMERIC(10, 2) NOT NULL CHECK (montant > 0),
+  statut        TEXT    NOT NULL CHECK (statut IN ('autorise', 'capture', 'rembourse', 'echoue'))
+);
+```
+
+La huitième table, stocks, relie produits et entrepôts. Elle illustre la clé primaire composite sur une relation plusieurs-à-plusieurs : un produit peut être présent dans plusieurs entrepôts, un entrepôt contient plusieurs produits, et la paire suffit à identifier une ligne de stock. Son index en cascade, index sur produit puis sur entrepôt, permet les deux directions de lecture, celle du réapprovisionnement qui part d'un produit et celle de la préparation qui part d'un entrepôt.
+
+```sql
+CREATE TABLE entrepots (
+  identifiant INTEGER PRIMARY KEY,
+  code        TEXT NOT NULL UNIQUE,
+  ville       TEXT NOT NULL
+);
+
+CREATE TABLE stocks (
+  produit_id   INTEGER NOT NULL REFERENCES produits (identifiant),
+  entrepot_id  INTEGER NOT NULL REFERENCES entrepots (identifiant),
+  quantite     INTEGER NOT NULL DEFAULT 0 CHECK (quantite >= 0),
+  PRIMARY KEY (produit_id, entrepot_id)
+);
+
+CREATE INDEX ix_stocks_entrepot ON stocks (entrepot_id);
+```
+
+Une fois le script exécuté, vérifiez ce que la base a réellement créé plutôt que de supposer. Chaque moteur propose un moyen d'inspecter le catalogue : la vue des informations sur les tables, la commande de description d'une table ou la consultation du schéma système. Repérez la liste des clés étrangères, des index et des contraintes : si une contrainte manque, c'est qu'une ligne a été perdue, et mieux vaut le découvrir maintenant que lors du premier rapport faux.
+
+## Contraintes, types et index : ce que le script garantit
+
+Les contraintes de ce script ne sont pas des décorations, chacune répond à une défaillance observée en production quelque part. L'unicité du courriel empêche deux comptes de se disputer le même identifiant de connexion. La contrainte de domaine sur le statut interdit les valeurs libres telles que payé avec un accent ou PAYE en majuscules, qui ruinent les regroupements de rapports. La borne de quantité positive empêche des retours négatifs d'être enregistrés comme des ventes. Le prix figé sur la ligne de commande garantit que le rapport de chiffre d'affaires du mois dernier restera exact même après une hausse tarifaire.
+
+Le choix des types mérite autant d'attention que celui des contraintes. On utilise un entier pour les compteurs et les quantités, un NUMERIC à précision fixe pour les montants, un TIMESTAMP pour les événements datés, un BOOLEAN pour les drapeaux, un TEXT pour les libellés, avec une longueur limitée uniquement lorsque la réalité métier l'impose, comme pour un code postal ou un pays. On évite soigneusement le type flottant pour l'argent, on évite de stocker des dates dans du texte, et on refuse les colonnes qui mélangent plusieurs informations, par exemple un champ adresse complet au lieu de rue, code postal, ville et pays. Une colonne non atomique rend impossible tout regroupement par ville.
+
+Les index doivent être choisis en fonction des requêtes réelles, et non par réflexe. Une clé primaire crée automatiquement un index unique, ce qui signifie que les identifiants sont déjà rapides. Une clé étrangère n'est pas indexée par défaut dans la plupart des moteurs : comme les rapports et les jointures passent fréquemment par commandes.client_id et lignes_commande.produit_id, ces colonnes méritent un index explicite. Les colonnes filtrées par des plages de dates, comme commandes.cree_le pour le chiffre d'affaires mensuel, en demandent un autre. En revanche, créer un index sur chaque colonne ralentit les écritures et consomme de l'espace : chaque index doit pouvoir justifier sa présence par une requête identifiée.
+
+Un index composite obéit à une règle de lecture simple : il accélère les filtrages qui commencent par sa colonne de gauche. Un index sur (categorie_id, prix_catalogue) sert les recherches filtrées par catégorie et triées par prix, mais pas les recherches triées uniquement par prix. Cette asymétrie explique bon nombre de requêtes étonnamment lentes : l'index existe, mais son ordre ne correspond pas à la requête. Pour vérifier, on consulte le plan d'exécution avec la commande EXPLAIN, qui indique si le moteur parcourt un index ou lit la table en entier.
+
+Enfin, les contraintes portées par le schéma ne couvrent pas tout, et il est sain de le savoir. Le montant total d'une commande pourrait être recalculé à partir de ses lignes, et laisser ce champ modifiable ouvre la porte à des incohérences. On peut l'interdire par un déclencheur, par une règle, ou accepter de le recalculer à chaque écriture dans l'application. De même, la décrémentation du stock lors d'une commande relève d'une opération composite qui dépasse une simple contrainte. Ces limites ne discréditent pas le schéma : elles dessinent la frontière entre ce que la base garantit seule et ce que la base partage avec le code.
+
+## Le peuplement : jeu de données et ordre des INSERT
+
+Un schéma vide ne prouve rien. Il faut le peupler d'un jeu de données suffisamment réaliste pour révéler les défauts : au moins une dizaine de catégories, cinquante produits répartis entre elles, cent clients, plusieurs cents commandes étalées sur dix-huit mois, des lignes en quantités variées et quelques paiements annulés. Ce volume minimum permet aux agrégations de donner des chiffres non triviaux et aux index d'avoir quelque chose à trier. Des données trop propretes, où chaque mois affiche exactement le même total, masquent les bugs de regroupement.
+
+L'ordre de peuplement suit exactement l'ordre de création : d'abord les tables sans dépendance, puis leurs filles. Concrètement, on insère les catégories, puis les entrepôts, puis les clients, puis les adresses, puis les produits qui référencent des catégories, puis le stock qui relie produits et entrepôts, puis les commandes qui référencent des clients, puis les lignes de commande qui référencent commandes et produits, et enfin les paiements qui référencent les commandes. Si vous insérez une ligne de commande avant sa commande, le moteur refusera l'écriture avec une erreur de clé étrangère : ce n'est pas un défaut du script, c'est la protection qui fonctionne.
+
+```sql
+INSERT INTO categories (identifiant, libelle, parent_id, chemin) VALUES
+  (1, 'Outillage main',  NULL, 'outillage-main'),
+  (2, 'Outillage electrique', NULL, 'outillage-electrique'),
+  (3, 'Visserie', NULL, 'visserie'),
+  (4, 'Perceuses', 1, 'outillage-electrique/perceuses'),
+  (5, 'Marteaux', 1, 'outillage-main/marteaux');
+
+INSERT INTO clients (identifiant, courriel, mot_de_passe, prenom, nom, telephone) VALUES
+  (1, 'camille@exemple.fr', 'hache-3f9d', 'Camille', 'Renard', '0612345678'),
+  (2, 'yanis@exemple.fr',   'hache-8ab1', 'Yanis',  'Lopez',  NULL);
+
+INSERT INTO produits (identifiant, reference, libelle, prix_catalogue, poids_grammes, categorie_id) VALUES
+  (1, 'PER-001', 'Perceuse a percussion 850 W', 89.90, 2100, 4),
+  (2, 'MAR-001', 'Marteau d'ecoincon 600 g', 18.50, 600, 5),
+  (3, 'VIS-001', 'Boite de vis inox 200 pieces', 9.90, 350, 3);
+```
+
+Observez la façon dont les identifiants sont fixés explicitement dans ces INSERT. Cette technique rend le jeu de données déterministe : la commande numéro 42 portera toujours les mêmes articles, ce qui permet de comparer vos résultats de rapport avec ceux de la leçon, et de reprendre un débogage là où vous l'aviez laissé. Dans un chargement réel, vous préférerez souvent laisser la base générer les identifiants et récupérer ensuite les valeurs produites, à l'aide d'une clause de retour ou d'une requête de sélection immédiate. Les deux approches sont légitimes, à condition de choisir la même pour tout le script.
+
+Le remplissage des tables de transaction demande une astuce : les dates. En laissant CURRENT_TIMESTAMP par défaut, toutes vos commandes se retrouvent à la même seconde, et un rapport mensuel ne renverra qu'un seul mois rempli. Il faut donc fournir explicitement la colonne de date, en répartissant les commandes sur plusieurs mois avec des valeurs étales. C'est une erreur classique de peuplement : le schéma est bon, les données sont présentes, mais le rapport de tendance affiche une ligne unique et personne ne comprend pourquoi.
+
+```sql
+INSERT INTO commandes (identifiant, numero, client_id, cree_le, statut, adresse_livraison, montant_total) VALUES
+  (1, 'CMD-2025-0001', 1, '2025-01-14 10:23:00', 'livree',  '12 rue des Lilas, 93100 Montreuil', 118.30),
+  (2, 'CMD-2025-0002', 2, '2025-03-02 15:07:00', 'payee',   '5 avenue du Pre, 75019 Paris', 89.90),
+  (3, 'CMD-2025-0003', 1, '2025-06-21 09:41:00', 'annulee', '12 rue des Lilas, 93100 Montreuil', 28.40);
+
+INSERT INTO lignes_commande (commande_id, produit_id, quantite, prix_unitaire, remise) VALUES
+  (1, 1, 1, 89.90, 0),
+  (1, 3, 2, 9.90, 1.30),
+  (2, 1, 1, 89.90, 0),
+  (3, 2, 1, 18.50, 0),
+  (3, 3, 1, 9.90, 0);
+
+INSERT INTO paiements (commande_id, moyen, montant, statut) VALUES
+  (1, 'carte', 118.30, 'capture'),
+  (2, 'carte', 89.90,  'capture'),
+  (3, 'carte', 28.40,  'rembourse');
+```
+
+Après chaque lot d'insertions, contrôlez le résultat au lieu de faire confiance à l'absence d'erreur. Comptez les lignes de chaque table, vérifiez que le total des lignes de commande correspond au montant total de chaque en-tête, cherchez les clients sans commande et les produits jamais vendus. Ces contrôles, exécutés avec quelques requêtes d'agrégation simples, constituent la première ligne de défense contre les données de test inutilisables. Un jeu de données qui ne passe pas ces contrôles ne servira à rien pour valider vos rapports.
+
+## Transactions de peuplement : charger vite et sans risque
+
+Le mot transaction désigne, vous vous en souvenez, une suite d'opérations traitée comme une unité indivisible : elle s'applique entièrement ou pas du tout. Pour le peuplement, cela change tout. Si vous chargez mille commandes et que la ligne numéro six cent trente-sept échoue parce qu'un produit référencé n'existe pas, une exécution sans transaction laisse votre base dans un état intermédiaire, six cents commandes chargées et le reste absent. Une exécution dans une transaction annule l'intégralité du lot et vous rend une base propre, sur laquelle vous corrigez la cause réelle puis rejouez.
+
+```sql
+BEGIN;
+INSERT INTO clients (courriel, mot_de_passe, prenom, nom)
+VALUES ('lea@exemple.fr', 'hache-77cd', 'Lea', 'Moreau');
+
+-- Identifiant attribué au client : récupération selon le moteur,
+--   PostgreSQL : RETURNING identifiant dans l'INSERT
+--   MySQL      : LAST_INSERT_ID()
+--   SQLite     : last_insert_rowid()
+
+INSERT INTO adresses (client_id, libelle, rue, code_postal, ville)
+VALUES (1, 'Domicile', '3 boulevard Voltaire', '75011', 'Paris');
+
+INSERT INTO commandes (numero, client_id, adresse_livraison, montant_total)
+VALUES ('CMD-2025-0099', 1, '3 boulevard Voltaire, 75011 Paris', 42.00);
+
+
+COMMIT;
+```
+
+Ce bloc illustre le motif d'une opération multi-tables. La commande BEGIN ouvre la transaction, les trois INSERT forment un ensemble, et COMMIT valide l'ensemble. Si l'une des écritures échoue, on exécute ROLLBACK et rien n'a été écrit. Dans un script de chargement, on enveloppe généralement chaque lot de quelques milliers de lignes dans une transaction, on commit au besoin, et on termine par un ROLLBACK global si le script complet doit être annulable. Sans cette discipline, un chargement interrompu laisse des dizaines de milliers de lignes orphelines qu'il faudra repérer et effacer à la main.
+
+La question des identifiants revient dans ce contexte avec une acuité particulière. Dans la transaction ci-dessus, la deuxième écriture doit connaître l'identifiant attribué à la première, alors que la colonne est auto-incrémentée. Chaque moteur propose une solution : une clause RETURNING en PostgreSQL, une fonction d'accès à la dernière valeur insérée dans MySQL, ou bien la fixation explicite des identifiants pour tout le lot, méthode que nous avons utilisée plus haut et qui évite complètement le problème. L'important est d'être cohérent : alterner les deux approches dans le même script est la meilleure façon de produire des références erronées.
+
+Un second piège de peuplement concerne l'ordre des tables de transaction. Il est tentant d'insérer d'abord toutes les commandes pour ensuite remplir les lignes, ce qui fonctionne tant que tout va bien. Mais si vous devez annuler la moitié du chargement, la contrainte de clé étrangère sur les lignes vous empêchera de supprimer les commandes avant leurs filles, à moins de préciser une politique en cascade ou d'inverser l'ordre des suppressions. Pensez donc aussi à la fin de vie des données : chaque script d'insertion devrait être accompagné de sa procédure d'annulation, au moins en environnement de test.
+
+Le contrôle de cohérence après chargement est le dernier maillon. Une transaction garantit l'intégrité référentielle et l'atomicité, pas la justesse métier. Vérifiez que le montant total de chaque commande est bien la somme de ses lignes, que les paiements ne dépassent pas le montant dû, que les quantités de stock sont cohérentes avec les mouvements, et que la répartition des dates couvre bien la période attendue. Ces contrôles se formulent en quelques requêtes avec SUM et GROUP BY, que vous écrirez de toute façon plus loin pour les rapports. Une base chargée, contrôlée et transactionnelle est enfin prête à répondre à des questions : c'est l'objet de la section suivante.

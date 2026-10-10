@@ -1,0 +1,157 @@
+Le scan SYN que vous venez de pratiquer est puissant, mais il n'est pas toujours disponible ni toujours souhaitable. Sur un poste Windows sans privilèges étendus, ou dans un environnement où vos paquets bruts déclencheraient immédiatement une alerte, un autre mode prend le relais : le scan CONNECT, noté -sT. Comprendre la différence entre ces deux approches, et savoir lire correctement les réponses de service qu'elles produisent, transforme une liste de ports ouverts en un début d'inventaire exploitable.
+
+Dans cette partie, nous allons d'abord détailler le scan CONNECT et le scan TCP complet, puis apprendre à interpréter les codes de service et les bannières que les applications renvoient, et enfin poser les bases de la corrélation entre une version détectée et une vulnérabilité publiée. C'est à ce stade que l'analyse cesse d'être de la simple découverte pour devenir du renseignement sur la surface d'attaque.
+
+## Le scan CONNECT et le scan TCP complet
+
+Le scan CONNECT utilise l'API système normale pour établir une connexion. Là où le scan SYN construit lui-même les paquets, le scan CONNECT demande au système d'exploitation de faire le travail : ouverture d'une socket, envoi du SYN, réception du SYN-ACK, envoi de l'ACK, constatation de la connexion réussie, puis fermeture propre par FIN. Tout ceci est parfaitement conforme au protocole, ce qui signifie que le serveur, lui, voit une connexion complète et légitime. Le service testé peut même écrire une entrée dans son journal : « connexion ouverte depuis 192.168.56.20, fermée immédiatement ».
+
+```bash
+nmap -sT -p 80,443,8080 192.168.56.101
+```
+
+Voici une sortie typique de ce mode :
+
+```bash
+Starting Nmap 7.94 ( https://nmap.org ) at 2026-03-10 09:22 CET
+Nmap scan report for serveur-demo (192.168.56.101)
+Host is up (0.00051s latency).
+PORT     STATE    SERVICE
+80/tcp   open     http
+443/tcp  open     https
+8080/tcp closed   http-alt
+Nmap done: 1 IP address (1 host up) scanned in 0.87 seconds
+```
+
+À première vue, les résultats ressemblent à ceux d'un scan SYN. Pourtant, trois différences structurelles changent la donne. Premièrement, le scan CONNECT est moins rapide, car chaque connexion doit être établie puis fermée proprement, sans possibilité de pipeline aussi agressif. Deuxièmement, il est beaucoup plus visible : pare-feu, IDS et journaux d'application voient passer des connexions entières. Troisièmement, il ne distingue pas toujours un port filtré d'un port fermé, car l'échec de connexion peut prendre plusieurs formes selon le système.
+
+Le scan TCP complet, noté -sT quand il est contraint, ou plus couramment -sT versus -sS, désigne en pratique la même famille : Nmap parcourt l'ensemble de la plage de ports spécifiée et tente une connexion complète sur chacun. La différence avec le scan SYN par défaut réside donc dans le niveau de privilège et le choix délibéré de rester dans le cadre du système d'exploitation. Dans un laboratoire, vous utiliserez plutôt le SYN ; sur un poste d'entreprise où vous n'avez pas les droits administrateur, le CONNECT sera votre outil naturel.
+
+Un mot sur les plages de ports. Par défaut, Nmap scan les 1 000 ports les plus fréquents, mais cette liste, bien que pratique, masque des services exotiques. Le port 3306 de MySQL, le 5432 de PostgreSQL, le 6379 de Redis, le 8500 de Consul, le 27017 de MongoDB : aucun n'est dans la liste par défaut selon la version de Nmap installée. Spécifiez toujours vos propres plages, et gardez en tête les ports suivants, qui reviennent constamment dans les inventaires :
+
+```table
+| Port | Protocole | Service courant | Pourquoi il compte |
+| 22 | TCP | SSH | Accès distant, parfois avec mots de passe faibles |
+| 80 | TCP | HTTP | Applications web non chiffrées, redirections |
+| 443 | TCP | HTTPS | Applications web chiffrées, certificats à auditer |
+| 3389 | TCP | RDP | Accès distant Windows, cible fréquente de brute force |
+| 445 | TCP | SMB | Partages de fichiers, vecteur de rançongiciel |
+| 5432 | TCP | PostgreSQL | Bases de données exposées à l'Internet |
+| 6379 | TCP | Redis | Stockage en mémoire souvent non authentifié |
+| 8080 | TCP | HTTP alt | Proxys, interfaces d'administration, conteneurs |
+```
+
+Pour lancer un scan CONNECT sur une plage complète sans privilèges :
+
+```bash
+nmap -sT -p 1-65535 --open 192.168.56.101
+```
+
+L'option --open restreint la sortie aux seuls ports ouverts, ce qui réduit le bruit pour l'analyse. La contrepartie est que vous perdez la distinction entre fermé et filtré : utile pour un premier balayage, insuffisant pour un rapport final.
+
+## Interpréter les codes de service et les bannières
+
+Un port ouvert n'est qu'un indice. Ce qui transforme cet indice en information, c'est la réponse que le service lui-même renvoie quand on le questionne. On appelle bannière, ou banner, la chaîne de caractères qu'une application envoie spontanément — souvent au moment de la connexion, parfois après une requête minimale. Un serveur SSH renverra par exemple SSH-2.0-OpenSSH_9.2p1 Debian-2, un serveur FTP un 220 Welcome to the FTP server, un serveur SMTP un 220 mail.example.com ESMTP Postfix.
+
+Nmap collecte ces bannières lorsqu'il les détecte, et les affiche dans la colonne VERSION de la sortie enrichie. Pour activer cette détection, utilisez l'option -sV :
+
+```bash
+nmap -sV -p 22,80,443 192.168.56.101
+```
+
+La sortie se complète alors d'une colonne cruciale :
+
+```bash
+PORT    STATE  SERVICE VERSION
+22/tcp  open   ssh     OpenSSH 9.2p1 Debian-2 (protocol 2.0)
+80/tcp  open   http    nginx 1.22.1
+443/tcp open   ssl/http nginx 1.22.1
+```
+
+Chaque ligne est maintenant un fait vérifiable : le port 80 parle HTTP, le logiciel est nginx, la version est 1.22.1. C'est exactement l'information dont vous aurez besoin pour interroger une base de vulnérabilités. Sans -sV, vous n'auriez que « 80/tcp open http » : vous savez qu'un serveur web tourne, mais pas lequel, ni à quelle version — donc rien de corréléable.
+
+Le processus de détection de versions repose sur une série de probes : Nmap envoie des requêtes calibrées pour chaque service et compare la réponse à une base de signatures. Parfois, le service ne répond pas à la probe mais se contente d'envoyer sa bannière dès la connexion : c'est le cas typique de SSH ou de FTP. Parfois, aucune probe ne correspond, et Nmap affiche simplement service avec une confiance moindre. La mention unknown doit alors vous alerter : le scan n'a pas réussi à identifier le logiciel, et une investigation manuelle est nécessaire.
+
+Pour une investigation manuelle, un outil aussi simple que netcat peut suffire. Supposons que le port 8080 soit ouvert mais que Nmap n'ait rien identifié :
+
+```bash
+printf 'GET / HTTP/1.0\r\n\r\n' | nc 192.168.56.101 8080 | head -n 20
+```
+
+La réponse contiendra probablement un en-tête Server: Apache/2.4.57 (Debian), ou bien le nom d'une application métier. Ce réflexe — questionner à la main quand l'automatisation échoue — est celui d'un auditeur expérimenté. Il vous évite de classer un service en « inconnu » alors qu'une simple requête suffisait à l'identifier.
+
+Voici les principales bannières que vous rencontrerez au cours de vos premiers audits, et ce qu'elles vous apprennent :
+
+```table
+| Bannière | Logiciel probable | Renseignement obtenu |
+| SSH-2.0-OpenSSH_9.2 | OpenSSH 9.2 | Version exacte, distro souvent déductible |
+| 220 ProFTPD 1.3.5 Server | ProFTPD 1.3.5 | Version avec CVE connues (ex. 1.3.5) |
+| Server: Apache/2.4.57 | Apache httpd | Modules possibles, correctifs à vérifier |
+| Server: Microsoft-IIS/10.0 | IIS 10 | Version majeure, correctifs à vérifier par build |
+| X-Powered-By: PHP/8.1.2 | PHP 8.1.2 | Exposition inutile de la pile technique |
+```
+
+La dernière ligne de ce tableau mérite une remarque. Un en-tête X-Powered-By ou un Server précis est une aide précieuse pour l'auditeur, mais une information que l'administrateur aurait pu taire. Signalez-le dans votre rapport comme une divulgation d'information, avec une sévérité faible : ce n'est pas une faille en soi, mais il réduit le coût de la reconnaissance pour un attaquant.
+
+## Des versions aux vulnérabilités : CVE et CVSS
+
+Vous avez désormais une table de ports ouverts et une table de versions. La question qui suit, celle qui justifie tout le travail précédent, est la suivante : parmi ces versions, lesquelles contiennent des failles connues, publiées et documentées ? Pour y répondre, vous allez utiliser deux référentiels : le catalogue CVE et le système de notation CVSS.
+
+Le catalogue CVE, pour Common Vulnerabilities and Exposures, est une base publique gérée par le centre MITRE, dans laquelle chaque faille reçoit un identifiant stable de la forme CVE-Année-Numéro. Exemple : CVE-2021-44228 désigne la faille Log4Shell, découverte dans la bibliothèque Java Log4j en décembre 2021. L'identifiant est une référence universelle : tout le monde, dans le monde entier, parle de la même faille en citant ce numéro.
+
+Pour rattacher une version détectée à une CVE, plusieurs méthodes existent. La plus simple est la recherche par moteur : saisissez nginx 1.22.1 CVE dans un moteur de recherche, et parcourez les résultats. La plus fiable est l'interrogation d'une base structurée, comme celle du National Vulnerability Database maintenu par le NIST, qui expose une API :
+
+```bash
+curl -s "https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=nginx%201.22.1" | head -c 2000
+```
+
+Cette requête renvoie une liste de vulnerabilities, chacune contenant son identifiant CVE, sa description, et — point crucial — son score CVSS. C'est ce score que nous allons apprendre à lire.
+
+Le CVSS, pour Common Vulnerability Scoring System, traduit une vulnérabilité en un nombre décimal entre 0,0 et 10,0, accompagné d'un qualificatif de sévérité. La version 3.1, la plus répandue actuellement, décompose le score en plusieurs métriques : le vecteur d'attaque (le logiciel est-il accessible à distance, faut-il une authentification), l'impact sur la confidentialité, l'intégrité et la disponibilité, et le niveau de correction nécessaire. Voici comment lire un vecteur CVSS :
+
+```bash
+# Vecteur CVSS 3.1 typique pour une vulnérabilité critique
+# CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+# AV:N   : Access Vector Network (attaque à distance)
+# AC:L   : Attack Complexity Low (pas de condition particulière)
+# PR:N   : Privileges Required None (aucun compte)
+# UI:N   : User Interaction None (aucune action de la victime)
+# C:H    : Confidentiality High (fuite totale des données)
+# I:H    : Integrity High (modification possible)
+# A:H    : Availability High (interruption possible)
+```
+
+Un vecteur entièrement en N et H produit presque toujours un score supérieur à 9,0 : c'est le profil des failles qui font les titres, comme Log4Shell (CVSS 10,0) ou WannaCry via EternalBlue (CVSS 8,1). À l'inverse, une faille nécessitant une authentification préalable et n'atteignant que la confidentialité peut tomber sous 4,0, et sera qualifiée de faible.
+
+Il existe une version plus synthétique encore du score, le temps de base, que de nombreux rapports professionnels utilisent pour prioriser les corrections :
+
+```table
+| Plage de score | Qualificatif | Délai de correction usuel |
+| 9,0 à 10,0 | Critique | Immédiat, sous 24 à 72 heures |
+| 7,0 à 8,9 | Élevé | Sous 7 à 30 jours |
+| 4,0 à 6,9 | Moyen | Sous 30 à 90 jours |
+| 0,1 à 3,9 | Faible | Sous le cycle de maintenance courant |
+```
+
+Attention cependant : le score CVSS est une mesure technique, pas une mesure de risque réel. Une vulnérabilité notée 9,8 sur un service exposé uniquement à un réseau interne isolé n'aura pas le même impact qu'une vulnérabilité notée 6,5 sur un serveur public. La priorisation finale devra toujours croiser le score avec le contexte d'exposition — c'est exactement l'objet de la partie suivante.
+
+Un dernier point sur la corrélation version-CVE, qui est la source n°1 des faux positifs dans les rapports de débutants : la simple présence d'une version dans une CVE ne prouve pas que le système est vulnérable. Les éditeurs corrigent leurs logiciels sans changer le numéro de version visible, les distributions appliquent des correctifs en interne, et certaines CVE ne concernent qu'une fonctionnalité désactivée par défaut. Votre rôle n'est pas d'affirmer « ce serveur est compromis », mais d'écrire « ce serveur expose nginx 1.22.1, version associée à CVE-XXXX-YYYY, à confirmer par test ou par audit des correctifs ». La nuance est la marque du professionnel.
+
+En pratique, la corrélation se fait souvent à l'aide d'un outil dédié, comme SearchSploit, fourni avec la distribution Kali Linux, qui interroge localement la base Exploit-DB :
+
+```bash
+searchsploit nginx 1.22.1
+```
+
+La sortie liste les exploits publiés pour cette version, avec leur chemin local et un lien vers la fiche complète. Un exploit publié n'est pas une preuve de vulnérabilité, mais c'est un signal fort : il indique que la communauté de sécurité a jugé cette version intéressante, et qu'un correctif existe probablement. Reportez ce résultat dans votre inventaire, avec le numéro CVE associé et le score CVSS, et laissez à l'équipe le soin de confirmer par le test de correctif.
+
+Prenons un exemple complet, du scan au constat. Vous scannez un serveur interne et découvrez le port 3306 ouvert, identifié comme MySQL 5.7.33. Vous interrogez la base du NVD avec la chaîne mysql 5.7.33 et récupérez plusieurs dizaines de CVE, dont certaines notées 7,5 ou plus. Vous ne concluez pas que le serveur est compromis : vous notez dans votre tableau que le port 3306 est ouvert sur le réseau interne, que le service est MySQL 5.7.33, que des CVE de sévérité élevée existent pour cette version, et que la correction recommandée est la mise à niveau vers une version 8.0 supportée. Vous ajoutez une recommandation de cloisonnement réseau, car l'exposition de MySQL sur un réseau partagé est en soi une mauvaise pratique. Cinq lignes de rapport, et l'administrateur dispose de tout ce qu'il faut pour agir.
+
+La capture d'écran suivante illustre le niveau de détail qu'un analyseur de paquets vous donne lorsque vous voulez vérifier manuellement ce qu'un scan a détecté :
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Wireshark_3.0.3_screenshot.png/960px-Wireshark_3.0.3_screenshot.png
+| Capture Wireshark montrant la liste des paquets échangés, avec les protocoles, les adresses source et destination et les informations de séquence utiles pour valider un scan.
+```
+
+Un mot sur les versions qui ne sont pas des versions. Parfois, la bannière renvoie une chaîne comme Apache/2.4.57 (Ubuntu) ou nginx/1.22.1 (Debian). Le suffixe entre parenthèses vous renseigne sur la distribution, ce qui est précieux : un paquet Debian est corrigé par le gestionnaire de paquets de la distribution, pas par la compilation d'une version amont. Un correctif publié par l'éditeur met parfois plusieurs semaines à être disponible dans le dépôt Debian, et l'administrateur doit donc surveiller les avis de sécurité de sa distribution autant que ceux de l'éditeur. Mentionnez cette nuance dans votre rapport, elle montre que vous avez compris la chaîne de correction.

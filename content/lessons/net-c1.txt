@@ -1,0 +1,447 @@
+Bienvenue dans ce premier chapitre du parcours réseaux : du modèle OSI à l'adressage IP. Si vous n'avez jamais manipulé un routeur, jamais ouvert un terminal pour regarder une adresse, vous êtes exactement au bon endroit. Rien de ce qui suit ne suppose un diplôme en télécommunications ni des mathématiques poussées : seuls sont requis la curiosité, un ordinateur sous Linux, macOS ou Windows avec le sous-système Linux installé, et l'envie de comprendre ce qui se passe réellement quand une page web s'affiche. Un réseau, ce n'est pas de la magie : c'est une pile de règles empilées les unes sur les autres, chacune étant chargée d'une tâche précise et repoussant la suite du travail à la couche du dessus. Ce chapitre vous apprend à lire cette pile, à la nommer correctement, puis à fabriquer vous-même les adresses qui la font fonctionner. Tous les exemples sont courts, exécutables tels quels, et commentés pour que vous puissiez les recopier, les modifier et les observer vivre sur votre écran.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, et vous les aurez déjà manipulées dans de vraies commandes. Premièrement, vous situerez un protocole, un équipement et une panne dans le modèle OSI en sept couches, en expliquant ce que chaque couche apporte à la précédente. Deuxièmement, vous lirez une adresse IPv4 en binaire, vous en déduirez le masque, l'adresse de réseau, l'adresse de diffusion et la plage d'hôtes réellement utilisables. Troisièmement, vous planifierez un découpage en sous-réseaux avec la méthode VLSM, en attribuant à chaque segment exactement la taille dont il a besoin. Quatrièmement, vous vérifierez tout cela avec les outils du métier, ip, ping, traceroute et tcpdump, en attaquant le problème couche par couche au lieu de deviner. Ces quatre compétences forment le socle du parcours : les chapitres sur Ethernet et ARP, sur TCP et DNS, puis sur le routage OSPF supposent toutes les notions installées ici.
+
+Le fil rouge du chapitre est un cas pratique que vous retrouverez dans l'exercice de fin de leçon. Une PME lyonnaise exploite trois sites, un siège, une agence et un entrepôt, reliés entre eux, et dispose d'un seul bloc d'adresses : 172.20.0.0/22. Un prestataire parti en cours de route a laissé un plan bâclé, où deux sous-réseaux se chevauchent et où une imprimante réseau se retrouve hors de la passerelle. Vous allez reconstruire ce plan depuis zéro : identifier les besoins de chaque segment, choisir les masques, calculer les plages, vérifier l'absence de conflit, puis tester le résultat en pingant d'une machine à l'autre. Chaque notion abordée dans ce chapitre servira directement ce cas : le modèle OSI pour savoir quel équipement est en cause, les masques pour couper le bloc, le VLSM pour optimiser la coupe, et les commandes de vérification pour prouver que le résultat fonctionne.
+
+Un conseil avant de commencer, sur la manière d'aborder ce cours. Un réseau s'apprend comme on apprend un sport : en faisant, pas en regardant. Rien ne remplace le geste de taper soi-même chaque commande dans un terminal, de lire la sortie, de provoquer volontairement une panne et de constater le message d'erreur. Nous avancerons par petits pas, en alternant explications détaillées, schémas de topologie, tableaux de synthèse et blocs de commandes prêts à exécuter. Quand un bloc apparaît, ouvrez un terminal à côté de cette page et lancez-le : même si votre machine n'a pas exactement la même configuration, la sortie vous apprendra à lire les adresses, les masques et les routes. Si une commande échoue, lisez le message au lieu de le subir : il indique presque toujours si le problème est physique, de liaison, de routage ou de nom de domaine.
+
+## Comprendre : ce qu'est vraiment le modèle OSI
+
+Le modèle OSI, pour Open Systems Interconnection, est un cadre de référence publié par l'Organisation internationale de normalisation. Il découpe la communication entre deux machines en sept couches numérotées de bas en haut, de la couche 1, la plus physique, à la couche 7, la plus proche de l'utilisateur. L'idée centrale est simple : chaque couche fournit un service à la couche située juste au-dessus, et pour remplir ce service elle utilise les possibilités de la couche située juste en dessous. Aucune couche ne se préoccupe du fonctionnement interne de ses voisines. Le logiciel qui échange des messages HTTP n'a aucune idée de la façon dont lesondes radio ou les impulsions électriques transportent ses octets : il se contente de demander à la couche inférieure de livrer son contenu, et reçoit en retour soit la donnée livrée, soit une erreur explicite.
+
+Ce découpage existe pour une raison historique très pratique : l'interopérabilité. Dans les années soixante-dix, chaque constructeur inventait sa propre façon de relier des machines, et deux équipements de marques différentes refusaient de se parler. En séparant la communication en strates indépendantes, un standard de la couche physique peut évoluer sans remettre en cause les programmes d'application, et inversement. C'est ce qui permet aujourd'hui de remplacer une carte filaire par une carte sans fil sans réinstaller votre navigateur. Le modèle OSI reste un outil pédagogique et un langage commun : quand un technicien dit que le problème est en couche 2, tout le monde comprend qu'il faut regarder les câbles, les commutateurs et les adresses MAC, pas le serveur applicatif.
+
+On retient souvent l'analogie du service postal. Vous écrivez une lettre, la couche application ; vous la glissez dans une enveloppe addressée, la couche transport attribue un port, la couche réseau inscrit l'adresse IP de destination ; le facteur la prend en charge, couche liaison, puis le camion la transporte, couche physique. À l'arrivée, l'enveloppe est ouverte dans l'ordre inverse : chaque récepteur retire l'entête de sa couche, vérifie qu'elle s'adresse bien à lui, puis transmet le contenu à la couche du dessus. Ce retrait progressif, c'est exactement ce que fait votre machine quand une réponse HTTP arrive : la carte réseau récupère des octets, le système d'exploitation reconstruit une trame, puis un paquet, puis un segment TCP, et finalement le navigateur reçoit un message complet qu'il sait interpréter.
+
+Voici la pile telle qu'on la représente d'ordinaire, avec l'équipement et l'adresse associés à chaque niveau. Le schéma montre aussi la direction du flux : à l'envoi on descend la pile, à la réception on la remonte.
+
+```text
+  Envoi (haut vers bas)          |  Couche | Rôle courant          | Outil / adresse
+                                 |---------|-----------------------|----------------
+  Application  (navigateur)      |    7    | Service vu de l'usage | https, DNS
+  Présentation (encodage)        |    6    | Format, chiffrement   | TLS, UTF-8
+  Session     (dialogue)         |    5    | Ouvrir/fermer un échange | sockets
+  Transport   (TCP / UDP)        |    4    | Fiabilité, ports      | port 443, 53
+  Réseau      (IP)               |    3    | Acheminement          | routeur, 10.0.0.5
+  Liaison     (Ethernet, Wi-Fi)  |    2    | Trame, MAC, CRC       | commutateur, MAC
+  Physique    (câble, fibre, RF) |    1    | Bits sur le support   | carte, optique
+                                 |---------|-----------------------|----------------
+  Réception (bas vers haut)
+```
+
+Dans la pratique quotidienne, la couche 3 est celle où vous passerez le plus de temps dans ce chapitre, puisque l'adressage IP y vit. La couche 2 intervient dès que vous avez un doute sur le fonctionnement d'un commutateur ou d'un point d'accès, et la couche 4 deviendra centrale au chapitre sur TCP. Les couches 5, 6 et 7 sont souvent regroupées en une seule dans le modèle TCP/IP, celui réellement déployé sur Internet, car leurs frontières sont floues : TLS chiffre et présente autant les données qu'il ne protège un dialogue. Gardez néanmoins les sept couches en tête : elles vous donnent un vocabulaire précis pour dire où commence et où finit un problème.
+
+## Les sept couches, une par une
+
+La couche 1, physique, concerne le support de transmission : paire torsadée, fibre optique, ondes radio, signal électrique, débit, connecteurs et normes de câblage. Elle transforme des bits en signaux et inversement. Quand un câble est débranché, qu'une fibre est pliée à trop fort angle ou qu'un point d'accès émet sur une fréquence saturée, la panne est en couche 1. C'est aussi le seul endroit où l'on mesure des grandeurs matérielles : volts, décibels, millisecondes de latence intrinsèque. Aucune adresse n'existe à ce niveau, seulement un flux de bits sans structure.
+
+La couche 2, liaison de données, organise ces bits en trames et ajoute l'addressage de proximité : l'adresse MAC, gravée dans la carte réseau. Le commutateur travaille ici : il lit l'adresse MAC de destination, consulte sa table d'apprentissage et bascule la trame vers le bon port. La couche 2 ne sait pas joindre deux réseaux différents, seulement acheminer au sein d'un même réseau local, ce qu'on appelle un domaine de diffusion. Elle vérifie aussi l'intégrité de la trame avec une somme de contrôle, le CRC : si le résultat est faux, la trame est supprimée silencieusement et c'est au protocole de la couche du dessus de se plaindre. Le protocole ARP, qui associe une adresse IP à une adresse MAC, appartient à cette interface entre couche 2 et couche 3.
+
+La couche 3, réseau, est le royaume d'IP et des routeurs. Elle prend une paquet, lit l'adresse IP de destination, le compare aux entrées de sa table de routage et décide par quelle interface le relancer. Contrairement au commutateur, le routeur relie des réseaux différents et franchit les frontières : chaque fois qu'il fait un saut, il réécrit l'en-tête de couche 2, car la trame change de support, mais il conserve l'en-tête IP, sauf pour décrementer le champ TTL. Ce fameux Time to Live, décrémenté à chaque saut, empêche les paquets de circuler indéfiniment quand une boucle de routage apparaît. La couche 3 fournit aussi le diagnostic le plus utilisé du métier, le protocole ICMP, sans lequel la commande ping n'existerait pas.
+
+La couche 4, transport, s'occupe de la livraison de bout en bout entre deux processus, pas entre deux machines. Elle le fait grâce aux ports, ces numéros de 0 à 65535 qui désignent une application de destination : 80 pour le web non chiffré, 443 pour le web chiffré, 53 pour le DNS, 22 pour l'administration à distance. TCP, le protocole fiable, établit une connexion en trois temps, numérote chaque segment, attend un accusé de réception et réenvoie ce qui manque. UDP, plus léger, émet sans garantie ni ordre : il sert au temps réel, à la résolution de nom et aux sondes réseau. La couche 4 résout aussi un problème que la couche 3 ignore totalement : plusieurs conversations peuvent partager la même adresse IP, il faut donc les distinguer.
+
+Les couches 5, 6 et 7 complètent la chaîne jusqu'au logiciel. La couche 5, session, gère l'ouverture, la maintenance et la fermeture des dialogues ; la couche 6, présentation, s'occupe du format, de l'encodage et du chiffrement des données ; la couche 7, application, expose le service que l'utilisateur voit, comme le web, la messagerie ou le transfert de fichiers. Dans le modèle TCP/IP condensé, ces trois couches sont fondues dans la couche applicative. Quel que soit le découpage retenu, gardez le principe : plus on monte, plus on parle le langage de l'utilisateur ; plus on descend, plus on parle le langage de la machine et du support.
+
+Le tableau suivant résume la correspondance entre couches, unités de données, équipements et adresses : c'est la carte mentale que vous devez pouvoir réproduire de mémoire avant le quiz.
+
+```table
+| Couche | Nom | Unité de données | Équipement type | Adresse utilisée |
+|---|---|---|---|---|
+| 7 | Application | Message | Serveur, navigateur | Nom de domaine |
+| 6 | Présentation | Message | Passerelle TLS | Format, certificat |
+| 5 | Session | Message | Pare-feu applicatif | Identifiant de session |
+| 4 | Transport | Segment ou datagramme | Balanceur de charge | Port |
+| 3 | Réseau | Paquet | Routeur, pare-feu | IP |
+| 2 | Liaison | Trame | Commutateur, point d'accès | MAC |
+| 1 | Physique | Bits | Câble, fibre, antenne | Aucune |
+```
+
+
+Une application concrète de ce tableau : diagnostiquer. Quand un site ne se charge plus mais que la messagerie fonctionne, vous savez que la couche 3 est saine, car le trafic sort bien du réseau local ; le problème se situe donc plus haut, probablement au niveau du nom de domaine ou du service distant. Quand aucun trafic ne sort, commencez par le bas : voyez si la carte a une adresse, si la passerelle répond, si un routeur intermédiaire répond. Descendre ou remonter la pile méthodiquement, au lieu de tout redémarrer dans l'espoir d'un miracle, distingue un dépanneur d'un bricoleur.
+
+## Protocoles, services et encapsulation
+
+Un protocole est un accord écrit entre deux ou plusieurs parties : il définit le format des messages, l'ordre des échanges et l'action à entreprendre en cas d'erreur. Un service, lui, est ce qu'une couche promet à la couche du dessus : la couche 3 promet d'acheminer un paquet vers une autre machine, quelle que soit la manière dont elle y parviendra. La distinction est importante car elle sépare le quoi du comment : votre navigateur réclame un service de livraison, il ignore si la livraison passe par une fibre, une 4G ou un lien satellite. De même, une unité de données change de nom en traversant la pile, un détail qui prête souvent à confusion lors des examens : on parle de message en haut, de segment pour TCP, de datagramme pour UDP, de paquet en couche 3, de trame en couche 2 et de bits en couche 1.
+
+Ce renommage s'explique par l'encapsulation. À l'envoi, chaque couche prend la donnée qui lui est remise, lui préfixe un en-tête portant ses propres informations, et parfois lui ajoute un pied, une fin de message contenant des métadonnées complémentaires. L'en-tête IP porte l'adresse source et l'adresse de destination ; l'en-tête TCP porte les ports et le numéro de séquence ; l'en-tête Ethernet porte les adresses MAC. À la réaction, l'opération se déroule exactement à l'envers : chaque couche lit son en-tête, le valide, le retire et transmet le reste vers le haut. Le schéma ci-dessous montre un message HTTP de quelques octets qui descend la pile et se retrouve coiffé de trois en-têtes successifs.
+
+```text
+Application :  GET /index.html HTTP/1.1
+                   |
+Transport   :  [ TCP : ports 51234 -> 443, seq=1 ] + GET /index.html HTTP/1.1
+                   |
+Réseau      :  [ IP : 10.10.5.24 -> 93.184.216.34, TTL=64 ] + (TCP + HTTP)
+                   |
+Liaison     :  [ ETH : MAC src -> MAC dst, type 0x0800 ] + (IP + TCP + HTTP) + CRC
+                   |
+Physique    :  10110010 11010001 01001011 ...
+```
+
+Cette pile d'en-têtes a une conséquence directe et mesurable : la taille utile diminue à chaque couche. Sur une liaison Ethernet standard, la trame maximale emporte 1500 octets de données utiles, auxquels s'ajoutent les en-têtes. Si votre paquet IP fait 1480 octets, la couche 4 doit encore y ajouter son en-tête TCP : le transport découpe alors le flux en plusieurs segments. C'est le mécanisme de fragmentation, qu'on préfère éviter aujourd'hui car il coûte en performance ; on lui préfère le réglage de la taille maximale de transport, le fameux MTU. Quand une trame est trop grosse pour un lien, le routeur doit la fragmenter ou la rejeter, et si le drapeau interdit la fragmentation, il renvoie une erreur ICMP que ping affiche comme un message de paquet trop grand.
+
+Le routeur joue dans ce processus un rôle double qu'il faut bien saisir. Il désencapsule l'entrée jusqu'à la couche 3, examine l'adresse IP de destination, consulte sa table de routage, puis réencapsule le paquet dans une nouvelle trame adaptée au lien de sortie. Si l'entrée était du Wi-Fi et la sortie de la fibre, l'en-tête Ethernet de départ disparaît au profit d'un nouveau, tandis que l'en-tête IP, lui, ne change pas. Le routeur ne modifie l'adresse IP que s'il pratique de la traduction, le NAT, que nous aborderons plus loin. Ce mécanisme explique pourquoi la même donnée change d'apparence en route tout en restant identique du point de vue des applications : les adresses de proximité sont locales à chaque lien, l'adresse IP est globale à l'acheminement.
+
+Il reste une notion à poser avant de passer à l'adressage : celle de couche lorsque l'équipement fait plusieurs choses à la fois. Un routeur d'entreprise filtre aussi les flux, traduit des adresses, chiffre des tunnels : il opère alors en couche 3 et en couche 4, voire au-dessus. Un pare-feu applicatif inspecte le contenu des messages, donc la couche 7, tout en s'appuyant sur la couche 3 pour savoir d'où vient le trafic. Dire la couche d'un équipement revient à dire la couche de sa décision principale : le commutateur bascule sur la couche 2, le routeur achemine sur la couche 3, le pare-feu applicatif autorise ou refuse sur la couche 7. Connaître cette hiérarchie vous évitera les discussions stériles et, surtout, vous indiquera par où commencer quand le trafic ne passe pas.
+
+## L'adressage IPv4 : structure d'une adresse
+
+Une adresse IP, c'est un nombre de 32 bits écrit sous une forme que l'on appelle notation décimale pointée : quatre nombres entiers de 0 à 255 séparés par des points, comme 192.168.1.10. Chaque nombre, appelé octet, correspond à huit bits, ce qui donne bien 4 × 8 = 32 bits au total. Pour comprendre ce que la machine voit réellement, il faut parfois repasser en binaire : l'adresse 192.168.1.10 se lit alors une suite de deux mots de seize bits dont les bits de poids fort valent 11000000, 10101000, 00000001 et 00001010. Ce passage entre base dix et base deux n'est pas un exercice de style : il est indispensable pour calculer un masque, car les masques se manipulent comme des lignes de bits, pas comme des nombres décimaux. Chaque octet vaut en effet 128 plus 64 plus 32 puis 16, 8, 4, 2, 1 : voilà toute l'arithmétique dont vous aurez besoin.
+
+Voici à quoi ressemble une machine lorsqu'on lui demande ses adresses, avec la commande ip addr show, disponible sous Linux et très utilisée en milieu professionnel.
+
+```text
+$ ip addr show
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP
+    link/ether 3c:22:fb:8e:11:04 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.25/24 brd 192.168.1.255 scope global dynamic eth0
+       valid_lft 84320sec preferred_lft 84320sec
+    inet6 fe80::3e22:fbff:fe8e:1104/64 scope link
+       valid_lft forever preferred_lft forever
+```
+
+Trois informations essentielles s'y trouvent. L'adresse IPv4 192.168.1.25 est suivie de la barre oblique et du nombre 24, qui indique la longueur du masque : ici 24 bits mis à 1. Le mot brd annonce l'adresse de diffusion du segment, et le mot dynamic précise que cette adresse a été donnée par un serveur de configuration automatique plutôt que fixée à la main. Notez aussi la ligne inet6 : elle commence par fe80, ce qui signifie une adresse de liaison locale, automatique et non routable, obligatoire sur chaque interface IPv6 active. La ligne link/ether affiche l'adresse MAC de la carte, en couche 2, que le protocole ARP utilisera tout à l'heure pour joindre la machine sur le segment local.
+
+L'adresse IP ne prend tout son sens qu'en présence d'un masque. Sans masque, une adresse est un simple nombre ; avec un masque, on sait quelle partie désigne le réseau et quelle partie désigne l'hôte de la machine. Le masque est une suite de bits à 1 suivie d'une suite de bits à 0, toujours contiguë : on ne peut pas avoir un 0 encadré de 1. Les bits à 1 couvrent la partie réseau, les bits à 0 la partie hôte. C'est pourquoi on écrit le masque long, /24, plutôt que le masque décimal 255.255.255.0 : les deux sont équivalents, mais le premier est plus rapide à écrire et à comparer. Une machine dont l'adresse est 172.20.0.0 et le masque /12 possède 20 bits de réseau et 12 bits d'hôte, et c'est ce décompte qui décide si deux machines peuvent dialoguer directement ou doivent passer par un routeur.
+
+Autre avantage du binaire, on peut calculer n'importe quelle plage sans table de correspondance. Prenons l'adresse 192.168.10.64 avec un masque /26, soit 26 bits à 1. Le dernier octet du masque est alors 11000000 en binaire, ce qui vaut 192 en décimal, et le masque complet s'écrit 255.255.255.192. Les bits d'hôte restent 000000 dans ce dernier octet, soit 64 valeurs possibles. L'adresse de réseau s'obtient en forçant tous les bits d'hôte à zéro, et l'adresse de diffusion en les forçant tous à 1 : le réseau est donc 192.168.10.64 et la diffusion est 192.168.10.127. Les adresses utilisables se glissent entre les deux, de .65 à .126, soit 62 machines au maximum.
+
+Le tableau ci-dessous regroupe les masques que vous rencontrerez le plus souvent, avec le nombre d'adresses disponibles et le nombre réellement attribuables aux machines. Apprenez au moins les trois premières lignes et la dernière, celle des liens point à point.
+
+```table
+| Masque long | Masque décimal | Adresses totales | Hôtes utilisables |
+|---|---|---|---|
+| /24 | 255.255.255.0 | 256 | 254 |
+| /25 | 255.255.255.128 | 128 | 126 |
+| /26 | 255.255.255.192 | 64 | 62 |
+| /27 | 255.255.255.224 | 32 | 30 |
+| /28 | 255.255.255.240 | 16 | 14 |
+| /30 | 255.255.255.252 | 4 | 2 |
+```
+
+
+## Masques, plages et adresses spéciales
+
+Chaque sous-réseau contient deux adresses qui n'appartiennent jamais à une machine : la première, l'adresse de réseau, nomme le segment lui-même et sert de clé dans les tables de routage ; la dernière, l'adresse de diffusion, permet d'envoyer un même message à toutes les machines du segment d'un seul coup. C'est pourquoi le nombre de machines réellement attribuables est toujours le total moins deux. Ce retrait de deux adresses surprend au début, mais il se justifie : un routeur n'a pas besoin d'une adresse pour le réseau, il a besoin d'un nom de destination pour y envoyer, et la diffusion n'est pas une machine mais un mécanisme de livraison groupée. Ajoutez à cela que la première adresse utilisable sert souvent d'adresse de passerelle par convention, ce qui réduit encore d'une unité l'espace réellement libre pour les postes.
+
+Trois adresses ont des comportements spéciaux qu'il vaut mieux connaître dès maintenant. L'adresse 0.0.0.0 représente l'adresse par défaut, c'est-à-dire l'absence d'adresse : elle apparaît dans une table de routage comme la route par défaut et dans les annonces de serveur quand celui-ci écoute sur toutes les interfaces. L'adresse 127.0.0.1, avec le masque 125.0.0.0 sur le domaine local, est la boucle de retour : elle permet à une machine de s'adresser à elle-même sans rien émettre sur le réseau, et c'est le premier réflexe de vérification quand on teste un service. Enfin, l'adresse 169.254.0.0/16 est réservée à l'auto-configuration : quand une machine n'entend aucun serveur de configuration automatique, elle se fabrique une adresse dans cette plage, ce qui produit l'erreur classique d'adresse APIPA, signe que le câble est bon mais que le serveur est absent ou injoignable.
+
+La commande ping est l'outil de base pour tester l'atteinte d'une adresse. Elle envoie des paquets ICMP de type demande d'écho et attend les réponses, en affichant pour chacune le temps d'aller-retour et le nombre de sauts restants, le TTL.
+
+```text
+$ ping -c 4 192.168.1.1
+PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.
+64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=0.412 ms
+64 bytes from 192.168.1.1: icmp_seq=2 ttl=64 time=0.387 ms
+
+--- 192.168.1.1 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3005ms
+rtt min/avg/max/mdev = 0.387/0.401/0.428/0.017 ms
+```
+
+Une perte de 0 pour cent et des temps d'une fraction de milliseconde indiquent un segment local en bonne santé. Si le temps augmente fortement, cherchez la congestion sur le chemin ; si vous recevez des réponses avec un TTL faible, le paquet a traversé plusieurs routeurs ; si vous ne recevez rien, le diagnostic commence à peine et dépend du message affiché : destination hors périmètre lorsque la machine sait qu'elle n'a pas le droit d'envoyer, délai dépassé quand le réseau existe mais personne ne répond, ou destination inaccessible quand la couche 2 ne permet pas d'atteindre la passerelle. Comme chaque message oriente vers une couche différente, lire le message vaut mille essais aveugles.
+
+Les routeurs utilisent eux aussi la diffusion, mais avec parcimonie. Les annonces de configuration automatique, les résolutions de noms anciennes et certains protocoles de découverte en ont besoin ; en revanche, la diffusion traversée par un routeur est bloquée par défaut, et à juste titre : diffuser sur tout un réseau au moindre besoin suffit à saturer les liens. C'est la raison pour laquelle un plan d'adressage découpe les machines en segments raisonnables plutôt que de tout mettre dans un immense réseau unique. Plus le nombre de machines dans un même domaine de diffusion est élevé, plus les annonces intempestives consomment la bande passante de chacun, et plus les pannes localisées deviennent difficiles à isoler.
+
+## Adresses privées, NAT et IPv6
+
+Toutes les adresses IPv4 ne sont pas utilisables sur l'Internet public. La RFC 1918 réserve trois plages à l'usage privé : 10.0.0.0/8, soit plus de seize millions d'adresses, 172.16.0.0/12, soit plus d'un million, et 192.168.0.0/16, soit soixante-cinq mille. Ces plages sont libres d'emploi à l'intérieur d'une organisation, mais aucun routeur Internet ne les achemine : si un paquet en source privée arrive sur le lien d'un fournisseur d'accès, il est jeté. Cette séparation a été décidée au début des années quatre-vingt-dix par manque criant d'adresses publiques : il devenait impossible d'en attribuer une à chaque appareil de la planète. La solution retenue fut de réserver l'espace privé aux réseaux internes et de n'exposer vers l'extérieur que des adresses publiques, en nombre limité.
+
+Le mécanisme qui rend cette économie possible s'appelle NAT, traduction d'adresses réseau. Le routeur de sortie remplace l'adresse IP privée de la machine émettrice par sa propre adresse publique, mémorise la correspondance dans une table, puis, quand la réponse revient, rétablit l'adresse privée d'origine et relaie le paquet. En variante la plus courante, PAT, plusieurs machines partagent la même adresse publique en se distinguant par des numéros de port différents. Le NAT a transformé l'Internet, mais il introduit une asymétrie : une machine privée peut initier une connexion sortante, tandis qu'une machine du monde extérieur ne peut pas l'atteindre directement, ce qui complique les visioconférences, les jeux et les serveurs domestiques. L'IPv6 a été conçu pour supprimer cette asymétrie en rendant chaque appareil globalement addressable.
+
+L'IPv6 repose sur des adresses de 128 bits, écrites en hexadécimal sous la forme de huit groupes de quatre chiffres séparés par des deux-points. Pour alléger l'écriture, deux règles de compression s'appliquent : les zéros de tête de chaque groupe sont supprimés, et une ou plusieurs séries consécutives de groupes nuls sont remplacées par deux-points, une seule fois dans l'adresse. L'adresse de boucle de retour se simplifie ainsi en ::1, et l'adresse de lien local, obligatoire sur chaque interface, commence toujours par fe80. À l'envoi, une machine vérifie d'abord si sa destination appartient au même segment : dans ce cas elle communique directement, sinon elle interroge sa passerelle par l'échange de messages voisin, qui a remplacé le protocole ARP.
+
+```text
+$ ping -6 -c 2 2001:db8:ac10:1::10
+PING 2001:db8:ac10:1::10(2001:db8:ac10:1::10) 56 data bytes
+64 bytes from 2001:db8:ac10:1::10: icmp_seq=1 ttl=64 time=0.52 ms
+64 bytes from 2001:db8:ac10:1::10: icmp_seq=2 ttl=64 time=0.47 ms
+```
+
+Les différences entre les deux versions tiennent en quelques points structurants, que le tableau suivant condense. Notez l'absence de diffusion en IPv6 : elle est remplacée par le multicast, plus économe, chaque service ciblant un groupe d'abonnés plutôt que tout le segment.
+
+```table
+| Critère | IPv4 | IPv6 |
+|---|---|---|
+| Taille d'adresse | 32 bits | 128 bits |
+| Écriture | Décimal pointée, 4 octets | Hexadécimal, 8 groupes |
+| Diffusion | Oui, broadcast | Non, remplacée par le multicast |
+| Configuration | Manuelles ou par DHCP | Manuelles, DHCPv6 ou autoconfiguration |
+| NAT | Courant, voire indispensable | En principe inutile |
+| En-tête | Variable, vérification de somme | Fixe, sans somme de contrôle |
+```
+
+
+L'autoconfiguration sans serveur, dite SLAAC, mérite une précision : en émettant une requête de découverte de routeur, la machine apprend le préfixe du segment, y ajoute une partie générée à partir de son adresse MAC ou tirée au sort, et obtient son adresse en quelques secondes sans aucune configuration. Le protocole de voisinage IPv6 assure ensuite la résolution des adresses voisines, la vérification de doublons et la détection des routeurs disponibles. Dans un environnement de production, on combine d'ordinaire SLAAC et serveur de configuration pour centraliser les baux et le nom de domaine, la découverte automatique restant la solution de secours quand le serveur est hors service.
+
+## Sous-réseautage : la méthode pas à pas
+
+Découper un réseau en sous-réseaux, c'est remplacer un grand domaine de diffusion par plusieurs petits, chacun administré avec ses propres règles. Les raisons d'y recourir sont toujours les mêmes. La première est technique : plus un segment est vaste, plus les trames de diffusion, les annonces automatiques et les résolutions de noms sollicitent inutilement chaque machine, et plus les pannes localisées deviennent difficiles à isoler. La deuxième est organisationnelle : un service comptable, une zone d'impression et des machines invitées n'ont pas besoin de se voir, et le découpage est le premier filtre que l'on pose. La troisième est le routage : un routeur ne connaît pas les machines individuelles, seulement les réseaux, et un plan en sous-réseaux clairs produit des tables de routage courtes, lisibles et faciles à filtrer. Enfin, la quatrième raison est quantitative : adresser 500 machines dans un unique /24 est impossible, il faut déjà plusieurs blocs.
+
+La méthode en cinq étapes se répète à l'identique quel que soit le besoin. Premièrement, recensez chaque segment et le nombre d'hôtes qu'il doit accueillir, en y ajoutant la passerelle, les équipements réseau, les imprimantes et une marge de croissance raisonnable. Deuxièmement, choisissez pour chacun la plus petite puissance de deux supérieure au besoin, puis retirez deux pour le nombre d'adresses utilisables. Troisièmement, traduisez ce besoin en longueur de masque avec la table des puissances de deux, car le nombre d'adresses vaut 2 puissance 32 moins le masque. Quatrièmement, attribuez les blocs du plus grand au plus petit, en alignant chaque début sur une frontière multiple de sa taille, sans jamais chevaucher le précédent. Cinquièmement, contrôlez le plan en écrivant les plages à la suite et en vérifiant que la dernière adresse d'un bloc est inférieure à la première du suivant.
+
+Appliquons la méthode à un cas simple : découper le réseau 192.168.10.0/24 en quatre morceaux égaux pour accueillir quatre services distincts. Un /24 contient 256 adresses ; pour le partager en quatre, il faut retirer deux bits au masque, ce qui donne quatre blocs de 64 adresses chacun, notés /26. Le calcul tient en quatre lignes, comme le montre le bloc suivant.
+
+```text
+# 192.168.10.0/24 partage en 4 blocs /26
+Bloc A : reseau 192.168.10.0   diffusion .63    utilisables .1    -> .62
+Bloc B : reseau 192.168.10.64  diffusion .127   utilisables .65   -> .126
+Bloc C : reseau 192.168.10.128 diffusion .191   utilisables .129  -> .190
+Bloc D : reseau 192.168.10.192 diffusion .255   utilisables .193  -> .254
+Controle : .63 < .65, .127 < .129, .191 < .193  -> aucun chevauchement
+```
+
+L'alignement n'est pas une coquetterie : un bloc /26 doit débuter à un multiple de 64 dans le dernier octet, sous peine de se répartir de part et d'autre d'une frontière et de devenir inexploitable. Pour vérifier une adresse de début, divisez-la par la taille du bloc et contrôlez que le reste est nul. Une erreur classique consiste à attribuer 192.168.10.100/26 comme réseau : le bloc irait de .100 à .163, chevauchant le bloc suivant et forçant les routeurs à décider arbitrairement entre deux destinations. Retenez donc la règle : l'adresse de réseau s'écrit toujours avec tous les bits d'hôte à zéro, et la longueur du masque toujours précise.
+
+Le nombre d'hôtes, lui, se décompte avec soin. Un /24 offre 254 adresses utilisables, pas 256, et sur ces 254, une part à la passerelle, une autre au serveur de noms et une troisième éventuellement au serveur de noms secondaire. Prévoir 10 pour cent de marge n'est pas du luxe dans un environnement qui grandit : un bureau de vingt personnes accumule en quelques années ordinateurs, téléphones, capteurs et objets connectés. À l'inverse, une liaison entre deux routeurs n'a besoin que de deux adresses, ce qui se loge dans un /30, et depuis la RFC 3021, il est même permis d'utiliser un /31 sur une liaison point à point, en considérant que les deux adresses du couple sont utilisables.
+
+## VLSM : planifier sans gaspiller
+
+La méthode des masques de longueur variable, VLSM pour Variable Length Subnet Mask, consiste à donner à chaque segment le masque exact qui lui convient, au lieu d'appliquer partout le même. Le principe paraît évident, mais il change radicalement le résultat : avec un masque unique imposé à tout un site, le plus petit segment surdimensionne mécaniquement et le plus grand manque d'adresses. En autorisant plusieurs longueurs de masque au sein du même bloc, on peut loger un réseau de quatre cents machines, un réseau de soixante, un réseau de douze et deux liaisons point à point dans un seul et même espace, sans aucun gâchis. La condition indispensable est que les blocs restent disjoints, ce que garantit un ordre d'attribution rigoureux.
+
+La règle d'or du VLSM tient en une phrase : triez les besoins par taille décroissante et attribuez dans cet ordre. En plaçant d'abord le bloc le plus grand sur une frontière naturelle, les blocs plus petits peuvent ensuite se glisser dans les interstices, à condition qu'ils s'alignent eux aussi sur leurs propres frontières. Si vous commencez par le plus petit, vous risquez de fragmenter l'espace en morceaux non contigus, incapables d'accueillir le grand besoin à la fin. Chaque attribution doit être notée immédiatement dans un tableau : adresse de réseau, masque, première et dernière utilisable, diffusion. Ce tableau est le seul livrable qui compte réellement, car c'est lui que vous recopierez dans la configuration des routeurs et que vous consulterez en pleine intervention.
+
+Voici la topologie du cas pratique qui court jusqu'à la fin du chapitre : trois sites reliés par deux liaisons dédiées, un seul bloc global à répartir.
+
+```text
+            172.20.0.0/22  (bloc unique)
+  +-------------------+        liaison A         +------------------+
+  |   SIEGE  (400)    |--------------------------|   AGENCE  (60)   |
+  | 172.20.0.0/23     |    routeur R1 ----- R2   | 172.20.2.0/26    |
+  +---------+---------+                          +--------+---------+
+            |  liaison B                                   |
+            | 172.20.2.80/30                               |
+            |                                              |
+            +--------------------+    +--------------------+
+                                 |    |
+                          +------+------+------+
+                          |  ENTREPOT (12)    |
+                          | 172.20.2.64/28    |
+                          | routeur R3        |
+                          +-------------------+
+```
+
+Suivons l'attribution pas à pas. Le siège réclame 400 machines : la plus petite puissance de deux qui les accueille est 512, soit 256 moins deux bits, donc un /23. On le place en tête du bloc : 172.20.0.0/23, couvrant 172.20.0.0 à 172.20.1.255, avec 510 adresses utilisables. L'agence réclame 60 machines : 64 adresses suffisent, soit un /26, et on le place juste après la fin du bloc précédent, en 172.20.2.0/26, utilisables de .1 à .62. L'entrepôt réclame 12 machines : seize adresses, soit un /28, logé en 172.20.2.64/28. Les deux liaisons n'ont besoin que de deux adresses chacune : deux /30 se rangent en 172.20.2.80/30 et 172.20.2.84/30. Le tout tient dans le premier tiers du bloc disponible, et il reste 172.20.3.0/24 entier pour les extensions futures.
+
+Le tableau de planification, à conserver comme référence pendant toute la suite, se lit ainsi :
+
+```table
+| Segment | Besoin | Masque | Réseau attribué | Utilisables | Diffusion |
+|---|---|---|---|---|---|
+| Siège | 400 postes | /23 | 172.20.0.0 | .0.1 à 1.254 | 172.20.1.255 |
+| Agence | 60 postes | /26 | 172.20.2.0 | 172.20.2.1 à .62 | 172.20.2.63 |
+| Entrepôt | 12 postes | /28 | 172.20.2.64 | 172.20.2.65 à .78 | 172.20.2.79 |
+| Liaison A | 2 routeurs | /30 | 172.20.2.80 | .81 et .82 | 172.20.2.83 |
+| Liaison B | 2 routeurs | /30 | 172.20.2.84 | .85 et .86 | 172.20.2.87 |
+```
+
+
+Comparer ce résultat avec un découpage naïf éclaire l'intérêt du VLSM. Si l'on avait donné à chaque site un /24, le siège n'aurait pas trouvé les 400 adresses nécessaires, et l'entrepôt aurait gaspillé 242 adresses sur 254. Avec le VLSM, le siège obtient exactement ce dont il manque, l'agence un bloc ajusté, l'entrepôt le strict minimum, et les liaisons deux adresses au lieu de 254. Le gain n'est pas seulement comptable : les tables de routage des routeurs énumèrent des préfixes précis, ce qui accélère la comparaison et simplifie les règles de filtrage. Un pare-feu qui doit n'autoriser que le trafic de l'entrepôt s'exprime en un seul préfixe, 172.20.2.64/28.
+
+## Outils de vérification : ip, ping, traceroute et tcpdump
+
+Un plan d'adressage n'existe vraiment que s'il est appliqué et vérifié sur les équipements. Sous Linux, la famille de commandes ip de la suite iproute2 a remplacé les anciennes commandes de configuration : ip addr show affiche les adresses, ip route show affiche la table de routage, et ip link show l'état des interfaces. Contrairement à une idée répandue, les adresses attribuées par ces commandes sont éphémères : elles disparaissent au redémarrage, sauf si elles sont écrites dans un fichier de configuration permanent. C'est d'ailleurs une qualité pédagogique : on peut tout tester sur une machine jetable sans rien casser, puis appliquer ce qui fonctionne en production.
+
+```text
+$ ip route show
+default via 172.20.0.1 dev eth0 proto dhcp src 172.20.0.24 metric 100
+172.20.0.0/23 dev eth0 proto kernel scope link src 172.20.0.24
+10.99.0.0/30 via 172.20.2.81 dev eth0
+```
+
+Cette table se lit de la gauche vers la droite. La première ligne est la route par défaut : toute destination qui ne correspond à aucune autre entrée part vers la passerelle 172.20.0.1. La deuxième ligne décrit le réseau directement connecté à l'interface eth0, avec la mention kernel indiquant qu'elle a été créée automatiquement à l'attribution de l'adresse. La troisième est une route statique vers un réseau distant atteignable via un voisin de liaison. Le champ src précise l'adresse source utilisée pour ce départ, et le champ metric sert à départager les routes concurrentes : la plus petite valeur gagne. Lire une table de routage, c'est donc répondre à trois questions : par où sort le paquet, quelle adresse source porte-t-il et quelle route a été préférée.
+
+La commande traceroute révèle le chemin emprunté en faisant varier le nombre de sauts autorisés. En envoyant des paquets avec un temps de vie incrémental, elle reçoit à chaque étape une réponse d'erreur de chaque routeur traversé, ce qui permet d'afficher la liste des hôtes et les temps d'aller-retour par saut.
+
+```text
+$ traceroute -n 198.51.100.7
+traceroute to 198.51.100.7 (198.51.100.7), 30 hops max
+ 1  172.20.0.1   0.412 ms  0.398 ms  0.385 ms
+ 2  10.14.0.1     3.720 ms  3.654 ms  3.610 ms
+ 3  80.10.234.9  11.204 ms  11.150 ms  11.087 ms
+ 4  198.51.100.7 18.442 ms  18.399 ms  18.351 ms
+```
+
+Trois informations se dégagent : le premier saut est toujours votre passerelle locale, le dernier est la destination, et tout ce qui se trouve entre les deux appartient au réseau d'un tiers, sur lequel vous n'avez aucune autorité. Quand la liste s'arrête net à une ligne, la coupure est au niveau du routeur qui ne répond pas ou de son filtre, pas forcément plus loin. Quand un saut affiche des astérisques mais que les suivants répondent, ce routeur refuse simplement d'envoyer les messages d'erreur, ce qui est fréquent sur les liens sensibles. Associez toujours traceroute à ping : l'un confirme l'atteinte, l'autre localise le point de blocage.
+
+Pour observer ce qui circule réellement sur un lien, rien ne remplace tcpdump, qui capture les paquets au plus près de la carte et les affiche en clair. Le filtre exprimé en langage BPF restreint la capture aux seuls paquets qui vous intéressent, évitant des milliers de lignes inutiles.
+
+```text
+$ sudo tcpdump -i eth0 -n icmp
+tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
+14:22:07.114 IP 172.20.0.24 > 172.20.2.70: ICMP echo request, id 4120, seq 1, length 64
+14:22:07.116 IP 172.20.2.70 > 172.20.0.24: ICMP echo reply, id 4120, seq 1, length 64
+14:22:08.119 IP 172.20.0.24 > 172.20.2.70: ICMP echo request, id 4120, seq 2, length 64
+```
+
+Chaque ligne montre l'heure, les deux adresses IP, le protocole et le sens de l'échange. Si vous ne voyez que les requêtes sans réponses, le problème est côté destination ou côté retour ; si vous ne voyez rien du tout, le paquet n'arrive même pas à cette interface, et le défaut est en amont, sur la carte, le câble ou le commutateur. Une variante utile, tcpdump -i eth0 port 53, isole le trafic de nom de domaine et distingue instantanément une panne de résolution d'une panne de routage. La discipline consiste à ouvrir une capture avant de lancer le test, puis à l'interrompre avec la combinaison de contrôle et de lettre c : on observe d'abord, on conclut ensuite.
+
+Ces outils s'articulent dans une méthode de dépannage en quatre temps. D'abord, vérifiez la couche 1 et 2 : l'interface est-elle active, l'adresse MAC est-elle visible, la liaison locale répond-elle. Ensuite, testez la couche 3 en pignant la passerelle : si elle répond, le segment local est bon. Puis testez une adresse distante connue : si elle répond alors que le nom de domaine échoue, le problème est purement nominatif. Enfin, examinez le chemin avec traceroute et la capture avec tcpdump pour isoler le saut fautif. Ce déroulé, du plus proche au plus loin, transforme une panne floue en une série de tests binaires dont chacun élimine une hypothèse.
+
+## Exemple guidé : du besoin au plan complet
+
+Tout ce que le chapitre a posé jusqu'ici converge maintenant vers une application complète : le plan d'adressage de la PME lyonnaise, bloc 172.20.0.0/22, trois sites et deux liaisons. Nous allons le reconstruire dans l'ordre, du recensement des besoins jusqu'à la vérification sur les équipements, en passant par les calculs, la configuration et les contrôles. L'objectif de cette section n'est pas seulement de produire des adresses correctes, mais de montrer la démarche professionnelle : un besoin chiffré, un calcul écrit, un tableau validé, une configuration appliquée, puis une preuve mesurable que tout fonctionne. Chaque étape laisse une trace que vous pourrez relire dans six mois, ce qui distingue un plan d'adressage d'une simple liste de nombres improvisés.
+
+Rappelons le cahier des charges pour que les calculs soient devant nous. Le bloc global disponible est 172.20.0.0/22, soit 1024 adresses, de 172.20.0.0 à 172.20.3.255, dont 1022 utilisables. Le siège compte 400 postes fixes plus imprimantes, téléphones et points d'accès, ce qui porte le besoin réel à environ 450 adresses avec marge. L'agence héberge 60 machines, l'entrepôt 12, et chaque liaison entre routeurs n'utilise que deux adresses. Aucun autre bloc n'est disponible aujourd'hui, mais il faut absolument réserver de la place pour la croissance : un plan qui remplit cent pour cent du bloc est un plan mort en une année. Le tableau d'allocation retenu après le tri par taille décroissante est donc le suivant : un /23 pour le siège, un /26 pour l'agence, un /28 pour l'entrepôt et deux /30 pour les liaisons.
+
+Vérifions l'arithmétique avant toute configuration. Un /23 retire 23 bits sur 32, donc il reste 9 bits d'hôte, soit 512 adresses, 510 utilisables : largement de quoi absorber les 450 machines annoncées. Ce bloc démarre en 172.20.0.0 et se termine en 172.20.1.255. Le /26 suivant démarre en 172.20.2.0, premier multiple de 64 situé après la fin du précédent, et couvre jusqu'à 172.20.2.63. Le /28 démarre en 172.20.2.64, multiple de 16, et va jusqu'à 172.20.2.79. Les deux /30 occupent 172.20.2.80 à .83 puis 172.20.2.84 à .87. Aucun chevauchement n'est possible, et le premier bloc suivant libre est 172.20.2.88, tandis que tout le troisième mégaoctet du bloc, 172.20.3.0/24, reste intact pour les futurs sites.
+
+La configuration d'un hôte de siège tient en quelques lignes, à adapter selon la distribution : on fixe l'adresse avec son masque, on déclare la passerelle par défaut, puis on renseigne le serveur de noms sans lequel les noms de domaine resteront muets.
+
+```bash
+# Hote du siege — adresse, passerelle et nom de domaine
+sudo ip addr add 172.20.0.24/23 dev eth0
+sudo ip route add default via 172.20.0.1
+echo "nameserver 172.20.0.10" | sudo tee /etc/resolv.conf
+
+# Routeur R1 — liaison A vers l'agence
+sudo ip addr add 172.20.2.81/30 dev eth1
+sudo ip route add 172.20.2.64/28 via 172.20.2.82
+sudo ip route add 172.20.2.0/26 via 172.20.2.82
+```
+
+Deux détails méritent l'attention dans ce bloc. Le premier est la passerelle : elle doit impérativement appartenir au même sous-réseau que les machines qu'elle sert, sinon les paquets ne trouvent aucun chemin de couche 2 pour l'atteindre et l'envoi échoue avant même d'être routé. Le deuxième est la route statique du routeur : chaque destination distante est écrite avec son préfixe exact et le voisin atteignable, jamais avec une adresse d'hôte isolée, car une route plus précise coûte moins cher à gérer qu'une accumulation d'exceptions. Sur un réseau de cette taille, une route par défaut côté siège et deux routes spécifiques côté routeur suffisent amplement.
+
+La vérification suit un ordre immuable, du plus proche au plus lointain, et produit des preuves à conserver dans le dossier du site. On commence par confirmer l'adresse locale, puis la passerelle, puis un hôte d'un autre site, puis enfin le service attendu. Chaque ligne réussie élimine une couche entière de l'hypothèse.
+
+```text
+$ ip addr show eth0 | grep inet
+    inet 172.20.0.24/23 brd 172.20.1.255 scope global eth0
+
+$ ping -c 2 172.20.0.1
+2 packets transmitted, 2 received, 0% packet loss
+
+$ ping -c 2 172.20.2.70
+2 packets transmitted, 2 received, 0% packet loss, rtt min/avg/max = 1.9/2.1/2.3 ms
+
+$ ping -c 2 intranet.pme.example
+2 packets transmitted, 2 received, 0% packet loss
+```
+
+Pour prouver l'absence de chevauchement de manière reproductible plutôt qu'à l'œil, un petit script d'arithmétique suffit : il convertit chaque paire adresse et masque en nombre entier, puis compare les intervalles deux à deux. C'est exactement le genre de contrôle qu'on ajoute à l'intégration continue d'un dépôt d'infrastructure, car une faute de saisie dans une route statique reste invisible jusqu'au jour où un site devient injoignable.
+
+```bash
+python3 - <<'EOF'
+import ipaddress
+blocs = ["172.20.0.0/23", "172.20.2.0/26", "172.20.2.64/28",
+         "172.20.2.80/30", "172.20.2.84/30"]
+reseaux = [ipaddress.ip_network(b) for b in blocs]
+for i, a in enumerate(reseaux):
+    for b in reseaux[i+1:]:
+        assert not a.overlaps(b), f"chevauchement {a} et {b}"
+print("OK,", len(reseaux), "blocs disjoints, total",
+      sum(n.num_addresses for n in reseaux), "adresses utilisees")
+EOF
+```
+
+Il reste à brancher ce plan sur les services. Le serveur de configuration automatique doit attribuer des baux pris dans chaque plage, en réservant le premier tiers de chaque bloc aux équipements à adresse fixe : routeurs, serveurs, imprimantes, points d'accès et caméras. Les réservations par adresse MAC permettent de garder une adresse stable sans la saisir à la main sur chaque machine. Le serveur de nom de domaine doit inverser chaque plage pour que les adresses soient résolubles en noms, ce qui rend les journaux lisibles. Enfin, la documentation du site : un fichier texte, un tableau ou un wiki, contenant le bloc, le masque, la passerelle, l'étendue du serveur de configuration automatique et le plan des liaisons. Un réseau sans documentation redevient obsolète dès la première modification.
+
+## Dépannage des erreurs d'adressage
+
+Les pannes d'adressage ont un petit nombre de causes qui reviennent sans cesse, et les reconnaître immédiatement fait gagner un temps considérable. La première est le masque incohérent : deux machines du même segment portent le même préfixe réseau mais des masques différents, chacune croit l'autre distante, tente d'envoyer vers la passerelle et échoue, souvent de façon intermittent selon l'ordre de mise sous tension. La seconde est le conflit d'adresses : deux hôtes portent la même adresse, le trafic part vers la mauvaise machine, les connexions tombent aléatoirement et la commande d'inspection du système signale une collision détectée. La troisième est la passerelle hors plage, où le routeur de sortie n'appartient pas au réseau local : le trafic interne fonctionne parfaitement, seul l'extérieur échoue, ce qui fait dire à tort que le réseau est coupé.
+
+La quatrième cause est la route manquante ou trop générale : une machine sait joindre son voisinage mais ignore par où envoyer vers un autre site, et la table de routage ne contient ni préfixe correspondant ni route par défaut. La cinquième est la confusion entre nom et adresse : la résolution échoue alors que tout le reste fonctionne, donnant l'illusion d'une panne totale alors que la commande vers une adresse brute répond parfaitement. La sixième est le pare-feu local ou distante, qui rejette silencieusement des paquets que le réseau achemine pourtant correctement : dans ce cas, la capture montre les requêtes partir sans réponse, ou sans rien partir du tout selon l'endroit où la règle s'applique. Identifier laquelle de ces six familles vous affrontez, c'est déjà la moitié du diagnostic.
+
+La méthode de résolution suit la pile, couche après couche, en ne changeant d'étape que lorsque la précédente est démontrée. Vérifiez d'abord que l'interface est active et dotée d'une adresse, avec ip addr show. Puis confirmez la couche 2 en pingant un voisin direct du même segment. Ensuite la couche 3 avec la passerelle, puis une adresse distante. Puis le nom de domaine, enfin le port applicatif. À chaque échec, le message obtenu indique la famille de cause évoquée plus haut. Cette discipline a un avantage décisif : elle empêche de modifier plusieurs paramètres à la fois, erreur qui rend la panne impossible à reproduire et la correction impossible à attribuer.
+
+```bash
+# Sequence de diagnostic, couche apres couche
+ip addr show eth0                  # adresse et masque presents ?
+ip route show                      # route par defaut et reseaux connectes ?
+ping -c 2 172.20.0.1               # passerelle joignable ?
+ping -c 2 172.20.2.70              # autre site joignable ?
+ping -c 2 intranet.pme.example     # resolution de nom fonctionnelle ?
+traceroute -n 198.51.100.7         # ou le chemin s'arrete-t-il ?
+sudo tcpdump -i eth0 -n icmp       # les paquets sortent-ils vraiment ?
+```
+
+Deux réflexes complètent la méthode. Le premier consiste à comparer avec une machine qui fonctionne : si le voisin reçoit la même configuration et marche, le défaut est local à la machine, sinon il est sur le segment ou en amont. Le second consiste à ne jamais changer deux choses à la fois : on corrige une hypothèse, on teste, on constate, puis seulement on passe à la suivante. Notez enfin que certaines pannes sont physiques et déguisées en problèmes d'adressage : un câble défectueux abaisse le débit sans couper la liaison, les pertes se multiplient et les commandes semblent échouer sans raison logique. La couche 1 reste donc toujours à inspecter, ne serait-ce que pour vérifier la diode de la carte réseau.
+
+## De la théorie à la production : le cycle de vie d'un réseau
+
+Un plan d'adressage ne s'arrête pas au calcul : il doit vivre en production, survivre aux changements d'équipe et rester intelligible pour la personne qui l'héritera. Cette dernière partie élargit le champ au-delà du chapitre, en décrivant le cycle de vie complet d'un réseau d'entreprise, de la première évaluation du besoin jusqu'à la supervision quotidienne. L'objectif est de vous donner les réflexes qui distinguent un réseau installé un jour et oublié le lendemain d'un réseau véritablement exploitable. Vous y retrouverez les notions déjà vues, appliquées cette fois à l'organisation du travail plutôt qu'au calcul brut, et vous verrez que la rigueur méthodologique compte autant que la justesse des masques.
+
+Tout commence par un recensement honnête du besoin, qui se fait bien avant d'ouvrir un terminal. On liste les postes fixes, les équipements mobiles, les téléphones, les caméras, les objets connectés, les imprimantes et les serveurs, puis on classe ces hôtes par nature plutôt que par localisation : les machines critiques, les machines de production, les machines invitées et les objets non contrôlables n'ont ni les mêmes exigences de disponibilité ni les mêmes droits. On chiffre la croissance annuelle observée, souvent entre cinq et quinze pour cent dans une PME, et on l'intègre au besoin initial. On identifie enfin les flux indispensables, c'est-à-dire les échanges sans lesquels l'activité s'arrête : messagerie, progiciel de gestion, accès à l'extérieur, sauvegardes. Ce recensement produit deux livrables indispensables, un tableau de dimensionnement et une carte des flux, qui serviront de référence objective à chaque décision technique ultérieure.
+
+Du recensement découle le choix de la plage d'adressage globale. La question n'est pas seulement de savoir combien d'adresses il faut aujourd'hui, mais de savoir quel espace on pourra encore découper dans trois ans sans tout renommer. Une organisation qui choisit d'utiliser un espace privé immense, par exemple un préfixe de la plage 10.0.0.0/8, se laisse une liberté de croissance considérable et peut loger des dizaines de sites sans recourir à des adresses publiques. À l'inverse, un espace étroit impose très vite des recouvrements compliqués et des exceptions de routage. La règle pratique consiste à réserver une grande tranche par site, une tranche par réseau invité et une tranche par objet connecté, sans jamais mélanger ces catégories. Le plan d'adressage devient alors une arborescence lisible, où le préfixe seul indique la nature du trafic autorisé.
+
+Le nommage accompagne l'adressage et en est le complément indispensable. Une adresse dit où est la machine, un nom dit ce qu'elle fait : serveur-app-01, prt-eta-2, cam-ext-nord. Sans convention, la documentation devient un fouillis d'abréviations personnelles et le remplacement d'un administrateur transforme chaque intervention en archéologie. On adopte donc une règle unique, on l'écrit une fois pour toutes, et on l'applique sans exception, y compris pour les équipements les plus modestes. Le serveur de nom de domaine doit tenir à jour les enregistrements directs et inverses pour chaque plage, de sorte qu'un journal de connexion affiche un nom compréhensible plutôt qu'une suite de chiffres. La corrélation stricte entre préfixe réseau, plage de noms et plage de configuration automatique fait gagner un temps considérable lors des dépannages nocturnes.
+
+La mise en service elle-même se planifie par vagues contrôlées, jamais en un seul big bang. On commence par le cœur de la topologie, routeurs et commutateurs, avec des configurations minimales documentées et un accès de secours réservé. Puis on ouvre un site pilote, volontairement petit, où les erreurs de plan se révèlent à moindre coût. Les constats du pilote corrigent le plan global avant que les sites suivants ne le reprennent à l'identique. Chaque vague se termine par une vérification écrite : adresses en place, routes convergentes, service de configuration automatique distribuant les bonnes étendues, résolutions de noms correctes et accès extérieur fonctionnel. Seul un résultat vérifié et consigné permet de passer à la vague suivante, ce qui évite d'accumuler les défauts invisibles jusqu'au jour de la mise en production générale.
+
+La configuration de chaque équipement doit être récupérable à tout moment, y compris lorsque la machine qui la portait est hors service. Une sauvegarde automatique des fichiers de configuration, déclenchée à chaque modification et copiée vers un serveur externe au site, transforme un incident majeur en simple restauration. On conserve aussi une version commentée de l'adresse des équipements, de leur rôle et de leur emplacement physique : siège, baie, position dans le rack. Un croisement entre l'inventaire de couche 1 et le plan d'adressage permet de localiser physiquement l'origine d'une panne affichée à distance, ce qui réduit d'autant les déplacements. Ces deux documents, inventaire physique et plan d'adressage, doivent être mis à jour dans la foulée de toute modification, sous peine de devenir des fictions élégantes.
+
+La supervision transforme ces choix en indicateurs suivis dans la durée. Un simple relevé périodique de la latence vers chaque site, du taux d'utilisation des adresses d'une étendue et de l'état des liens suffit à détecter une dérive avant qu'elle ne devienne une panne. Les alertes se paramètrent sur des seuils, pas sur des absolus : une latence qui augmente de moitié par rapport à sa moyenne est souvent plus préoccupante qu'un pic ponctuel. La consommation des adresses mérite la même attention : une étendue atteignant quatre-vingts pour cent de sa capacité déclenche l'ouverture d'un ticket d'extension, bien avant la crise. Ces mesures n'exigent pas d'outils coûteux, seulement une discipline de relevé régulier et un endroit unique où conserver les courbes.
+
+Le tableau récapitulatif du cycle de vie d'un projet réseau aide à visualiser l'enchaînement des étapes et ce qui doit être produit à chacune.
+
+```table
+| Étape | Question posée | Livrable attendu |
+|---|---|---|
+| Recensement | Qui se connecte, combien, pour faire quoi ? | Tableau de dimensionnement |
+| Plan d'adressage | Quel bloc découper, en combien de sous-réseaux ? | Tableau des plages et masques |
+| Conventions | Comment nommer et documenter ? | Règles de nommage écrites |
+| Mise en service | Le plan fonctionne-t-il sur le terrain ? | Rapport de vérification |
+| Sauvegarde | Peut-on tout restaurer ? | Copies de configuration horodatées |
+| Supervision | La dérive est-elle détectée à temps ? | Courbes et alertes paramétrées |
+```
+
+
+Un dernier point mérite votre attention avant de conclure : la sécurité minimale, qui fait partie intégrante d'un plan d'adressage sain. Séparer les réseaux de production, d'accès invité et d'objets non maîtrisés n'est pas une élégance, c'est la première barrière opposée à un poste compromis. Limiter ce qui circule entre ces zones, journaliser les connexions administratives, et réserver un accès de secours distinct de l'accès courant constituent le socle à partir duquel les chapitres suivants construiront des filtrages plus fins. On ne sécurise efficacement que ce qu'on sait décrire, et un plan d'adressage clair est la première description dont dépend toute règle de contrôle.
+
+Pour matérialiser cette discipline, voici une séquence de commandes de contrôle que l'on peut relire à chaque changement important, avant et après intervention.
+
+```bash
+# Controle avant intervention : etat connu et documente
+ip addr show | grep "inet "
+ip route show
+ip neigh show
+sudo ss -tlnp | head -n 15
+
+# Controle apres intervention : rien ne doit avoir bouge par erreur
+diff <(ssh admin@routeur-01 "ip route show") sauvegardes/routeur-01.routes.txt
+ping -c 3 172.20.0.1
+traceroute -n 172.20.2.70
+```
+
+Le premier bloc capture l'état de référence, le second vérifie que l'intervention n'a modifié que ce qui devait l'être. Cette habitude de comparer avant et après est le nerf du métier : elle transforme une modification risquée en opération réversible, et elle offre surtout, en cas de problème, la certitude de savoir exactement ce qui a changé. Le réseau décrit dans ce chapitre tient désormais debout : les couches sont nommées, les adresses sont calculées, le VLSM a été appliqué, les outils ont prouvé le fonctionnement et le plan est documenté. Ce socle vous sert dès le chapitre suivant, où l'on examinera les trames Ethernet, les commutateurs et le protocole ARP qui relie justement vos adresses IP à vos adresses MAC.
+
+## À retenir
+
+- Le modèle OSI découpe la communication en sept couches, chacune servant la couche supérieure et utilisant l'inférieure.
+- Couche 1 physique, couche 2 liaison avec les trames et les MAC, couche 3 réseau avec IP et les routeurs, couche 4 transport avec les ports.
+- L'encapsulation ajoute un en-tête par couche à l'envoi et le retire dans l'ordre inverse à la réception.
+- Chaque couleur d'unité de données a un nom : message, segment, paquet, trame, bits.
+- Une adresse IPv4 fait 32 bits et se lit en quatre octets séparés par des points.
+- Le masque indique les bits de réseau et les bits d'hôte ; il s'écrit /24, /26, /30 ou en points.
+- Un sous-réseau contient 2 puissance 32 moins le masque adresses, dont deux non attribuables : réseau et diffusion.
+- L'adresse de réseau porte tous les bits d'hôte à zéro, l'adresse de diffusion tous les bits d'hôte à un.
+- Les plages privées de la RFC 1918 sont 10.0.0.0/8, 172.16.0.0/12 et 192.168.0.0/16.
+- Le NAT permet à de nombreux hôtes privés de partager une adresse publique, au prix d'une asymétrie entrante.
+- L'IPv6 utilise des adresses de 128 bits, sans diffusion, avec voisinage et autoconfiguration.
+- Le VLSM attribue à chaque segment le masque exact dont il a besoin, en triant les besoins par taille décroissante.
+- ip affiche adresses et routes, ping teste l'atteinte, traceroute localise le chemin, tcpdump observe le trafic réel.
+
+## Erreurs fréquentes
+
+- Piège : confondre le nombre d'adresses d'un /26, soit 64, avec le nombre d'hôtes, soit 62. Correction : retirez toujours deux adresses, réseau et diffusion.
+- Piège : écrire une adresse de réseau quelconque, par exemple 192.168.10.100/26, qui déborde sur le bloc suivant. Correction : alignez le début sur un multiple de la taille du bloc.
+- Piège : attribuer une adresse de passerelle hors du sous-réseau des machines. Correction : la passerelle doit partager le préfixe exact du segment qu'elle dessert.
+- Piège : donner le même masque à un siège de 400 machines et à une liaison entre deux routeurs. Correction : utilisez le VLSM et un /30 pour chaque lien point à point.
+- Piège : diagnostiquer en changeant plusieurs paramètres à la fois. Correction : suivez la pile couche après couche et ne modifiez qu'une hypothèse par test.
+- Piège : croire qu'une panne de nom de domaine est une panne réseau. Correction : testez d'abord une adresse brute, puis le nom, pour séparer résolution et routage.
+- Piège : oublier que l'auto-configuration 169.254.0.0/16 signifie l'absence de serveur de configuration, pas un câble débranché. Correction : vérifiez le lien, puis le serveur et son étendue.
+- Piège : penser que le NAT autorise une machine du monde extérieur à atteindre un hôte privé. Correction : prévoyez une redirection de ports ou un accès en tunnel si l'entrée doit venir de l'extérieur.
+- Piège : laisser un plan d'adressage uniquement dans la tête de l'administrateur. Correction : documentez blocs, réservations et routes dès la mise en service.
+
+## Pour aller plus loin
+
+Les documents de référence restent les meilleures sources pour consolider ce chapitre, et ils sont tous consultables gratuitement. La RFC 791 décrit l'en-tête IPv4 champ par champ, y compris le TTL et les options, et se lit étonnamment bien une fois les bases acquises : https://www.rfc-editor.org/rfc/rfc791.html. La RFC 1918 explique en quelques pages pourquoi les plages privées ont été créées et comment elles doivent être utilisées : https://www.rfc-editor.org/rfc/rfc1918.html. Pour l'IPv6, la RFC 4291 définit l'architecture d'adressage, les types de préfixes et les règles de notation compressée : https://www.rfc-editor.org/rfc/rfc4291.html. Le registre spécial IPv4 de l'IANA, consultable sur https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml, indique pour chaque plage réservée le statut exact et les restrictions de routage.
+
+Un document plus pratique accompagne avantageusement ces références : la RFC 3021, dédiée aux liaisons point à point en trente et un bits, que vous rencontrerez sur les liens opérateurs modernes, et que l'on trouve sur https://www.rfc-editor.org/rfc/rfc3021.html. Côté terrain, la commande ip et sa documentation officielle méritent une lecture complète : man ip sur une machine Linux, ou la page du projet iproute2, car la majorité des exemples de ce chapitre s'y appuient. Enfin, pratiquez : recalculez de mémoire le plan du siège, déplacez une machine dans un autre segment, provoquez volontairement un conflit d'adresses sur une machine virtuelle et observez le message exact. La théorie s'installe durablement le jour où vous avez vu vos propres erreurs échouer puis se corriger.
+
+## Et maintenant : la vidéo du chapitre puis l'exercice pratique
+
+Le modèle OSI et l'adressage IP sont le vocabulaire de base de tout le réseau : sans eux, chaque diagnostic devient une devinette. Regardez la vidéo du chapitre pour revoir les couches en situation réelle, puis passez à l'exercice pratique : masques, plages et découpage VLSM, avec des valeurs différentes de celles de l'exemple. Vérifiez vos calculs avec une table de conversion binaire avant de consulter la correction — l'objectif est que la méthode soit acquise, pas seulement le résultat.

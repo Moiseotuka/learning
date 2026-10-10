@@ -1,0 +1,126 @@
+"use client";
+
+import Link from "next/link";
+import { MenuIcon, SearchIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { AuthActions } from "@/components/auth/auth-actions";
+import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { links } from "@/config/site";
+import { messages } from "@/i18n";
+import { cn } from "@/lib/utils";
+
+const t = messages;
+
+export function SiteHeader() {
+  const [scrolled, setScrolled] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 12);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  return (
+    <header
+      className={cn(
+        "sticky top-0 z-50 w-full transition-all duration-300",
+        scrolled
+          ? "bg-background border-b border-hairline shadow-sm"
+          : "border-b border-transparent bg-transparent",
+      )}
+    >
+      <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-3 px-4 sm:px-6 lg:gap-6">
+        <Link href={links.home} aria-label={t.meta.title} className="shrink-0">
+          <Logo />
+        </Link>
+
+        <nav
+          aria-label="Navigation principale"
+          className="hidden min-w-0 items-center gap-0.5 lg:flex"
+        >
+          {t.nav.items.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="whitespace-nowrap rounded-md px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Link
+            href="/catalogue"
+            title={t.nav.search}
+            aria-label={t.nav.search}
+            className="hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background/60 text-muted-foreground transition-colors hover:border-electric/50 hover:text-foreground md:flex"
+          >
+            <SearchIcon className="size-4 shrink-0" aria-hidden />
+          </Link>
+
+          <ThemeToggle />
+
+          <AuthActions />
+
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="lg:hidden"
+                aria-label={t.nav.menu}
+              >
+                <MenuIcon className="size-5" aria-hidden />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-80 gap-0">
+              <SheetHeader className="border-b border-border pb-4">
+                <SheetTitle>
+                  <Logo />
+                </SheetTitle>
+                <SheetDescription className="sr-only">
+                  Navigation mobile de easyLearn
+                </SheetDescription>
+              </SheetHeader>
+
+              <nav aria-label="Navigation mobile" className="flex flex-col gap-1 px-4 py-4">
+                {t.nav.items.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setOpen(false)}
+                    className="rounded-md px-3 py-3 text-base text-foreground transition-colors hover:bg-muted"
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </nav>
+
+              <div className="mt-auto flex flex-col gap-2 border-t border-border p-4">
+                <AuthActions
+                  variant="sheet"
+                  onNavigate={() => setOpen(false)}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+      </div>
+
+    </header>
+  );
+}

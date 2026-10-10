@@ -1,0 +1,164 @@
+## Les requêtes N+1 et select_related
+
+L'un des problèmes de performance les plus courants dans les applications Django est le problème des requêtes N+1. Il se produit lorsque vous itérez sur un queryset et que, pour chaque objet, vous accédez à une relation étrangère ou inverse. Au lieu d'une seule requête, Django exécute une requête pour récupérer les objets principaux, puis N requêtes supplémentaires pour récupérer les relations de chaque objet. Avec 100 objets, vous obtenez 101 requêtes au lieu de 2.
+
+Considérez ce modèle :
+
+```python
+class Auteur(models.Model):
+    nom = models.CharField(max_length=100)
+
+class Livre(models.Model):
+    titre = models.CharField(max_length=200)
+    auteur = models.ForeignKey(Auteur, on_delete=models.CASCADE,
+                                related_name='livres')
+```
+
+Si vous affichez une liste de livres avec le nom de leur auteur, vous écrirez probablement ceci dans votre vue :
+
+```python
+def liste_livres(request):
+    livres = Livre.objects.all()
+    return render(request, 'livres/liste.html', {'livres': livres})
+```
+
+Et dans votre template :
+
+```django
+{% for livre in livres %}
+    <p>{{ livre.titre }} par {{ livre.auteur.nom }}</p>
+{% endfor %}
+```
+
+Cette boucle génère une requête pour récupérer tous les livres, puis une requête supplémentaire pour chaque livre afin de récupérer l'auteur. Pour résoudre ce problème, utilisez select_related, qui effectue une jointure SQL en une seule requête :
+
+```python
+def liste_livres(request):
+    livres = Livre.objects.select_related('auteur').all()
+    return render(request, 'livres/liste.html', {'livres': livres})
+```
+
+select_related fonctionne pour les ForeignKey et les OneToOneField. Il crée une jointure SQL et récupère toutes les données en une seule requête. Vous pouvez chaîner les relations avec des points : select_related('auteur', 'auteur__profil').
+
+## prefetch_related pour les relations multiples
+
+prefetch_related résout un problème similaire mais pour les relations ManyToMany et les ForeignKey inverses. Au lieu d'une jointure SQL, il effectue une requête séparée pour chaque relation, puis combine les résultats en Python. Cela est plus efficace que les requêtes N+1 et fonctionne pour les relations que select_related ne peut pas gérer.
+
+```python
+class Tag(models.Model):
+    nom = models.CharField(max_length=50)
+
+class Article(models.Model):
+    titre = models.CharField(max_length=200)
+    tags = models.ManyToManyField(Tag, related_name='articles')
+```
+
+Pour récupérer tous les articles avec leurs tags sans requêtes N+1 :
+
+```python
+def liste_articles(request):
+    articles = Article.objects.prefetch_related('tags').all()
+    return render(request, 'articles/liste.html', {'articles': articles})
+```
+
+Dans le template, vous pouvez maintenant acceder à article.tags.all sans déclencher de requêtes supplémentaires. prefetch_related accepte également des objets Prefetch pour des cas plus complexes, comme filtrer ou ordonner les objets liés.
+
+```python
+from django.db.models import Prefetch
+
+def liste_articles(request):
+    articles = Article.objects.prefetch_related(
+        Prefetch('tags', queryset=Tag.objects.filter(actif=True))
+    ).all()
+    return render(request, 'articles/liste.html', {'articles': articles})
+```
+
+## Combiner select_related et prefetch_related
+
+Dans la réalité, vos vues ont souvent besoin des deux. Vous pourriez avoir une liste d'articles avec leur auteur (ForeignKey) et leurs tags (ManyToMany). La combinaison des deux méthodes vous permet de récupérer toutes les données en un minimum de requêtes.
+
+```python
+def liste_articles(request):
+    articles = Article.objects.select_related('auteur').prefetch_related(
+        'tags', 'commentaires'
+    ).all()
+    return render(request, 'articles/liste.html', {'articles': articles})
+```
+
+Cette vue exécute une requête pour les articles avec leurs auteurs (jointure), une requête pour les tags, et une requête pour les commentaires. Au total, trois requêtes au lieu de centaines. Utilisez l'outil django-debug-toolbar pour vérifier le nombre de requêtes générées par vos vues et identifier les opportunités d'optimisation.
+
+## Seulement les champs nécessaires avec only et defer
+
+Par défaut, Django récupère tous les champs d'un modèle. Si vous n'avez besoin que de quelques champs, vous pouvez utiliser only pour limiter la sélection à ces champs. Cela réduit la quantité de données transférées depuis la base de données et désérialisées en Python.
+
+```python
+# Récupère uniquement id, titre et date de creation
+articles = Article.objects.only('titre', 'date_creation')
+
+# Récupère tous les champs sauf contenu (utile pour les gros textes)
+articles = Article.objects.defer('contenu')
+```
+
+Attention : si vous accédez à un champ non chargé, Django exécutera une requête supplémentaire pour le récupérer. Utilisez only avec soin et vérifiez que vous n'accédez pas à d'autres champs dans votre vue ou vos templates.
+
+## Les valeurs agrégées avec annotate et aggregate
+
+Si vous avez besoin de calculer des statistiques sur vos objets, utilisez annotate et aggregate. annotate ajoute une annotation à chaque objet du queryset, tandis qu'aggregate renvoie un dictionnaire de valeurs agrégées.
+
+```python
+from django.db.models import Count, Avg
+
+# Nombre de commentaires par article
+articles = Article.objects.annotate(
+    nombre_commentaires=Count('commentaires')
+)
+
+# Note moyenne de tous les livres
+moyenne = Book.objects.aggregate(Avg('note'))
+```
+
+Ces fonctions traduisent vos besoins en SQL efficace, en utilisant les fonctions d'agrégation de la base de données. Elles évitent de charger tous les objets en mémoire pour calculer des statistiques en Python.
+
+## Les index de base de données
+
+Les index sont des structures de données qui accélèrent les recherches dans la base de données. Django vous permet de définir des index sur vos modèles via la classe Meta.
+
+```python
+class Article(models.Model):
+    titre = models.CharField(max_length=200, db_index=True)
+    slug = models.SlugField(unique=True)
+    date_creation = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['-date_creation'], name='article_date_desc'),
+        ]
+```
+
+Les index sur les champs fréquemment filtrés ou triés (date de création, statut, auteur) peuvent considérablement accélérer vos requêtes. Cependant, chaque index ralentit les écritures et occupe de l'espace disque. Créez des index uniquement sur les champs qui en valent la peine, et utilisez EXPLAIN pour vérifier qu'ils sont effectivement utilisés.
+
+## À retenir
+
+Les requêtes N+1 sont le problème de performance le plus courant dans Django. select_related résout le problème pour les ForeignKey et OneToOneField en effectuant une jointure SQL. prefetch_related résout le problème pour les ManyToMany et les ForeignKey inverses en effectuant des requêtes séparées. Combinez les deux pour optimiser vos vues. Utilisez only et defer pour limiter les champs récupérés, et annotate et aggregate pour les calculs. Ajoutez des index sur les champs fréquemment filtrés.
+
+## À retenir
+
+Les requêtes N+1 sont le problème de performance le plus courant dans Django. select_related résout le problème pour les ForeignKey et OneToOneField en effectuant une jointure SQL. prefetch_related résout le problème pour les ManyToMany et les ForeignKey inverses en effectuant des requêtes séparées. Combinez les deux pour optimiser vos vues. Utilisez only et defer pour limiter les champs récupérés, et annotate et aggregate pour les calculs. Ajoutez des index sur les champs fréquemment filtrés.
+
+## Erreurs fréquentes
+
+La première erreur est d'utiliser select_related sur une relation ManyToMany. select_related ne fonctionne que pour les relations « un-à-un » et « plusieurs-à-un ». Pour les relations « plusieurs-à-plusieurs » et les relations inverses, utilisez prefetch_related.
+
+La deuxième erreur est d'oublier que select_related suit les relations en profondeur. Si vous avez Article -> Auteur -> Profil, vous devez écrire select_related('auteur__profil') pour récupérer les trois modèles en une seule requête. Si vous oubliez une relation, vous risquez de générer des requêtes N+1 sur les objets liés.
+
+La troisième erreur est d'utiliser only sans vérifier les accès ultérieurs. Si votre template accède à un champ non chargé, Django exécutera une requête supplémentaire. Utilisez l'outil django-debug-toolbar pour identifier ces accès et compléter votre liste only.
+
+Enfin, beaucoup de développeurs ajoutent des index sans mesurer leur impact. Un index sur un champ peu utilisé ne fait qu'alourdir vos écritures. Analysez vos requêtes les plus fréquentes et ajoutez des index uniquement si cela améliore mesurablement les performances.
+
+## Pour aller plus loin
+
+Pour approfondir l'optimisation des requêtes Django, consultez la documentation officielle sur les querysets, qui détaille select_related, prefetch_related, only, defer, annotate et aggregate. Le livre « Django for Professionals » de William Vincent contient un chapitre sur la performance. Enfin, explorez l'outil django-silk pour le profiling avancé de vos requêtes en production.
+
+## Et maintenant
+
+Vous maîtrisez maintenant les techniques d'optimisation de requêtes Django. Dans la partie suivante, nous aborderons le framework de cache de Django, qui vous permettra de réduire encore davantage la charge sur votre base de données en mettant en cache les résultats coûteux.

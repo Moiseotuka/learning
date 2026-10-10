@@ -1,0 +1,52 @@
+{
+  "exercise": "Votre station météo du chapitre six fonctionne encore en boucle unique. Refactorisez-la en trois tâches FreeRTOS qui communiquent par une file de messages. La tâche capteur, cadencée à la seconde, lit, valide, filtre puis dépose une copie structurée de la mesure ; la tâche afficheur, réveillée quatre fois par seconde, consulte la file sans la vider et rafraîchit l'écran ; la tâche réseau maintient la liaison Wi-Fi et publie toutes les dix secondes, avec un délai maximum sur chaque appel bloquant. Justifiez chaque priorité par une échéance écrite, épinez les trois tâches au cœur applicatif, dimensionnez leurs piles puis vérifiez-les avec uxTaskGetStackHighWaterMark. Protégez les écritures sur le port série par un mutex rendu sur toutes les branches de sortie, et imposez un ordre unique de prise des verrous si vous en ajoutez d'autres. Livrable : un sketch compilable, un tableau récapitulatif des tâches indiquant cadence, priorité, pile et ressources partagées, ainsi qu'une capture du moniteur série affichant la hauteur de pile restante de chaque tâche après une minute de fonctionnement.",
+  "resources": [
+    {
+      "label": "FreeRTOS — référence officielle de xTaskCreate : arguments, pile, priorité et code de retour",
+      "url": "https://www.freertos.org/a00125.html"
+    },
+    {
+      "label": "Espressif — ESP-IDF FreeRTOS : SMP, affinité de cœur, unité de la pile et sections critiques",
+      "url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos_idf.html"
+    },
+    {
+      "label": "Arduino — référence officielle de delay() et son comportement dans un sketch",
+      "url": "https://docs.arduino.cc/language-reference/en/functions/time/delay/"
+    },
+    {
+      "label": "Vidéos tutorielles ARD",
+      "url": "https://www.youtube.com/results?search_query=ard ard"
+    },
+    {
+      "label": "Grafikart — Arduino et ESP32",
+      "url": "https://www.youtube.com/@grafikart/search?query=arduino%20esp32"
+    },
+    {
+      "label": "Grafikart — IoT et objets connectés",
+      "url": "https://www.youtube.com/@grafikart/search?query=iot%20objets%20connect%C3%A9s"
+    }
+  ],
+  "code_language": "cpp",
+  "starter_code": "// Station meteo - refactorisation en taches FreeRTOS (ESP32 / Arduino)\n// A completer : trois taches, une file de mesures, un mutex sur le port serie.\n\n#include <Arduino.h>\n\ntypedef struct {\n  float temperature;\n  float humidite;\n  uint32_t sequence;\n  uint32_t tick;\n  bool valide;\n} Mesure;\n\n// TODO 1 : declarer la file de mesures (une case, dernier etat seulement)\nQueueHandle_t fileMesures = NULL;\n\n// TODO 2 : declarer le mutex protegeant les ecritures sur Serial\nSemaphoreHandle_t mutexSerial = NULL;\n\nvoid ecrireLog(const char *message) {\n  // TODO 3 : prise du mutex avec delai maximum, ecriture, rendu sur les deux branches\n}\n\nvoid tacheCapteur(void *parametre) {\n  // TODO 4 : boucle infinie, lecture + filtrage, xQueueOverwrite,\n  //          puis xTaskDelayUntil sur une periode de 1000 ms\n}\n\nvoid tacheAfficheur(void *parametre) {\n  // TODO 5 : boucle infinie, xQueuePeek sans vider la file, dessin de l'ecran,\n  //          puis xTaskDelayUntil sur une periode de 250 ms\n}\n\nvoid tacheReseau(void *parametre) {\n  // TODO 6 : maintien de la liaison, xQueueReceive avec delai borne,\n  //          publication MQTT, puis xTaskDelayUntil sur 10000 ms\n}\n\nvoid setup() {\n  Serial.begin(115200);\n\n  // TODO 7 : creer la file et le mutex, verifier les poignees\n  // TODO 8 : creer les trois taches avec xTaskCreatePinnedToCore,\n  //          priorites justifiees, piles dimensionnees, coeur applicatif (1),\n  //          et verifier le code de retour de chaque creation\n}\n\nvoid loop() {\n  // TODO 9 : la boucle ne doit plus mesurer ni publier : service console uniquement\n  vTaskDelay(pdMS_TO_TICKS(50));\n}",
+  "solution_code": "// Station meteo temps reel - solution complete (ESP32 / Arduino + FreeRTOS)\n\n#include <Arduino.h>\n\ntypedef struct {\n  float temperature;\n  float humidite;\n  uint32_t sequence;\n  uint32_t tick;\n  bool valide;\n} Mesure;\n\nQueueHandle_t fileMesures = NULL;\nSemaphoreHandle_t mutexSerial = NULL;\nuint32_t sequence = 0;\n\nvoid ecrireLog(const char *message) {\n  if (xSemaphoreTake(mutexSerial, pdMS_TO_TICKS(50)) == pdTRUE) {\n    Serial.println(message);\n    xSemaphoreGive(mutexSerial);\n  } else {\n    Serial.println(\"trace perdue : port serie occupe\");\n  }\n}\n\nMesure lireEtFiltrer() {\n  Mesure m;\n  m.temperature = 20.0f + (float)(millis() % 1000) / 100.0f;\n  m.humidite = 50.0f + (float)(millis() % 500) / 100.0f;\n  m.sequence = ++sequence;\n  m.valide = true;\n  if (m.temperature < -40.0f || m.temperature > 85.0f) m.valide = false;\n  return m;\n}\n\nvoid tacheCapteur(void *parametre) {\n  TickType_t reveil = xTaskGetTickCount();\n  Mesure m;\n  for (;;) {\n    m = lireEtFiltrer();\n    m.tick = xTaskGetTickCount();\n    if (m.valide) xQueueOverwrite(fileMesures, &m);\n    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));\n  }\n}\n\nvoid tacheAfficheur(void *parametre) {\n  TickType_t reveil = xTaskGetTickCount();\n  Mesure copie;\n  for (;;) {\n    if (xQueuePeek(fileMesures, &copie, 0) == pdTRUE) {\n      char ligne[64];\n      snprintf(ligne, sizeof(ligne), \"T=%.2f C  H=%.1f %%  seq=%lu\",\n               copie.temperature, copie.humidite,\n               (unsigned long)copie.sequence);\n      ecrireLog(ligne);\n    }\n    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(250));\n  }\n}\n\nvoid tacheReseau(void *parametre) {\n  TickType_t reveil = xTaskGetTickCount();\n  Mesure aPublier;\n  for (;;) {\n    // maintenirLiaisonWifi() doit lui-meme etre borne dans le temps\n    if (xQueueReceive(fileMesures, &aPublier, pdMS_TO_TICKS(100)) == pdTRUE) {\n      if (aPublier.valide) {\n        // publierMQTT(aPublier) : 50 ms en temps normal, 2 s si relance\n      }\n    }\n    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(10000));\n  }\n}\n\nvoid afficherDiagnostic(const char *nom) {\n  UBaseType_t libre = uxTaskGetStackHighWaterMark(NULL);\n  char ligne[64];\n  snprintf(ligne, sizeof(ligne), \"%s : %u octets de pile libres\",\n           nom, (unsigned)libre);\n  ecrireLog(ligne);\n}\n\nvoid setup() {\n  Serial.begin(115200);\n\n  fileMesures = xQueueCreate(1, sizeof(Mesure));\n  mutexSerial = xSemaphoreCreateMutex();\n  if (fileMesures == NULL || mutexSerial == NULL) {\n    Serial.println(\"creation des objets de synchro impossible\");\n    while (true) delay(1000);\n  }\n\n  BaseType_t ok;\n  ok = xTaskCreatePinnedToCore(tacheCapteur, \"capteur\", 4096, NULL, 3, NULL, 1);\n  if (ok != pdPASS) Serial.println(\"echec creation tache capteur\");\n  ok = xTaskCreatePinnedToCore(tacheAfficheur, \"ecran\", 4096, NULL, 2, NULL, 1);\n  if (ok != pdPASS) Serial.println(\"echec creation tache ecran\");\n  ok = xTaskCreatePinnedToCore(tacheReseau, \"reseau\", 6144, NULL, 2, NULL, 1);\n  if (ok != pdPASS) Serial.println(\"echec creation tache reseau\");\n\n  ecrireLog(\"station meteo demarree en trois taches\");\n}\n\nvoid loop() {\n  if (Serial.available()) {\n    String commande = Serial.readStringUntil('\\n');\n    commande.trim();\n    if (commande == \"etat\") {\n      afficherDiagnostic(\"service\");\n    }\n  }\n  vTaskDelay(pdMS_TO_TICKS(50));\n}",
+  "concepts": [
+    "Qu'est-un microcontrôleur",
+    "Éléments de base : broche GPIO, résistance",
+    "Câblage LED + résistance",
+    "Schéma blink (setup/loop)",
+    "Lecture bouton + anti-rebond"
+  ],
+  "lecon": "ard-c7.txt",
+  "videos": [
+    {
+      "title": "Arduino et ESP32",
+      "url": "https://www.youtube.com/@grafikart/search?query=arduino%20esp32",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "IoT et objets connectés",
+      "url": "https://www.youtube.com/@grafikart/search?query=iot%20objets%20connect%C3%A9s",
+      "channel": "Grafikart"
+    }
+  ]
+}

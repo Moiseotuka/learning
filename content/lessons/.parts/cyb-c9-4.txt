@@ -1,0 +1,127 @@
+## Journaliser et surveiller des conteneurs éphémères
+
+Un conteneur s'arrête, se redémarre, se remplace : si ses journaux restent sur son disque, ils disparaissent avec lui. C'est la différence fondamentale avec le serveur physique que vous avez durci dans le chapitre quatre, où les fichiers de journalisation résidaient sur une machine que l'on pouvait saisir. La règle à appliquer est donc simple et non négociable : un conteneur n'écrit que sur la sortie standard, la sortie d'erreur et un volume monté ; tout ce qui doit survivre au conteneur est immédiatement expédié vers un système extérieur qui, lui, appartient à une échelle de conservation que vous avez fixée. La sortie standard d'un conteneur est un tuyau, pas un fichier.
+
+Ce que vous écrivez compte autant que l'endroit où vous l'écrivez. Structurez vos journaux en format machine lisible, avec un horodatage, un niveau, un identifiant de requête, le compte appelant et l'identifiant de la ressource concernée. N'y placez jamais de secret, de jeton d'accès, de numéro de carte ou de mot de passe, même en mode débogage : les journaux sont lus par plus de monde qu'on ne croit, ils sont copiés dans des outils d'analyse et ils sont conservés des mois. Chaque ligne de journal doit répondre à l'une de ces questions : qui a fait quoi, sur quelle ressource, à quel moment, avec quel résultat. Une ligne qui ne répond à aucune n'est du bruit, et le bruit fait disparaître les signaux rares qui, eux, doivent attirer l'attention.
+
+La centralisation se fait en deux temps. Le moteur de conteneurs et l'orchestrateur collectent les journaux des conteneurs en cours et de ceux qui viennent de s'arrêter, mais cette collecte est locale et limitée dans le temps ; un système central, distinct du cluster et non modifiable par les comptes applicatifs, reçoit le flux, l'indexe et l'y conserve le temps défini dans votre politique. Cette séparation a un but précis : dans un incident, l'attaquant qui contrôle un pod ne doit pas pouvoir effacer la trace de ce qu'il a fait. Conservez au minimum douze mois les journaux d'authentification et d'administration, trois mois les journaux d'erreur applicatifs, une semaine les journaux de mise au point — les mêmes durées que pour les postes et les serveurs du parc, pour les mêmes raisons.
+
+La surveillance ajoute une couche que la lecture de journaux ne remplace pas : l'observation continue de signaux rares. Un conteneur redémarré à répétition, une défaillance de mémoire, un refus de déploiement dû à un profil de sécurité, un échec de tirage d'image, une élévation refusée, l'apparition d'un compte de service inconnu, un volume monté depuis le nœud, un trafic sortant vers une adresse inhabituelle : chacun de ces signaux est fréquent isolément et préoccupant lorsqu'il devient répétitif ou inattendu. Fixez pour chacun un seuil, une canalisation d'alerte et un destinataire nommé. Une alerte sans destinataire est un événement que personne ne verra, et l'histoire du parcours est remplie de notifications partées vers une adresse abandonnée.
+
+Le bloc suivant donne les commandes de premier niveau, à exécuter dans les minutes qui suivent un signalement. Elles répondent, dans l'ordre, aux trois questions posées dans tous les chapitres d'investigation : que s'est-il passé, quand, et par quelle identité. Notez la commande qui interroge le journal du conteneur précédent : elle est souvent la première trace concrète d'une application qui plante ou d'une tentative qui échoue.
+
+```bash
+# Journal du conteneur en cours, avec le conteneur precedent s'il existe
+kubectl logs -n catalogue catalogue-web-7f9c4b-x2k9d --previous --timestamps
+
+# Evenements du cluster : refus d'admission, echecs de tirage, eviction
+kubectl get events -n catalogue --sort-by=.lastTimestamp
+
+# Redemarrages, etat reseau et volume monte depuis le noeud
+kubectl describe pod -n catalogue catalogue-web-7f9c4b-x2k9d
+
+# Journal applicatif cible : erreurs d'authentification sur la fenetre concernee
+kubectl logs -n catalogue -l app=catalogue-web --since=2h | grep -i "auth"
+```
+
+## Mini-projet : la fiche de durcissement de l'image livrée
+
+Vous voici devant la mission qui réunit tout le chapitre. L'équipe de bénévoles a publié une image pour le catalogue des emprunts ; votre responsable vous demande une fiche de durcissement complète, opposable, avant la mise en production prévue dans trois semaines. Le livrable n'est pas une impression générale du type « l'image paraît propre », c'est un document structuré en six rubriques, daté, signé, où chaque affirmation est accompagnée de la commande qui l'a produite et du résultat obtenu. Un collègue qui n'a jamais vu l'environnement doit pouvoir rejouer vos vérifications dans l'ordre et obtenir les mêmes réponses.
+
+La première rubrique décrit l'image : identifiant complet avec empreinte, date de construction, auteur déclaré, provenance de la base et nombre de couches. La deuxième présente l'analyse des vulnérabilités : outil employé, version de la base de données de référence, date du scan, nombre de failles par gravité et décision pour chacune, corrigée, différée avec motif, non applicable. La troisième porte sur les secrets : résultat de la recherche dans les couches, dans la configuration et dans l'historique du dépôt, puis, si un élément a été trouvé, la date de révocation et la personne qui l'a effectuée. Ces trois rubriques se lisent en cinq minutes et constituent le cœur du document.
+
+La quatrième rubrique rassemble les preuves de durcissement : base choisie et épinglée, construction en étapes séparées, utilisateur non privilégié effectif, système de fichiers de la couche finale appartenant à cet utilisateur, absence d'outillage de compilation, commande de santé déclarée. Pour chaque point, donnez la commande et sa sortie attendue, par exemple l'identifiant numérique renvoyé par la commande d'exécution, qui doit être non nul. La cinquième rubrique décrit le déploiement : manifeste du pod avec son profil de sécurité, compte de service dédié, droits vérifiés par interrogation, limites de ressources, refus attendu lors d'un déploiement non conforme. La sixième enfin fixe la surveillance : journaux exportés, durées de conservation, seuils d'alerte et destinataire nommé.
+
+```text
+FICHE DE DURCISSEMENT D'IMAGE — (nom de l'application) — (date)
+
+1. IDENTITE DE L'IMAGE
+   Reference complete avec empreinte : <registre>/<image>@sha256:<empreinte>
+   Date de construction, auteur, provenance de la base, nombre de couches
+   Commande utilisee : docker image inspect ...
+
+2. ANALYSE DES VULNERABILITES
+   Outil et version : <outil> <version> — date du scan : <date>
+   Failles : critiques <n> / elevees <n> / moderees <n>
+   Decision par ligne : corrigee | differee jusqu'au <date> | non applicable
+
+3. SECRETS
+   Recherche dans les couches, la configuration et l'historique : <resultat>
+   Si trouve : cle revoquee le <date> par <nom> — nouvelle valeur en place : oui/non
+
+4. PREUVES DE DURCISSEMENT
+   Utilisateur effectif (non nul) : <sortie de la commande>
+   Proprietaire des fichiers de l'application : <sortie>
+   Outils de compilation presents : oui/non — preuve : <sortie>
+   Sante declaree : <commande de controle>
+
+5. DEPLOIEMENT
+   Profil de securite impose : <profil> — espace de noms : <espace>
+   Compte de service : <nom> — droits : <sortie de l'interrogation>
+   Limites de ressources : <memoire> / <processeur>
+   Test negatif effectue : <description du deploiement refuse>
+
+6. SURVEILLANCE
+   Export des journaux vers : <destination> — conservation : <durees>
+   Seuils et destinataire : <seuil> — <nom>
+   Prochaine relecture : <date> — declencheurs anticipe : <evenements>
+```
+
+Pour mener l'atelier à son terme, travaillez dans cet ordre : inspectez l'image reçue avant de la modifier, conservez la sortie originale ; corrigez le Dockerfile puis reconstruisez ; relancez l'analyse et comparez les deux rapports ; déployez en environnement de recette avec le manifeste durci ; tentez volontairement un déploiement non conforme pour constater le refus ; enfin rédigez la fiche avec les résultats réels, jamais avec des intentions. Prévoyez deux bonnes heures, un espace de recette jetable et un registre que vous pouvez vider. Le rendu se fait sans votre formateur sous les yeux : si un collègue ne peut pas rejouer une vérification, c'est qu'elle n'a pas été faite.
+
+## À retenir
+
+- Le modèle de responsabilités partagées place la frontière selon le niveau de service : en IaaS vous appliquez les correctifs du système, en PaaS le fournisseur les applique, en SaaS il gère l'application.
+- Partagé signifie complémentaire, jamais moitié-moitié : le fournisseur sécurise le cloud, vous sécurisez ce que vous y déposez.
+- Les données, les identités et la configuration restent du côté du client dans les trois modèles.
+- Un service managé n'est pas un service configuré : les options par défaut restent votre responsabilité.
+- Une responsabilité sans preuve se confond avec une supposition : nom, date, commande, résultat.
+- Une image est un empilement de couches en lecture seule ; supprimer un fichier dans une couche postérieure ne l'efface pas des couches antérieures.
+- L'image voyage partout : une faiblesse embarquée se multiplie à chaque déploiement.
+- Verrouillez la base et les dépendances par empreinte, jamais par un tag flottant.
+- Construisez en plusieurs étapes pour que les outils de compilation ne franchissent jamais la frontière vers la production.
+- Exécutez sans privilège : un processus racine transforme une faille applicative en prise de contrôle de l'environnement.
+- Aucun secret ne doit entrer dans le contexte de construction, ni dans l'historique du dépôt, ni dans une variable d'environnement.
+- Injectez les secrets à l'exécution, sous forme de fichier monté, avec une durée de vie courte et une rotation datée.
+- En Kubernetes, imposez le profil restreint, refusez l'élévation, rendez la racine inécritable et retirez toutes les capacités.
+- Un compte de service dédié par charge de travail, sans jeton monté lorsque l'application n'en a pas besoin.
+- Les secrets Kubernetes ne sont protégés qu'après chiffrement de l'état au repos et restriction des droits de lecture.
+- Chez le fournisseur, refusez les actions et ressources en astérisque, remplacez les clés longue durée par des jetons éphémères.
+- Séparez les comptes, révoyez les droits inutilisés et alertez sur toute élévation de privilège.
+- La chaîne d'approvisionnement se verrouille par provenance, signature, inventaire des composants et contrôle d'admission.
+- Un conteneur écrit sur la sortie standard ; ce qui doit survivre part immédiatement vers un système central non modifiable.
+
+## Erreurs fréquentes
+
+- Piège : croire que le fournisseur corrige le système d'exploitation d'une machine virtuelle. Correction : en IaaS le correctif du système invité vous revient, inscrivez-le dans votre calendrier de maintenance.
+- Piège : acheter un service managé et laisser toutes les options par défaut. Correction : relevez les cinq vérifications de configuration et consignez chaque écart.
+- Piège : placer la frontière une fois puis ne plus la revoir. Correction : prévoyez une revue semestrielle à chaque migration de service.
+- Piège : construire l'image sur le poste d'un développeur. Correction : construisez dans l'intégration continue et conservez le journal de construction.
+- Piège : conserver un tag flottant pour la production. Correction : épinglez l'image par empreinte et écrivez cette empreinte dans le manifeste.
+- Piège : supprimer un secret avec une instruction de nettoyage. Correction : reconstruisez sans jamais faire entrer le secret, puis révoquez l'ancien.
+- Piège : faire tourner l'application en root parce que le port d'écoute est inférieur à mille vingt-quatre. Correction : utilisez un port au-dessus, ou ajustez l'autorisation de connexion sans relever le privilège.
+- Piège : reprendre un manifeste d'exemple contenant le mode privilégié. Correction : appliquez le profil restreint et motivez par écrit toute exception.
+- Piège : partager le compte de service par défaut entre toutes les applications. Correction : un compte par charge de travail, droits vérifiés par interrogation.
+- Piège : lire un secret Kubernetes encodé en base64 et le croire chiffré. Correction : activez le chiffrement au repos et restreignez les droits de lecture.
+- Piège : conserver une clé d'accès statique dans un dépôt. Correction : fédération, jeton éphémère, révocation datée et vérification de l'ancienne clé.
+- Piège : accorder une action complète sur toutes les ressources par commodité. Correction : nommez les actions et les ressources réellement nécessaires.
+- Piège : déployer une image non signée en production parce qu'elle vient d'un registre connu. Correction : exigez la signature et la provenance au contrôle d'admission.
+- Piège : laisser les journaux dans le conteneur. Correction : export immédiat vers un système central, durées de conservation chiffrées.
+- Piège : créer une alerte sans destinataire nommé. Correction : désignez la personne et son suppléant, vérifiez la réception mensuellement.
+- Piège : livrer une fiche remplie d'intentions. Correction : joignez à chaque rubrique la commande, la sortie et la date.
+
+## Pour aller plus loin
+
+La documentation Docker consacrée aux bonnes pratiques de construction reste la référence la plus directe : elle détaille l'ordre des instructions, la mise en cache, la construction en plusieurs étapes et la réduction du contexte de construction, avec des exemples complets à recopier. Elle est accessible à l'adresse https://docs.docker.com/build/building/best-practices/ et mérite une relecture intégrale après l'atelier, car chaque paragraphe correspond à un défaut que vous avez corrigé de vive voix. Complétez-la par la documentation des bases d'images officielles, qui indique pour chaque distribution ce qui est installé, comment les correctifs sont appliqués et quelle est la politique de durée de vie des versions.
+
+Côté orchestration, les documents de référence du projet Kubernetes sur la sécurité des pods constituent la seconde lecture obligatoire. Les profils de sécurité applicables par espace de noms y sont décrits champ par champ, avec la liste exacte des interdictions du profil restreint et la marche à suivre pour une migration progressive depuis un espace permissif. Prenez également les pages consacrées aux comptes de service, aux règles d'autorisation et au chiffrement de l'état, qui répondent précisément aux interrogations de la commande d'autorisation vue dans la leçon. Ces pages sont publiées à l'adresse https://kubernetes.io/docs/concepts/security/ et évoluent avec chaque version majeure : vérifiez la version que votre cluster exécute.
+
+Le modèle de responsabilités partagées est décrit par chaque grand fournisseur, et leurs formulations, proches mais pas identiques, méritent d'être confrontées. La note de référence de Microsoft, publiée à l'adresse https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility, présente la frontière couche par couche et insiste sur les cas de co-gestion qui posent problème en pratique. La lire après le tableau du début de chapitre vous donnera l'habitude de traduire un vocabulaire commercial en une ligne de responsabilité concrète. En complément, les listes de contrôle du Center for Internet Security pour les conteneurs et pour Kubernetes fournissent des items numérotés, justifiés et vérifiables, idéals pour construire vos propres fiches de durcissement plutôt que de rédiger vos critères à partir de zéro.
+
+Enfin, pour la chaîne d'approvisionnement, explorez les spécifications de provenance et d'inventaire des composants logiciels, ainsi que les outils de signature d'images associés. L'objectif n'est pas d'adopter chaque outil, mais de comprendre le schéma commun : un artefact construit de façon reproductible, accompagné d'un journal signé, d'un inventaire de composants, puis accepté uniquement s'il correspond à ce journal. Ce schéma se lit en une soirée et il change durablement la manière dont on accepte une image venue de l'extérieur.
+
+## Et maintenant : passer de la fiche au réflexe
+
+Vous avez désormais la grille complète : placer la frontière de responsabilité, durcir l'image qui franchit cette frontière, ôter les secrets de tout ce qui voyage, abaisser les privilèges au niveau du pod et chez le fournisseur, vérifier la provenance de chaque artefact, puis observer ce qui s'exécute réellement. L'exercice pratique qui suit cette leçon vous demandera d'appliquer la totalité de cette chaîne à l'image du catalogue, sans vous appuyer sur la fiche modèle : c'est à ce moment-là que vous mesurerez ce que vous avez retenu de l'ordre des couches, des champs de sécurité et de la commande d'interrogation des autorisations. Le quiz de quatre questions qui accompagne le chapitre vérifie ensuite, en quelques minutes, les notions que l'on confond le plus souvent.
+
+Deux rendez-vous valent mieux qu'une résolution générale de mieux faire. Le premier est mensuel : une heure passée à relire les empreintes d'images déployées, les droits effectivement utilisés chez le fournisseur et les secrets proches de leur échéance de rotation. Le second est trimestriel : la revue de la frontière de responsabilité, service par service, avec le nom de la personne qui agirait en cas d'incident et le délai qu'elle mettrait. Un environnement cloud n'est pas plus sûr qu'un serveur parce qu'il est plus grand, il est plus sûr quand quelqu'un, à une date précise, a vérifié ce qu'il contenait. Les habitudes durables tiennent en trois verbes : vérifier, consigner, revenir.

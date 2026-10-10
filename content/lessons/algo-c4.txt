@@ -1,0 +1,776 @@
+Après avoir posé la définition d'un algorithme, mesuré son coût d'exécution et manipulé les structures de données linéaires, vous voici au quatrième chapitre du parcours Algorithmique, là où toutes ces notions vont se rencontrer. Un tableau nous a servi à ranger des nombres, une liste à les parcourir dans l'ordre, une file et une pile à organiser des traitements successifs ; aucun de ces objets ne permet pourtant de décrire une relation entre deux éléments quelconques. Or le monde est fait de relations : des villes reliées par des routes, des personnes liées par des amitiés, des pages web reliées entre elles par des liens, des tâches d'un projet qui en dépendent d'autres. Le graphe est la structure qui représente toutes ces situations, et les trois algorithmes du chapitre, le parcours en largeur, le parcours en profondeur et Dijkstra, sont ceux que les logiciels exécutent des milliards de fois par jour pour vous proposer un itinéraire, un ami suggéré ou une page pertinente.
+
+À la fin de cette leçon, vous saurez faire les trois choses annoncées dans les objectifs du chapitre. Vous saurez représenter un même graphe de deux manières différentes, en matrice d'adjacence et en listes d'adjacence, et dire laquelle choisir selon les données et l'usage. Vous saurez parcourir un graphe en largeur avec une file et en profondeur avec une pile ou la récursion, en expliquant pourquoi chaque sommet n'est visité qu'une seule fois malgré les cycles. Vous saurez enfin calculer un plus court chemin dans un graphe dont les arêtes portent des poids positifs, en déroulant Dijkstra pas à pas sur un exemple chiffré et en connaissant son coût en opérations.
+
+La manière d'aborder ce chapitre mérite un conseil préalable, parce que les graphes sont la première structure de données qui ne tient pas dans une ligne de votre écran. Contrairement à une liste, un graphe ne se parcourt pas d'un bout à l'autre : il s'explore, avec des embranchements, des retours en arrière et des boucles qui menacent de faire tourner votre esprit en rond. Dessinez donc systématiquement les exemples, avec des points pour les sommets et des traits pour les arêtes. Tracez les exécutions à la main, une ligne par étape, en notant le contenu de la file ou de la pile à chaque instant. Ce travail manuel est le seul qui vous fasse réellement sentir la différence entre la largeur et la profondeur : on ne l'apprend pas en lisant une description, on l'apprend en se trompant sur un schéma et en corrigeant.
+
+Un mot sur le fil conducteur de ces quatre volets. Le premier pose le vocabulaire et les deux représentations, sans aucun algorithme : il s'agit de savoir quoi stocker avant de savoir quoi faire. Le second introduit le parcours en largeur avec sa file, puis le trace sur l'exemple fil rouge. Le troisième traite du parcours en profondeur, de son équivalence entre pile explicite et récursion, puis prépare la question des poids. Le quatrième déroule Dijkstra sur un exemple chiffré, compare les complexités des trois algorithmes et termine par les applications concrètes. Les chapitres précédents vous ont donné les briques ; celui-ci assemble les premiers véritables algorithmes de parcours.
+
+## D'où viennent les graphes : sommets, arêtes et orientations
+
+Un graphe est un ensemble de points, appelés sommets ou nœuds, reliés entre eux par des traits appelés arêtes. Formellement, on le note G = (S, A), où S désigne l'ensemble des sommets et A l'ensemble des arêtes. Rien de plus : pas de tableau, pas d'ordre imposé, pas de distance. Un sommet peut être une ville, une personne, une page web, une étape d'une recette, un état d'un jeu. Une arête exprime simplement le fait qu'il existe une relation entre deux sommets : on peut aller de l'un à l'autre, ils sont voisins. Toute la complexité du sujet naît de ce vocabulaire minimal : il suffit d'ajouter une orientation ou un nombre à une arête pour transformer complètement le problème à résoudre.
+
+L'orientation est la première variante à maîtriser. Une arête non orientée signifie que la relation fonctionne dans les deux sens : si une route relie Lyon à Dijon sans sens unique, on va de Lyon à Dijon et de Dijon à Lyon. Un arc, lui, ne fonctionne que dans un sens : un abonnement d'un utilisateur vers une chaîne ne donne pas forcément le droit inverse, et un lien hypertexte d'une page vers une autre ne se parcourt pas automatiquement à rebours. Un graphe dont toutes les arêtes sont non orientées est dit non orienté ; un graphe dont toutes les arêtes sont des arcs est dit orienté, ou digraphe. Les deux se traitent avec les mêmes algorithmes, à ceci près que dans un graphe orienté, atteindre un sommet ne garantit pas d'en repartir.
+
+Ce vocabulaire s'enrichit de quelques mots que vous retrouverez dans tous les énoncés. Le degré d'un sommet est le nombre d'arêtes qui le touchent, dans un graphe orienté on distingue le degré entrant du degré sortant. Un voisin est un sommet relié directement. Un chemin est une suite de sommets consécutifs sans répétition ; sa longueur est le nombre d'arêtes parcourues. Un cycle est un chemin qui revient à son point de départ. Un graphe est connexe si l'on peut aller d'un sommet à n'importe quel autre, ce qui est faux par exemple d'un réseau coupé en deux îlots. Enfin, un graphe est pondéré quand chaque arête porte un poids, une distance, une durée, un coût.
+
+```table
+| Notion | Définition courte | Exemple quotidien |
+| --- | --- | --- |
+| Sommet | Élément du réseau | Ville, personne, page web |
+| Arête non orientée | Lien réciproque | Route à double sens, amitié |
+| Arc | Lien à sens unique | Abonnement, lien hypertexte |
+| Degré | Nombre d'arêtes d'un sommet | Nombre de routes d'une ville |
+| Chemin | Suite d'arêtes sans répétition | Itinéraire d'un point à un autre |
+| Cycle | Chemin qui revient au départ | Boucle d'un réseau de transports |
+| Poids | Valeur portée par une arête | Distance en kilomètres, durée en minutes |
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/6/61/Graph.traversal.example.svg/960px-Graph.traversal.example.svg.png
+| Un graphe non orienté simple : six sommets reliés par des arêtes, sans ordre imposé ni direction, exactement la structure que nous allons représenter en matrice et en listes d'adjacence.
+```
+
+Les exemples abondent et déterminent le type de graphe à manipuler, il est donc utile de les passer en revue avant d'écrire la moindre ligne. Un réseau routier est un graphe pondéré et orienté : les carrefours sont des sommets, les tronçons de route portent un poids qui mesure la distance ou le temps de trajet, et les sens interdits imposent des arcs. Un réseau social est un graphe non orienté pour les amitiés et orienté pour les abonnements, avec des poids possibles quand on veut mesurer la fréquence des échanges. Le web est un digraphe massif dont les pages sont les sommets et les liens les arcs. Un planning de projet est un digraphe acyclique dont les tâches dépendent les unes des autres. Un fichier avec ses dossiers est encore un graphe, particulièrement régulier, que l'on appellera arbre.
+
+La raison pour laquelle la leçon précédente sur les structures de données ne suffit pas se clarifie maintenant. Une liste conserve l'ordre de ses éléments mais ignore les liens entre eux ; un tableau permet d'accéder à un rang en temps constant mais ne dit pas qui est relié à qui ; une file et une pile organisent des traitements mais ne modélisent pas une structure fixe. Le graphe combine une structure statique, les sommets et les arêtes, et des traitements dynamiques, les parcours, les recherches de chemin, les mesures de distance. C'est pourquoi ce chapitre se divise en deux temps : d'abord stocker le graphe proprement, puis le parcourir efficacement.
+
+## La matrice d'adjacence : un tableau carré pour tout dire
+
+La matrice d'adjacence consiste à ranger le graphe dans un tableau à deux dimensions carré, de n lignes et n colonnes, où n est le nombre de sommets. Chaque sommet reçoit un indice, de 0 à n moins 1, et la case située à l'intersection de la ligne i et de la colonne j contient 1 si une relie les deux sommets correspondants, 0 sinon. L'opération fondamentale devient alors d'une simplicité totale : pour savoir si deux sommets sont reliés, il suffit de lire une case. Ce choix mérite qu'on le comprenne en détail, parce qu'il paie sa commodité par une consommation d'espace qui n'est pas toujours raisonnable.
+
+Prenons le graphe qui servira de fil rouge dans toute la leçon. Il comporte six sommets, nommés de A à F, et six arêtes non orientées : A est relié à B et à C, B est relié à A, D et E, C est relié à A et à F, D est relié à B seul, E est relié à B et à F, F est relié à C et à E. Plaçons les sommets dans l'ordre alphabétique en lignes et en colonnes. La ligne A porte alors des 1 aux colonnes B et C, et des 0 ailleurs ; la ligne D ne porte qu'un 1, à la colonne B, parce que D n'a qu'un seul voisin. Comme les arêtes sont non orientées, la matrice est symétrique par rapport à sa diagonale : lire M[i][j] ou M[j][i] revient au même, et la diagonale est constituée de zéros, puisqu'un sommet n'est pas relié à lui-même.
+
+```table
+| | A | B | C | D | E | F |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 0 | 1 | 1 | 0 | 0 | 0 |
+| B | 1 | 0 | 0 | 1 | 1 | 0 |
+| C | 1 | 0 | 0 | 0 | 0 | 1 |
+| D | 0 | 1 | 0 | 0 | 0 | 0 |
+| E | 0 | 1 | 0 | 0 | 0 | 1 |
+| F | 0 | 0 | 1 | 0 | 1 | 0 |
+```
+
+Deux remarques sur la construction, parce qu'elles causent la plupart des erreurs de début. La première est que l'ordre des sommets est une décision du programmeur, arbitraire mais définitif : si vous décidez d'écrire F avant A, la matrice change complètement tout en décrivant le même graphe. Il faut donc conserver la table de correspondance entre nom de sommet et indice, sous forme de dictionnaire. La deuxième remarque concerne les graphes orientés : la matrice n'est plus symétrique, la ligne i décrit les arcs sortants de i et la colonne j les arcs entrants dans j. Un 1 en M[i][j] signifie alors qu'on peut aller de i vers j, et rien sur le chemin inverse.
+
+Les graphes pondérés modifient le contenu des cases sans modifier la forme du tableau : on y écrit le poids de l'arête au lieu d'un 1, et on réserve une valeur particulière pour l'absence d'arête, le plus souvent zéro ou une valeur sentinelle. Cette subtilité devient délicate dès que les poids peuvent valoir zéro, car la case devient ambiguë. Les implementations sérieuses préfèrent alors une autre valeur réservée, ou combinent la matrice de poids avec une matrice de présence. Retenez le principe : la matrice décrit la structure du graphe, et les cases transportent l'information que l'on souhaite, présence, poids, capacité, couleur de l'arête.
+
+Reste à mesurer ce que coûte cette représentation. Le nombre de cases est n multiplié par n, soit mille cases pour dix sommets et un million pour mille sommets. Or un graphe réel est souvent vide la plus grande partie du temps : sur notre exemple, vingt-huit cases sur trente-six valent zéro. L'accès à une arête coûte une seule lecture, c'est-à-dire un temps constant, et c'est le grand atout de la matrice ; mais lister les voisins d'un sommet impose de balayer toute sa ligne, soit n lectures dont la plupart sont inutiles. Construire la matrice à partir d'une liste d'arêtes se fait en temps proportionnel au nombre d'arêtes. La représentation alternative, qui évite de stocker les zéros, fait l'objet de la section suivante.
+
+## La liste d'adjacence : ne garder que ce qui existe
+
+La liste d'adjacence part d'une observation de bon sens : un graphe clairsemé contient surtout des absences de liens. On range alors, pour chaque sommet, la liste de ses voisins seulement. En Python, la forme naturelle est un dictionnaire dont les clés sont les sommets et les valeurs des listes de sommets voisins. Pour notre graphe d'exemple, la table tient en six lignes : la liste de A contient B et C, celle de B contient A, D et E, celle de C contient A et F, celle de D contient B seul, celle de E contient B et F, et celle de F contient C et E.
+
+Cette représentation inverse la logique de la matrice. Là où la matrice répond instantanément à la question y a-t-il une arête entre i et j, la liste d'adjacence répond instantanement à la question quels sont les voisins de i, qui est exactement la question posée par les parcours. Un parcours en largeur ou en profondeur ne fait rien d'autre, étape après étape, que demander la liste des voisins du sommet courant et examiner chacun d'eux. Avec la matrice, cette même question coûte un balayage complet d'une ligne ; avec la liste, elle coûte le temps de lecture des seuls voisins réels. C'est cette asymétrie qui justifie l'existence de deux représentations au lieu d'une seule.
+
+```table
+| Sommet | Liste des voisins | Degré |
+| --- | --- | --- |
+| A | B, C | 2 |
+| B | A, D, E | 3 |
+| C | A, F | 2 |
+| D | B | 1 |
+| E | B, F | 2 |
+| F | C, E | 2 |
+```
+
+Le coût mémoire se calcule facilement et mérite d'être comparé à celui de la matrice. La liste d'adjacence contient une entrée pour chaque sommet, plus une entrée pour chaque arête dans le cas non orienté, puisque chaque arête apparaît deux fois, une fois dans chaque liste. Pour n sommets et m arêtes, la taille totale est donc de l'ordre de n plus deux fois m. Sur notre exemple, six sommets et six arêtes donnent dix-huit références au lieu de trente-six cases. L'écart explose avec la taille : pour un réseau social de cent mille personnes et un million d'amitiés, la matrice réclamerait dix milliards de cases, tandis que les listes réclament environ deux millions d'entrées. Un graphe dit dense, où presque tous les couples de sommets sont reliés, renverse l'avantage.
+
+Les opérations offertes par la liste d'adjacence suivent la même logique que son contenu. Lister les voisins d'un sommet coûte son degré, ce qui est optimal. Ajouter ou supprimer une arête se fait en temps proportionnel au degré du sommet, puisqu'il faut chercher l'élément dans sa liste. Vérifier l'existence d'une arête, en revanche, coûte le degré du premier sommet, là où la matrice offrait un accès direct : c'est le seul point où la liste est théoriquement moins bonne, et la différence se lit surtout sur des graphes denses.
+
+Pour les graphes pondérés, on enrichit chaque entrée de liste d'un poids. La case A contient alors les couples B de poids 7 et C de poids 9, et ainsi de suite ; le même graphe orienté s'exprime sans ambiguïté puisque seul le sommet de départ porte l'entrée concernée. Une autre forme courante est la liste d'arêtes, une simple suite de triples départ, arrivée, poids, très commode pour lire un graphe depuis un fichier ou le dessiner, mais qu'il faut convertir en listes d'adjacence avant de le parcourir efficacement. Cette conversion demande un dictionnaire d'index, une boucle sur les arêtes et deux insertions par arête dans le cas non orienté.
+
+Comment choisir entre les deux ? La règle tient en une phrase : on utilise la matrice quand le graphe est dense et que l'on pose beaucoup de questions d'existence d'arêtes, et l'on utilise les listes d'adjacence dans tous les autres cas, ce qui comprend la quasi-totalité des graphes réels. Les parcours que vous allez écrire dans les sections suivantes supposent d'ailleurs implicitement les listes, car ils ont besoin d'itérer sur les voisins plutôt que de tester des cases. Quel que soit le choix de représentation, les algorithmes du chapitre travaillent sur la même structure et les deux formes lui donnent la même information. C'est maintenant que commence le vrai sujet : explorer ces sommets sans jamais tourner en rond.
+
+## Parcourir un graphe : l'ordre de découverte des sommets
+
+Parcourir un graphe, c'est visiter tous les sommets qui sont accessibles depuis un point de départ, en partant de ce point et en suivant les arêtes une à une. La formulation tient en une phrase, et pourtant elle contient les deux difficultés du chapitre. La première est la répétition : dans un graphe, on revient très vite sur ses pas, un cycle vous ramenant au sommet d'où vous êtes parti. Si l'on ne prend pas de précaution, la visite s'arrête et le programme tourne éternellement en décrivant la même boucle. La seconde difficulté est l'ordre : le graphe ne propose aucun ordre naturel, contrairement à une liste dont les éléments se suivent. Il faut donc choisir, et ce choix définit deux familles d'algorithmes qui ne donnent jamais le même résultat sur un même graphe.
+
+La parade à la répétition est la marque, un tableau logique qui indique pour chaque sommet s'il a déjà été découvert. On y inscrit un sommet au moment précis où on l'ajoute à la structure de travail, et non au moment où on le traite. Cette nuance, qui peut paraître administrative, est la clé de tout le chapitre : si l'on marque à la sortie, deux chemins différents peuvent ajouter le même sommet deux fois dans la file ou la pile, et le parcours traite un sommet qui n'aurait jamais dû y figurer. Marquez à l'entrée, et chaque sommet entre exactement une fois dans la structure ; c'est le premier réflexe à acquérir avant d'écrire le moindre code de parcours.
+
+Les deux stratégies de découverte s'imaginent facilement sur un dessin. La première procède par vagues concentriques : on visite le départ, puis tous ses voisins directs, puis tous les voisins non encore vus de ces voisins, et ainsi de suite. C'est le parcours en largeur, souvent noté BFS pour breadth first search. La seconde procède par enfoncement : on part dans une direction aussi loin que possible, on ne revient en arrière que lorsqu'un cul-de-sac nous y contraint, puis on reprend dans une autre direction. C'est le parcours en profondeur, noté DFS pour depth first search. Sur le même graphe et le même sommet de départ, les deux produisent des ordres de visite distincts, mais visitent exactement les mêmes sommets et au même nombre.
+
+Cette différence de comportement vient directement des structures de données empruntées aux chapitres précédents. Le parcours en largeur utilise une file, où l'on ajoute par la queue et où l'on retire par la tête : les sommets découverts les premiers sont traités les premiers, ce qui produit l'effet de vagues. Le parcours en profondeur utilise une pile, où l'on ajoute et retire par le même bout, ou plus souvent la récursion, dont la pile d'appels est implicitement une pile : les sommets découverts les derniers sont traités les premiers, ce qui produit l'effet d'enfoncement. Rien d'autre ne distingue les deux algorithmes, et cette proximité est précieuse : une fois l'un écrit, l'autre se déduit en changeant la structure et l'endroit du marquage.
+
+Voici le graphe que nous allons parcourir, repris du premier volet. Six sommets A, B, C, D, E, F ; six arêtes non orientées : A avec B, A avec C, B avec D, B avec E, C avec F, E avec F. Le voisinage est le suivant : A a pour voisins B et C ; B a pour voisins A, D et E ; C a pour voisins A et F ; D a pour voisin B seulement ; E a pour voisins B et F ; F a pour voisins C et E. Partons toujours de A. Le parcours en largeur atteindra les sommets dans l'ordre A, B, C, D, E, F ; le parcours en profondeur, nous le verrons, donnera A, B, D, E, F, C. Tous deux auront visité les six sommets, une seule fois chacun.
+
+Avant d'écrire l'algorithme, une dernière propriété commune mérite d'être posée, car elle rend la démonstration de correction possible. À chaque instant, la structure de travail contient des sommets déjà découverts mais pas encore traités, et la frontière entre ces deux catégories progresse d'un pas à chaque itération. L'invariant du parcours s'énonce ainsi : à la fin de chaque tour, tous les sommets situés à moins de k arêtes du départ ont été découverts, où k est le nombre de tours déjà réalisés. Cet énoncé, faux au départ pour k égal à zéro, devient vrai au premier tour et se conserve ensuite. C'est cette phrase, et non la lecture du code, qui prouve que le parcours fonctionne : retenez-la, elle reviendra dans les erreurs fréquentes du chapitre.
+
+## BFS : le parcours en largeur avec une file
+
+Le parcours en largeur organise la visite autour d'une file, structure de données FIFO où l'on entre par la queue et d'où l'on sort par la tête. L'algorithme débute en plaçant le sommet de départ dans la file et en le marquant comme découvert. Tant que la file n'est pas vide, on retire son premier élément, on le note comme visité, puis on examine un à un ses voisins : chaque voisin non encore découvert est aussitôt marqué et ajouté en fin de file. Lorsque la file se vide, tous les sommets accessibles depuis le départ ont été traités, et le parcours est terminé.
+
+Le point délicat, celui sur lequel les débutants trébuchent le plus, est la position du marquage. On marque un sommet au moment où on l'ajoute à la file, pas au moment où on le retire. Si l'on inversait les deux, un sommet pourrait être ajouté plusieurs fois par plusieurs voisins différents avant sa première extraction, et la file se remplirait de doublons. Avec le marquage à l'ajout, un sommet entre exactement une fois, ce qui garantit qu'il sera traité exactement une fois. Tenez cette règle pour non négociable : elle vaut pour la file comme pour la pile, pour BFS comme pour DFS.
+
+L'implémentation tient en quelques lignes de Python, et il est utile de la lire lentement, en suivant la variable vus et la variable file tour à tour. La file est fournie par la structure deque de la bibliothèque standard, dont la méthode popleft retire en tête en temps constant, ce que la liste ordinaire de Python ne sait pas faire proprement.
+
+```python
+from collections import deque
+
+def bfs(graphe, depart):
+    decouverts = {depart}
+    file = deque([depart])
+    ordre = []
+    while file:
+        sommet = file.popleft()
+        ordre.append(sommet)
+        for voisin in graphe[sommet]:
+            if voisin not in decouverts:
+                decouverts.add(voisin)
+                file.append(voisin)
+    return ordre
+```
+
+La correction de cet algorithme se démontre en trois points. Chaque sommet est ajouté à la file au plus une fois, puisqu'il n'est ajouté que lorsqu'il n'appartient pas à l'ensemble decouverts, ensemble qui ne fait que grossir. Chaque sommet retiré est donc traité une seule fois, et la boucle s'arrête quand la file est vide, ce qui est possible puisque le nombre de sommets est fini. Enfin, tout sommet accessible depuis le départ finit nécessairement dans la file : par hypothèse il existe un chemin, et le premier sommet de ce chemin qui n'est pas encore découvert y est ajouté par son prédécesseur déjà traité. Le parcours est donc exhaustif sur la composante connexe de départ.
+
+Le coût de l'opération se lit directement dans le code. Chaque sommet est extrait une fois et ses voisins parcourus une fois, ce qui donne un total de travail proportionnel au nombre de sommets plus le nombre d'arêtes, soit la célèbre borne O de V plus E. Dans un graphe non orienté, chaque arête est examinée deux fois, une fois depuis chaque extrémité, ce qui ne change pas l'ordre de grandeur. Si le graphe est stocké en matrice d'adjacence, en revanche, le balayage d'une ligne entière pour chaque sommet porte le coût à V au carré, quelle que soit la rareté des arêtes : voilà une raison de plus de préférer les listes pour les parcours.
+
+Suivons l'exécution sur notre graphe, ligne à ligne, en notant le contenu de la file et l'ensemble des sommets découverts après chaque tour. On part de A, seul élément initial. À chaque tour, on retire le sommet de tête et on y ajoute ses voisins non encore découverts, dans l'ordre alphabétique pour fixer les idées. Le tableau ci-dessous retrace les sept tours nécessaires, et la section suivante commente ce déroulé en mots pour que vous puissiez le rejouer sur une feuille.
+
+```table
+| Tour | Retiré | Ajoutés à la file | File après le tour | Découverts | Ordre |
+| --- | --- | --- | --- | --- | --- |
+| 1 | A | B, C | B, C | A, B, C | A |
+| 2 | B | D, E | C, D, E | A, B, C, D, E | A, B |
+| 3 | C | F | D, E, F | A, B, C, D, E, F | A, B, C |
+| 4 | D | aucun | E, F | inchangés | A, B, C, D |
+| 5 | E | aucun | F | inchangés | A, B, C, D, E |
+| 6 | F | aucun | vide | inchangés | A, B, C, D, E, F |
+```
+
+Un cas limite doit être traité explicitement : le graphe peut être formé de plusieurs composantes connexes, c'est-à-dire de plusieurs morceaux sans aucun lien entre eux. Partant de A, notre parcours ne verra jamais un sommet isolé ajouté au graphe, puisqu'aucune suite d'arêtes ne peut l'atteindre. Si la tâche est de visiter le graphe entier, il faut envelopper l'appel de BFS dans une boucle sur tous les sommets, en relançant le parcours sur chacun de ceux qui n'ont pas encore été découverts. Chaque relance identifie une composante, et le nombre de relances est exactement le nombre de composantes connexes, une application directe et fréquente de l'algorithme.
+
+Enfin, une précision sur ce que BFS ne fait pas. Il donne l'ordre de découverte par niveau, et il fournit le plus court chemin en nombre d'arêtes entre le départ et n'importe quel sommet atteint, puisque tout chemin parcouru par la file l'est avec le minimum d'arêtes intermédiaires. En revanche, il ignore totalement la notion de longueur pondérée : si chaque arête valait un kilomètre, cela suffirait, mais dès que les poids varient, le chemin au plus petit nombre d'arêtes n'est plus le chemin le plus court. C'est précisément le défaut que l'algorithme de Dijkstra corrigera, et il faut garder cette limite présente à l'esprit pour ne pas appliquer BFS là où il a tort.
+
+## Tracer BFS : la propagation par vagues sur notre graphe
+
+Rejetons l'algorithme sur le graphe d'exemple, mais cette fois à voix haute, en racontant ce que chaque ligne produit. Le départ est A : on le place dans la file et on le marque. Premier tour, on retire A, on le note dans l'ordre de visite, et l'on regarde ses voisins B et C, qui ne sont pas encore découverts : on les marque et on les empile en queue, dans cet ordre. La file contient désormais B puis C. Le sens de lecture est important : B est en tête, donc B sera traité avant C, même si C a été découvert presque en même temps. C'est exactement ce qui produit l'effet de vagues promis par la file.
+
+Deuxième tour, on retire B. Ses voisins sont A, D et E. A est déjà découvert, on l'ignore ; D et E ne le sont pas, on les marque et on les ajoute en queue. La file contient C, D, E, et l'ordre de visite est A puis B. Troisième tour, on retire C. Ses voisins sont A et F : A est découvert, F ne l'est pas, on le marque et on l'ajoute. La file contient D, E, F. Remarquez ce qui vient de se passer : en trois tours, nous avons exploré tout l'entourage immédiat de A, et la file ne contient plus que des sommets situés à deux arêtes du départ. La vague suivante est prête.
+
+Quatrième tour, on retire D. Son unique voisin B est déjà découvert : rien n'est ajouté. Cinquième tour, on retire E, dont les voisins B et F sont tous deux découverts : encore rien. Sixième tour, on retire F, dont les voisins C et E sont découverts : la file se vide. Le parcours s'arrête avec un ordre final A, B, C, D, E, F et six sommets visités sur six. La lenteur apparente des derniers tours n'est pas un défaut : elle montre que la file s'assèche exactement quand il n'y a plus rien à découvrir, ce qui est le comportement correct d'un parcours exhaustif.
+
+L'image suivante illustre le résultat sous forme d'arbre de découverte. Chaque sommet est rattaché au voisin par lequel il a été découvert, et les niveaux de l'arbre correspondent exactement aux distances en nombre d'arêtes depuis le départ : A au niveau zéro, B et C au niveau un, D, E et F au niveau deux. Cet arbre n'est pas unique, il dépend de l'ordre dans lequel on parcourt les voisins, mais ses niveaux, eux, ne varient jamais. Changer l'ordre des voisins modifie la forme de l'arbre sans modifier les distances, et c'est cette invariance qui fait de BFS un outil fiable de mesure.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Breadth-first-tree.svg/960px-Breadth-first-tree.svg.png
+| Ordre de découverte d'un parcours en largeur : les sommets s'organisent en niveaux successifs, chaque étage correspondant au nombre d'arêtes qui sépare le sommet du point de départ.
+```
+
+Cette propriété des niveaux est la vraie richesse de BFS. Pour tout sommet atteint, le niveau auquel il apparaît est la longueur du plus court chemin entre lui et le départ, entendue en nombre d'arêtes. Pourquoi ? Parce que la file traite les sommets par ordre croissant de distance : tant qu'un sommet de distance d n'a pas été traité, aucun sommet de distance d plus un ne peut l'être, et tout voisin découvert depuis un sommet de distance d a forcément une distance au plus d plus un. Aucun chemin plus court ne peut donc se cacher ailleurs, et BFS le trouverait avant. Il suffit de mémoriser, pour chaque sommet, le sommet par lequel il a été découvert, pour reconstruire ensuite le chemin en remontant les prédécesseurs depuis l'arrivée jusqu'au départ.
+
+Deux practicalités complètent ce tableau. D'abord, l'ordre obtenu n'est pas une propriété du graphe mais du programme : si l'on ajoute les voisins de A dans l'ordre C puis B, l'ordre devient A, C, B, D, E, F, et l'arbre de découverte change de forme. Les niveaux, eux, restent identiques. Ensuite, BFS s'applique très bien aux graphes orientés, avec une réserve : il suit les arcs dans leur sens, et il atteint donc uniquement les sommets qui sont accessibles depuis le départ en suivant les flèches. Un graphe orienté peut être fortement connexe, c'est-à-dire qu'on peut aller de partout à partout, ou ne l'être pas du tout, et BFS explore seulement la zone en aval.
+
+Voilà donc un premier parcours complet, simple à écrire, facile à tracer, et dont le coût est optimal pour la question qu'il résout. Mais sa logique de vagues a un revers : elle oublie vite les directions, elle s'étale au lieu de s'enfoncer. Quand on veut explorer un labyrinthe en suivant un couloir jusqu'au bout, ou repérer rapidement s'il existe un cycle en remontant une chaîne de dépendances, ce n'est pas le comportement recherché. Le parcours en profondeur, qui emprunte la pile au lieu de la file, inverse la priorité et complète le tableau du chapitre : c'est l'objet du troisième volet.
+
+## DFS : le parcours en profondeur, par pile et par récursion
+
+Le parcours en profondeur adopte une consigne inverse de celle du parcours en largeur : dès qu'un sommet est découvert, on le traite immédiatement et l'on plonge dans l'un de ses voisins sans attendre d'avoir exploré les autres. On avance tant qu'on peut, on ne revient en arrière que lorsqu'un cul-de-sac l'impose, puis on reprend au dernier embranchement non encore exploré. Cette conduite, souvent comparée à celle d'un explorateur qui suit un couloir jusqu'à sa fin avant de revenir au carrefour, produit des chemins longs et sinueux plutôt que des vagues ordonnées.
+
+La structure adaptée à ce comportement est la pile, structure LIFO où l'on ajoute et retire par le même bout. L'algorithme place le départ dans la pile, retire ensuite un sommet à chaque tour, le marque comme visité puis empile ses voisins non encore découverts. Comme les derniers éléments empilés sont les premiers retirés, la plongée continue dans le voisin empilé en dernier, et le retour en arrière se produit naturellement quand la pile se réduit jusqu'à un ancêtre déjà partiellement exploré. Le marquage, une fois de plus, se fait à l'empilement, pour exactement la même raison que dans BFS : empêcher qu'un même sommet entre deux fois dans la pile.
+
+En pratique, la pile explicite est presque toujours remplacée par la récursion. Chaque appel de fonction crée un nouveau cadre d'exécution sur la pile d'appels de la machine, et ces cadres s'empilent exactement comme les sommets d'une pile manuelle. Écrire DFS de façon récursive revient donc à écrire la pile sans la nommer, ce qui rend le code plus court et plus lisible. Le prix de cette élégance est que la profondeur de récursion est bornée par la mémoire de la machine : un parcours qui plonge très loin peut dépasser la limite d'appels et faire échouer le programme. Pour les grands graphes, on revient alors à la pile explicite, dont la taille n'est limitée que par le nombre de sommets.
+
+```python
+def dfs_recursif(graphe, sommet, decouverts=None, ordre=None):
+    if decouverts is None:
+        decouverts, ordre = set(), []
+    decouverts.add(sommet)
+    ordre.append(sommet)
+    for voisin in graphe[sommet]:
+        if voisin not in decouverts:
+            dfs_recursif(graphe, voisin, decouverts, ordre)
+    return ordre
+```
+
+La version à pile explicite, elle, ne mobilise aucun appel de fonction et se lit comme un BFS dont on aurait remplacé la file par une pile. On y empile le sommet de départ, on retire ensuite un élément à chaque tour, on le note dans l'ordre de visite, et l'on empile ses voisins qui ne sont pas encore découverts, en les marquant au moment même de l'empilement. Comme le dernier voisin empilé sera le premier retiré, la plongée continue dans ce voisin, et le retour en arrière se produit dès qu'une pile se réduit jusqu'à un sommet dont tous les voisins sont déjà connus.
+
+```python
+def dfs_pile(graphe, depart):
+    decouverts = {depart}
+    pile = [depart]
+    ordre = []
+    while pile:
+        sommet = pile.pop()
+        ordre.append(sommet)
+        for voisin in graphe[sommet]:
+            if voisin not in decouverts:
+                decouverts.add(voisin)
+                pile.append(voisin)
+    return ordre
+```
+
+L'équivalence entre les deux formes se vérifie à la main sur un petit graphe. La version pile empile A, le retire, empile ses voisins B et C, retire C qui était en tête, empile les voisins de C, et ainsi de suite ; la version récursive appelle dfs sur A, qui appelle dfs sur C à l'intérieur de sa boucle, laquelle appelle dfs sur un autre sommet avant même de revenir à A. Dans les deux cas, l'état du parcours à un instant donné est la chaîne des sommets en attente de traitement, et cette chaîne est une pile dans les deux cas. Choisir l'une ou l'autre forme relève du style, pas de la logique.
+
+Le coût est identique à celui de BFS. Chaque sommet est marqué une fois et traité une fois, chaque arête est examinée une fois dans un graphe orienté et deux fois dans un graphe non orienté, si bien que le total reste en O de V plus E avec les listes d'adjacence, et en V au carré avec une matrice. La seule différence réside dans la mémoire vive : BFS retient tous les sommets encore en attente, ce qui peut approcher la totalité du graphe, tandis que DFS ne retient que la chaîne en cours d'exploration, beaucoup plus courte en pratique sur un graphe filiforme, mais potentiellement aussi longue sur un graphe où chaque sommet renvoie aussitôt sur lui-même.
+
+L'exécution de DFS produit en outre un objet supplémentaire que BFS ne donne pas : une forêt de découverte. Les arêtes qui mènent à un sommet jamais vu forment les branches de l'arbre ; les autres arêtes, celles qui relient un sommet à un ancêtre déjà découvert, sont des arêtes de retour. En marquant à chaque sommet son rang d'entrée et son rang de sortie, on obtient deux numéros qui disent quand un sommet a été découvert et quand son exploration s'est achevée. Les intervalles ainsi formés sont emboîtés comme des poupées russes : un sommet est l'ancêtre d'un autre exactement quand son intervalle contient celui-ci. Cette donnée, dérisoire en apparence, suffit à détecter les cycles et à trier les dépendances dans un graphe orienté acyclique.
+
+## Tracer DFS et choisir entre largeur et profondeur
+
+Reprenons notre graphe à six sommets et traçons DFS depuis A, en décidant que les voisins sont examinés dans l'ordre alphabétique. Le départ est A, qu'on marque et qu'on note dans l'ordre. On plonge aussitôt sur son premier voisin B, jamais vu : B est marqué, noté, et l'on plonge de nouveau. Le premier voisin non vu de B est D : D est marqué et noté. D n'a que B comme voisin, déjà découvert, donc la plongée s'arrête : on remonte, littéralement, au niveau supérieur de la pile. L'état du parcours est désormais A puis B, et l'on reprend B à l'endroit exact où la boucle s'était interrompue.
+
+B possède un second voisin non vu, E : on y plonge. E a pour voisins B et F ; B est connu, F ne l'est pas, donc on plonge une fois de plus sur F. F a pour voisins C et E : E est connu, C ne l'est pas, on plonge encore sur C. C a pour voisins A et F, tous deux déjà découverts : plus aucun chemin ne reste à explorer, la pile se vide progressivement et le parcours se termine. L'ordre final est A, B, D, E, F, C, à comparer à l'ordre A, B, C, D, E, F donné par BFS sur le même graphe et le même départ.
+
+```table
+| Étape | Pile avant retrait | Sommet traité | Ajouts | Ordre partiel |
+| --- | --- | --- | --- | --- |
+| 1 | A | A | B | A |
+| 2 | B | B | D | A, B |
+| 3 | D | D | aucun | A, B, D |
+| 4 | B, E | E | F | A, B, D, E |
+| 5 | F, C | F | C | A, B, D, E, F |
+| 6 | C | C | aucun | A, B, D, E, F, C |
+```
+
+La comparaison des deux ordres éclaire la nature profonde des algorithmes. Les deux parcours ont visité les six sommets, une fois chacun, et ont consulté le même voisinage pour un coût total identique. Mais BFS a exploré par cercles concentriques autour de A, tandis que DFS a suivi la branche A, B, D jusqu'au bout avant de rebrousser chemin. Ni l'un ni l'autre n'est plus correct : ils répondent à des questions différentes. Le tableau suivant résume les cas d'usage, et il vaut la peine d'être appris par cœur, car le bon choix de parcours est souvent la moitié d'un exercice.
+
+```table
+| Critère | Parcours en largeur | Parcours en profondeur |
+| --- | --- | --- |
+| Structure | File | Pile ou récursion |
+| Ordre | Par niveau de distance | Par branche enfoncée |
+| Plus court chemin en arêtes | Oui, toujours | Non |
+| Mémoire | Peut retenir tout un niveau | Retient la chaîne en cours |
+| Détection de cycle | Possible, moins naturelle | Très naturelle avec les arêtes de retour |
+| Meilleur usage | Proximité, diffusion, niveaux | Exhaustivité, labyrinthes, dépendances |
+```
+
+Quand faut-il préférer BFS ? Dès que la question posée comporte une notion de proximité ou de distance minimale en nombre d'arêtes. Trouver le plus court itinéraire dans un réseau non pondéré, évaluer le degré de séparation entre deux personnes dans un réseau social, rechercher le plus court chemin d'une case à une autre dans une grille, diffuser une information à tous les usagers d'un système : autant de cas où la garantie des niveaux est exactement ce que l'on cherche. BFS est aussi le choix par défaut quand on veut un parcours prévisible et équilibré, car il ne s'enfonce jamais dans une branche très longue au détriment du reste du graphe.
+
+Quand faut-il préférer DFS ? Dès que la structure du graphe est elle-même la question, ou que la mémoire est comptée. DFS détecte un cycle dès qu'une arête de retour apparaît, ce qui se vérifie sans calcul supplémentaire. Il produit un ordre topologique sur un graphe orienté acyclique, indispensable pour ordonner des tâches dépendantes. Il explore un labyrinthe en suivant un couloir jusqu'au bout, ce qui correspond à l'intuition humaine. Il requiert moins de mémoire sur les graphes filiformes, et il sert de socle à des algorithmes plus fins comme la recherche de composantes fortement connexes ou l'algorithme des chemins critiques. Enfin, quand le problème demande d'examiner toutes les solutions possibles, c'est toujours une exploration en profondeur qu'on écrit.
+
+Les deux parcours que vous venez d'assimiler supposent toutes les arêtes équivalentes : une arête vaut une arête, et la longueur d'un chemin est son nombre d'arêtes. C'est l'hypothèse tacite de BFS et DFS, et c'est précisément l'hypothèse que la réalité contredit le plus souvent. Sur un réseau routier, deux tronçons de même longueur n'ont pas la même durée ; dans un réseau de télécommunications, deux liaisons de même nombre de sauts n'ont pas la même latence. Il faut donc donner un poids à chaque arête, et repenser le problème du plus court chemin en conséquence.
+
+## Des arêtes pondérées : poser le problème du plus court chemin
+
+Introduire des poids change la question, pas seulement les données. Le problème du plus court chemin pondéré s'énoncé ainsi : on donne un graphe dont chaque arête porte un nombre positif, un sommet de départ et un sommet d'arrivée, et l'on demande un chemin allant de l'un à l'autre dont la somme des poids soit la plus petite possible. Les sommets intermédiaires peuvent être empruntés, mais un sommet déjà traversé n'apporte rien : si un chemin contient un cycle, celui-ci est de poids positif, et le retirer diminue toujours la somme. Le plus court chemin est donc nécessairement sans cycle, ce qui limite considérablement le nombre de candidats.
+
+La première tentation à écarter est celle du chemin le plus court à chaque étape. Prenons trois sommets A, B et C, avec A relié à B par une arête de poids 1, B relié à C par une arête de poids 100, et A relié à C directement par une arête de poids 3. En choisissant systématiquement l'arête la plus courte au départ de A, on emprunte A vers B, puis l'on découvre qu'il faudra payer 100 pour atteindre C, soit un total de 101, alors que l'arête directe coûtait 3. L'erreur venait de comparer des arêtes isolées au lieu de comparer des distances complètes depuis le départ. Toute méthode correcte doit mémoriser, pour chaque sommet, le coût total du meilleur chemin connu depuis l'origine, et c'est exactement ce que fera Dijkstra.
+
+Une deuxième difficulté apparaît dès que l'on autorise des poids négatifs. Un poids négatif modélise une ristourne, un gain, une descente qui fait gagner du temps. Le problème est que la présence d'un cycle négatif rend le plus court chemin mal défini : en faisant le tour de ce cycle aussi souvent que l'on veut, la somme décroît indéfiniment, et il n'existe pas de valeur minimale. Même sans cycle négatif, un simple arc négatif suffit à contredire l'approche gloutonne de Dijkstra, qui fige définitivement la distance d'un sommet dès qu'elle le sélectionne : si un arc vers ce sommet arrive plus tard avec un meilleur coût, il est déjà trop tard. Voilà pourquoi les deux familles d'algorithmes sont séparées dans tous les cours : Dijkstra pour les poids positifs ou nuls, l'algorithme de Bellman-Ford quand des poids négatifs sont possibles.
+
+BFS, de son côté, reste valable dans un cas précis : quand toutes les arêtes ont exactement le même poids, que l'on peut fixer à 1 sans perte d'information. Dans ce cas, la somme des poids d'un chemin est son nombre d'arêtes, et BFS donne exactement le plus court chemin, en O de V plus E. C'est la raison pour laquelle BFS paraît suffisant sur une grille de jeu ou sur un réseau social non pondéré, et soudain insuffisant dès que l'on ajoute des durées réelles. Connaître les trois régimes, tous poids égaux pour BFS, poids positifs pour Dijkstra, poids potentiellement négatifs pour Bellman-Ford, fait partie du bagage de base.
+
+L'inventaire des approches se complète d'une question complémentaire : celle des plus courts chemins entre toutes les paires de sommets. L'algorithme de Floyd-Warshall répond en une boucle triplement imbriquée, avec un coût en V au cube, ce qui reste acceptable pour de petits graphes et offre l'avantage d'un code d'une brièveté déconcertante. Les systèmes de navigation, eux, combinent plusieurs couches : un précalcul massif hors ligne, des structures condensées tenues en mémoire, puis une recherche locale ajustée en temps réel. Pour ce chapitre, nous nous en tiendrons à la source unique, c'est-à-dire un seul départ et tous les autres sommets, qui est le cas le plus fréquent et celui que Dijkstra résout le plus efficacement.
+
+Voici le graphe pondéré que nous allons dérouler dans le volet suivant. Six sommets, neuf arêtes non orientées, toutes à poids strictement positif : A relié à B de poids 7, A relié à C de poids 9, A relié à F de poids 14, B relié à C de poids 10, B relié à D de poids 15, C relié à D de poids 11, C relié à F de poids 2, D relié à E de poids 6, E relié à F de poids 9. Partons de A. Le plus court chemin jusqu'à F ne passe pas par l'arête la plus longue au départ mais par la chaîne A, C, F, qui coûte 9 plus 2, soit 11, contre 14 pour l'arête directe. C'est déjà une illustration de la subtilité précédente, et ce même graphe contient de quoi exiger de l'algorithme qu'il renonce à ses premières intuitions.
+
+## Dijkstra étape à étape sur un exemple chiffré
+
+L'algorithme de Dijkstra repose sur une idée gloutonne, correctement encadrée. On maintient pour chaque sommet une distance provisoire, la meilleure longueur de chemin connue depuis le départ : nulle pour le départ, très grande pour les autres. À chaque tour, on choisit parmi les sommets non encore figés celui dont la distance provisoire est la plus petite, on la déclare définitive, puis on examine ses arêtes : si passer par ce sommet améliore la distance d'un voisin, on met cette distance à jour et l'on mémorise le prédécesseur. Le sommet figé ne change plus, et l'algorithme s'arrête quand tous les sommets ont été traités.
+
+Ce choix est juste pour une raison simple à comprendre une fois posée. Quand on sélectionne un sommet, sa distance est la plus petite de toutes celles qui restent ; or tout chemin encore inexploré devra traverser un sommet non figé, dont la distance est au moins aussi grande. Aucun chemin futur ne peut donc battre la valeur déjà trouvée. C'est exactement ce qui échoue avec un poids négatif : la distance d'un sommet déjà figé pourrait être améliorée plus tard et le raisonnement s'effondre. Avec des poids positifs ou nuls, la preuve tient.
+
+Travaillons sur le graphe annoncé dans le volet précédent : six sommets A à F et neuf arêtes non orientées, A-B de 7, A-C de 9, A-F de 14, B-C de 10, B-D de 15, C-D de 11, C-F de 2, D-E de 6, E-F de 9, avec A comme départ. L'initialisation porte la distance de A à zéro et les cinq autres à l'infini. Le premier sommet sélectionné est forcément A, puisque zéro est le plus petit ; sa relaxation fixe B à 7, C à 9 et F à 14. Le tableau ci-dessous tient un journal de bord, une ligne par sélection.
+
+```table
+| Étape | Sommet figé | Améliorations apportées | État des distances |
+| --- | --- | --- | --- |
+| 1 | A, distance 0 | B 7, C 9, F 14 | autres à l'infini |
+| 2 | B, distance 7 | D passe à 22 | C 9, D 22, F 14 |
+| 3 | C, distance 9 | D 20, F 11 | E à l'infini |
+| 4 | F, distance 11 | E passe à 20 | D 20, E 20 |
+| 5 | D, distance 20 | aucune | inchangé |
+| 6 | E, distance 20 | aucune | tous les sommets sont figés |
+```
+
+Trois moments de ce déroulé méritent une relecture attentive. Au tour 2, B propose de joindre D en 7 plus 15, soit 22 ; C reste à 9 parce que passer par B coûterait 17, ce qui est plus cher que la valeur connue. Au tour 3, C améliore D : 9 plus 11 vaut 20, moins que 22 ; il améliore aussi F, car 9 plus 2 vaut 11, moins que le 14 de l'arête directe A-F. Au tour 4, F atteint enfin E pour 11 plus 9, soit 20. D et E valent tous deux 20 : cette égalité ne change rien au résultat, seul l'ordre de traitement varie.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/5/57/Dijkstra_Animation.gif
+| Animation d'un algorithme de Dijkstra : les distances provisoires se mettent à jour arête après arête jusqu'à ce que chaque sommet reçoive sa valeur définitive.
+```
+
+La distance n'est qu'une moitié du résultat, l'autre étant le chemin lui-même. On le reconstruit avec le tableau des prédécesseurs rempli pendant les relaxations : D a pour prédécesseur C, C pour prédécesseur A, d'où le chemin A puis C puis D pour un coût de 20. Pour E, le prédécesseur est F, lui-même issu de C, d'où A puis C puis F puis E, à 9 plus 2 plus 9, soit 20 également. Remonter les prédécesseurs de l'arrivée au départ est un parcours linéaire qui ne peut pas boucler, car un sommet ne reçoit un prédécesseur qu'au moment où il est amélioré.
+
+Pour éviter de balayer tous les sommets à chaque tour, l'implémentation de référence utilise un tas binaire, fourni en Python par le module heapq sous forme de file de priorité où l'on insère des couples distance puis sommet.
+
+```python
+import heapq
+
+def dijkstra(graphe, depart):
+    distances = {s: float("inf") for s in graphe}
+    predecesseurs = {}
+    distances[depart] = 0
+    file = [(0, depart)]
+    while file:
+        d, u = heapq.heappop(file)
+        if d > distances[u]:
+            continue
+        for v, poids in graphe[u]:
+            candidate = d + poids
+            if candidate < distances[v]:
+                distances[v] = candidate
+                predecesseurs[v] = u
+                heapq.heappush(file, (candidate, v))
+    return distances, predecesseurs
+```
+
+Le test qui compare d à distances[u] rejette les entrées périmées du tas : une même distance y figure plusieurs fois, une par amélioration, et seules les plus petites méritent d'être développées.
+
+## Complexités : ce que coûtent BFS, DFS et Dijkstra
+
+Mesurer ces trois algorithmes suppose de reprendre la méthode des chapitres précédents : on compte des opérations, non des secondes, et l'on retient l'ordre de grandeur qui croît le plus vite avec la taille du graphe. Deux lettres suffisent, V pour le nombre de sommets, issu de vertices, et E pour le nombre d'arêtes, issu de edges. Toutes les bornes qui suivent supposent les listes d'adjacence, seule représentation qui permette de n'examiner que les arêtes réellement présentes.
+
+BFS et DFS partagent exactement le même coût. Chaque sommet est inscrit une fois dans la file ou la pile, extrait une fois, et ses voisins sont parcourus une fois. Comme la somme des degrés vaut deux fois le nombre d'arêtes dans un graphe non orienté, le total des examens d'arêtes vaut deux fois E, d'où la borne O de V plus E. Avec une matrice d'adjacence, chaque sommet impose au contraire de balayer une ligne entière, ce qui porte le coût à V au carré indépendamment du nombre réel d'arêtes : sur un graphe clairsemé, c'est un gaspillage considérable.
+
+Dijkstra coûte plus cher, parce qu'il ajoute à chaque tour une recherche de minimum et des mises à jour. Avec un tableau simple où l'on balaie les sommets, le bilan est de V tours multipliés par V examens, soit O de V au carré, formule avantageuse sur les graphes très denses. Avec un tas binaire, chaque sommet est inséré au plus une fois par amélioration et chaque arête déclenche au plus une tentative de relaxation ; chaque insertion et chaque retrait coûtent le logarithme de la taille du tas, d'où la borne O de V plus E le tout multiplié par le logarithme de V. C'est cette seconde formule qui domine pour les graphes ordinaires.
+
+Un point de vocabulaire évite bien des confusions. La complexité décrit une croissance, pas une vitesse mesurée en secondes. Or E est lui-même borné : dans un graphe non orienté, E ne dépasse pas V multiplié par V moins un divisé par deux. Dire O de V plus E revient donc parfois, sur un graphe complet, à dire O de V au carré.
+
+```table
+| Algorithme | Plus court chemin | Coût temporel | Mémoire |
+| --- | --- | --- | --- |
+| BFS | En nombre d'arêtes, si toutes les arêtes se valent | O de V plus E | O de V plus E |
+| DFS | Aucune garantie de minimalité | O de V plus E | O de V en profondeur |
+| Dijkstra, tas binaire | Exact, poids positifs ou nuls | O de V plus E multiplié par log V | O de V plus E |
+```
+
+La mémoire, enfin, reste en O de V plus E pour les trois algorithmes, soit la somme des sommets et des arêtes rangés, auxquels s'ajoute pour Dijkstra l'espace occupé par le tas. Ce coût supplémentaire se paie en vitesse et se justifie dès que la question du plus court chemin se pose : aucun parcours linéaire ne peut le résoudre exactement, et payer un logarithme de plus est le prix de la pondération.
+
+## Applications : GPS, réseaux sociaux, pages web et au-delà
+
+Le système de navigation est l'application la plus visible du chapitre. Le plan d'une ville ou d'un réseau autoroutier est un graphe pondéré et orienté : les carrefours sont les sommets, les tronçons portent un poids qui mesure la distance ou le temps de parcours, et les sens interdits transforment une route à double sens en deux arcs distincts. Calculer un itinéraire revient à lancer Dijkstra depuis votre position, avec des poids qui changent en temps réel à cause des travaux ou des embouteillages. Les moteurs commerciaux précalculent des structures condensées et combinent Dijkstra avec des heuristiques, mais le principe de relaxation reste celui que vous venez d'écrire.
+
+Les réseaux sociaux sont eux aussi des graphes : les sommets sont les profils, les arêtes sont les amitiés, les abonnements ou les collaborations. Le parcours en largeur y travaille en permanence. Compter le nombre de degrés qui vous séparent d'une personne, c'est trouver le niveau de sa découverte dans un BFS lancé depuis votre profil ; regrouper les contacts d'un même cercle, c'est isoler des composantes connexes. Le parcours en profondeur sert à explorer un sous-ensemble cohérent et à détecter des boucles de recommandation, tandis que les mesures d'influence s'appuient sur la structure complète du graphe.
+
+Le web lui-même forme un immense digraphe dont les pages sont les sommets et les liens les arcs. Les robots d'indexation le parcourent selon une stratégie hybride, empruntant la profondeur pour explorer une thématique et la largeur pour ne pas négliger le reste du site. Les protocoles de routage des réseaux informatiques font de même entre les routeurs : ils tiennent une copie locale du graphe et calculent des plus courts chemins pour acheminer chaque paquet, en relançant le calcul dès qu'une liaison tombe. La compilation, la planification de projets et l'analyse de réseaux biologiques emploient les mêmes briques.
+
+La planification de projet illustre pour sa part la vertu de la profondeur. Les tâches forment un graphe orienté acyclique, une flèche signifiant que l'une ne peut commencer avant l'autre ; un parcours en profondeur suffit à en découvrir les cycles, c'est-à-dire les dépendances circulaires qui rendraient le planning impossible, puis à produire un ordre d'exécution valide. Le même principe se retrouve dans la résolution des dépendances d'un gestionnaire de paquets.
+
+Le point commun de toutes ces situations est que la structure précède le traitement. Avant de mesurer une distance, il faut avoir choisi ce qui est un sommet et ce qui est une arête, puis avoir décidé entre une matrice et des listes ; avant de comparer des parcours, il faut savoir quelle question on pose : proximité, exhaustivité, structure. C'est pourquoi ce chapitre a commencé par les représentations. Les trois méthodes que vous venez de voir ne sont pas des recettes isolées, elles forment une boîte à outils dont chaque instrument répond à une question précise.
+
+## À retenir
+
+- Un graphe est un ensemble de sommets reliés par des arêtes, non orientées, ou des arcs, à sens unique, noté G = (S, A).
+- Un graphe est pondéré quand chaque arête porte un poids : distance, durée, coût.
+- La matrice d'adjacence est un tableau carré de n au carré cases : test d'arête en temps constant, listes de voisins en temps linéaire.
+- La liste d'adjacence range pour chaque sommet ses voisins seulement : mémoire de O de V plus E, exploration optimale.
+- On choisit la matrice pour les graphes denses et les nombreuses questions d'existence, les listes sinon.
+- BFS explore par vagues concentriques avec une file et donne le plus court chemin en nombre d'arêtes.
+- DFS plonge au plus loin avec une pile ou la récursion et revient aux embranchements non explorés.
+- Dans les deux parcours, un sommet est marqué au moment de son insertion, jamais au moment de son traitement.
+- BFS et DFS coûtent O de V plus E avec les listes d'adjacence, et O de V au carré avec une matrice.
+- Dijkstra maintient des distances provisoires, fige à chaque tour le sommet le plus proche et relâche ses arêtes.
+- Dijkstra exige des poids positifs ou nuls et coûte O de V plus E multiplié par le logarithme de V avec un tas binaire.
+
+## Erreurs fréquentes
+
+- Piège : marquer un sommet au moment du retrait de la file ou de la pile. Correction : marquez à l'insertion, sinon le sommet entre plusieurs fois.
+- Piège : utiliser BFS pour un plus court chemin pondéré. Correction : dès que les poids varient, passez à Dijkstra.
+- Piège : lancer Dijkstra sur un graphe contenant des poids négatifs, sans message d'erreur. Correction : utilisez l'algorithme de Bellman-Ford.
+- Piège : oublier la boucle sur tous les sommets quand le graphe comporte plusieurs composantes connexes. Correction : relancez le parcours sur chaque sommet encore inconnu.
+- Piège : confondre poids nul et arête absente dans une matrice de pondération. Correction : réservez une valeur sentinelle explicite.
+- Piège : rechercher le voisin le plus proche plutôt que le sommet de distance minimale dans Dijkstra. Correction : figez le sommet à la plus petite distance provisoire.
+- Piège : construire la matrice dans un ordre de sommets différent à chaque exécution. Correction : figez la table nom puis indice.
+- Piège : attendre de DFS un chemin de longueur minimale. Correction : pour la minimale en arêtes, employez BFS.
+- Piège : conclure à la lenteur d'un algorithme sur une petite donnée. Correction : exprimez le coût en O et raisonnez sur la croissance.
+
+## Pour aller plus loin
+
+La première adresse reste Wikipédia, dont les articles en français sur le parcours en largeur et sur l'algorithme de Dijkstra détaillent les preuves de correction, les variantes d'implémentation et les liens avec les autres algorithmes de plus court chemin. Ils se lisent avantageusement après cette leçon, car vous disposez du vocabulaire nécessaire pour suivre les démonstrations. L'article sur la matrice d'adjacence sert de rappel pour la représentation et pour le tableau des coûts. Conservez ces pages comme référence, plutôt que comme première lecture.
+
+Pour visualiser les parcours, rien ne remplace un outil interactif. Le site VisuAlgo, développé pour l'enseignement, propose des animations de BFS, de DFS et de Dijkstra sur des graphes que vous pouvez modifier, avec affichage pas à pas de la file, de la pile et des distances. Si votre intuition hésite encore entre largeur et profondeur, observez deux fois le même graphe : la différence deviendra évidente sans qu'aucun texte ne soit nécessaire.
+
+Côté pratique, la bibliothèque NetworkX en Python offre une implémentation complète de tous les algorithmes du chapitre et constitue un excellent banc d'essai. Vous y définissez un graphe en quelques lignes, puis vous comparez la distance renvoyée par vos propres fonctions à celle de la bibliothèque. Enfin, lisez la documentation de votre langage pour la file de priorité : comprendre le tas binaire vous expliquera à lui seul la complexité de Dijkstra.
+
+- https://fr.wikipedia.org/wiki/Algorithme_de_parcours_en_largeur — le parcours BFS, sa preuve de correction et ses variantes
+- https://fr.wikipedia.org/wiki/Algorithme_de_Dijkstra — l'algorithme pas à pas, sa preuve et sa complexité
+- https://fr.wikipedia.org/wiki/Matrice_d%27adjacence — la représentation matricielle et ses coûts
+
+## Et maintenant : passez à l'implémentation
+
+Vous disposez des trois briques qui permettent d'explorer n'importe quel réseau : deux représentations pour stocker la structure, deux parcours pour la découvrir, et un algorithme de plus court chemin pour la mesurer. Chacune répond à une question précise, et aucune ne remplace les autres : la matrice et les listes sont deux vues du même objet, BFS et DFS sont deux ordres de découverte, Dijkstra est la seule des trois à tenir compte des poids. Cette distinction entre stockage et traitement est la vraie leçon du chapitre.
+
+L'exercice qui accompagne ce chapitre vous demande d'écrire en Python l'ensemble de la chaîne : construire la représentation d'un graphe pondéré à partir d'une liste d'arêtes, écrire BFS et DFS avec leur marquage correct, implémenter Dijkstra avec un tas, puis comparer les distances obtenues sur un exemple tracé à la main. Le quiz de quatre questions vérifie les points les plus souvent oubliés : la position du marquage, le choix entre file et pile, les conditions de validité de Dijkstra et l'interprétation des complexités.
+
+Si un point résiste, revenez à la section correspondante plutôt que de chercher une solution toute faite : les représentations dans le premier volet, la file et le marquage dans le second, la pile et la récursion dans le troisième, le déroulé chiffré et les complexités dans le dernier. Tracez à la main, comparez au tableau de vos propres résultats, puis seulement exécutez le code : dix minutes de parcours simulé sur papier valent mieux qu'une heure de débogage sans ordre ni méthode.
+
+
+
+## D'où viennent les graphes : sommets, arêtes et orientations
+
+Un graphe est un ensemble de points, appelés sommets ou nœuds, reliés entre eux par des traits appelés arêtes. Formellement, on le note G = (S, A), où S désigne l'ensemble des sommets et A l'ensemble des arêtes. Rien de plus : pas de tableau, pas d'ordre imposé, pas de distance. Un sommet peut être une ville, une personne, une page web, une étape d'une recette, un état d'un jeu. Une arête exprime simplement le fait qu'il existe une relation entre deux sommets : on peut aller de l'un à l'autre, ils sont voisins. Toute la complexité du sujet naît de ce vocabulaire minimal : il suffit d'ajouter une orientation ou un nombre à une arête pour transformer complètement le problème à résoudre.
+
+L'orientation est la première variante à maîtriser. Une arête non orientée signifie que la relation fonctionne dans les deux sens : si une route relie Lyon à Dijon sans sens unique, on va de Lyon à Dijon et de Dijon à Lyon. Un arc, lui, ne fonctionne que dans un sens : un abonnement d'un utilisateur vers une chaîne ne donne pas forcément le droit inverse, et un lien hypertexte d'une page vers une autre ne se parcourt pas automatiquement à rebours. Un graphe dont toutes les arêtes sont non orientées est dit non orienté ; un graphe dont toutes les arêtes sont des arcs est dit orienté, ou digraphe. Les deux se traitent avec les mêmes algorithmes, à ceci près que dans un graphe orienté, atteindre un sommet ne garantit pas d'en repartir.
+
+Ce vocabulaire s'enrichit de quelques mots que vous retrouverez dans tous les énoncés. Le degré d'un sommet est le nombre d'arêtes qui le touchent, dans un graphe orienté on distingue le degré entrant du degré sortant. Un voisin est un sommet relié directement. Un chemin est une suite de sommets consécutifs sans répétition ; sa longueur est le nombre d'arêtes parcourues. Un cycle est un chemin qui revient à son point de départ. Un graphe est connexe si l'on peut aller d'un sommet à n'importe quel autre, ce qui est faux par exemple d'un réseau coupé en deux îlots. Enfin, un graphe est pondéré quand chaque arête porte un poids, une distance, une durée, un coût.
+
+```table
+| Notion | Définition courte | Exemple quotidien |
+| --- | --- | --- |
+| Sommet | Élément du réseau | Ville, personne, page web |
+| Arête non orientée | Lien réciproque | Route à double sens, amitié |
+| Arc | Lien à sens unique | Abonnement, lien hypertexte |
+| Degré | Nombre d'arêtes d'un sommet | Nombre de routes d'une ville |
+| Chemin | Suite d'arêtes sans répétition | Itinéraire d'un point à un autre |
+| Cycle | Chemin qui revient au départ | Boucle d'un réseau de transports |
+| Poids | Valeur portée par une arête | Distance en kilomètres, durée en minutes |
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/6/61/Graph.traversal.example.svg/960px-Graph.traversal.example.svg.png
+| Un graphe non orienté simple : six sommets reliés par des arêtes, sans ordre imposé ni direction, exactement la structure que nous allons représenter en matrice et en listes d'adjacence.
+```
+
+Les exemples abondent et déterminent le type de graphe à manipuler, il est donc utile de les passer en revue avant d'écrire la moindre ligne. Un réseau routier est un graphe pondéré et orienté : les carrefours sont des sommets, les tronçons de route portent un poids qui mesure la distance ou le temps de trajet, et les sens interdits imposent des arcs. Un réseau social est un graphe non orienté pour les amitiés et orienté pour les abonnements, avec des poids possibles quand on veut mesurer la fréquence des échanges. Le web est un digraphe massif dont les pages sont les sommets et les liens les arcs. Un planning de projet est un digraphe acyclique dont les tâches dépendent les unes des autres. Un fichier avec ses dossiers est encore un graphe, particulièrement régulier, que l'on appellera arbre.
+
+La raison pour laquelle la leçon précédente sur les structures de données ne suffit pas se clarifie maintenant. Une liste conserve l'ordre de ses éléments mais ignore les liens entre eux ; un tableau permet d'accéder à un rang en temps constant mais ne dit pas qui est relié à qui ; une file et une pile organisent des traitements mais ne modélisent pas une structure fixe. Le graphe combine une structure statique, les sommets et les arêtes, et des traitements dynamiques, les parcours, les recherches de chemin, les mesures de distance. C'est pourquoi ce chapitre se divise en deux temps : d'abord stocker le graphe proprement, puis le parcourir efficacement.
+
+## La matrice d'adjacence : un tableau carré pour tout dire
+
+La matrice d'adjacence consiste à ranger le graphe dans un tableau à deux dimensions carré, de n lignes et n colonnes, où n est le nombre de sommets. Chaque sommet reçoit un indice, de 0 à n moins 1, et la case située à l'intersection de la ligne i et de la colonne j contient 1 si une relie les deux sommets correspondants, 0 sinon. L'opération fondamentale devient alors d'une simplicité totale : pour savoir si deux sommets sont reliés, il suffit de lire une case. Ce choix mérite qu'on le comprenne en détail, parce qu'il paie sa commodité par une consommation d'espace qui n'est pas toujours raisonnable.
+
+Prenons le graphe qui servira de fil rouge dans toute la leçon. Il comporte six sommets, nommés de A à F, et six arêtes non orientées : A est relié à B et à C, B est relié à A, D et E, C est relié à A et à F, D est relié à B seul, E est relié à B et à F, F est relié à C et à E. Plaçons les sommets dans l'ordre alphabétique en lignes et en colonnes. La ligne A porte alors des 1 aux colonnes B et C, et des 0 ailleurs ; la ligne D ne porte qu'un 1, à la colonne B, parce que D n'a qu'un seul voisin. Comme les arêtes sont non orientées, la matrice est symétrique par rapport à sa diagonale : lire M[i][j] ou M[j][i] revient au même, et la diagonale est constituée de zéros, puisqu'un sommet n'est pas relié à lui-même.
+
+```table
+| | A | B | C | D | E | F |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 0 | 1 | 1 | 0 | 0 | 0 |
+| B | 1 | 0 | 0 | 1 | 1 | 0 |
+| C | 1 | 0 | 0 | 0 | 0 | 1 |
+| D | 0 | 1 | 0 | 0 | 0 | 0 |
+| E | 0 | 1 | 0 | 0 | 0 | 1 |
+| F | 0 | 0 | 1 | 0 | 1 | 0 |
+```
+
+Deux remarques sur la construction, parce qu'elles causent la plupart des erreurs de début. La première est que l'ordre des sommets est une décision du programmeur, arbitraire mais définitif : si vous décidez d'écrire F avant A, la matrice change complètement tout en décrivant le même graphe. Il faut donc conserver la table de correspondance entre nom de sommet et indice, sous forme de dictionnaire. La deuxième remarque concerne les graphes orientés : la matrice n'est plus symétrique, la ligne i décrit les arcs sortants de i et la colonne j les arcs entrants dans j. Un 1 en M[i][j] signifie alors qu'on peut aller de i vers j, et rien sur le chemin inverse.
+
+Les graphes pondérés modifient le contenu des cases sans modifier la forme du tableau : on y écrit le poids de l'arête au lieu d'un 1, et on réserve une valeur particulière pour l'absence d'arête, le plus souvent zéro ou une valeur sentinelle. Cette subtilité devient délicate dès que les poids peuvent valoir zéro, car la case devient ambiguë. Les implementations sérieuses préfèrent alors une autre valeur réservée, ou combinent la matrice de poids avec une matrice de présence. Retenez le principe : la matrice décrit la structure du graphe, et les cases transportent l'information que l'on souhaite, présence, poids, capacité, couleur de l'arête.
+
+Reste à mesurer ce que coûte cette représentation. Le nombre de cases est n multiplié par n, soit mille cases pour dix sommets et un million pour mille sommets. Or un graphe réel est souvent vide la plus grande partie du temps : sur notre exemple, vingt-huit cases sur trente-six valent zéro. L'accès à une arête coûte une seule lecture, c'est-à-dire un temps constant, et c'est le grand atout de la matrice ; mais lister les voisins d'un sommet impose de balayer toute sa ligne, soit n lectures dont la plupart sont inutiles. Construire la matrice à partir d'une liste d'arêtes se fait en temps proportionnel au nombre d'arêtes. La représentation alternative, qui évite de stocker les zéros, fait l'objet de la section suivante.
+
+## La liste d'adjacence : ne garder que ce qui existe
+
+La liste d'adjacence part d'une observation de bon sens : un graphe clairsemé contient surtout des absences de liens. On range alors, pour chaque sommet, la liste de ses voisins seulement. En Python, la forme naturelle est un dictionnaire dont les clés sont les sommets et les valeurs des listes de sommets voisins. Pour notre graphe d'exemple, la table tient en six lignes : la liste de A contient B et C, celle de B contient A, D et E, celle de C contient A et F, celle de D contient B seul, celle de E contient B et F, et celle de F contient C et E.
+
+Cette représentation inverse la logique de la matrice. Là où la matrice répond instantanément à la question y a-t-il une arête entre i et j, la liste d'adjacence répond instantanement à la question quels sont les voisins de i, qui est exactement la question posée par les parcours. Un parcours en largeur ou en profondeur ne fait rien d'autre, étape après étape, que demander la liste des voisins du sommet courant et examiner chacun d'eux. Avec la matrice, cette même question coûte un balayage complet d'une ligne ; avec la liste, elle coûte le temps de lecture des seuls voisins réels. C'est cette asymétrie qui justifie l'existence de deux représentations au lieu d'une seule.
+
+```table
+| Sommet | Liste des voisins | Degré |
+| --- | --- | --- |
+| A | B, C | 2 |
+| B | A, D, E | 3 |
+| C | A, F | 2 |
+| D | B | 1 |
+| E | B, F | 2 |
+| F | C, E | 2 |
+```
+
+Le coût mémoire se calcule facilement et mérite d'être comparé à celui de la matrice. La liste d'adjacence contient une entrée pour chaque sommet, plus une entrée pour chaque arête dans le cas non orienté, puisque chaque arête apparaît deux fois, une fois dans chaque liste. Pour n sommets et m arêtes, la taille totale est donc de l'ordre de n plus deux fois m. Sur notre exemple, six sommets et six arêtes donnent dix-huit références au lieu de trente-six cases. L'écart explose avec la taille : pour un réseau social de cent mille personnes et un million d'amitiés, la matrice réclamerait dix milliards de cases, tandis que les listes réclament environ deux millions d'entrées. Un graphe dit dense, où presque tous les couples de sommets sont reliés, renverse l'avantage.
+
+Les opérations offertes par la liste d'adjacence suivent la même logique que son contenu. Lister les voisins d'un sommet coûte son degré, ce qui est optimal. Ajouter ou supprimer une arête se fait en temps proportionnel au degré du sommet, puisqu'il faut chercher l'élément dans sa liste. Vérifier l'existence d'une arête, en revanche, coûte le degré du premier sommet, là où la matrice offrait un accès direct : c'est le seul point où la liste est théoriquement moins bonne, et la différence se lit surtout sur des graphes denses.
+
+Pour les graphes pondérés, on enrichit chaque entrée de liste d'un poids. La case A contient alors les couples B de poids 7 et C de poids 9, et ainsi de suite ; le même graphe orienté s'exprime sans ambiguïté puisque seul le sommet de départ porte l'entrée concernée. Une autre forme courante est la liste d'arêtes, une simple suite de triples départ, arrivée, poids, très commode pour lire un graphe depuis un fichier ou le dessiner, mais qu'il faut convertir en listes d'adjacence avant de le parcourir efficacement. Cette conversion demande un dictionnaire d'index, une boucle sur les arêtes et deux insertions par arête dans le cas non orienté.
+
+Comment choisir entre les deux ? La règle tient en une phrase : on utilise la matrice quand le graphe est dense et que l'on pose beaucoup de questions d'existence d'arêtes, et l'on utilise les listes d'adjacence dans tous les autres cas, ce qui comprend la quasi-totalité des graphes réels. Les parcours que vous allez écrire dans les sections suivantes supposent d'ailleurs implicitement les listes, car ils ont besoin d'itérer sur les voisins plutôt que de tester des cases. Quel que soit le choix de représentation, les algorithmes du chapitre travaillent sur la même structure et les deux formes lui donnent la même information. C'est maintenant que commence le vrai sujet : explorer ces sommets sans jamais tourner en rond.
+
+## Parcourir un graphe : l'ordre de découverte des sommets
+
+Parcourir un graphe, c'est visiter tous les sommets qui sont accessibles depuis un point de départ, en partant de ce point et en suivant les arêtes une à une. La formulation tient en une phrase, et pourtant elle contient les deux difficultés du chapitre. La première est la répétition : dans un graphe, on revient très vite sur ses pas, un cycle vous ramenant au sommet d'où vous êtes parti. Si l'on ne prend pas de précaution, la visite s'arrête et le programme tourne éternellement en décrivant la même boucle. La seconde difficulté est l'ordre : le graphe ne propose aucun ordre naturel, contrairement à une liste dont les éléments se suivent. Il faut donc choisir, et ce choix définit deux familles d'algorithmes qui ne donnent jamais le même résultat sur un même graphe.
+
+La parade à la répétition est la marque, un tableau logique qui indique pour chaque sommet s'il a déjà été découvert. On y inscrit un sommet au moment précis où on l'ajoute à la structure de travail, et non au moment où on le traite. Cette nuance, qui peut paraître administrative, est la clé de tout le chapitre : si l'on marque à la sortie, deux chemins différents peuvent ajouter le même sommet deux fois dans la file ou la pile, et le parcours traite un sommet qui n'aurait jamais dû y figurer. Marquez à l'entrée, et chaque sommet entre exactement une fois dans la structure ; c'est le premier réflexe à acquérir avant d'écrire le moindre code de parcours.
+
+Les deux stratégies de découverte s'imaginent facilement sur un dessin. La première procède par vagues concentriques : on visite le départ, puis tous ses voisins directs, puis tous les voisins non encore vus de ces voisins, et ainsi de suite. C'est le parcours en largeur, souvent noté BFS pour breadth first search. La seconde procède par enfoncement : on part dans une direction aussi loin que possible, on ne revient en arrière que lorsqu'un cul-de-sac nous y contraint, puis on reprend dans une autre direction. C'est le parcours en profondeur, noté DFS pour depth first search. Sur le même graphe et le même sommet de départ, les deux produisent des ordres de visite distincts, mais visitent exactement les mêmes sommets et au même nombre.
+
+Cette différence de comportement vient directement des structures de données empruntées aux chapitres précédents. Le parcours en largeur utilise une file, où l'on ajoute par la queue et où l'on retire par la tête : les sommets découverts les premiers sont traités les premiers, ce qui produit l'effet de vagues. Le parcours en profondeur utilise une pile, où l'on ajoute et retire par le même bout, ou plus souvent la récursion, dont la pile d'appels est implicitement une pile : les sommets découverts les derniers sont traités les premiers, ce qui produit l'effet d'enfoncement. Rien d'autre ne distingue les deux algorithmes, et cette proximité est précieuse : une fois l'un écrit, l'autre se déduit en changeant la structure et l'endroit du marquage.
+
+Voici le graphe que nous allons parcourir, repris du premier volet. Six sommets A, B, C, D, E, F ; six arêtes non orientées : A avec B, A avec C, B avec D, B avec E, C avec F, E avec F. Le voisinage est le suivant : A a pour voisins B et C ; B a pour voisins A, D et E ; C a pour voisins A et F ; D a pour voisin B seulement ; E a pour voisins B et F ; F a pour voisins C et E. Partons toujours de A. Le parcours en largeur atteindra les sommets dans l'ordre A, B, C, D, E, F ; le parcours en profondeur, nous le verrons, donnera A, B, D, E, F, C. Tous deux auront visité les six sommets, une seule fois chacun.
+
+Avant d'écrire l'algorithme, une dernière propriété commune mérite d'être posée, car elle rend la démonstration de correction possible. À chaque instant, la structure de travail contient des sommets déjà découverts mais pas encore traités, et la frontière entre ces deux catégories progresse d'un pas à chaque itération. L'invariant du parcours s'énonce ainsi : à la fin de chaque tour, tous les sommets situés à moins de k arêtes du départ ont été découverts, où k est le nombre de tours déjà réalisés. Cet énoncé, faux au départ pour k égal à zéro, devient vrai au premier tour et se conserve ensuite. C'est cette phrase, et non la lecture du code, qui prouve que le parcours fonctionne : retenez-la, elle reviendra dans les erreurs fréquentes du chapitre.
+
+## BFS : le parcours en largeur avec une file
+
+Le parcours en largeur organise la visite autour d'une file, structure de données FIFO où l'on entre par la queue et d'où l'on sort par la tête. L'algorithme débute en plaçant le sommet de départ dans la file et en le marquant comme découvert. Tant que la file n'est pas vide, on retire son premier élément, on le note comme visité, puis on examine un à un ses voisins : chaque voisin non encore découvert est aussitôt marqué et ajouté en fin de file. Lorsque la file se vide, tous les sommets accessibles depuis le départ ont été traités, et le parcours est terminé.
+
+Le point délicat, celui sur lequel les débutants trébuchent le plus, est la position du marquage. On marque un sommet au moment où on l'ajoute à la file, pas au moment où on le retire. Si l'on inversait les deux, un sommet pourrait être ajouté plusieurs fois par plusieurs voisins différents avant sa première extraction, et la file se remplirait de doublons. Avec le marquage à l'ajout, un sommet entre exactement une fois, ce qui garantit qu'il sera traité exactement une fois. Tenez cette règle pour non négociable : elle vaut pour la file comme pour la pile, pour BFS comme pour DFS.
+
+L'implémentation tient en quelques lignes de Python, et il est utile de la lire lentement, en suivant la variable vus et la variable file tour à tour. La file est fournie par la structure deque de la bibliothèque standard, dont la méthode popleft retire en tête en temps constant, ce que la liste ordinaire de Python ne sait pas faire proprement.
+
+```python
+from collections import deque
+
+def bfs(graphe, depart):
+    decouverts = {depart}
+    file = deque([depart])
+    ordre = []
+    while file:
+        sommet = file.popleft()
+        ordre.append(sommet)
+        for voisin in graphe[sommet]:
+            if voisin not in decouverts:
+                decouverts.add(voisin)
+                file.append(voisin)
+    return ordre
+```
+
+La correction de cet algorithme se démontre en trois points. Chaque sommet est ajouté à la file au plus une fois, puisqu'il n'est ajouté que lorsqu'il n'appartient pas à l'ensemble decouverts, ensemble qui ne fait que grossir. Chaque sommet retiré est donc traité une seule fois, et la boucle s'arrête quand la file est vide, ce qui est possible puisque le nombre de sommets est fini. Enfin, tout sommet accessible depuis le départ finit nécessairement dans la file : par hypothèse il existe un chemin, et le premier sommet de ce chemin qui n'est pas encore découvert y est ajouté par son prédécesseur déjà traité. Le parcours est donc exhaustif sur la composante connexe de départ.
+
+Le coût de l'opération se lit directement dans le code. Chaque sommet est extrait une fois et ses voisins parcourus une fois, ce qui donne un total de travail proportionnel au nombre de sommets plus le nombre d'arêtes, soit la célèbre borne O de V plus E. Dans un graphe non orienté, chaque arête est examinée deux fois, une fois depuis chaque extrémité, ce qui ne change pas l'ordre de grandeur. Si le graphe est stocké en matrice d'adjacence, en revanche, le balayage d'une ligne entière pour chaque sommet porte le coût à V au carré, quelle que soit la rareté des arêtes : voilà une raison de plus de préférer les listes pour les parcours.
+
+Suivons l'exécution sur notre graphe, ligne à ligne, en notant le contenu de la file et l'ensemble des sommets découverts après chaque tour. On part de A, seul élément initial. À chaque tour, on retire le sommet de tête et on y ajoute ses voisins non encore découverts, dans l'ordre alphabétique pour fixer les idées. Le tableau ci-dessous retrace les sept tours nécessaires, et la section suivante commente ce déroulé en mots pour que vous puissiez le rejouer sur une feuille.
+
+```table
+| Tour | Retiré | Ajoutés à la file | File après le tour | Découverts | Ordre |
+| --- | --- | --- | --- | --- | --- |
+| 1 | A | B, C | B, C | A, B, C | A |
+| 2 | B | D, E | C, D, E | A, B, C, D, E | A, B |
+| 3 | C | F | D, E, F | A, B, C, D, E, F | A, B, C |
+| 4 | D | aucun | E, F | inchangés | A, B, C, D |
+| 5 | E | aucun | F | inchangés | A, B, C, D, E |
+| 6 | F | aucun | vide | inchangés | A, B, C, D, E, F |
+```
+
+Un cas limite doit être traité explicitement : le graphe peut être formé de plusieurs composantes connexes, c'est-à-dire de plusieurs morceaux sans aucun lien entre eux. Partant de A, notre parcours ne verra jamais un sommet isolé ajouté au graphe, puisqu'aucune suite d'arêtes ne peut l'atteindre. Si la tâche est de visiter le graphe entier, il faut envelopper l'appel de BFS dans une boucle sur tous les sommets, en relançant le parcours sur chacun de ceux qui n'ont pas encore été découverts. Chaque relance identifie une composante, et le nombre de relances est exactement le nombre de composantes connexes, une application directe et fréquente de l'algorithme.
+
+Enfin, une précision sur ce que BFS ne fait pas. Il donne l'ordre de découverte par niveau, et il fournit le plus court chemin en nombre d'arêtes entre le départ et n'importe quel sommet atteint, puisque tout chemin parcouru par la file l'est avec le minimum d'arêtes intermédiaires. En revanche, il ignore totalement la notion de longueur pondérée : si chaque arête valait un kilomètre, cela suffirait, mais dès que les poids varient, le chemin au plus petit nombre d'arêtes n'est plus le chemin le plus court. C'est précisément le défaut que l'algorithme de Dijkstra corrigera, et il faut garder cette limite présente à l'esprit pour ne pas appliquer BFS là où il a tort.
+
+## Tracer BFS : la propagation par vagues sur notre graphe
+
+Rejetons l'algorithme sur le graphe d'exemple, mais cette fois à voix haute, en racontant ce que chaque ligne produit. Le départ est A : on le place dans la file et on le marque. Premier tour, on retire A, on le note dans l'ordre de visite, et l'on regarde ses voisins B et C, qui ne sont pas encore découverts : on les marque et on les empile en queue, dans cet ordre. La file contient désormais B puis C. Le sens de lecture est important : B est en tête, donc B sera traité avant C, même si C a été découvert presque en même temps. C'est exactement ce qui produit l'effet de vagues promis par la file.
+
+Deuxième tour, on retire B. Ses voisins sont A, D et E. A est déjà découvert, on l'ignore ; D et E ne le sont pas, on les marque et on les ajoute en queue. La file contient C, D, E, et l'ordre de visite est A puis B. Troisième tour, on retire C. Ses voisins sont A et F : A est découvert, F ne l'est pas, on le marque et on l'ajoute. La file contient D, E, F. Remarquez ce qui vient de se passer : en trois tours, nous avons exploré tout l'entourage immédiat de A, et la file ne contient plus que des sommets situés à deux arêtes du départ. La vague suivante est prête.
+
+Quatrième tour, on retire D. Son unique voisin B est déjà découvert : rien n'est ajouté. Cinquième tour, on retire E, dont les voisins B et F sont tous deux découverts : encore rien. Sixième tour, on retire F, dont les voisins C et E sont découverts : la file se vide. Le parcours s'arrête avec un ordre final A, B, C, D, E, F et six sommets visités sur six. La lenteur apparente des derniers tours n'est pas un défaut : elle montre que la file s'assèche exactement quand il n'y a plus rien à découvrir, ce qui est le comportement correct d'un parcours exhaustif.
+
+L'image suivante illustre le résultat sous forme d'arbre de découverte. Chaque sommet est rattaché au voisin par lequel il a été découvert, et les niveaux de l'arbre correspondent exactement aux distances en nombre d'arêtes depuis le départ : A au niveau zéro, B et C au niveau un, D, E et F au niveau deux. Cet arbre n'est pas unique, il dépend de l'ordre dans lequel on parcourt les voisins, mais ses niveaux, eux, ne varient jamais. Changer l'ordre des voisins modifie la forme de l'arbre sans modifier les distances, et c'est cette invariance qui fait de BFS un outil fiable de mesure.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Breadth-first-tree.svg/960px-Breadth-first-tree.svg.png
+| Ordre de découverte d'un parcours en largeur : les sommets s'organisent en niveaux successifs, chaque étage correspondant au nombre d'arêtes qui sépare le sommet du point de départ.
+```
+
+Cette propriété des niveaux est la vraie richesse de BFS. Pour tout sommet atteint, le niveau auquel il apparaît est la longueur du plus court chemin entre lui et le départ, entendue en nombre d'arêtes. Pourquoi ? Parce que la file traite les sommets par ordre croissant de distance : tant qu'un sommet de distance d n'a pas été traité, aucun sommet de distance d plus un ne peut l'être, et tout voisin découvert depuis un sommet de distance d a forcément une distance au plus d plus un. Aucun chemin plus court ne peut donc se cacher ailleurs, et BFS le trouverait avant. Il suffit de mémoriser, pour chaque sommet, le sommet par lequel il a été découvert, pour reconstruire ensuite le chemin en remontant les prédécesseurs depuis l'arrivée jusqu'au départ.
+
+Deux practicalités complètent ce tableau. D'abord, l'ordre obtenu n'est pas une propriété du graphe mais du programme : si l'on ajoute les voisins de A dans l'ordre C puis B, l'ordre devient A, C, B, D, E, F, et l'arbre de découverte change de forme. Les niveaux, eux, restent identiques. Ensuite, BFS s'applique très bien aux graphes orientés, avec une réserve : il suit les arcs dans leur sens, et il atteint donc uniquement les sommets qui sont accessibles depuis le départ en suivant les flèches. Un graphe orienté peut être fortement connexe, c'est-à-dire qu'on peut aller de partout à partout, ou ne l'être pas du tout, et BFS explore seulement la zone en aval.
+
+Voilà donc un premier parcours complet, simple à écrire, facile à tracer, et dont le coût est optimal pour la question qu'il résout. Mais sa logique de vagues a un revers : elle oublie vite les directions, elle s'étale au lieu de s'enfoncer. Quand on veut explorer un labyrinthe en suivant un couloir jusqu'au bout, ou repérer rapidement s'il existe un cycle en remontant une chaîne de dépendances, ce n'est pas le comportement recherché. Le parcours en profondeur, qui emprunte la pile au lieu de la file, inverse la priorité et complète le tableau du chapitre : c'est l'objet du troisième volet.
+
+## DFS : le parcours en profondeur, par pile et par récursion
+
+Le parcours en profondeur adopte une consigne inverse de celle du parcours en largeur : dès qu'un sommet est découvert, on le traite immédiatement et l'on plonge dans l'un de ses voisins sans attendre d'avoir exploré les autres. On avance tant qu'on peut, on ne revient en arrière que lorsqu'un cul-de-sac l'impose, puis on reprend au dernier embranchement non encore exploré. Cette conduite, souvent comparée à celle d'un explorateur qui suit un couloir jusqu'à sa fin avant de revenir au carrefour, produit des chemins longs et sinueux plutôt que des vagues ordonnées.
+
+La structure adaptée à ce comportement est la pile, structure LIFO où l'on ajoute et retire par le même bout. L'algorithme place le départ dans la pile, retire ensuite un sommet à chaque tour, le marque comme visité puis empile ses voisins non encore découverts. Comme les derniers éléments empilés sont les premiers retirés, la plongée continue dans le voisin empilé en dernier, et le retour en arrière se produit naturellement quand la pile se réduit jusqu'à un ancêtre déjà partiellement exploré. Le marquage, une fois de plus, se fait à l'empilement, pour exactement la même raison que dans BFS : empêcher qu'un même sommet entre deux fois dans la pile.
+
+En pratique, la pile explicite est presque toujours remplacée par la récursion. Chaque appel de fonction crée un nouveau cadre d'exécution sur la pile d'appels de la machine, et ces cadres s'empilent exactement comme les sommets d'une pile manuelle. Écrire DFS de façon récursive revient donc à écrire la pile sans la nommer, ce qui rend le code plus court et plus lisible. Le prix de cette élégance est que la profondeur de récursion est bornée par la mémoire de la machine : un parcours qui plonge très loin peut dépasser la limite d'appels et faire échouer le programme. Pour les grands graphes, on revient alors à la pile explicite, dont la taille n'est limitée que par le nombre de sommets.
+
+```python
+def dfs_recursif(graphe, sommet, decouverts=None, ordre=None):
+    if decouverts is None:
+        decouverts, ordre = set(), []
+    decouverts.add(sommet)
+    ordre.append(sommet)
+    for voisin in graphe[sommet]:
+        if voisin not in decouverts:
+            dfs_recursif(graphe, voisin, decouverts, ordre)
+    return ordre
+```
+
+La version à pile explicite, elle, ne mobilise aucun appel de fonction et se lit comme un BFS dont on aurait remplacé la file par une pile. On y empile le sommet de départ, on retire ensuite un élément à chaque tour, on le note dans l'ordre de visite, et l'on empile ses voisins qui ne sont pas encore découverts, en les marquant au moment même de l'empilement. Comme le dernier voisin empilé sera le premier retiré, la plongée continue dans ce voisin, et le retour en arrière se produit dès qu'une pile se réduit jusqu'à un sommet dont tous les voisins sont déjà connus.
+
+```python
+def dfs_pile(graphe, depart):
+    decouverts = {depart}
+    pile = [depart]
+    ordre = []
+    while pile:
+        sommet = pile.pop()
+        ordre.append(sommet)
+        for voisin in graphe[sommet]:
+            if voisin not in decouverts:
+                decouverts.add(voisin)
+                pile.append(voisin)
+    return ordre
+```
+
+L'équivalence entre les deux formes se vérifie à la main sur un petit graphe. La version pile empile A, le retire, empile ses voisins B et C, retire C qui était en tête, empile les voisins de C, et ainsi de suite ; la version récursive appelle dfs sur A, qui appelle dfs sur C à l'intérieur de sa boucle, laquelle appelle dfs sur un autre sommet avant même de revenir à A. Dans les deux cas, l'état du parcours à un instant donné est la chaîne des sommets en attente de traitement, et cette chaîne est une pile dans les deux cas. Choisir l'une ou l'autre forme relève du style, pas de la logique.
+
+Le coût est identique à celui de BFS. Chaque sommet est marqué une fois et traité une fois, chaque arête est examinée une fois dans un graphe orienté et deux fois dans un graphe non orienté, si bien que le total reste en O de V plus E avec les listes d'adjacence, et en V au carré avec une matrice. La seule différence réside dans la mémoire vive : BFS retient tous les sommets encore en attente, ce qui peut approcher la totalité du graphe, tandis que DFS ne retient que la chaîne en cours d'exploration, beaucoup plus courte en pratique sur un graphe filiforme, mais potentiellement aussi longue sur un graphe où chaque sommet renvoie aussitôt sur lui-même.
+
+L'exécution de DFS produit en outre un objet supplémentaire que BFS ne donne pas : une forêt de découverte. Les arêtes qui mènent à un sommet jamais vu forment les branches de l'arbre ; les autres arêtes, celles qui relient un sommet à un ancêtre déjà découvert, sont des arêtes de retour. En marquant à chaque sommet son rang d'entrée et son rang de sortie, on obtient deux numéros qui disent quand un sommet a été découvert et quand son exploration s'est achevée. Les intervalles ainsi formés sont emboîtés comme des poupées russes : un sommet est l'ancêtre d'un autre exactement quand son intervalle contient celui-ci. Cette donnée, dérisoire en apparence, suffit à détecter les cycles et à trier les dépendances dans un graphe orienté acyclique.
+
+## Tracer DFS et choisir entre largeur et profondeur
+
+Reprenons notre graphe à six sommets et traçons DFS depuis A, en décidant que les voisins sont examinés dans l'ordre alphabétique. Le départ est A, qu'on marque et qu'on note dans l'ordre. On plonge aussitôt sur son premier voisin B, jamais vu : B est marqué, noté, et l'on plonge de nouveau. Le premier voisin non vu de B est D : D est marqué et noté. D n'a que B comme voisin, déjà découvert, donc la plongée s'arrête : on remonte, littéralement, au niveau supérieur de la pile. L'état du parcours est désormais A puis B, et l'on reprend B à l'endroit exact où la boucle s'était interrompue.
+
+B possède un second voisin non vu, E : on y plonge. E a pour voisins B et F ; B est connu, F ne l'est pas, donc on plonge une fois de plus sur F. F a pour voisins C et E : E est connu, C ne l'est pas, on plonge encore sur C. C a pour voisins A et F, tous deux déjà découverts : plus aucun chemin ne reste à explorer, la pile se vide progressivement et le parcours se termine. L'ordre final est A, B, D, E, F, C, à comparer à l'ordre A, B, C, D, E, F donné par BFS sur le même graphe et le même départ.
+
+```table
+| Étape | Pile avant retrait | Sommet traité | Ajouts | Ordre partiel |
+| --- | --- | --- | --- | --- |
+| 1 | A | A | B | A |
+| 2 | B | B | D | A, B |
+| 3 | D | D | aucun | A, B, D |
+| 4 | B, E | E | F | A, B, D, E |
+| 5 | F, C | F | C | A, B, D, E, F |
+| 6 | C | C | aucun | A, B, D, E, F, C |
+```
+
+La comparaison des deux ordres éclaire la nature profonde des algorithmes. Les deux parcours ont visité les six sommets, une fois chacun, et ont consulté le même voisinage pour un coût total identique. Mais BFS a exploré par cercles concentriques autour de A, tandis que DFS a suivi la branche A, B, D jusqu'au bout avant de rebrousser chemin. Ni l'un ni l'autre n'est plus correct : ils répondent à des questions différentes. Le tableau suivant résume les cas d'usage, et il vaut la peine d'être appris par cœur, car le bon choix de parcours est souvent la moitié d'un exercice.
+
+```table
+| Critère | Parcours en largeur | Parcours en profondeur |
+| --- | --- | --- |
+| Structure | File | Pile ou récursion |
+| Ordre | Par niveau de distance | Par branche enfoncée |
+| Plus court chemin en arêtes | Oui, toujours | Non |
+| Mémoire | Peut retenir tout un niveau | Retient la chaîne en cours |
+| Détection de cycle | Possible, moins naturelle | Très naturelle avec les arêtes de retour |
+| Meilleur usage | Proximité, diffusion, niveaux | Exhaustivité, labyrinthes, dépendances |
+```
+
+Quand faut-il préférer BFS ? Dès que la question posée comporte une notion de proximité ou de distance minimale en nombre d'arêtes. Trouver le plus court itinéraire dans un réseau non pondéré, évaluer le degré de séparation entre deux personnes dans un réseau social, rechercher le plus court chemin d'une case à une autre dans une grille, diffuser une information à tous les usagers d'un système : autant de cas où la garantie des niveaux est exactement ce que l'on cherche. BFS est aussi le choix par défaut quand on veut un parcours prévisible et équilibré, car il ne s'enfonce jamais dans une branche très longue au détriment du reste du graphe.
+
+Quand faut-il préférer DFS ? Dès que la structure du graphe est elle-même la question, ou que la mémoire est comptée. DFS détecte un cycle dès qu'une arête de retour apparaît, ce qui se vérifie sans calcul supplémentaire. Il produit un ordre topologique sur un graphe orienté acyclique, indispensable pour ordonner des tâches dépendantes. Il explore un labyrinthe en suivant un couloir jusqu'au bout, ce qui correspond à l'intuition humaine. Il requiert moins de mémoire sur les graphes filiformes, et il sert de socle à des algorithmes plus fins comme la recherche de composantes fortement connexes ou l'algorithme des chemins critiques. Enfin, quand le problème demande d'examiner toutes les solutions possibles, c'est toujours une exploration en profondeur qu'on écrit.
+
+Les deux parcours que vous venez d'assimiler supposent toutes les arêtes équivalentes : une arête vaut une arête, et la longueur d'un chemin est son nombre d'arêtes. C'est l'hypothèse tacite de BFS et DFS, et c'est précisément l'hypothèse que la réalité contredit le plus souvent. Sur un réseau routier, deux tronçons de même longueur n'ont pas la même durée ; dans un réseau de télécommunications, deux liaisons de même nombre de sauts n'ont pas la même latence. Il faut donc donner un poids à chaque arête, et repenser le problème du plus court chemin en conséquence.
+
+## Des arêtes pondérées : poser le problème du plus court chemin
+
+Introduire des poids change la question, pas seulement les données. Le problème du plus court chemin pondéré s'énoncé ainsi : on donne un graphe dont chaque arête porte un nombre positif, un sommet de départ et un sommet d'arrivée, et l'on demande un chemin allant de l'un à l'autre dont la somme des poids soit la plus petite possible. Les sommets intermédiaires peuvent être empruntés, mais un sommet déjà traversé n'apporte rien : si un chemin contient un cycle, celui-ci est de poids positif, et le retirer diminue toujours la somme. Le plus court chemin est donc nécessairement sans cycle, ce qui limite considérablement le nombre de candidats.
+
+La première tentation à écarter est celle du chemin le plus court à chaque étape. Prenons trois sommets A, B et C, avec A relié à B par une arête de poids 1, B relié à C par une arête de poids 100, et A relié à C directement par une arête de poids 3. En choisissant systématiquement l'arête la plus courte au départ de A, on emprunte A vers B, puis l'on découvre qu'il faudra payer 100 pour atteindre C, soit un total de 101, alors que l'arête directe coûtait 3. L'erreur venait de comparer des arêtes isolées au lieu de comparer des distances complètes depuis le départ. Toute méthode correcte doit mémoriser, pour chaque sommet, le coût total du meilleur chemin connu depuis l'origine, et c'est exactement ce que fera Dijkstra.
+
+Une deuxième difficulté apparaît dès que l'on autorise des poids négatifs. Un poids négatif modélise une ristourne, un gain, une descente qui fait gagner du temps. Le problème est que la présence d'un cycle négatif rend le plus court chemin mal défini : en faisant le tour de ce cycle aussi souvent que l'on veut, la somme décroît indéfiniment, et il n'existe pas de valeur minimale. Même sans cycle négatif, un simple arc négatif suffit à contredire l'approche gloutonne de Dijkstra, qui fige définitivement la distance d'un sommet dès qu'elle le sélectionne : si un arc vers ce sommet arrive plus tard avec un meilleur coût, il est déjà trop tard. Voilà pourquoi les deux familles d'algorithmes sont séparées dans tous les cours : Dijkstra pour les poids positifs ou nuls, l'algorithme de Bellman-Ford quand des poids négatifs sont possibles.
+
+BFS, de son côté, reste valable dans un cas précis : quand toutes les arêtes ont exactement le même poids, que l'on peut fixer à 1 sans perte d'information. Dans ce cas, la somme des poids d'un chemin est son nombre d'arêtes, et BFS donne exactement le plus court chemin, en O de V plus E. C'est la raison pour laquelle BFS paraît suffisant sur une grille de jeu ou sur un réseau social non pondéré, et soudain insuffisant dès que l'on ajoute des durées réelles. Connaître les trois régimes, tous poids égaux pour BFS, poids positifs pour Dijkstra, poids potentiellement négatifs pour Bellman-Ford, fait partie du bagage de base.
+
+L'inventaire des approches se complète d'une question complémentaire : celle des plus courts chemins entre toutes les paires de sommets. L'algorithme de Floyd-Warshall répond en une boucle triplement imbriquée, avec un coût en V au cube, ce qui reste acceptable pour de petits graphes et offre l'avantage d'un code d'une brièveté déconcertante. Les systèmes de navigation, eux, combinent plusieurs couches : un précalcul massif hors ligne, des structures condensées tenues en mémoire, puis une recherche locale ajustée en temps réel. Pour ce chapitre, nous nous en tiendrons à la source unique, c'est-à-dire un seul départ et tous les autres sommets, qui est le cas le plus fréquent et celui que Dijkstra résout le plus efficacement.
+
+Voici le graphe pondéré que nous allons dérouler dans le volet suivant. Six sommets, neuf arêtes non orientées, toutes à poids strictement positif : A relié à B de poids 7, A relié à C de poids 9, A relié à F de poids 14, B relié à C de poids 10, B relié à D de poids 15, C relié à D de poids 11, C relié à F de poids 2, D relié à E de poids 6, E relié à F de poids 9. Partons de A. Le plus court chemin jusqu'à F ne passe pas par l'arête la plus longue au départ mais par la chaîne A, C, F, qui coûte 9 plus 2, soit 11, contre 14 pour l'arête directe. C'est déjà une illustration de la subtilité précédente, et ce même graphe contient de quoi exiger de l'algorithme qu'il renonce à ses premières intuitions.
+
+## Dijkstra étape à étape sur un exemple chiffré
+
+L'algorithme de Dijkstra repose sur une idée gloutonne, correctement encadrée. On maintient pour chaque sommet une distance provisoire, la meilleure longueur de chemin connue depuis le départ : nulle pour le départ, très grande pour les autres. À chaque tour, on choisit parmi les sommets non encore figés celui dont la distance provisoire est la plus petite, on la déclare définitive, puis on examine ses arêtes : si passer par ce sommet améliore la distance d'un voisin, on met cette distance à jour et l'on mémorise le prédécesseur. Le sommet figé ne change plus, et l'algorithme s'arrête quand tous les sommets ont été traités.
+
+Ce choix est juste pour une raison simple à comprendre une fois posée. Quand on sélectionne un sommet, sa distance est la plus petite de toutes celles qui restent ; or tout chemin encore inexploré devra traverser un sommet non figé, dont la distance est au moins aussi grande. Aucun chemin futur ne peut donc battre la valeur déjà trouvée. C'est exactement ce qui échoue avec un poids négatif : la distance d'un sommet déjà figé pourrait être améliorée plus tard et le raisonnement s'effondre. Avec des poids positifs ou nuls, la preuve tient.
+
+Travaillons sur le graphe annoncé dans le volet précédent : six sommets A à F et neuf arêtes non orientées, A-B de 7, A-C de 9, A-F de 14, B-C de 10, B-D de 15, C-D de 11, C-F de 2, D-E de 6, E-F de 9, avec A comme départ. L'initialisation porte la distance de A à zéro et les cinq autres à l'infini. Le premier sommet sélectionné est forcément A, puisque zéro est le plus petit ; sa relaxation fixe B à 7, C à 9 et F à 14. Le tableau ci-dessous tient un journal de bord, une ligne par sélection.
+
+```table
+| Étape | Sommet figé | Améliorations apportées | État des distances |
+| --- | --- | --- | --- |
+| 1 | A, distance 0 | B 7, C 9, F 14 | autres à l'infini |
+| 2 | B, distance 7 | D passe à 22 | C 9, D 22, F 14 |
+| 3 | C, distance 9 | D 20, F 11 | E à l'infini |
+| 4 | F, distance 11 | E passe à 20 | D 20, E 20 |
+| 5 | D, distance 20 | aucune | inchangé |
+| 6 | E, distance 20 | aucune | tous les sommets sont figés |
+```
+
+Trois moments de ce déroulé méritent une relecture attentive. Au tour 2, B propose de joindre D en 7 plus 15, soit 22 ; C reste à 9 parce que passer par B coûterait 17, ce qui est plus cher que la valeur connue. Au tour 3, C améliore D : 9 plus 11 vaut 20, moins que 22 ; il améliore aussi F, car 9 plus 2 vaut 11, moins que le 14 de l'arête directe A-F. Au tour 4, F atteint enfin E pour 11 plus 9, soit 20. D et E valent tous deux 20 : cette égalité ne change rien au résultat, seul l'ordre de traitement varie.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/5/57/Dijkstra_Animation.gif
+| Animation d'un algorithme de Dijkstra : les distances provisoires se mettent à jour arête après arête jusqu'à ce que chaque sommet reçoive sa valeur définitive.
+```
+
+La distance n'est qu'une moitié du résultat, l'autre étant le chemin lui-même. On le reconstruit avec le tableau des prédécesseurs rempli pendant les relaxations : D a pour prédécesseur C, C pour prédécesseur A, d'où le chemin A puis C puis D pour un coût de 20. Pour E, le prédécesseur est F, lui-même issu de C, d'où A puis C puis F puis E, à 9 plus 2 plus 9, soit 20 également. Remonter les prédécesseurs de l'arrivée au départ est un parcours linéaire qui ne peut pas boucler, car un sommet ne reçoit un prédécesseur qu'au moment où il est amélioré.
+
+Pour éviter de balayer tous les sommets à chaque tour, l'implémentation de référence utilise un tas binaire, fourni en Python par le module heapq sous forme de file de priorité où l'on insère des couples distance puis sommet.
+
+```python
+import heapq
+
+def dijkstra(graphe, depart):
+    distances = {s: float("inf") for s in graphe}
+    predecesseurs = {}
+    distances[depart] = 0
+    file = [(0, depart)]
+    while file:
+        d, u = heapq.heappop(file)
+        if d > distances[u]:
+            continue
+        for v, poids in graphe[u]:
+            candidate = d + poids
+            if candidate < distances[v]:
+                distances[v] = candidate
+                predecesseurs[v] = u
+                heapq.heappush(file, (candidate, v))
+    return distances, predecesseurs
+```
+
+Le test qui compare d à distances[u] rejette les entrées périmées du tas : une même distance y figure plusieurs fois, une par amélioration, et seules les plus petites méritent d'être développées.
+
+## Complexités : ce que coûtent BFS, DFS et Dijkstra
+
+Mesurer ces trois algorithmes suppose de reprendre la méthode des chapitres précédents : on compte des opérations, non des secondes, et l'on retient l'ordre de grandeur qui croît le plus vite avec la taille du graphe. Deux lettres suffisent, V pour le nombre de sommets, issu de vertices, et E pour le nombre d'arêtes, issu de edges. Toutes les bornes qui suivent supposent les listes d'adjacence, seule représentation qui permette de n'examiner que les arêtes réellement présentes.
+
+BFS et DFS partagent exactement le même coût. Chaque sommet est inscrit une fois dans la file ou la pile, extrait une fois, et ses voisins sont parcourus une fois. Comme la somme des degrés vaut deux fois le nombre d'arêtes dans un graphe non orienté, le total des examens d'arêtes vaut deux fois E, d'où la borne O de V plus E. Avec une matrice d'adjacence, chaque sommet impose au contraire de balayer une ligne entière, ce qui porte le coût à V au carré indépendamment du nombre réel d'arêtes : sur un graphe clairsemé, c'est un gaspillage considérable.
+
+Dijkstra coûte plus cher, parce qu'il ajoute à chaque tour une recherche de minimum et des mises à jour. Avec un tableau simple où l'on balaie les sommets, le bilan est de V tours multipliés par V examens, soit O de V au carré, formule avantageuse sur les graphes très denses. Avec un tas binaire, chaque sommet est inséré au plus une fois par amélioration et chaque arête déclenche au plus une tentative de relaxation ; chaque insertion et chaque retrait coûtent le logarithme de la taille du tas, d'où la borne O de V plus E le tout multiplié par le logarithme de V. C'est cette seconde formule qui domine pour les graphes ordinaires.
+
+Un point de vocabulaire évite bien des confusions. La complexité décrit une croissance, pas une vitesse mesurée en secondes. Or E est lui-même borné : dans un graphe non orienté, E ne dépasse pas V multiplié par V moins un divisé par deux. Dire O de V plus E revient donc parfois, sur un graphe complet, à dire O de V au carré.
+
+```table
+| Algorithme | Plus court chemin | Coût temporel | Mémoire |
+| --- | --- | --- | --- |
+| BFS | En nombre d'arêtes, si toutes les arêtes se valent | O de V plus E | O de V plus E |
+| DFS | Aucune garantie de minimalité | O de V plus E | O de V en profondeur |
+| Dijkstra, tas binaire | Exact, poids positifs ou nuls | O de V plus E multiplié par log V | O de V plus E |
+```
+
+La mémoire, enfin, reste en O de V plus E pour les trois algorithmes, soit la somme des sommets et des arêtes rangés, auxquels s'ajoute pour Dijkstra l'espace occupé par le tas. Ce coût supplémentaire se paie en vitesse et se justifie dès que la question du plus court chemin se pose : aucun parcours linéaire ne peut le résoudre exactement, et payer un logarithme de plus est le prix de la pondération.
+
+## Applications : GPS, réseaux sociaux, pages web et au-delà
+
+Le système de navigation est l'application la plus visible du chapitre. Le plan d'une ville ou d'un réseau autoroutier est un graphe pondéré et orienté : les carrefours sont les sommets, les tronçons portent un poids qui mesure la distance ou le temps de parcours, et les sens interdits transforment une route à double sens en deux arcs distincts. Calculer un itinéraire revient à lancer Dijkstra depuis votre position, avec des poids qui changent en temps réel à cause des travaux ou des embouteillages. Les moteurs commerciaux précalculent des structures condensées et combinent Dijkstra avec des heuristiques, mais le principe de relaxation reste celui que vous venez d'écrire.
+
+Les réseaux sociaux sont eux aussi des graphes : les sommets sont les profils, les arêtes sont les amitiés, les abonnements ou les collaborations. Le parcours en largeur y travaille en permanence. Compter le nombre de degrés qui vous séparent d'une personne, c'est trouver le niveau de sa découverte dans un BFS lancé depuis votre profil ; regrouper les contacts d'un même cercle, c'est isoler des composantes connexes. Le parcours en profondeur sert à explorer un sous-ensemble cohérent et à détecter des boucles de recommandation, tandis que les mesures d'influence s'appuient sur la structure complète du graphe.
+
+Le web lui-même forme un immense digraphe dont les pages sont les sommets et les liens les arcs. Les robots d'indexation le parcourent selon une stratégie hybride, empruntant la profondeur pour explorer une thématique et la largeur pour ne pas négliger le reste du site. Les protocoles de routage des réseaux informatiques font de même entre les routeurs : ils tiennent une copie locale du graphe et calculent des plus courts chemins pour acheminer chaque paquet, en relançant le calcul dès qu'une liaison tombe. La compilation, la planification de projets et l'analyse de réseaux biologiques emploient les mêmes briques.
+
+La planification de projet illustre pour sa part la vertu de la profondeur. Les tâches forment un graphe orienté acyclique, une flèche signifiant que l'une ne peut commencer avant l'autre ; un parcours en profondeur suffit à en découvrir les cycles, c'est-à-dire les dépendances circulaires qui rendraient le planning impossible, puis à produire un ordre d'exécution valide. Le même principe se retrouve dans la résolution des dépendances d'un gestionnaire de paquets.
+
+Le point commun de toutes ces situations est que la structure précède le traitement. Avant de mesurer une distance, il faut avoir choisi ce qui est un sommet et ce qui est une arête, puis avoir décidé entre une matrice et des listes ; avant de comparer des parcours, il faut savoir quelle question on pose : proximité, exhaustivité, structure. C'est pourquoi ce chapitre a commencé par les représentations. Les trois méthodes que vous venez de voir ne sont pas des recettes isolées, elles forment une boîte à outils dont chaque instrument répond à une question précise.
+
+## À retenir
+
+- Un graphe est un ensemble de sommets reliés par des arêtes, non orientées, ou des arcs, à sens unique, noté G = (S, A).
+- Un graphe est pondéré quand chaque arête porte un poids : distance, durée, coût.
+- La matrice d'adjacence est un tableau carré de n au carré cases : test d'arête en temps constant, listes de voisins en temps linéaire.
+- La liste d'adjacence range pour chaque sommet ses voisins seulement : mémoire de O de V plus E, exploration optimale.
+- On choisit la matrice pour les graphes denses et les nombreuses questions d'existence, les listes sinon.
+- BFS explore par vagues concentriques avec une file et donne le plus court chemin en nombre d'arêtes.
+- DFS plonge au plus loin avec une pile ou la récursion et revient aux embranchements non explorés.
+- Dans les deux parcours, un sommet est marqué au moment de son insertion, jamais au moment de son traitement.
+- BFS et DFS coûtent O de V plus E avec les listes d'adjacence, et O de V au carré avec une matrice.
+- Dijkstra maintient des distances provisoires, fige à chaque tour le sommet le plus proche et relâche ses arêtes.
+- Dijkstra exige des poids positifs ou nuls et coûte O de V plus E multiplié par le logarithme de V avec un tas binaire.
+
+## Erreurs fréquentes
+
+- Piège : marquer un sommet au moment du retrait de la file ou de la pile. Correction : marquez à l'insertion, sinon le sommet entre plusieurs fois.
+- Piège : utiliser BFS pour un plus court chemin pondéré. Correction : dès que les poids varient, passez à Dijkstra.
+- Piège : lancer Dijkstra sur un graphe contenant des poids négatifs, sans message d'erreur. Correction : utilisez l'algorithme de Bellman-Ford.
+- Piège : oublier la boucle sur tous les sommets quand le graphe comporte plusieurs composantes connexes. Correction : relancez le parcours sur chaque sommet encore inconnu.
+- Piège : confondre poids nul et arête absente dans une matrice de pondération. Correction : réservez une valeur sentinelle explicite.
+- Piège : rechercher le voisin le plus proche plutôt que le sommet de distance minimale dans Dijkstra. Correction : figez le sommet à la plus petite distance provisoire.
+- Piège : construire la matrice dans un ordre de sommets différent à chaque exécution. Correction : figez la table nom puis indice.
+- Piège : attendre de DFS un chemin de longueur minimale. Correction : pour la minimale en arêtes, employez BFS.
+- Piège : conclure à la lenteur d'un algorithme sur une petite donnée. Correction : exprimez le coût en O et raisonnez sur la croissance.
+
+## Pour aller plus loin
+
+La première adresse reste Wikipédia, dont les articles en français sur le parcours en largeur et sur l'algorithme de Dijkstra détaillent les preuves de correction, les variantes d'implémentation et les liens avec les autres algorithmes de plus court chemin. Ils se lisent avantageusement après cette leçon, car vous disposez du vocabulaire nécessaire pour suivre les démonstrations. L'article sur la matrice d'adjacence sert de rappel pour la représentation et pour le tableau des coûts. Conservez ces pages comme référence, plutôt que comme première lecture.
+
+Pour visualiser les parcours, rien ne remplace un outil interactif. Le site VisuAlgo, développé pour l'enseignement, propose des animations de BFS, de DFS et de Dijkstra sur des graphes que vous pouvez modifier, avec affichage pas à pas de la file, de la pile et des distances. Si votre intuition hésite encore entre largeur et profondeur, observez deux fois le même graphe : la différence deviendra évidente sans qu'aucun texte ne soit nécessaire.
+
+Côté pratique, la bibliothèque NetworkX en Python offre une implémentation complète de tous les algorithmes du chapitre et constitue un excellent banc d'essai. Vous y définissez un graphe en quelques lignes, puis vous comparez la distance renvoyée par vos propres fonctions à celle de la bibliothèque. Enfin, lisez la documentation de votre langage pour la file de priorité : comprendre le tas binaire vous expliquera à lui seul la complexité de Dijkstra.
+
+- https://fr.wikipedia.org/wiki/Algorithme_de_parcours_en_largeur — le parcours BFS, sa preuve de correction et ses variantes
+- https://fr.wikipedia.org/wiki/Algorithme_de_Dijkstra — l'algorithme pas à pas, sa preuve et sa complexité
+- https://fr.wikipedia.org/wiki/Matrice_d%27adjacence — la représentation matricielle et ses coûts
+
+## Et maintenant : passez à l'implémentation
+
+Vous disposez des trois briques qui permettent d'explorer n'importe quel réseau : deux représentations pour stocker la structure, deux parcours pour la découvrir, et un algorithme de plus court chemin pour la mesurer. Chacune répond à une question précise, et aucune ne remplace les autres : la matrice et les listes sont deux vues du même objet, BFS et DFS sont deux ordres de découverte, Dijkstra est la seule des trois à tenir compte des poids. Cette distinction entre stockage et traitement est la vraie leçon du chapitre.
+
+L'exercice qui accompagne ce chapitre vous demande d'écrire en Python l'ensemble de la chaîne : construire la représentation d'un graphe pondéré à partir d'une liste d'arêtes, écrire BFS et DFS avec leur marquage correct, implémenter Dijkstra avec un tas, puis comparer les distances obtenues sur un exemple tracé à la main. Le quiz de quatre questions vérifie les points les plus souvent oubliés : la position du marquage, le choix entre file et pile, les conditions de validité de Dijkstra et l'interprétation des complexités.
+
+Si un point résiste, revenez à la section correspondante plutôt que de chercher une solution toute faite : les représentations dans le premier volet, la file et le marquage dans le second, la pile et la récursion dans le troisième, le déroulé chiffré et les complexités dans le dernier. Tracez à la main, comparez au tableau de vos propres résultats, puis seulement exécutez le code : dix minutes de parcours simulé sur papier valent mieux qu'une heure de débogage sans ordre ni méthode.
+
+
+## Ressources video recommandees

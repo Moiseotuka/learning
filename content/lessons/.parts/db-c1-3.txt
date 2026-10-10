@@ -1,0 +1,93 @@
+Les deux chapitres précédents vous ont appris à décrire un domaine avec des entités, des attributs et des liens, puis à dessiner ces éléments sous forme de diagramme entité-association. Nous avons produit un schéma pour la bibliothèque, avec des tables, des clés primaires et des clés étrangères. Ce schéma fonctionne : il accepte les données, il rejette les incohérences élémentaires. Pourtant, il reste vulnérable à un mal plus sournois que l'absence de clés : la redondance. Quand une information est recopiée à plusieurs endroits, toute mise à jour doit réussir à toucher toutes les copies en même temps, et la moindre interruption se paie par des contradictions durables. La normalisation est le remède, et ce chapitre vous apprend à l'appliquer.
+
+La normalisation n'est pas une discipline ésotérique réservée aux théoriciens. C'est une suite de questions très concrètes, que l'on pose colonne par colonne : cette donnée dépend-elle vraiment de toute la clé primaire ? Dépend-elle d'une autre donnée non clé ? Si la réponse est non, la table est mal découpée, et il faut la scinder. Nous suivrons les trois formes normales classiques, la première, la deuxième et la troisième, avec à chaque fois la même méthode : énoncer la règle, la démontrer sur une table volontairement défaillante de la bibliothèque, puis produire la version corrigée en SQL. Vous verrez que les corrections se ressemblent toutes : extraire, nommer, référencer.
+
+## Première forme normalisée : des valeurs atomiques et des colonnes qui ne se répètent pas
+
+La première forme normalisée exige que chaque cellule contienne une valeur indivisible, et qu'une table ne contienne aucun groupe d'attributs répétitifs. Autrement dit : pas de liste dans une colonne, pas de colonnes livre1, livre2, livre3 pour figurer un ensemble variable. L'idée remonte aux travaux fondateurs du modèle relationnel, et elle reste la première porte d'entrée de la conception saine. Si vous viennent d'un tableur, cette règle vous paraîtra étrange, car le tableur encourage à empiler des valeurs dans une même cellule ou à ouvrir de nouvelles colonnes au fur et à mesure. La base de données, elle, préfère les lignes : ce qui varie en nombre doit se répéter en lignes, pas en colonnes.
+
+Considérons une table EMPRUNT_DETAILL qui prétend décrire un emprunt avec tous ses détails, y compris les informations sur le lecteur et sur l'ouvrage. Dans sa forme indisciplinée, elle contient les colonnes identifiant_emprunt, nom_lecteur, courriel_lecteur, titre_ouvrage, auteur_ouvrage, date_sortie, date_retour. La table paraît commode, tout est sur une ligne. Mais si un lecteur possède deux courriels, ou si un emprunt porte deux ouvrages, la tentation est grande de séparer les valeurs par une virgule dans une même cellule : « roman, essai ». Cette pratique rend impossible toute recherche fiable par ouvrage, tout regroupement, toute statistique par auteur. La première forme normalisée interdit formellement ce fonctionnement.
+
+La correction suit un patron stable. Pour chaque attribut qui contient une liste, on crée une table dédiée, dotée d'une clé primaire et d'une clé étrangère vers la table d'origine. Les valeurs successives deviennent des lignes. Pour les colonnes livre1, livre2, livre3, on remplace les trois colonnes par une table LIGNE_EMPRUNT, dont chaque ligne porte emprunt_id, ouvrage_id et quantité éventuelle. Le nombre d'ouvrages d'un emprunt n'est plus limité par le schéma, il est simplement compté par le nombre de lignes. C'est la leçon fondamentale de la première forme normalisée : la structure ne doit jamais présupposer une taille maximale des données.
+
+Un mot sur les types, parce qu'ils participent de la même exigence d'atomicité. Une colonne DATE doit contenir une date, pas un mélange de dates et de libellés libres. Une colonne ETAT doit être réduite à un vocabulaire fermé, par exemple en stock, en circulation, en réparation, plutôt qu'un texte libre où chacun orthographie à sa manière. On peut contraindre cette fermeture avec une table de référence, ou avec une contrainte de contrôle selon le moteur. L'atomicité n'est donc pas seulement une affaire de découpage : c'est aussi une affaire de discipline de saisie, car une valeur atomique mal typée redevient vite une valeur composite en puissance.
+
+Voici une démonstration SQL de la correction. La première requête montre la table fautive, avec une colonne ouvrages qui accumule les titres. La seconde montre la version normalisée, où la table EMPRUNT contient l'en-tête, et la table EMPRUNT_LIGNE détaille chaque ouvrage sorti, avec sa quantité. La clé étrangère emprunt_id relie les deux, et la clé primaire composite emprunt_id, ouvrage_id empêche d'inscrire deux fois le même ouvrage dans un même emprunt.
+
+```sql
+CREATE TABLE emprunts (
+  identifiant   INTEGER PRIMARY KEY,
+  lecteur_id    INTEGER NOT NULL REFERENCES lecteurs (identifiant),
+  date_sortie   DATE    NOT NULL,
+  date_retour   DATE
+);
+
+CREATE TABLE emprunt_lignes (
+  emprunt_id  INTEGER NOT NULL REFERENCES emprunts (identifiant),
+  ouvrage_id  INTEGER NOT NULL REFERENCES ouvrages (identifiant),
+  quantite    INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (emprunt_id, ouvrage_id)
+);
+```
+
+En passant de la table unique à la paire de tables, nous avons supprimé toute liste imbriquée, toute colonne répétitive, et nous avons gagné quelque chose de précieux : la possibilité de compter, pour chaque ouvrage, le nombre de fois où il est sorti, par une simple agrégation sur la table de lignes. La première forme normalisée n'a rien enlevé à la lisibilité métier ; elle a simplement déplacé la complexité du schéma vers les jointures, où les moteurs la traitent le mieux.
+
+## Deuxième forme normalisée : éliminer les dépendances partielles
+
+La deuxième forme normalisée s'attaque à un cas précis : les tables dont la clé primaire est composite, c'est-à-dire formée de plusieurs colonnes. Sa règle tient en une phrase : aucun attribut non clé ne doit dépendre d'une partie seulement de la clé. On parle alors de dépendance partielle. Si vous ne maîtrisez pas encore ce vocabulaire, prenez une image : la clé primaire est la carte d'identité de la ligne, et chaque autre colonne doit justifier sa présence par un renvoi complet à cette carte, pas à une moitié de carte. Toute colonne qui se contente d'une sous-partie de la clé est candidate à être déplacée dans sa propre table.
+
+Reprenons la table EMPRUNT_LIGNE du chapitre précédent, et supposons qu'on y ait ajouté, par facilité, le courriel du lecteur et la date d'inscription. La clé primaire de cette table est la paire emprunt_id et ouvrage_id. Or, le courriel du lecteur dépend uniquement de emprunt_id : dès que l'on sait quel emprunt, on connaît le lecteur, indépendamment de l'ouvrage considéré. C'est une dépendance partielle, puisque l'attribut non clé ne dépend pas de la totalité de la clé. Le symptôme est immédiat : si un emprunt porte trois ouvrages, le courriel est recopié sur trois lignes, et une modification du courriel doit réussir à toucher les trois à la fois.
+
+La correction, là encore, suit un patron. On extrait l'attribut fautif, ici courriel, et on le place dans la table qui lui revient naturellement, ici LECTEUR, dont la clé primaire est identifiant. Dans la table EMPRUNT_LIGNE, on ne garde que la référence, c'est-à-dire la clé étrangère emprunt_id, qui permet de remonter au lecteur par une jointure. Le schéma retrouve sa propreté : chaque fait est stocké une fois, à l'endroit qui lui correspond, et les jointures reconstituent la vue complète au moment de la lecture. C'est exactement l'esprit de la normalisation : payer un peu plus de jointures à la lecture pour gagner beaucoup de cohérence à l'écriture.
+
+Observons le cas concret d'une table qui enregistre, pour chaque emprunt et chaque ouvrage sorti, le titre de l'ouvrage et l'année de parution. Le titre dépend de ouvrage_id, qui n'est qu'une partie de la clé composite. On applique le même traitement : titre et année migrent dans la table OUVRAGE, et la table EMPRUNT_LIGNE ne contient plus que emprunt_id, ouvrage_id et quantité. Si demain l'éditeur corrige une faute de frappe dans le titre, une seule ligne est à modifier dans OUVRAGE, et tous les emprunts historiques en profitent instantanément. La dépendance partielle disparue, la table devient stable dans le temps.
+
+Un doute fréquent mérite d'être levé : la clé primaire auto-incrémentée, si vous en avez ajouté une à EMPRUNT_LIGNE pour simplifier les références, ne change rien à l'analyse. Même avec une clé simple, la table peut encore contenir des attributs qui dépendent d'une partie de la clé métier, c'est-à-dire de la combinaison emprunt_id et ouvrage_id. La deuxième forme normalisée ne regarde pas la forme technique de la clé primaire, elle regarde les dépendances fonctionnelles entre attributs. Le réflexe à prendre, c'est donc de lister, pour chaque colonne non clé, l'ensemble des colonnes dont elle dépend, avant de décider si elle reste ou non.
+
+```sql
+CREATE TABLE emprunt_lignes_2fn (
+  identifiant   INTEGER PRIMARY KEY,
+  emprunt_id    INTEGER NOT NULL REFERENCES emprunts (identifiant),
+  ouvrage_id    INTEGER NOT NULL REFERENCES ouvrages (identifiant),
+  quantite      INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (emprunt_id, ouvrage_id)
+);
+```
+
+La table ci-dessus est en deuxième forme normalisée : la clé primaire est simple, la contrainte d'unicité sur la paire emprunt_id et ouvrage_id préserve l'aspect métier, et aucune colonne ne dépend d'une moitié de clé. Si vous devez y ajouter un jour l'état de l'ouvrage au retour, par exemple en état abîmé, cet attribut dépendra de la ligne entière, donc de l'identifiant, donc il pourra rester ici sans problème. La deuxième forme normalisée n'est donc pas une interdiction d'enrichir une table : c'est une interdiction d'y mettre ce qui appartient ailleurs.
+
+## Troisième forme normalisée : éliminer les dépendances transitives
+
+La troisième forme normalisée prolonge le raisonnement aux dépendances entre attributs non clé. Sa règle : aucun attribut non clé ne doit dépendre d'un autre attribut non clé. On parle de dépendance fonctionnelle transitive. L'exemple type se retrouve dans la table des lecteurs, lorsque l'on y range à la fois la ville et le code postal. Si le code postal est déterminé par la ville, alors le code postal dépend du lecteur par l'intermédiaire de la ville : c'est une dépendance qui transite par un attribut qui n'est pas la clé.
+
+Les symptômes sont familiers. Deux lignes de lecteurs situés dans la même ville recopient le même code postal ; une correction de codage postal oblige à mettre à jour toutes ces lignes, sous peine de voir cohabiter deux orthographes pour une même commune. Pire, si la ville change de nom mais conserve son code, le champ ville devient contradictoire d'une ligne à l'autre. La normalisation de troisième forme tranche : on extrait la paire ville-code postal dans une table VILLES, dont la clé primaire est l'identifiant de commune, et l'on ne garde côté lecteur qu'une clé étrangère vers cette table. Le vocabulaire change, l'esprit reste le même que pour les formes précédentes : isoler chaque fait, le stocker une fois, le référencer par une clé.
+
+La chasse aux dépendances transitives ne s'arrête pas aux codes postaux. Un auteur avec sa nationalité dans la table des ouvrages, un état d'exemplaire avec sa description tarifaire dans la table des exemplaires, un rôle utilisateur avec ses permissions dans la table des comptes : autant de couples où le second attribut dépend du premier plutôt que de la clé. La correction suit toujours le même patron : extraire, nommer, référencer. Le schéma gagne en cohérence, et les listes de référence, villes, états, pays, deviennent réutilisables et traduisables indépendamment du reste du système.
+
+Une subtilité utile concerne les attributs calculés, par exemple le nombre de jours de retard. Cet attribut dépend de la date de retour et de la date du jour, donc il n'est pas stocké dans la table : il se calcule à la lecture. L'architecte qui le stocke prend le risque de devoir le recalculer à chaque changement de date de retard, et de se retrouver avec des lignes incohérentes entre elles. La troisième forme normalisée, appliquée avec bon sens, conduit naturellement à cette conclusion : on ne persiste que les faits, les dérivés se construisent quand on les demande. C'est aussi une règle de conception d'API : un champ calculé renvoyé par le serveur ne doit jamais être relu dans la base comme s'il y était source.
+
+```sql
+CREATE TABLE villes (
+  identifiant   INTEGER PRIMARY KEY,
+  nom           TEXT NOT NULL UNIQUE,
+  code_postal   TEXT NOT NULL
+);
+
+CREATE TABLE lecteurs_3fn (
+  identifiant       INTEGER PRIMARY KEY,
+  nom               TEXT NOT NULL,
+  courriel          TEXT NOT NULL UNIQUE,
+  ville_id          INTEGER NOT NULL REFERENCES villes (identifiant),
+  date_inscription  DATE NOT NULL
+);
+```
+
+Le schéma obtenu enchaîne les trois formes normales : valeurs atomiques pour tout le monde, clés primaires simples partout, aucune dépendance partielle, aucune dépendance transitive. Il reste perfectible, la théorie propose des formes plus poussées comme la forme normale de Boyce-Codd, qui corrige certaines ambiguïtés rares liées à des candidats à la clé, mais la troisième forme constitue le seuil au-delà duquel les gains deviennent marginaux pour la majorité des applications métier. Vous savez à présent reconnaître une table saine, diagnostiquer les trois grandes familles de redondances, et appliquer la correction correspondante. Ces réflexes, plus que la mémorisation des définitions, feront de vous un concepteur crédible.
+
+## Normaliser, puis mesurer : savoir quand s'arrêter
+
+La normalisation n'a pas de valeur absolue : elle sert la cohérence des écritures, et parfois, en lecture intensive, on choisit délibérément de dénormaliser pour réduire le nombre de jointures. Ce choix se discute au cas par cas, avec des mesures, jamais par principe. Le réflexe sain est donc de normaliser d'abord, de mesurer ensuite, et de ne dénormaliser que sur un point précis du système, par exemple une vue de lecture très sollicitée, tout en gardant la source normalisée intacte. Un exemple classique est la vue qui pré-joinct les tables lecteurs, emprunts et ouvrages pour alimenter un tableau de bord : le SGBD matérialise le résultat, l'application lit une table simple, et la base relationnelle conserve sa vérité première.
+
+Un second réflexe concerne la relecture par les pairs. Avant d'appliquer une migration qui scinde une table, faites relire la liste des dépendances que vous avez identifiées par un collègue, ou à vous-même le lendemain. La normalisation est un exercice d'attention, pas une recette magique, et les oublis les plus fréquents portent sur les attributs qui semblent évidents, comme une adresse ou un prix, mais qui dépendent en réalité d'une autre table. Un schéma relus à deux mains est un schéma qui vieillit mieux, parce que les hypothèses implicites deviennent explicites et peuvent être contestées avant qu'elles ne se figent dans des données chargées.
+
+Enfin, gardez en tête que la normalisation s'arrête quand le vocabulaire métier est stable. Si vos entités portent des noms que les responsables reconnaissent, si chaque table correspond à un objet qu'ils savent compter et dénombrer, si les cardinalités correspondent aux phrases qu'ils prononcent, vous êtes probablement bien. Si en revanche vous devez expliquer longuement pourquoi une table s'appelle comme elle s'appelle, ou pourquoi deux colonnes portent des noms presque identiques, c'est que le modèle n'a pas encore trouvé sa forme définitive. La troisième forme normalisée n'est pas une fin en soi ; elle est le témoin qu'on a bien séparé les responsabilités. Le chapitre suivant conclut ce parcours sur les fondations, avec une synthèse des notions à retenir, une liste des erreurs fréquentes et un exercice pratique pour consolider l'ensemble.

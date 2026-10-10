@@ -1,0 +1,103 @@
+Jusqu'ici, nous avons manipulé des fichiers et des commandes qui s'exécutent une fois, puis disparaissent. Un serveur, lui, doit fonctionner jour et nuit, redémarrer tout seul après une coupure d'alimentation, relancer les applications qui tombent et enregistrer ce qui s'est passé pendant notre absence. Ce troisième mouvement du chapitre aborde donc la vie longue du système : les services, leur supervision, leurs journaux, puis la connexion à distance qui vous permettra de les piloter depuis votre poste de travail.
+
+Nous commencerons par systemd, le gestionnaire de services qui supervise l'amorçage et l'exécution des programmes système sur les distributions modernes. Nous verrons ensuite comment le piloter au quotidien avec systemctl : démarrer, arrêter, redémarrer, activer au démarrage, inspecter l'état réel d'une unité. Puis nous passerons à journalctl, l'outil qui donne accès à l'ensemble des journaux de la machine, filtrables par service, par période ou par niveau de gravité. Enfin, nous terminerons par SSH : la connexion chiffrée à distance, sa configuration soignée, et la gestion des clés qui remplace avantageusement les mots de passe.
+
+Comme pour les sections précédentes, la règle reste la même : observez d'abord, agissez ensuite. Les commandes de ce chapitre touchent à des services partagés, dont dépendent potentiellement votre accès à la machine et le fonctionnement de vos applications. Pratiquez sur une machine de test, lisez la sortie de chaque commande, et gardez à l'esprit qu'un redémarrage de service interrompt brièvement les utilisateurs. Cette prudence n'est pas de la timidité : elle distingue l'administrateur dont on sollicite l'avis de celui dont on redoute les gestes.
+
+## systemd, le gestionnaire de services modernes
+
+systemd est l'init system de la plupart des distributions Linux contemporaines : c'est le premier processus lancé par le noyau, et il devient l'ancêtre de tous les autres. Sa mission est double : orchestrer la séquence de démarrage du système, puis maintenir en vie les services configurés. Il remplace l'ancienne suite de scripts d'amorçage par un modèle déclaratif, où l'on décrit ce que l'on veut voir tourner, et laisser systemd s'assurer que c'est bien le cas, y compris après un redémarrage brutal ou une dépendance qui échoue.
+
+```bash
+systemctl list-units --type=service
+systemctl status nginx
+systemctl cat nginx.service
+systemctl list-dependencies multi-user.target
+```
+
+L'objet de travail de systemd est l'unité, un fichier de configuration décrivant une ressource : un service, un point de montage, un timer, une socket réseau. Ces fichiers sont répartis dans plusieurs emplacements, dont certains servent de modèles livrés avec les paquets et d'autres accueillent vos propres réglages locaux. Leur syntaxe est en sections entre crochets, avec des paires clé-valeur, et ils se lisent en quelques minutes une fois que l'on a compris qu'une unité décrit un comportement attendu plutôt qu'une commande à lancer aveuglément.
+
+Les directives les plus importantes structurent le cycle de vie du service. La commande à exécuter, l'utilisateur sous lequel l'exécuter, le répertoire de travail, les variables d'environnement, puis les règles de redémarrage en cas d'échec. C'est précisément ce dernier point qui justifie systemd : un processus qui plante peut être relancé automatiquement, avec un délai progressif qui évite une boucle de redémarrages dévorant le processeur. Un administrateur qui se contentait de lancer un binaire à la main perdait cette résilience, et découvrait les pannes uniquement en arrivant au bureau.
+
+La notion de dépendance est au cœur du modèle. Une unité peut déclarer qu'elle doit démarrer après telle autre, ou qu'elle exige qu'un point de montage soit disponible. systemd construit alors un graphe d'ordre de démarrage et le déroule en parallèle quand c'est possible, ce qui réduit considérablement le temps d'amorçage. Le piège classique du débutant consiste à ignorer ces dépendances et à écrire un service qui démarre avant la base de données à laquelle il doit se connecter : le service échoue, systemd le relance, il échoue encore, et le diagnostic reste opaque tant qu'on n'a pas regardé le graphe.
+
+À côté des services, systemd propose deux autres mécanismes qu'il vaut mieux connaître dès maintenant. Les cibles regroupent des unités selon un niveau du système, niveau multi-utilisateur, interface graphique, mode maintenance, et remplacent les anciens niveaux d'exécution en fournissant un modèle plus lisible. Les minuteries, elles, déclenchent une unité à intervalle régulier ou à une heure fixe, comme le ferait un planificateur de tâches mais avec une journalisation, des dépendances et un suivi d'état intégrés. Beaucoup de tâches d'administration, sauvegardes, purges, rapports, gagnent à être exprimées en minuteries plutôt qu'en entrées de crontab, précisément parce que leur échec devient visible dans le journal.
+
+Un point mérite d'être dit sur la relation entre systemd et les anciens scripts d'init. Beaucoup de logiciels anciens fournissent encore un script de démarrage hérité, que systemd sait exécuter via un type d'unité dédié. C'est pratique pour la migration, mais cela masque les informations de statut : le gestionnaire sait seulement que le script a rendu la main, pas si le service tourne vraiment. Dès que possible, remplacez ce pont par une unité native, et gagnez un suivi d'état réel.
+
+## systemctl : piloter les services au quotidien
+
+systemctl est la porte d'entrée pratique sur systemd. Il affiche l'état, lance des actions, recharge la configuration et suit les journaux d'une unité. Ses commandes de base sont si courtes qu'on les apprend en une journée : démarrer, arrêter, redémarrer, activer au démarrage, désactiver, vérifier l'état. La distinction entre démarrer et activer est essentielle : la première agit maintenant, la seconde inscrit la unité dans la liste de celles qui devront démarrer au prochain amorçage.
+
+```bash
+sudo systemctl start nginx
+sudo systemctl enable --now nginx
+sudo systemctl restart nginx
+sudo systemctl reload nginx
+sudo systemctl disable nginx
+systemctl is-active nginx
+systemctl is-enabled nginx
+```
+
+L'option qui fait les deux à la fois, démarrage immédiat et activation persistante, est celle que l'on utilise le plus souvent lors d'une installation. Elle évite l'erreur de configuration incomplète où le service fonctionne parfaitement jusqu'au prochain redémarrage de la machine, puis disparaît faute d'avoir été activé. Ce type de défaillance, qui ne se manifeste qu'une fois sur plusieurs semaines, est extrêmement coûteux à comprendre, et une seule commande permet de l'éviter.
+
+Redémarrer et recharger ne font pas la même chose. Le redémarrage arrête net le processus puis en lance un nouveau, avec une coupure de service mesurable, parfois de quelques secondes. Le rechargement, lorsque l'application le supporte, lui demande de relire sa configuration en gardant les connexions établies. Vérifier le support du rechargement avant de l'invoquer est une courtoisie envers les utilisateurs, et vérifier qu'une configuration est valide avant de la recharger est une obligation : systemd refuse les fichiers malformés, mais une application plus ancienne peut accepter puis échouer plus tard.
+
+Après toute modification d'un fichier d'unité, une commande de rechargement de la configuration de systemd s'impose avant toute tentative de démarrage. Sans elle, le gestionnaire continue de croire à l'ancienne définition, et vous vous épuiserez à chercher pourquoi votre changement semble ignoré. Ce réflexe fait partie de la mécanique élémentaire : éditer, recharger, démarrer, vérifier. Inversement, une unité dont l'état affiche un échec répété doit d'abord être lue, message de sortie et dernier code de retour, avant d'être redémarrée à son tour, car un redémarrage répété sur une configuration fautive ne fait que ralentir le système sans rien résoudre.
+
+La commande d'état est votre première source de diagnostic. Elle indique le processus principal, le compte sous lequel il tourne, le dernier code de retour, le chemin du binaire, la mémoire consommée, et surtout le point d'insertion dans les journaux, qui mène directement aux messages récents. Lire systématiquement cette sortie avant toute action vous évite de redémarrer un service sain, ou de chercher un problème de configuration là où se cache en réalité un manque de droits. L'état vous donne aussi la date de démarrage, précieuse pour relier un incident à un événement récent.
+
+Un dernier réflexe, valable avant toute modification majeure : préparer un retour arrière. Sauvegardez le fichier de configuration, modifiez une seule chose à la fois, rechargez, observez, puis ne continuez que si le résultat est attendu. Cette discipline en quinze secondes transforme les interventions risquées en séries de petits pas vérifiables. Elle s'applique à systemd comme à toute autre partie du système, et elle est la marque des administrateurs dont les modifications ne font jamais l'objet d'une correction d'urgence.
+
+## journalctl : lire les journaux sans se noyer
+
+Tous les messages émis par le noyau et par les services sont rassemblés dans le journal central, que journalctl interroge. Là où l'ancienne approche consistait à ouvrir des fichiers plats, séparés, tournés ou corrompus à la moindre coupure, le journal est structuré, indexé, horodaté et conservé de manière cohérente. Il résiste aux redémarrages brutaux, ce qui est exactement ce dont vous avez besoin après une panne : l'histoire du système avant l'incident reste consultable.
+
+```bash
+journalctl -u nginx -n 50
+journalctl --since "10 min ago"
+journalctl -p err -b
+journalctl -f -u nginx.service
+journalctl --disk-usage
+```
+
+Les filtres s'enchaînent naturellement. Le premier consiste à restreindre à une unité, ce qui isole immédiatement les messages d'un service donné. Le second borne la période, avec des expressions relatives ou absolues, indispensable quand'on sait que l'incident a commencé à telle heure. Le troisième filtre par niveau de gravité, depuis le débogage jusqu'à l'alerte critique, et le quatrième n'affiche que les messages de la session d'amorçage en cours, évitant de mélanger plusieurs démarrages.
+
+Le suivi en direct est l'équivalent du vieux suivi de fichier, mais avec tous les filtres en plus. Lancez le service, laissez la fenêtre ouverte, déclenchez l'action qui pose problème, et lisez ce qui apparaît. Cette méthode, simple à l'extrême, résout la majorité des incidents de configuration, parce que le message d'erreur exact est presque toujours émis au moment de la tentative. Résistez à l'envie de chercher immédiatement sur un moteur de recherche : lisez d'abord le message complet, souvent la cause y est écrite en toutes lettres.
+
+Le journal distingue enfin la session d'amorçage en cours des sessions précédentes, une distinction qui évite un piège classique : analyser des messages d'un démarrage antérieur en croyant lire l'état actuel. Après un redémarrage, précisez la session, ou bornez la période, et vous éliminez d'un geste une source entière de confusions. Reliez toujours un message à un instant précis, en notant l'horodatage complet plutôt que l'heure approximative que vous croyez vous souvenir : dans un système multi-processus, deux événements séparés d'une fraction de seconde peuvent s'afficher dans un ordre qui ne correspond pas à la chaîne des causes.
+
+La conservation des journaux obéit à une politique de taille et de durée, réglable dans la configuration système. Sur un serveur à disque limité, laisser une politique par défaut trop généreuse finit par grignoter l'espace disponible, ce qui provoque des pannes d'un tout autre ordre. Inversement, une politique trop restrictive efface l'historique dont vous aurez besoin pour analyser un incident survenu la semaine dernière. Un contrôle régulier de l'usage disque du journal, avec la commande qui affiche ce total, permet d'ajuster avant que le problème ne survienne.
+
+Un conseil de méthode pour l'analyse : travaillez toujours en entonnoir. Commencez par les erreurs de la période, puis élargissez à un niveau moins sévère si rien n'apparaît, puis retirez le filtre de gravité pour voir l'activité normale autour de l'instant critique. Beaucoup d'incidents ne produisent pas d'erreur, seulement une absence de messages là où on en attendait, ou une séquence inhabituelle. Lire le journal comme une chronologie, et non comme une liste d'erreurs, change radicalement la qualité de vos diagnostics.
+
+## SSH sécurisé et gestion des clés
+
+SSH est le protocole de connexion à distance qui a remplacé ses prédécesseurs non chiffrés. Il fournit un canal chiffré entre deux machines, avec authentification par mot de passe ou par clé, et il transporte bien plus que votre terminal : transferts de fichiers, tunnels, exécution à distance de commandes, port forwarding. Une installation typique le laisse tourner comme service système, écoutant sur le port vingt-deux, prêt à répondre aux connexions entrantes.
+
+```bash
+ssh alice@serveur.example.com
+ssh -p 2222 alice@serveur.example.com
+scp fichier.txt alice@serveur:/var/tmp/
+ssh-copy-id alice@serveur.example.com
+```
+
+Sécuriser SSH commence par la configuration du serveur. Trois réglages font 90 pour cent du travail : désactiver l'authentification par mot de passe au profit des seules clés, désactiver la connexion directe de l'utilisateur super administrateur, et refuser les comptes qui n'ont pas de clé déposée. Ces trois lignes, placées dans le fichier de configuration principal du démon, éliminent la grande majorité des tentatives de force brute qui martèlent continuellement les serveurs exposés sur internet.
+
+```bash
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+AllowUsers alice bob
+```
+
+Il faut cependant prévoir une porte de sortie avant d'appliquer la première règle : tant que votre propre clé n'est pas installée et testée dans une session restée ouverte, vous risquez de vous enfermer dehors. La procédure sûre consiste à ouvrir une session, à déposer la clé publique, à ouvrir une seconde session pour valider l'authentification par clé, et seulement ensuite à recharger la configuration et à refermer la première session. Ce rituel, répété chaque fois, vous évite l'intervention d'urgence via la console physique du serveur.
+
+Au-delà de la configuration, quelques réflexes durcissent l'accès. Changez le port d'écoute seulement si vous avez un motif réel, car ce n'est pas une protection, seulement un filtre anti-bruit. Restreignez les adresses autorisées au niveau du pare-feu quand le serveur ne doit être joignable que depuis un réseau de confiance. Désactivez les options de forwarding et de transfert si personne n'en a besoin, et interdisez l'exécution de commandes distantes pour les comptes dédiés au transfert de fichiers. Chaque fonctionnalité retirée est une surface d'attaque en moins.
+
+La gestion des clés mérite une section à part, tant elle est centrale. Une paire comporte une clé privée, qui ne quitte jamais votre machine et doit rester secrète, et une clé publique, déposée sur le serveur dans un fichier autorisé. La phrase de passe, ou passphrase, protège la clé privée au repos. Créer une paire prend une seconde, et l'option qui génère un algorithme moderne reste le choix par défaut recommandé aujourd'hui, les anciens algorithmes étant jugés trop faibles face à la croissance des capacités de calcul.
+
+Le piège le plus répandu consiste à créer une clé sans phrase de passe, par commodité. On gagne quelques secondes à chaque connexion, et on perd tout : une clé volée ouverte sur un poste infecté donne un accès direct et durable à tous les serveurs qui l'acceptent, sans aucun facteur supplémentaire à présenter. Avec une phrase de passe, le voleur doit en plus la deviner ou la récupérer par d'autres moyens, et l'agent de connexion peut la conserver en mémoire pendant votre session, ce qui vous donne le confort recherché sans sacrifier la sécurité. Si vous devez utiliser une clé sans protection, restreignez au moins les serveurs concernés et prévoyez une rotation rapide.
+
+Côté client, un fichier de configuration personnelle rend les connexions bien plus pratiques. Il permet de déclarer un alias court pour chaque hôte, d'y attacher l'adresse, le port non standard, l'utilisateur et la clé utilisée, au point de réduire la connexion complète à un mot. Cette déclaration centralise aussi des informations que l'on aurait sinon dispersées dans des notes : le nom exact d'un serveur, son adresse réelle, l'emplacement de sa clé. Toute information de ce type écrite en clair dans ce fichier reste non sensible, car elle ne contient aucun secret, seulement des indications de routage.
+
+Enfin, la hygiène des clés s'inscrit dans la durée. Chaque poste qui quitte l'entreprise, chaque clé perdue, chaque collègue qui change d'équipe doit déclencher la suppression de la clé publique correspondante dans le fichier des clés autorisées. Ce fichier est banni d'ailleurs plus utile que n'importe quel journal : il indique exactement qui peut entrer sur la machine. Relisez-le périodiquement, supprimez les entrées orphelines, et traitez ce fichier comme un registre d'accès, pas comme une liste que l'on remplit et qu'on n'ouvre plus jamais.

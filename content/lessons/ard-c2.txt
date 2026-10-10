@@ -1,0 +1,705 @@
+Bienvenue dans le deuxième chapitre du parcours Arduino et ESP32, entièrement consacré aux capteurs et aux actionneurs. Le chapitre précédent vous a permis de faire clignoter une LED et de lire un bouton : tout y était numérique, c'est-à-dire réduit à deux états, haut ou bas, 1 ou 0. Or le monde réel n'est pas fabriqué ainsi. La température d'une pièce varie de façon continue, la lumière d'un bureau s'ajuste par des degrés imperceptibles, la distance jusqu'à un obstacle se mesure en millimètres, la vitesse d'un moteur se règle entre l'arrêt total et la pleine puissance. Pour faire entrer cette continuité dans un microcontrôleur, il faut deux familles d'éléments : les capteurs, qui transforment une grandeur physique en signal électrique, et les actionneurs, qui transforment un ordre numérique en effet physique observable. C'est exactement le sujet de ce chapitre, et vous allez voir qu'il repose sur deux seuls mécanismes : convertir une tension en nombre, et produire une tension moyenne à partir d'un signal carré.
+
+À la fin de cette leçon, vous saurez faire des choses très concrètes, et vous les aurez déjà manipulées dans du vrai code. Vous lirez un capteur analogique avec la fonction analogRead et vous comprendrez ce que renvoie réellement cette fonction : un entier compris entre 0 et 1023 sur un Arduino Uno, entre 0 et 4095 sur un ESP32. Vous convertirez cette lecture brute en tension, puis en grandeur physique, température, luminosité ou distance, en appliquant la formule propre à chaque capteur. Vous régulerez la puissance envoyée à une LED, à un moteur ou à un servomoteur avec la modulation de largeur d'impulsion, ce qu'on appelle le PWM, et vous saurez choisir la fréquence et le duty cycle adaptés à chaque actionneur. Enfin, vous afficherez des mesures formatées sur le moniteur série, avec un horodatage et des unités, de façon à pouvoir les relire, les copier dans un tableur ou les exploiter plus tard.
+
+La méthode de ce chapitre est volontairement la même que celle du précédent : on avance par étapes courtes, chaque notion étant d'abord expliquée, puis illustrée par un code complet, puis reprise dans un exemple filé. Un seul conseil avant de commencer : testez toujours un capteur isolément, avant de l'intégrer à un programme plus ambitieux. Une borne inversée, une formule fausse ou une tension de référence inadaptée se repèrent en trois lignes quand le programme ne fait qu'afficher la valeur brute, et deviennent un casse-tête incompréhensible quand dix fonctionnalités sont entremêlées. Le fil rouge de la leçon sera une petite station climatique : un capteur de température, un ventilateur piloté en PWM, deux LED d'état et un affichage série structuré. Vous le construirez pas à pas dans les sections qui suivent, puis vous le récrirez seul dans l'exercice pratique.
+
+## De quoi est fait le monde : capteurs et actionneurs
+
+Un capteur est un composant qui convertit une grandeur physique en une grandeur électrique, généralement une tension ou un courant qu'un microcontrôleur sait mesurer. Une photorésistance devient plus ou moins conductrice selon la lumière qu'elle reçoit ; un thermistor change de résistance avec la température ; un capteur ultrason émet une impulsion et renvoie une durée proportionnelle à la distance ; un accéléromètre produit une tension proportionnelle à l'accélération qu'il subit. Dans tous les cas, le capteur ne produit pas d'information prête à l'emploi : il produit un signal brut, qu'il faudra convertir, étalonner et interpréter. C'est pourquoi le premier réflexe à acquérir est d'afficher la valeur brute avant toute conversion : si la valeur brute ne bouge pas quand vous couvrez le capteur de votre main, aucun calcul ne réussira à lui infuser une variation.
+
+Un actionneur fait l'inverse : il reçoit un ordre numérique et produit un effet physique. Une LED convertit un courant en lumière, un moteur convertit un courant en mouvement, un servomoteur convertit une impulsion en position angulaire, un relais convertit un signal en contact mécanique, un buzzer convertit une fréquence en son. La distinction fondamentale à garder en tête concerne les courants : les broches d'un microcontrôleur sont capables de délivrer quelques dizaines de milliampères seulement, ce qui suffit pour faire briller une petite LED, mais pas pour entraîner un moteur. Toute la partie actionneurs de ce chapitre tourne autour de cette contrainte, et vous verrez comment un transistor ou un MOSFET joue le rôle d'intermédiaire, petit signal pilotant grand courant.
+
+La frontière entre analogique et numérique mérite d'être posée avec précision, car elle revient sans cesse. Un signal numérique ne connaît que deux états, et il encode une information par des séquences d'états : c'est ainsi que fonctionne le protocole série, où des 1 et des 0 se succèdent pour former un caractère. Un signal analogique, lui, peut prendre n'importe quelle valeur dans une plage continue : entre 0 V et 3,3 V sur un ESP32, il existe une infinité de tensions possibles, et c'est précisément ce qui permet de représenter une température de 23,4 degrés. Le microcontrôleur, lui, reste numérique : il ne sait raisonner qu'avec des entiers. Le convertisseur analogique-numérique est donc le pont obligatoire entre le monde continu et le monde du calcul, et comprendre ce pont, c'est comprendre l'essentiel de ce chapitre.
+
+- Un capteur transforme une grandeur physique en signal électrique mesurable.
+- Un actionneur transforme un ordre numérique en effet physique.
+- Une sortie analogique est continue ; une sortie numérique n'a que deux états.
+- Les broches d'un microcontrôleur délivrent peu de courant : prévoir un étage de puissance.
+- Toujours afficher la valeur brute avant d'écrire la moindre formule.
+- La distance de câblage décide entre capteur analogique court ou capteur numérique.
+
+## Lire une tension : le convertisseur analogique-numérique
+
+Le convertisseur analogique-numérique, souvent appelé ADC pour son nom anglais, prend une tension continue en entrée et produit un nombre entier proportionnel. Son fonctionnement se résume en deux opérations. La première est l'échantillonnage : à intervalle régulier, le convertisseur mesure la tension présente à sa broche d'entrée. La seconde est la quantification : cette tension mesurée est arrondie à l'étage le plus proche d'une grille régulière dont le nombre de pas est fixé par la résolution. Quand vous appelez analogRead, tout ce travail est exécuté en quelques microsecondes et la fonction renvoie l'indice du pas correspondant. Ce qu'il faut retenir, c'est que la valeur renvoyée n'est pas une tension : c'est un compteur, un indice dans une échelle, et c'est à vous de la replacer sur cette échelle.
+
+La résolution détermine la finesse de cette grille. Sur un Arduino Uno, l'ADC est codé sur 10 bits, ce qui donne 2 puissance 10, soit 1024 valeurs distinctes numérotées de 0 à 1023. Sur un ESP32, il est codé sur 12 bits, soit 4096 valeurs numérotées de 0 à 4095. À résolution égale, la référence d'alimentation définit la tension correspondant au sommet de l'échelle : 5 V sur un Uno alimenté en USB ou en 5 V, environ 3,3 V sur un ESP32. Le tableau ci-dessous réunit ces trois paramètres pour les deux cartes les plus courantes du parcours ; gardez-le sous la main, car toutes les formules de conversion de ce chapitre s'appuient sur lui.
+
+```table
+| Carte | Résolution | Plaque de valeurs | Référence | Pas correspondant |
+| --- | --- | --- | --- | --- |
+| Arduino Uno | 10 bits | 0 à 1023 | 5,0 V | environ 4,89 mV |
+| Arduino Nano | 10 bits | 0 à 1023 | 5,0 V | environ 4,89 mV |
+| ESP32 | 12 bits | 0 à 4095 | environ 3,3 V | environ 0,81 mV |
+| ESP32 en attenuation 11 dB | 12 bits | 0 à 4095 | jusqu'à 3,1 V utiles | environ 0,76 mV |
+```
+
+
+Le calcul de la tension à partir de la valeur brute suit toujours le même schéma : on multiplie la valeur brute par la référence, puis on divise par le maximum de la plage. Sur un Uno, la valeur 512 correspond donc à 512 multiplié par 5,0, divisé par 1023, soit environ 2,50 V. Sur un ESP32, la même valeur 512 donne 512 multiplié par 3,3, divisé par 4095, soit environ 0,41 V : à nombre brut identique, la tension réelle est totalement différente, et c'est la cause numéro un des programmes qui affichent des températures ridicules lorsqu'on les transfère d'une carte à l'autre. Notez aussi que la division doit se faire en nombres décimaux : écrire 512 fois 5 divisé par 1023 avec des entiers tronquerait le résultat, comme nous le verrons dans la section suivante.
+
+```cpp
+const int CAPTEUR_PIN = A0;      // broche analogique
+const float VREF = 5.0;          // tension de référence en volts
+const int ADC_MAX = 1023;        // 4095 sur un ESP32
+
+void setup() {
+  Serial.begin(115200);
+  analogReference(DEFAULT);      // référence par défaut de la carte
+}
+
+void loop() {
+  int brut = analogRead(CAPTEUR_PIN);
+  float tension = brut * VREF / ADC_MAX;
+  Serial.print("brut = ");
+  Serial.print(brut);
+  Serial.print("   tension = ");
+  Serial.print(tension, 3);
+  Serial.println(" V");
+  delay(500);
+}
+```
+
+- analogRead renvoie un entier, pas une tension : c'est un index dans une échelle.
+- Uno : 0 à 1023 pour 0 à 5 V. ESP32 : 0 à 4095 pour 0 à 3,3 V environ.
+- Tension égale à valeur brute multipliée par la référence, divisée par le maximum.
+- Une broche libre en l'air bruite : cela ne signifie pas que la carte est hs.
+- La résolution conditionne le pas : environ 4,89 mV sur Uno, 0,81 mV sur ESP32.
+- Préférez toujours une conversion en flottants pour éviter toute troncature.
+
+## De la lecture brute au nombre utile
+
+Convertir une tension en grandeur physique revient à appliquer la loi du capteur, c'est-à-dire la relation, souvent linéaire, qui relie sa sortie à la grandeur qu'il mesure. Le capteur de température LM35 est l'exemple le plus pédagogique car sa loi tient en une phrase : sa sortie vaut 0 mV à 0 degré, et augmente de 10 mV par degré supplémentaire. La tension mesurée est donc directement proportionnelle à la température, et l'inverse de la pente suffit pour l'obtenir : on divise la tension par 0,01. Sur un Uno, la chaîne complète s'écrit alors valeur brute multipliée par 5,0, divisée par 1023, le tout divisé par 0,01, ce qui se simplifie en valeur brute multipliée par environ 0,489. Un capteur à sortie 1 degré correspond donc à environ deux pas d'ADC, ce qui explique pourquoi la lecture brute oscille légèrement autour d'une valeur stable.
+
+La photorésistance illustre un deuxième cas de figure, celui des capteurs dont la loi n'est pas fournie sous forme de tension mais de résistance. Sa résistance chute quand la lumière augmente, de quelques mégohms dans le noir à quelques centaines d'ohms en plein soleil, mais une résistance ne se mesure pas directement avec une broche analogique : il faut la convertir en tension. On le fait avec un pont diviseur, formé par la photorésistance et une résistance fixe de valeur connue, généralement 10 kΩ, branchées en série entre l'alimentation et la masse, la jonction étant reliée à la broche analogique. Plus la photorésistance devient conductrice, plus elle abaisse la tension au point de mesure : la lecture brute monte quand la lumière augmente. Le calcul inverse de la résistance se fait ensuite avec la formule du diviseur, et une table de correspondance approximative donne ensuite les lux.
+
+Les capteurs de température à base de thermistance ajoutent une troisième variante, celle de la loi non linéaire. Un composant NTC est une résistance dont la valeur décroît quand la température augmente, mais selon une courbe exponentielle : doubler la résistance ne correspond pas à doubler l'écart de température. On l'utilise, lui aussi, dans un pont diviseur avec une résistance fixe, puis on convertit la tension lue en résistance, enfin cette résistance en température. Pour cette dernière étape, on emploie soit une approximation polynomiale simple, soit la formule de Steinhart-Hart, qui donne une précision remarquable avec seulement trois coefficients. Dans un projet débutant, une table de correspondance mesurée à deux ou trois points suffit souvent et a l'avantage d'intégrer automatiquement les tolérances de votre composant réel.
+
+Tous ces calculs supposent une opération que l'on oublie trop vite : l'étalonnage. Deux LM35 sortis de la même boîte peuvent différer de quelques dixièmes de degré, deux résistances marquées 10 kΩ peuvent en valoir 9,8 ou 10,2, et la tension d'alimentation d'un panneau solaire ou d'un banc d'essai varie elle aussi. La méthode des deux points règle efficacement ces défauts : vous mesurez une référence fidèle, un multimètre étalonné ou un point de fusion glacial, vous notez la lecture brute correspondante, puis vous répétez l'opération à un deuxième point. Deux équations à deux inconnues donnent alors un gain et un décalage qui corrigent la chaîne complète, capteur et ADC compris. Même grossier, un tel étalonnage améliore nettement la crédibilité d'une mesure affichée.
+
+```cpp
+const int LDR_PIN = A1;
+const int NTC_PIN = A2;
+const float VREF = 5.0;
+const int ADC_MAX = 1023;
+const float R_FIXE = 10000.0;   // pont diviseur 10 kΩ
+
+float lireTension(int broche) {
+  int brut = analogRead(broche);
+  return brut * VREF / ADC_MAX;
+}
+
+float lireResistance(int broche) {
+  float v = lireTension(broche);
+  if (v < 0.01) v = 0.01;                 // évite la division par zéro
+  return R_FIXE * (VREF - v) / v;          // pont diviseur
+}
+
+void setup() { Serial.begin(115200); }
+
+void loop() {
+  float tempLM35 = lireTension(A0) / 0.01;
+  Serial.print("LM35 = ");
+  Serial.print(tempLM35, 1);
+  Serial.print(" C   LDR = ");
+  Serial.print(lireResistance(LDR_PIN), 0);
+  Serial.print(" ohms   NTC = ");
+  Serial.print(lireResistance(NTC_PIN), 0);
+  Serial.println(" ohms");
+  delay(1000);
+}
+```
+
+```table
+| Grandeur | Capteur | Sortie | Conversion essentielle |
+| --- | --- | --- | --- |
+| Température | LM35 | tension 10 mV par degré | tension divisée par 0,01 |
+| Température | NTC 10 kΩ | résistance variable | pont diviseur puis Steinhart-Hart |
+| Lumière | photorésistance | résistance décroissante | pont diviseur puis approximation en lux |
+| Distance | HC-SR04 | durée d'écho | durée multipliée par la vitesse du son, divisée par deux |
+| Position | potentiomètre | tension de répartition | lecture brute normalisée entre 0 et 1023 |
+```
+
+
+Avant de passer au PWM, résumons la chaîne de traitement que vous appliquerez à tout capteur analogique. La valeur brute sort de l'ADC, sans unité. On la convertit en tension avec la référence et la résolution de la carte. On applique la loi du capteur pour obtenir la grandeur physique, en degrés, en lux, en ohms ou en centimètres. On corrige éventuellement avec un étalonnage. On affiche enfin avec une précision cohérente : afficher six décimales pour un capteur qui n'en a que deux est aussi trompeur que d'afficher zéro décimale pour une température qui fluctue de dixièmes. Cette discipline de conversion est le socle du mini-projet de fin de chapitre, où chaque mesure affichée devra pouvoir être reliée à sa formule en une seule ligne de code commentée.
+
+Une valeur analogique lue telle quelle est rarement utilisable : elle oscille, elle dépend de l'alimentation, et elle porte le bruit électrique de tout ce qui est câblé autour. La section précédente vous a appris à convertir une tension en grandeur physique ; celle-ci vous apprend à fiabiliser la mesure avant de la convertir. Nous verrons d'abord d'où vient le bruit et pourquoi une lecture isolée ment presque toujours, puis trois techniques simples pour le maîtriser : la moyenne de plusieurs échantillons, le lissage exponentiel qui convient aux mesures en continu, et l'étalonnage qui corrige les défauts systématiques. Nous terminerons par un tour d'horizon des capteurs les plus courants, avec pour chacun leur principe, leurs besoins particuliers et le code de lecture qui lui correspond.
+
+Le bruit de mesure a plusieurs origines, et les distinguer permet de choisir le bon remède. La première est intrinsèque au convertisseur : chaque conversion est arrondie à l'étage le plus proche, si bien que la vraie valeur peut hésiter entre deux codes voisins, ce qui produit l'oscillation d'une ou deux unités que vous avez observée sur une broche libre. La deuxième vient de l'alimentation : un moteur qui démarre, une LED qui s'allume ou l'étage haute fréquence d'un ESP32 en Wi-Fi font varier la tension de référence, et donc la mesure elle-même. La troisième est capacitivement induite : un long câble non blindé se comporte comme une antenne et capte les perturbations des câbles voisins, du moteur ou du réseau électrique. Enfin, certains capteurs sont eux-mêmes bruyants : un thermistor chauffé par son propre courant de mesure dérive lentement.
+
+Face à ces causes, la moyenne arithmétique est le premier outil, parce qu'elle est simple et efficace contre le bruit aléatoire. L'idée est de prendre plusieurs lectures successives, de les additionner, puis de diviser par leur nombre : le bruit, qui varie de façon erratique, tend à s'annuler dans la somme, tandis que la composante utile, elle, reste stable. Huit lectures suffisent généralement à réduire l'amplitude du tremblement d'un facteur trois environ, et soixante-quatre lectures le réduisent d'un facteur huit. Le coût reste dérisoire : huit appels à analogRead représentent moins d'un milliseconde sur un Arduino Uno. Attention toutefois à la nature entière du résultat : diviser une somme d'entiers par huit avec l'opérateur slash produirait un entier tronqué ; convertissez la somme en nombre décimal avant de diviser.
+
+```cpp
+const int BROCHE = A0;
+const int NB_ECHANTILLONS = 8;
+
+float moyenneAnalogique(int broche, int n) {
+  long somme = 0;
+  for (int i = 0; i < n; i++) {
+    somme += analogRead(broche);
+    delayMicroseconds(200);        // laisse l'ADC se stabiliser
+  }
+  return (float)somme / n;         // cast obligatoire : sinon division entière
+}
+
+void setup() { Serial.begin(115200); }
+
+void loop() {
+  float brut = moyenneAnalogique(BROCHE, NB_ECHANTILLONS);
+  float tension = brut * 5.0 / 1023.0;
+  Serial.print("moyenne = ");
+  Serial.print(brut, 1);
+  Serial.print("   tension = ");
+  Serial.print(tension, 3);
+  Serial.println(" V");
+  delay(250);
+}
+```
+
+Le lissage exponentiel, appelé filtre mémoire, répond à un besoin différent : garder une mesure réactive sans qu'elle s'affole. Plutôt que de moyennner un paquet d'échantillons à chaque cycle, on met à jour la valeur affichée en la rapprochant de la nouvelle lecture, avec un facteur d'oubli. La formule la plus courante s'écrit : nouvelle valeur égale à l'ancienne valeur, plus le coefficient qui pondère l'écart entre la lecture et l'ancienne valeur. Avec un coefficient de 0,1, la mesure suit dix pour cent de l'écart à chaque passage : elle devient très stable mais un peu lente, avec 0,3 elle suit plus vite mais laisse passer plus de bruit. Ce compromis entre réactivité et stabilité est le cœur du réglage, et il se règle en observant la sortie dans le moniteur série plutôt qu'en choisissant au hasard.
+
+Enfin, l'étalonnage transforme une mesure brute en mesure crédible. La méthode la plus pratique pour un débutant consiste à relever deux points de référence fiables : la température d'une glaçon pilée, théoriquement 0 °C, et celle d'une eau frémissante, proche de 100 °C au niveau de la mer. On note les lectures correspondantes, puis on calcule un gain et un décalage par une simple règle de trois à deux inconnues. Le même principe s'applique à une photorésistance étalonnée avec une luxomètre approximative, ou à un potentiomètre dont on vérifie les bornes mécaniques. L'étalonnage ne rend pas un capteur bon, mais il rend un capteur médiocre prévisible, et c'est souvent suffisant pour un banc d'essai ou un prototype.
+
+- Le bruit vient du convertisseur, de l'alimentation, du câblage et du capteur lui-même.
+- Moyenner huit lectures suffit généralement à stabiliser une mesure lente.
+- Convertissez la somme en flottant avant de diviser pour éviter la troncature.
+- Le filtre mémoire pondère réactivité et stabilité avec un seul coefficient.
+- Limitez le courant de mesure pour éviter l'auto-échauffement des thermistances.
+- Deux points de référence suffisent pour étalonner gain et décalage.
+
+## Les capteurs usuels et leurs caractéristiques
+
+Le capteur de température LM35 reste le plus simple pour débuter : trois bornes, une sortie en tension, aucune communication à mettre en place. Il fonctionne de 0 à 150 degrés environ, avec une précision d'un demi-degré typique, et son courant de consommation est faible. On le câble avec la borne d'alimentation sur 5 V ou 3,3 V selon les versions, la masse sur la masse commune, et la sortie directement sur une broche analogique. Sa limite est qu'il ne va pas sous zéro degré avec une alimentation unique : pour les mesures négatives, on lui préfère une version comme le TMP36 ou le DS18B20 numérique. Quel que soit le capteur, gardez la règle : câblez-le seul, affichez la valeur brute, déplacez la main devant, vérifiez que la variation existe avant d'écrire la moindre ligne de conversion.
+
+La famille DHT regroupe deux capteurs très répandus qui fournissent à la fois température et humidité relative. Le DHT11, moins cher, couvre 0 à 50 degrés avec une résolution d'un degré, tandis que le DHT22 couvre de -40 à 80 degrés avec une résolution de dixième. Tous deux partagent un protocole propriétaire à un seul fil : la carte abaisse la broche pendant environ une milliseconde, le capteur répond par une trame de 40 bits contenant humidité, température et somme de contrôle. C'est la raison pour laquelle une bibliothèque externe est nécessaire, et pourquoi il ne faut pas les interroger plus d'une fois toutes les deux secondes. Le BME280, lui, va plus loin en ajoutant la pression atmosphérique et en parlant en I2C ou SPI : un seul bus relie alors plusieurs capteurs, ce que vous découvrirez dans le chapitre suivant.
+
+Le HC-SR04 mérite une section à lui seul parce qu'il introduit une grandeur nouvelle : le temps. Il fonctionne comme un sonar : on envoie une impulsion d'au moins dix microsecondes sur la broche de déclenchement, le module émet alors une salve d'ultrasons, puis il prolonge une broche d'écho pendant exactement la durée de l'aller-retour du signal. Il suffit de mesurer cette durée avec la fonction pulseIn et de la multiplier par la vitesse du son, 343 mètres par seconde, puis de diviser par deux pour obtenir la distance. Le silence renvoyé vaut environ 343 microsecondes par centimètre d'aller-retour, ce qui donne la règle pratique : durée divisée par 58, ou multipliée par 0,0343 puis divisée par deux. Prévoyez toujours un délai d'attente de sortie, une trentaine de millisecondes, sinon le module reste bloqué devant un obstacle trop lointain.
+
+```cpp
+const int TRIG = 7;
+const int ECHO = 6;
+const unsigned long TIMEOUT_ECHO = 30000UL;   // environ 5 mètres
+
+float distanceEnCm() {
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG, LOW);
+  unsigned long duree = pulseIn(ECHO, HIGH, TIMEOUT_ECHO);
+  if (duree == 0) return -1.0;                // rien détecté
+  return duree * 0.0343 / 2.0;
+}
+
+void setup() {
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+  Serial.begin(115200);
+}
+
+void loop() {
+  float d = distanceEnCm();
+  if (d < 0) Serial.println("pas d'echo");
+  else { Serial.print(d, 1); Serial.println(" cm"); }
+  delay(200);
+}
+```
+
+Le détecteur de mouvement PIR constitue le cas le plus commode car il est presque entièrement analogique par nature, mais il se branche sur une broche numérique. Son dôme en plastique segmente le champ de visée en zones, et le mouvement d'une source de chaleur fait varier la tension produite par sa pyroélectricité ; l'électronique embarquée transforme cette variation en une sortie passant au niveau haut. Deux potentiomètres réglent la sensibilité, c'est-à-dire l'amplitude de variation nécessaire, et la durée de maintien après détection. La sortie reste active pendant cette durée, si bien que la broche ne dit pas tant où se trouve l'objet que si un mouvement vient d'être perçu. Ajoutez un délai à la lecture pour éviter les déclenchements en boucle, et souvenez-vous qu'un PIR ne détecte pas un objet immobile : il détecte un changement.
+
+Le tableau suivant récapitule les capteurs que vous rencontrerez le plus souvent dans ce type de projet, avec la nature de leur sortie et la conséquence pratique qui en découle. La colonne de drooute est celle qui compte le plus quand on choisit un composant pour un prototype : elle indique si l'on peut se contenter d'une broche analogique, s'il faudra une bibliothèque, ou si l'on entre de plain-pied sur un bus de communication.
+
+```table
+| Capteur | Grandeur | Sortie | Ce que cela implique |
+| --- | --- | --- | --- |
+| LM35 | température | analogique, 10 mV par degré | une broche analogique, conversion directe |
+| NTC 10 kΩ | température | résistance variable | un pont diviseur, formule non linéaire |
+| Photorésistance | lumière | résistance variable | un pont diviseur, étalonnage approximatif |
+| DHT22 | température, humidité | numérique, un fil | une bibliothèque, une attente de 2 s |
+| BME280 | température, pression | numérique, I2C | un bus, une adresse, plusieurs capteurs partagés |
+| HC-SR04 | distance | impulsion de temps | pulseIn et calcul par la vitesse du son |
+| PIR HC-SR501 | présence | binaire | une broche numérique, réglage au potentiomètre |
+```
+
+
+Quel que soit le capteur retenu, la démarche d'intégration reste identique et vaut la peine d'être ritualisée. Étape une : vérifier l'alimentation et la masse au multimètre. Étape deux : lire la valeur brute pendant qu'on provoque une variation nette, en chauffant, en couvrant ou en approchant la main. Étape trois : relier cette variation à la grandeur attendue et écrire la formule. Étape quatre : afficher les deux valeurs côte à côte, brute et convertie, pendant quelques minutes. Étape cinq seulement : intégrer la lecture au reste du programme. Ce protocole, fastidieux en apparence, vous fera gagner une heure dès la première panne, et il transforme un problème de code en problème d'étape identifiée.
+
+- Le LM35 offre la sortie la plus directe : une tension proportionnelle à la température.
+- Les capteurs DHT imposent un délai minimal entre deux lectures, de l'ordre de deux secondes.
+- Le HC-SR04 mesure une durée et non une distance : à vous de faire le calcul.
+- Un PIR détecte un changement, pas un objet immobile.
+- Un bus comme I2C permet de relier plusieurs capteurs sur deux fils seulement.
+- Suivez toujours les cinq étapes d'intégration avant de brancher un capteur au programme final.
+
+## Potentiomètre et photorésistance : deux entrées pédagogiques
+
+Le potentiomètre est le capteur le plus simple qui existe, et pourtant il enseigne l'essentiel. Il s'agit d'une résistance dont on peut prendre la tension au niveau d'une cueillère mobile : deux bornes externes se branchent entre l'alimentation et la masse, la troisième, reliée au curseur, descend vers la broche analogique. On obtient alors un diviseur de tension réglable, dont la sortie varie linéairement entre les deux bornes quand on tourne le bouton. La lecture brute devient directement une position : zéro tourné à fond dans un sens, 1023 dans l'autre. C'est le principe du réglage de luminosité d'un écran, de la vitesse d'un ventilateur ou de l'angle d'un servomoteur, et c'est aussi le meilleur outil de simulation : avec un potentiomètre, vous pouvez piloter une valeur de consigne sans réécrire et re-téléverser le programme à chaque essai.
+
+La photorésistance, ou LDR, se branche de la même manière, mais son rôle est inversé : au lieu d'être commandée par l'utilisateur, elle réagit à l'environnement. Sa résistance chute quand la lumière augmente, passant de plusieurs mégohms dans l'obscurité à quelques centaines d'ohms sous une lumière vive. Comme pour le NTC, on l'associe à une résistance fixe pour former un pont, et on lit la tension à leur jonction. Deux orientations sont possibles et donnent des sens opposés : si la LDR est placée vers l'alimentation, la tension monte quand la lumière augmente ; si elle est placée vers la masse, la tension baisse. Aucune n'est plus correcte que l'autre, mais il faut savoir laquelle on a choisie, car c'est elle qui décide si un seuil doit être écrit avec un plus ou un moins. Notez enfin que la sensibilité de l'œil et celle d'une LDR ne coïncident pas : l'espèce humaine est plus sensible au vert, la LDR est plus sensible au proche infrarouge.
+
+```cpp
+const int POT_PIN = A0;
+const int LDR_PIN = A1;
+
+void setup() {
+  Serial.begin(115200);
+}
+
+void loop() {
+  int pot = analogRead(POT_PIN);            // 0 à 1023
+  int ldr = analogRead(LDR_PIN);            // 0 à 1023
+  float ratio = pot / 1023.0;               // normalisé 0.0 à 1.0
+
+  Serial.print("pot = ");
+  Serial.print(pot);
+  Serial.print(" (");
+  Serial.print(ratio * 100.0, 0);
+  Serial.print("%)   ldr = ");
+  Serial.print(ldr);
+  Serial.print("   lumi = ");
+  Serial.println(ldr * 100.0 / 1023.0, 0);
+
+  delay(200);
+}
+```
+
+La normalisation, illustrée par le calcul du ratio ci-dessus, est une habitude de programmation à prendre très tôt. Plutôt que de traîner une valeur brute entre 0 et 1023 dans tout le programme, on la convertit immédiatement en fraction, entre 0,0 et 1,0, ou en pourcentage. Les seuils deviennent alors indépendants de la résolution de la carte : un seuil de 70 pour cent s'écrit de la même façon sur un Uno et sur un ESP32, alors qu'il vaudrait 717 sur l'un et 2866 sur l'autre. Ce petit réflexe de mise à l'échelle vous sauvera lorsque vous porterez un brouillon d'Uno vers un ESP32, et il prépare directement la lecture de la PWM où le même rapport, le duty cycle, décide de la puissance délivrée.
+
+- Le potentiomètre fournit une position sous forme de tension réglable.
+- La photorésistance est une résistance variable pilotée par la lumière.
+- Le sens de variation dépend de l'orientation choisie dans le pont diviseur.
+- Normalisez toujours une lecture entre 0,0 et 1,0 avant de la comparer à un seuil.
+- Une hystérésis évite les basculements multiples autour d'une frontière.
+- Utilisez un potentiomètre pour simuler une consigne pendant vos essais.
+
+Nous avons jusqu'ici mesuré le monde : il reste à agir sur lui. La tension qu'une broche numérique peut fournir se limite à deux valeurs, plein courant ou rien, et cette brutalité convient mal à une LED que l'on veut atténuer, à un moteur dont on règle la vitesse ou à un servomoteur que l'on positionne au degré près. La modulation de largeur d'impulsion, abrégée PWM pour pulse width modulation, contourne cette limitation avec une astuce élégante : au lieu de produire une tension intermédiaire, on commute très vite entre la tension maximale et zéro, en faisant varier la part du temps passé dans chaque état. Le cerveau, l'œil et surtout l'inertie physique d'un moteur font le reste en percevant la moyenne. Cette section explique le principe, les réglages disponibles sur Arduino Uno et ESP32, puis les trois actionneurs classiques : la LED, le moteur DC et le servomoteur.
+
+## Pourquoi une tension moyenne suffit : le principe du PWM
+
+Considérez une LED alimentée à 5 V avec sa résistance de protection. Si vous fermez le circuit une milliseconde sur deux, la LED ne reçoit ni 2,5 V, ni la moitié du courant : elle est soit allumée, soit éteinte, et elle parcourt ce cycle mille fois par seconde. Ce qui change n'est pas l'intensité instantanée, c'est la proportion du temps pendant laquelle elle brille. L'œil, incapable de suivre une variation aussi rapide, perçoit une luminosité proportionnelle à cette proportion, ce que l'on appelle le duty cycle ou rapport cyclique, exprimé en pourcentage. À 25 pour cent, la LED semble réduite au quart de sa puissance ; à 90 pour cent, elle paraît presque pleine, alors que le courant qui la traverse, lui, n'a jamais varié : toujours le même, simplement découpé.
+
+Le moteur DC illustre le même principe par l'inertie mécanique. Sa masse en rotation ne peut pas s'arrêter ni démarrer instantanément ; entre deux impulsions, il conserve l'élan acquis, si bien qu'un enchaînement d'impulsions courtes se traduit par une rotation lente mais régulière. La vitesse devient ainsi proportionnelle au duty cycle, ce qui permet des démarrages doux, des arrêts progressifs et des régulations de vitesse sans aucun composant de puissance élaboré. Le servomoteur, lui, exploite la même idée à une fréquence précise et avec une sémantique différente : c'est la largeur de chaque impulsion, en microsecondes, qui commande la position, non le rapport en pour-cent. Les deux lectures du signal sont donc à distinguer soigneusement, car elles conduisent à des réglages opposés.
+
+Le signal PWM est donc un signal carré caractérisé par deux paramètres : sa fréquence et son duty cycle. La fréquence décide de la finesse de l'approximation et du bruit perçu, le duty cycle décide de la puissance transmise. Une fréquence trop basse rend le clignotement visible sur une LED ou audible sur un moteur ; une fréquence trop élevée augmente les pertes dans l'étage de puissance et peut faire chauffer un transistor. Entre les deux, une plage confortable s'étend de quelques cents à quelques dizaines de kilohertz, valeur à laquelle un moteur chuinte encore légèrement mais où l'œil ne perçoit plus rien. Pour un servomoteur, la fréquence n'est pas un réglage libre : le standard exige 50 Hz, soit une période de 20 millisecondes.
+
+```
+        duty cycle = 25 %                    duty cycle = 75 %
+
+  5 V ┌───┐   ┌───┐   ┌───┐   ┌───┐     ┌───────┐   ┌───────┐   ┌───┐
+      │   │   │   │   │   │   │   │     │       │   │       │   │   │
+  0 V ┘   └───┘   └───┘   └───┘   └───┘ ┘       └───┘       └───┘   └──
+
+      |--|                                 |------|
+      temps haut                           temps haut
+      1/4 de la période                    3/4 de la période
+
+  Tension moyenne : 1,25 V                Tension moyenne : 3,75 V
+  sur une alimentation de 5 V             sur une alimentation de 5 V
+```
+
+La tension moyenne obtenue se calcule en multipliant la tension d'alimentation par le duty cycle exprimé en fraction. Pour 25 pour cent sur une alimentation de 5 V, on obtient 1,25 V ; pour 75 pour cent, 3,75 V. C'est ce calcul qui vous permet de prédire le comportement d'un actionneur avant même de l'allumer, et surtout de convertir une valeur voulue en valeur numérique à écrire. Si vous souhaitez une vitesse correspondant à 3 V sur une alimentation de 12 V, il vous faut un rapport de 25 pour cent, donc, sur une sortie de 8 bits, la valeur 64. Cette conversion proportionnelle, à ne jamais confondre avec la lecture analogique vue précédemment, est le geste mathématique central du PWM.
+
+```table
+| Fréquence | Duty cycle | Tension moyenne sur 5 V | Usage typique |
+| --- | --- | --- | --- |
+| 490 Hz | 0 % | 0,0 V | extinction complète |
+| 490 Hz | 50 % | 2,5 V | moitié de puissance |
+| 490 Hz | 100 % | 5,0 V | pleine puissance |
+| 5 kHz | 25 % | 1,25 V | LED faiblement lumineuse |
+| 50 Hz | impulsion de 1,5 ms | position centrale | servomoteur à 90 degrés |
+```
+
+
+## Régler le duty cycle sur Arduino Uno avec analogWrite
+
+Sur l'Arduino Uno, la fonction analogWrite encapsule tout ce mécanisme. On lui donne une broche supportant la PWM, reconnaissable au signe tilde imprimé sur la carte, et une valeur entière de 0 à 255, soit une sortie de 8 bits. La valeur 0 correspond à l'arrêt total, la valeur 255 à la pleine puissance, et les valeurs intermédiaires se répartissent en 254 paliers. La fréquence est fixée par le cœur du système : environ 490 Hz sur la plupart des broches concernées, et environ 980 Hz sur les broches 5 et 6, dont le timer est déjà occupé par une autre fonction. Vous ne réglez donc pas la fréquence sur un Uno, seulement l'amplitude, ce qui convient parfaitement à l'éclairage et à la vitesse d'un moteur.
+
+Un point important concerne les broches : seules celles marquées du tilde acceptent analogWrite. Sur un Uno, il s'agit des broches 3, 5, 6, 9, 10 et 11. Appeler analogWrite sur une broche ordinaire ne produit pas d'erreur d'exécution : la fonction se contente d'écrire un niveau haut ou bas selon que la valeur est supérieure à 127 ou non, ce qui donne une fausse bonne impression de fonctionnement, un binaire sec à la place d'une moyenne. Le moyen le plus sûr de détecter cette erreur est de mesurer la tension au multimètre ou d'observer le comportement d'une LED, dont la variation de luminosité sera nettement discontinue. Avant de câbler, repérez donc vos broches PWM sur le schéma de la carte.
+
+```cpp
+const int LED_PWM = 9;      // broche marquée du signe tilde
+int valeur = 0;
+int pas = 5;
+
+void setup() {
+  pinMode(LED_PWM, OUTPUT);
+}
+
+void loop() {
+  analogWrite(LED_PWM, valeur);
+  valeur += pas;
+  if (valeur <= 0 || valeur >= 255) pas = -pas;   // marche arrière
+  delay(20);
+}
+```
+
+Le programme ci-dessus fait varier la valeur de 0 à 255 puis inverse le sens, créant un respiration continue de la LED. Notez la structure de l'inversion : quand la valeur atteint l'une des bornes, on change le signe du pas plutôt que d'écrire un embranchement complexe. Ce motif, très fréquent, se retrouve dans tous les balayages de luminosité, de température ou de position. Pour un usage plus sobre, remplacez la progression par une valeur fixe, par exemple analogWrite(LED_PWM, 64) pour un quart de puissance, ou reliez la lecture d'un potentiomètre à la fonction pour commander la luminosité à la main. Le second exercice du chapitre propose précisément cette montée.
+
+- analogWrite prend une valeur de 0 à 255 sur une broche marquée du tilde.
+- La fréquence par défaut est fixe, autour de 490 Hz, sauf exceptions de broche.
+- Une broche non PWM traitée en binaire donne un résultat trompeur mais pas d'erreur.
+- La valeur 0 éteint complètement, la valeur 255 correspond à la pleine puissance.
+- Deux usages de timers peuvent entrer en conflit quand on cumule PWM et protocoles.
+
+## Le périphérique LEDC de l'ESP32 : fréquence et résolution au choix
+
+L'ESP32 aborde le problème avec un matériel nettement plus riche : un périphérique nommé LEDC, pour LED controller, qui comprend seize canaux indépendants, chacun muni de son propre compteur et de son propre générateur de signal carré. Contrairement à analogWrite, on y choisit explicitement la fréquence et la résolution. La résolution peut aller de 1 à 16 bits, ce qui donne soit la finesse d'origine de 0 à 255, soit une échelle de 0 à 65535, très confortable pour une régulation de vitesse exigeante. La fréquence, elle, s'étend sur une plage considérable, de quelques hertz à plusieurs mégahertz, à condition de respecter une contrainte : le produit de la fréquence par le nombre de pas de la résolution ne doit pas dépasser la fréquence de l'horloge source divisée par un diviseur minimal.
+
+La configuration s'effectue en trois appels. Le premier, ledcSetup, fixe pour un canal donné sa fréquence en hertz et sa résolution en bits. Le second, ledcAttachPin, associe ce canal à une broche physique, et l'on peut enchaîner plusieurs appels pour piloter plusieurs LED ou plusieurs moteurs sur des canaux distincts. Le troisième, ledcWrite, écrit la valeur de duty dans le canal, avec une plage allant de zéro à deux puissances de la résolution moins un. Sur les versions récentes du cœur ESP32, une API simplifiée existe, ledcAttach et ledcWrite par broche, mais comprendre l'ancienne forme reste utile car elle montre explicitement la séparation entre canal logique et broche physique.
+
+```cpp
+const int BROCHE_LED = 2;
+const int CANAL = 0;
+const int FREQUENCE = 5000;    // 5 kHz : inaudible sur un moteur
+const int RESOLUTION = 8;      // 8 bits : 0 à 255, comme sur un Uno
+
+void setup() {
+  ledcSetup(CANAL, FREQUENCE, RESOLUTION);
+  ledcAttachPin(BROCHE_LED, CANAL);
+}
+
+void loop() {
+  for (int d = 0; d <= 255; d++) {
+    ledcWrite(CANAL, d);
+    delay(8);
+  }
+  for (int d = 255; d >= 0; d--) {
+    ledcWrite(CANAL, d);
+    delay(8);
+  }
+}
+```
+
+Un réglage mérite d'être mentionné pour les moteurs : choisir une fréquence trop basse fait claquer mécaniquement le moteur et produire un sifflement aigu à l'oreille humaine. Entre 5 et 20 kHz, le sifflement disparaît car il sort du champ auditif, et la vitesse reste bien régulée. Pour un servomoteur, en revanche, la fréquence doit être exactement 50 Hz et la période de 20 millisecondes, car c'est ce rythme que le circuit interne du servo attend ; en dehors de cette plage, il perd la position ou vibre. Enfin, pour un éclairage, une fréquence basse suffit et diminue les pertes. Bref, la fréquence n'est pas un réglage anodin : elle se choisit à partir de la physique de l'actionneur, avant même d'écrire la boucle.
+
+Il existe une différence supplémentaire entre les deux cartes qui n'apparaît qu'en mesurant : la tension d'alimentation. L'ESP32 travaille à 3,3 V, et sa broche ne peut délivrer ni 5 V ni un courant important, de l'ordre de quelques dizaines de milliampères au maximum. Une LED blanche à 3,3 V s'allume correctement, mais un moteur de 5 V ou un servomoteur réclame une alimentation externe, reliée à la masse commune de la carte sans pour autant y puiser son courant. Cette règle de l'alimentation séparée, avec une masse commune obligatoire, revient pour tous les actionneurs puissants et sera détaillée dans la section suivante.
+
+- LEDC offre 16 canaux, chacun avec sa fréquence et sa résolution propres.
+- ledcSetup configure le canal, ledcAttachPin le relie à une broche, ledcWrite écrit le duty.
+- Choisissez la fréquence en fonction de l'actionneur : 50 Hz pour un servo, 5 kHz ou plus pour un moteur.
+- Une résolution de 16 bits permet des réglages de vitesse très fins.
+- La sortie de l'ESP32 est en 3,3 V et très limitée en courant.
+
+## Piloter un moteur DC : transistor, diode et puissance
+
+Un moteur DC est l'actionneur le plus utile et le plus dangereux pour une carte de développement, pour une raison simple : il consomme bien plus que ce qu'une broche peut délivrer, typiquement de quelques centaines de milliampères à plusieurs ampères, et il génère des phénomènes parasites en retour. Le transistor joue alors le rôle d'interrupteur commandé : un très faible courant appliqué à sa base, quelques milliampères venant de la broche, autorise un courant important entre ses deux autres bornes. Pour un petit moteur, un transistor NPN comme le 2N2222 convient, en l'alimentant par une résistance de base qui limite le courant demandé à la carte. Pour des moteurs plus puissants, on préfère un MOSFET à logique 3,3 V, dont la commande ne consomme presque rien et qui reste froid même à fort courant.
+
+La diode de roue libre n'est pas une option de confort, c'est une pièce de sécurité obligatoire. Un moteur est une bobine, et une bobine s'oppose à toute variation brutale de courant : quand la commande se ferme, le champ magnétique s'effondre et le moteur devient brièvement un générateur, produisant une surtension inverse qui peut dépasser une centaine de volts. Cette impulsion trouve naturellement passage dans la jonction du transistor et le détruit, souvent de façon silencieuse, c'est-à-dire avec un composant devenu passant ou ouvert. La diode branchée en opposition aux bornes du moteur rattrape ce pic : elle conduit pendant la fraction de seconde où la tension inverse apparaît, la dissipe, puis se referme. Elle se pose donc cathode vers l'alimentation positive, et se teste au multimètre en deux secondes.
+
+```
+         alimentation moteur (+)
+                │
+                ├──────────────┐
+                │              │
+                │         ┌────┴────┐
+                │         │  moteur │
+                │         └────┬────┘
+                │         ┌────┴────┐
+                │         │   diode │  cathode vers le haut
+                │         └────┬────┘
+                │              │
+                │         collecteur
+                │            ┌─┴─┐
+   broche PWM ──┴── R base ──┤ B   C  transistor NPN
+                             │ E │
+                             └─┬─┘
+                               │
+                              masse
+```
+
+Le câblage complet suit donc un trajet unique : masse commune, émetteur du transistor à la masse, base reliée à la broche PWM par une résistance, collecteur au bornier négatif du moteur, borne positive du moteur à l'alimentation moteur, et diode en travers du moteur. Le duty cycle appliqué à la base règle la vitesse, la résistance de base protège la carte, la diode protège le transistor. N'alimentez jamais un moteur depuis la broche d'alimentation régulée de la carte : les chutes de tension provoquées par les accélérations provoquent des redémarrages intempestifs du microcontrôleur, symptôme très reconnaissable puisque la carte se réinitialise à chaque démarrage du moteur.
+
+```cpp
+const int MOTEUR_PIN = 9;     // broche PWM, marque tilde obligatoire
+
+void setup() {
+  pinMode(MOTEUR_PIN, OUTPUT);
+  analogWrite(MOTEUR_PIN, 0);   // démarrage à l'arrêt, toujours
+}
+
+void demarrerProgressif(int pin, int vitesseCible) {
+  for (int v = 0; v <= vitesseCible; v += 5) {
+    analogWrite(pin, v);
+    delay(40);
+  }
+}
+
+void setupEtArret() {
+  for (int v = 255; v >= 0; v -= 5) {
+    analogWrite(MOTEUR_PIN, v);
+    delay(40);
+  }
+  analogWrite(MOTEUR_PIN, 0);
+}
+```
+
+- Un transistor pilote un grand courant avec un tout petit courant de commande.
+- La diode de roue libre absorbe la surtension générée à l'arrêt du moteur.
+- Sa cathode se branche du côté de l'alimentation positive.
+- Alimentez le moteur sur une source dédiée, jamais sur la sortie régulée de la carte.
+- Démarrez toujours à zéro puis augmentez progressivement le duty cycle.
+- Séparez physiquement câbles de puissance et câbles de mesure.
+
+## Servomoteur et relais : deux commandes très différentes
+
+Le servomoteur se distingue des autres actionneurs parce qu'il ne reçoit pas une puissance mais une consigne de position. Son circuit interne reçoit une impulsion dont la largeur indique l'angle voulu : environ 1 milliseconde pour la position la plus à gauche, 1,5 milliseconde pour le centre, 2 millisecondes pour la position la plus à droite, le tout répété à une fréquence de 50 Hz. Un comparateur et un potentiomètre mécanique couplés à un petit moteur forment une boucle de régulation locale : le servo tourne jusqu'à ce que sa position corresponde à la commande, puis s'arrête. C'est cette boucle interne qui explique qu'un servo maintient une position contre une résistance modérée, et aussi qu'il consomme du courant dès qu'on le déplace.
+
+Sur Arduino, la bibliothèque Servo masque entièrement ces détails. On déclare un objet, on l'attache à une broche avec la méthode attach, puis on écrit la position voulue avec write en degrés, de 0 à 180 par défaut. La bibliothèque gère elle-même la génération des impulsions à l'aide d'un timer, ce qui a deux conséquences pratiques : elle occupe ce timer, donc certaines lectures de durée deviennent indisponibles, et elle impose des durées de retour à zéro compatibles avec le standard. Pour affiner la course réelle de votre servo, que ses mécanismes font toujours varier d'un modèle à l'autre, la forme writeMicroseconds vous donne un contrôle direct en microsecondes et permet de recaler les bornes mécaniques.
+
+```cpp
+#include <Servo.h>
+
+Servo monServo;
+const int SERVO_PIN = 10;
+
+void setup() {
+  monServo.attach(SERVO_PIN, 500, 2500);   // recalage des bornes
+}
+
+void loop() {
+  for (int angle = 0; angle <= 180; angle += 3) {
+    monServo.write(angle);
+    delay(25);
+  }
+  for (int angle = 180; angle >= 0; angle -= 3) {
+    monServo.write(angle);
+    delay(25);
+  }
+}
+```
+
+L'alimentation du servo est le piège classique de ce composant. Un petit servo comme le SG90 réclame plusieurs centaines de milliampères au démarrage, parfois près d'un ampère en charge, ce qui dépasse largement la capacité d'un régulateur de carte. Branché sur la sortie 5 V de l'Arduino, il provoque une chute de tension à chaque mouvement, et la carte redémarre au milieu de l'exécution, le programme recommençant alors indéfiniment depuis le début. La solution consiste à alimenter le servo sur une source externe dédiée, à relier les masses des deux alimentations en un point unique, et à éventuellement prévoir une capacité d'au moins 100 microfarads aux bornes du servo pour amortir les pointes.
+
+Le relais, enfin, apporte une fonction que les autres actionneurs ne donnent pas : l'inversion mécanique et l'isolement. Un module de relais comporte une bobine, une paire de contacts et, dans les versions recommandées, un étage opto-isolé qui sépare électriquement la commande de la charge. On commande une broche numérique, la bobine aspire l'armature, les contacts commutent, et un appareil sous tension secteur peut alors être allumé. Deux précautions s'imposent. La première est que de nombreux modules sont actifs au niveau bas : leur broche de commande doit être mise à l'état bas pour activer le relais, ce qui inverse la logique de votre programme. La seconde concerne la sécurité : rien de ce qui se passe côté 220 V ne doit jamais être manipulé pendant les essais sans les précautions d'usage, le rôle de l'opto-isolateur n'étant pas de rendre l'opération anodine.
+
+- Un servo reçoit une commande de position, pas une puissance : impulsion de 1 à 2 ms à 50 Hz.
+- writeMicroseconds permet de recaler précisément la course mécanique.
+- Alimentez un servo sur une source externe, avec masse commune à la carte.
+- Un relais commande des charges élevées et isole galvaniquement la partie puissance.
+- De nombreux modules de relais sont actifs à l'état bas : vérifiez la logique.
+- Les deux familles d'actionneurs se pilotent en PWM ou en broche numérique selon le cas.
+
+Une mesure que l'on ne voit pas n'existe pas. Jusqu'ici, vos programmes ont lu des tensions et piloté des puissances, mais la valeur obtenue restait enfermée dans la carte : pour l'exploiter, il faut l'envoyer vers l'extérieur, l'afficher, l'enregistrer, la comparer à une autre. C'est le rôle du port série, cette liaison qui relie la carte à votre ordinateur par le même câble qui la décharge et la programme. Cette dernière partie du chapitre vous montre à organiser cette sortie : choisir une vitesse de communication compatible, formater les valeurs avec un nombre de décimales cohérent, leur donner un horodatage, puis adopter un format structuré, clé-valeur, CSV ou JSON, que vous pourrez relire à tête reposée ou importer dans un tableur. Elle se termine par le mini-projet qui rassemble toutes les notions du chapitre.
+
+## Afficher les mesures sur le moniteur série
+
+Tout commence par Serial.begin, appelé une seule fois dans setup avec la vitesse de communication exprimée en bauds, c'est-à-dire en bits par seconde. La valeur 9600 est l'héritage des premiers microcontrôleurs, où elle suffisait amplement ; 115200 est aujourd'hui le réglage le plus courant, car il permet d'envoyer de longs messages sans ralentir le programme. Cette valeur doit correspondre exactement à celle réglée dans le moniteur série de votre éditeur : en cas de désaccord, le texte arrive, mais déformé, en une succession de caractères indéchiffrables. Ce symptôme, très fréquent au départ, ne provient jamais du programme lui-même, seulement d'une vitesse mal assortie, et se répare en deux clics.
+
+Les fonctions d'envoi s'utilisent en deux variantes. Serial.print envoie un fragment sans retour à la ligne, Serial.println ajoute le retour à la ligne, si bien que le style courant consiste à écrire un libellé, puis une valeur, puis à fermer la ligne avec println. Les nombres décimaux acceptent un second argument qui fixe le nombre de chiffres après la virgule : print(tension, 3) affiche trois décimales, ce qui évite d'afficher seize chiffres pour un résultat qui n'en mérite que deux. Toutes les valeurs, entières, décimales, textuelles, sont converties en caractères avant l'envoi : le port série ne transporte que du texte, et la conversion est prise en charge par la bibliothèque.
+
+```cpp
+const int BROCHE = A0;
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial) { }        // attend l'ouverture du port sur certaines cartes
+}
+
+void loop() {
+  int brut = analogRead(BROCHE);
+  float tension = brut * 5.0 / 1023.0;
+  float temp = tension / 0.01;
+
+  Serial.print("brut=");
+  Serial.print(brut);
+  Serial.print("  V=");
+  Serial.print(tension, 3);
+  Serial.print("  T=");
+  Serial.print(temp, 1);
+  Serial.println(" C");
+  delay(500);
+}
+```
+
+Un second réflexe à acquérir concerne la fréquence d'affichage. Envoyer une ligne toutes les millisecondes sature le moniteur, ralentit le programme qui attend que le tampon se vide, et rend l'écran illisible. Pour une mesure lente comme la température, une ligne par seconde suffit largement ; pour observer une rampe de démarrage, on peut monter à dix lignes par seconde ; au-delà, c'est le graphique de l'éditeur qu'il faut utiliser. La solution consiste à séparer la période de mesure de la période d'affichage : on lit souvent, on affiche rarement, avec deux compteurs de temps indépendants fondés sur millis(). Ce découplage est exactement celui que vous utiliserez dans le mini-projet, et il évite le piège classique du delay() placé au mauvais endroit, qui ralentit toute la boucle.
+
+Le moniteur série propose aussi deux fonctionnalités que l'on ignore trop longtemps. Le graphique intégré trace en temps réel les valeurs numériques envoyées, ce qui est incomparablement plus parlant qu'une colonne de chiffres défilant : une variation de quelques points devient immédiatement lisible comme une courbe, et l'on distingue le bruit d'une vraie évolution. La zone de saisie permet, elle, d'envoyer du texte vers la carte, ce qui ouvre la porte aux consignes à distance, la température cible d'un thermostat par exemple. Ces deux outils transforment le port série en véritable interface de laboratoire, sans rien ajouter au matériel.
+
+- Serial.begin fixe la vitesse, qui doit correspondre à celle du moniteur.
+- print envoie sans retour à la ligne, println le ferme.
+- Un second argument limite le nombre de décimales affichées.
+- Séparez la période de mesure de la période d'affichage avec millis().
+- Le graphique intégré révèle le bruit que masque une colonne de chiffres.
+- La zone de saisie permet d'envoyer des commandes vers la carte.
+
+## Format structuré, unités et horodatage
+
+Un affichage lisible par un humain n'est pas nécessairement lisible par un programme. Dès que vous souhaitez enregistrer des mesures, les importer dans un tableur ou les faire consommer par un autre logiciel, il faut adopter un format structuré. Trois formes couvrent la quasi-totalité des besoins. Le format clé-valeur, par exemple temp=23.5 hum=48, se lit d'un coup d'œil et se parse avec quelques lignes. Le format CSV, séparé par des virgules, s'importe directement dans un tableur ou un langage d'analyse de données. Le format JSON, plus rigoureux, accepte les types imbriqués et bénéficie d'outils universels pour sa lecture. Pour un relevé de banc, choisissez CSV ; pour un dialogue entre programmes, choisissez JSON ; pour un affichage quotidien, le clé-valeur suffit.
+
+L'horodatage donne son contexte à chaque mesure. La fonction millis() renvoie le nombre de millisecondes écoulées depuis le démarrage de la carte, sous forme d'un entier non signé sur 32 bits, ce qui couvre environ 49 jours de fonctionnement continu. Cette valeur n'est pas une date : c'est un temps relatif, parfait pour espacer des échantillons, mesurer des durées ou construire des séries temporelles à partir du démarrage. Pour une véritable date, il faut un module d'horloge temps réel, comme le DS3231, qui conserve l'heure à l'alimentation près. Dans la majorité des projets pédagogiques, millis() suffit amplement : il faut simplement garder à l'esprit que la première mesure porte la valeur zéro, non minuit.
+
+```cpp
+const int BROCHE = A0;
+unsigned long dernierAffichage = 0;
+const unsigned long PERIODE = 1000;   // une ligne par seconde
+
+void setup() {
+  Serial.begin(115200);
+}
+
+void loop() {
+  unsigned long maintenant = millis();
+
+  if (maintenant - dernierAffichage >= PERIODE) {
+    dernierAffichage = maintenant;
+    int brut = analogRead(BROCHE);
+    float temp = brut * 5.0 / 1023.0 / 0.01;
+
+    // format clé-valeur, une ligne, horodatée
+    Serial.print("ts=");
+    Serial.print(maintenant);
+    Serial.print("ms temp=");
+    Serial.print(temp, 1);
+    Serial.println("C");
+  }
+}
+```
+
+Deux pièges d'affichage méritent d'être signalés, parce qu'ils coûtent toujours une heure de recherche. Le premier concerne les entiers non signés : comparer deux valeurs de millis() avec un simple plus est incorrect au moment du débordement, et la syntaxe soustraction puis comparaison, celle que l'exemple ci-dessus utilise, est la seule correcte. Le second concerne les chaînes construites à la main : la moindre virgule manquante ou le moindre guillemet oublié casse l'analyse d'un JSON en aval, sans que la carte elle-même signale la moindre erreur. C'est pourquoi on conseille de tester d'abord l'affichage à l'œil, puis de soumettre un exemplaire au parseur du langage de votre choix avant d'enchaîner des centaines de lignes.
+
+Le tableau ci-dessous compare les trois formats sur une même mesure, afin que le choix soit fait en connaissance de cause. La ligne CSV se prête à l'import direct dans un tableur, la ligne clé-valeur à un débogage rapide, la ligne JSON à un échange entre programmes. Dans le mini-projet, vous produirez une de ces trois formes, avec pour chacune l'horodatage, la valeur, l'unité et l'état de l'actionneur, ce qui rend la mesure exploitable sans autre information d'accompagnement.
+
+```table
+| Format | Exemple | Se lit à l'œil | Se parse automatiquement | Usage recommandé |
+| --- | --- | --- | --- | --- |
+| clé-valeur | ts=12540 temp=23.5C | très bien | facile | débogage quotidien |
+| CSV | 12540,23.5,48,1 | bien | très facile | import tableur |
+| JSON | ts de 12540 avec temp 23.5 | correct | très robuste | échange entre programmes |
+```
+
+
+- Horodatez chaque mesure avec millis(), temps relatif depuis le démarrage.
+- CSV pour le tableur, JSON pour les échanges structurés, clé-valeur pour soi.
+- Comparez toujours millis() par soustraction, jamais par addition.
+- Séparez clairement unité et valeur : 23.5C vaut mieux que 23.5.
+- Testez une ligne sur un parseur avant d'en produire des centaines.
+- Limitez la fréquence d'envoi : une ligne par seconde pour une mesure lente.
+
+## Mini-projet : la station climatique complète
+
+Nous voici réunis pour assembler le projet fil rouge du chapitre. L'appareil surveille la température d'une pièce, compare la valeur à une consigne réglable, pilote un ventilateur en PWM quand il faut rafraîchir, allume une LED d'état et publie régulièrement une mesure horodatée sur le port série. Il met donc en jeu toutes les notions vues jusqu'ici : lecture analogique et conversion, moyennage pour stabiliser, seuil avec hystérésis pour éviter les basculements, PWM pour commander la puissance, entrée série pour modifier la consigne à chaud, et affichage structuré. Comme toujours, nous commencerons par la chaîne de mesure, puis la chaîne de commande, puis le lien entre les deux.
+
+La chaîne de mesure appelle la fonction de lecture moyennée de la section précédente. On lit huit échantillons, on les convertit en tension avec la référence de la carte, puis en température avec la pente du LM35. On stocke le résultat dans une variable flottante mise à jour une fois par seconde, et seulement elle : répéter la lecture à chaque passage de la boucle pour l'affichage produirait des valeurs différentes d'une ligne à l'autre, alors qu'il s'agit de la même mesure. La consigne et l'hystérésis sont déclarées en tête de fichier comme constantes nommées, ce qui rend le programme lisible et évite les nombres magiques dispersés dans le code.
+
+La logique de commande repose sur l'hystérésis, ce mécanisme qui remonte au XIXe siècle et qui règle tous les thermostatiques. On fait démarrer le ventilateur quand la température dépasse la consigne plus un demi-degré, et on ne l'arrête qu'en dessous de la consigne moins un demi-degré. Entre ces deux seuils, l'état précédent se maintient. Sans cette marge, la mesure, qui oscille naturellement de quelques dixièmes, provoquerait un enchaînement de démarrages et d'arrêts, destructeur pour le moteur et incompréhensible à l'observation. La largeur de la bande morte se règle en pratique : un dixième de degré réagit vite mais claque, un degré est calme mais retarde l'action.
+
+```cpp
+const int LM35_PIN = A0;
+const int VENTIL_PIN = 9;      // PWM, broche tilde
+const int LED_VERTE = 7;
+const int LED_ROUGE = 8;
+
+const float VREF = 5.0;
+const int ADC_MAX = 1023;
+const float CONSIGNE_INIT = 25.0;
+const float HYSTERESIS = 0.5;
+
+float consigne = CONSIGNE_INIT;
+bool ventilateur = false;
+unsigned long dernierLux = 0;
+unsigned long derniereLigne = 0;
+
+float lireTemperature() {
+  long somme = 0;
+  for (int i = 0; i < 8; i++) somme += analogRead(LM35_PIN);
+  float brut = (float)somme / 8.0;
+  return brut * VREF / ADC_MAX / 0.01;
+}
+
+void setup() {
+  pinMode(VENTIL_PIN, OUTPUT);
+  pinMode(LED_VERTE, OUTPUT);
+  pinMode(LED_ROUGE, OUTPUT);
+  Serial.begin(115200);
+  Serial.println("station prete");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  if (now - dernierLux >= 1000) {
+    dernierLux = now;
+    float t = lireTemperature();
+    if (!ventilateur && t > consigne + HYSTERESIS) ventilateur = true;
+    if (ventilateur && t < consigne - HYSTERESIS) ventilateur = false;
+
+    analogWrite(VENTIL_PIN, ventilateur ? 200 : 0);
+    digitalWrite(LED_VERTE, !ventilateur);
+    digitalWrite(LED_ROUGE, ventilateur);
+  }
+
+  if (now - derniereLigne >= 5000) {
+    derniereLigne = now;
+    float t = lireTemperature();
+    Serial.print("{\"ts\":");
+    Serial.print(now);
+    Serial.print(",\"temp\":");
+    Serial.print(t, 1);
+    Serial.print(",\"consigne\":");
+    Serial.print(consigne, 1);
+    Serial.print(",\"fan\":");
+    Serial.print(ventilateur ? 1 : 0);
+    Serial.println("}");
+  }
+
+  if (Serial.available()) {
+    String commande = Serial.readStringUntil('\n');
+    commande.trim();
+    if (commande.startsWith("SET:")) {
+      float valeur = commande.substring(4).toFloat();
+      if (valeur > 5.0 && valeur < 45.0) {
+        consigne = valeur;
+        Serial.print("nouvelle consigne ");
+        Serial.println(consigne, 1);
+      }
+    }
+  }
+}
+```
+
+Le programme ci-dessus est entièrement non bloquant : aucune attente ne fige la boucle, chaque tâche possède son propre compteur de temps. C'est cette structure qui vous permet de lire la série pendant que le ventilateur continue de se commander et que la consigne se modifie à la volée. Notez que la température est relue pour l'affichage plutôt que stockée depuis la dernière mesure : dans un vrai appareil, vous préférerez conserver la dernière valeur lue pour garantir que la ligne publiée correspond exactement à l'état commandé, arbitrage typique entre fraîcheur et cohérence. Notez aussi la validation de la consigne reçue : toute valeur hors plage plausible est rejetée, si bien qu'une saisie erronée dans le moniteur ne peut pas mettre l'appareil dans un état absurde.
+
+La vérification du montage se fait en trois temps, dans cet ordre. D'abord, débranchez le ventilateur et observez uniquement la température affichée : elle doit évoluer doucement et refléter votre souffle ou votre main. Ensuite, réintroduisez la commande du ventilateur et vérifiez que les deux LED basculent aux bons seuils, en soufflant sur le capteur pour simuler une montée. Enfin, testez la commande série avec une consigne basse, par exemple une consigne de 20 degrés, qui doit déclencher le ventilateur immédiatement, puis remontez la consigne pour l'arrêter. Chaque étape isole une fonctionnalité : si l'une échoue, vous savez exactement laquelle corriger, sans jamais deviner.
+
+- Séparez les trois chaînes : mesure, décision, commande.
+- Appliquez l'hystérésis pour éviter les basculements en frontière.
+- Conservez deux compteurs de temps indépendants pour mesurer et publier.
+- Validez toute consigne reçue avant de l'appliquer.
+- Vérifiez le système par étapes isolées, jamais en une seule tentative.
+- Aucune attente bloquante : la boucle reste disponible pour toutes les tâches.
+
+## À retenir
+
+- Un capteur convertit une grandeur physique en signal ; un actionneur convertit un ordre en effet.
+- analogRead renvoie un indice dans une échelle : Uno de 0 à 1023, ESP32 de 0 à 4095.
+- La conversion en tension s'écrit valeur brute multipliée par la référence, divisée par le maximum.
+- Chaque capteur impose sa loi : 10 mV par degré pour le LM35, pont diviseur pour une LDR ou un NTC.
+- Moyenner quelques échantillons réduit le bruit ; convertissez la somme en flottant avant de diviser.
+- Le PWM produit une tension moyenne en faisant varier le duty cycle d'un signal carré.
+- analogWrite accepte de 0 à 255 sur les broches tilde ; LEDC ajoute 16 canaux, fréquence et résolution réglables.
+- Un moteur exige un transistor, une diode de roue libre et une alimentation dédiée.
+- Un servo se commande par impulsion de 1 à 2 ms à 50 Hz et réclame son propre alimentation.
+- Le port série exige des vitesses identiques des deux côtés et gagne à être horodaté et structuré.
+- millis() fournit un temps relatif fiable pour espacer lectures et publications.
+- L'hystérésis protège toute régulation contre les basculements en frontière de seuil.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus fréquente, consiste à confondre la valeur brute et la tension. Une lecture de 512 ne vaut pas 512 volts ni 512 degrés : elle correspond à environ 2,50 V sur un Uno, et à peine 0,41 V sur un ESP32. Transférer un sketch d'une carte à l'autre sans reprendre la référence et la résolution produit des résultats absurdes qui semblent pourtant parfaitement cohérents en première lecture. Vérifiez toujours les deux constantes, référence et maximum, avant de chercher une faute dans le capteur.
+
+La deuxième erreur est la division entière. Si vous écrivez la conversion avec des entiers, la partie décimale est tronquée et la mesure avance par paliers brutaux : une température reste bloquée à 23 degrés pendant que la tension réelle monte de dixièmes. Convertissez au moins un des termes en nombre décimal, ou lancez explicitement un cast, pour forcer l'arithmétique réelle. La même remarque vaut pour la moyenne : additionner des entiers puis diviser par huit reste une division entière tant que rien ne signale le contraire.
+
+La troisième erreur vient des broches : appeler analogWrite sur une broche sans PWM, ou oublier que le pin 9 est bien concerné mais pas le pin 8, donne des comportements étranges sans message d'erreur. Sur ESP32, oubliez d'attacher le canal à la broche et votre ledcWrite modifie un canal qui ne commande rien. La quatrième est l'alimentation : un servo ou un moteur pris sur la sortie régulée de la carte provoque des redémarrages intempestifs, toujours au pire moment. Enfin, la cinquième concerne le moniteur série : une vitesse différente de celle du programme donne du texte indéchiffrable, et la simple modification d'un paramètre suffit alors à faire croire à une panne matérielle.
+
+Un sixième point mérite attention parce qu'il est purement logique : l'oubli de l'hystérésis. Un simple test de température strictement supérieur au seuil, avec une mesure qui oscille de deux dixièmes, fait clignoter le relais ou le ventilateur plusieurs fois par seconde. Ajoutez une bande morte d'un demi-degré et le problème disparaît. Une septième erreur classique est de placer un delay() long au milieu de la boucle : pendant cette attente, la carte ne lit plus rien, n'exécute plus aucune commande et ne répond plus au port série. Remplacez toujours une attente par une comparaison de compteurs de temps, et gardez le delay pour les seuls cas où le programme n'a réellement rien d'autre à faire.
+
+## Pour aller plus loin
+
+Pour approfondir, commencez par la documentation officielle des fonctions de la carte, qui détaille les constantes de chaque famille de microcontrôleurs, les timers occupés et les particularités des entrées analogiques. Elle répond à la plupart des questions que vous vous poserez en passant d'un matériel à l'autre. Les fiches techniques des capteurs, ensuite, valent le détour même si elles semblent techniques : une page consacrée aux caractéristiques électriques vous apprendra la sensibilité, la plage, la consommation et les tolérances, autant d'informations qui font la différence entre un prototype qui mesure et un prototype qui estime.
+
+En pratique, le meilleur exercice suivant consiste à ajouter une deuxième grandeur à votre station : l'humidité avec un DHT22, ou la pression avec un BME280. Vous découvrirez alors la notion de bibliothèque externe, d'installation par gestionnaire, et la différence entre un capteur analogique qu'on lit en une ligne et un capteur numérique dont il faut mettre en place un protocole. Un second axe d'approfissage est l'enregistrement des données : au lieu d'afficher, écrire sur une carte mémoire, avec un format CSV, transforme l'appareil en station d'acquisition et vous apprend à gérer l'espace, les en-têtes de colonnes et la rotation des fichiers.
+
+Le dernier prolongement concerne l'habillage : un écran local pour afficher la mesure sans ordinateur, puis une publication réseau pour la consulter à distance. Tous deux s'appuient sur la même chaîne de traitement que celle du mini-projet : la mesure reste la mesure, seule la sortie change. C'est la leçon principale de ce chapitre, et vous la retrouverez dans les suivants : si votre code sépare proprement la lecture, la décision et la sortie, chaque nouvelle fonctionnalité se greffe sans réécriture, et un projet devenu complexe reste lisible.
+
+## Et maintenant : passez à la mesure réelle
+
+Vous disposez à présent de tout ce qu'il faut pour faire entrer le monde physique dans votre carte : convertir une tension en nombre, fiabiliser la mesure, commander une puissance et rendre le résultat observable. Le prochain pas ne demande aucune nouvelle théorie : branchez un capteur, lancez le programme d'affichage brut, déclenchez une variation avec votre main, puis écrivez la formule qui relie les deux. Une fois cette chaîne vérifiée, réécrivez seul le mini-projet du thermostat, sans regarder l'exemple, en structurant le code en trois fonctions : lire, décider, agir. C'est cet exercice, plus que la lecture, qui fixera les notions.

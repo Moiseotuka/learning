@@ -1,0 +1,170 @@
+Voici la campagne que nous allons suivre, car la corrélation s'apprend sur un cas raconté, pas sur une définition. Entre le 3 et le 5 novembre 2026, des adresses publiques ont essayé de deviner des mots de passe sur la messagerie hébergée et la passerelle d'accès distant de la Métropole : mille huit cents tentatives, douze comptes visés, quatre adresses sources qui tournaient. Une seule tentative a réussi, celle visant le compte stage.accueil, créé pour un stage de l'été et jamais désactivé. Ce détail, anecdotique en apparence, commande toute la suite de l'histoire.
+
+La chronologie se lit en trois temps. Le 3 novembre à 4 h 12, les premiers échecs tombent sur la passerelle, à raison de trois à cinq par minute, sans que personne ne soit là pour les lire. Le 4, la vague se poursuit, change d'adresse source et élargit la liste des comptes. Le 5 à 6 h 41, une connexion réussie s'enregistre depuis l'une des adresses déjà utilisées, puis, en dix-sept minutes, une règle de transfert est créée sur la boîte stage.accueil et les contacts sont exportés. À 7 h 03, une documentaliste signale qu'elle ne reçoit plus aucun courriel du service : sans ce signalement humain, l'incident aurait été découvert plusieurs jours plus tard.
+
+Considérez maintenant ce que chaque alerte isolée aurait produit. La règle d'échecs de connexion, réglée sur vingt échecs par heure, se serait déclenchée quarante fois, chacune classée de niveau moyen. La règle de compte dormant réveillé se serait déclenchée une fois, niveau faible : un ancien stagiaire qui se connecte, après tout. La règle de création de règle de messagerie se serait déclenchée une fois, à 7 h, quand la boîte est déjà pleine. Quarante-deux alertes, trois histoires tronquées, aucune qui dise ce qui se joue. L'analyste de nuit les aurait classées sans suite à 5 h du matin.
+
+```text
+# Extrait réuni — 5 novembre 2026, temps universel affiché en heure locale
+
+# passerelle d'accès distant (source vpn01)
+06:38:11+01:00 vpn01 AUTH_FAIL user="stage.accueil" peer="185.220.101.19" reason="bad_password"
+06:41:09+01:00 vpn01 AUTH_OK   user="stage.accueil" peer="45.129.9.83"    session="9f21" duration="0"
+
+# annuaire (dc01, Événement 4740 : compte verrouillé puis déverrouillé)
+06:41:15+01:00 dc01 Security 4740 "A user account was locked out. Account Name: stage.accueil"
+
+# messagerie hébergée (journal d'audit, règles et exports)
+06:47:58+01:00 messagerie InboxRuleCreated     user="stage.accueil" name="jav" forward="util.retour@messagerie-extranger.net"
+06:53:12+01:00 messagerie MailItemsAccessed    user="stage.accueil" access="5214" folder="Contacts"
+07:03:40+01:00 messagerie TransportThrottling  user="stage.accueil" action="rate_limited"
+
+# pare-feu de périmètre (connexion sortante vers la destination du transfert)
+06:48:03+01:00 fw-edge01 allowpkt proto=tcp dst=195.181.160.14 dport=443 src=10.30.7.24 bytes=842113
+```
+
+La corrélation ne change aucun de ces faits, elle change l'ordre dans lequel on les voit. Rapprochés sur l'entité pivot, le compte stage.accueil, et sur une fenêtre de trente minutes, ils forment une phrase : essais répétés, réussite, déverrouillage du compte, règle de transfert, export des contacts, débit anormal. Une seule alerte remonte alors, de niveau élevé, avec les six faits et leurs sources. Le volume passe de quarante-deux alertes à une ; le temps de détection passe de plusieurs jours, si l'on attend le signalement utilisateur, à quatre minutes après la première connexion réussie.
+
+Le traitement n'est plus le même non plus. L'analyste ouvre un dossier unique qui contient déjà la séquence, les adresses sources, les journaux extraits et le propriétaire du compte ; il qualifie l'incident en quelques minutes. L'incident est déclaré majeur : accès à une boîte professionnelle, export de contacts, filtrage probable du courriel entrant. Les décisions suivent un ordre écrit : bloquer les quatre adresses au pare-feu, révoquer les sessions du compte, réinitialiser le mot de passe en présence du propriétaire, conserver les journaux de la boîte. C'est cette séquence que la section sur les playbooks transformera en exécution automatisée.
+
+- Une campagne se lit sur l'entité, pas sur l'événement isolé.
+- Quarante-deux alertes isolées deviennent une seule alerte corrélée, avec sa séquence, et le test sur historique reste obligatoire.
+
+## Corréler : de l'alerte isolée à l'incident
+
+Corrélier, c'est substituer à des lignes éparses un récit vérifiable. Concrètement, une règle de corrélation applique l'un des quatre motifs qui couvrent la quasi-totalité des cas pratiques. La cardinalité, qui compte : plus de cinquante échecs en cinq minutes. La fenêtre, qui borne un événement dans le temps. La séquence, qui impose un ordre : échecs, puis réussite, puis ouverture d'un dossier sensible. Et la cooccurrence, qui exige deux faits sur la même entité dans un intervalle donné : un poste qui reçoit un courriel puis exécute une macro. Un playbook ne corrige rien à cela : il consomme l'alerte que ces motifs produisent.
+
+Le choix de l'entité pivot fait toute la qualité du résultat. Compte, adresse, poste, application, dossier : la bonne entité est celle que l'attaquant doit toucher plusieurs fois pour réussir. Sur notre campagne, pivoter sur l'adresse source aurait donné une alerte par vague ; pivoter sur le compte a donné une histoire complète. L'enrichissement vient ensuite, avant l'affichage : propriétaire, service, sensibilité de la boîte, sessions ouvertes, pays et historique de l'adresse. Une alerte sans enrichissement reporte du travail sur l'analyste ; une alerte enrichie commence déjà l'investigation.
+
+Les fenêtres se choisissent à partir du comportement à détecter, jamais à partir de la commodité de l'outil. Trois minutes suffisent pour un essai de mots de passe rapide ; trente minutes pour un ressaisi distrait ; vingt-quatre heures pour le réveil d'un compte dormant ; quinze minutes pour la séquence tentative, réussite, action post-authentification. Trop large, la fenêtre agrège des faits sans rapport et produit des faux positifs ; trop étroite, elle découpe une campagne en alertes successives et vous retrouvez le problème de départ. À chaque fenêtre, écrivez à côté de la règle le fait métier qui la justifie.
+
+Le pare-feu apporte à cette mécanique une matière première que les journaux d'application ne donnent pas : le refus et l'autorisation. Un balayage se voit comme une série de refus vers des ports jamais touchés ; une connexion établie vers une destination inconnue se voit comme une autorisation sans antécédent ; un poste qui tente d'atteindre un lecteur de sauvegarde se voit comme un refus à répétition. Ces lignes, prises isolément, sont du bruit ; agrégées sur une adresse ou un poste pendant quelques minutes, elles deviennent le premier maillon d'une séquence que les sources d'identité confirment ensuite.
+
+```image
+parefeu-reseau
+| Pare-feu de périmètre : ses journaux de refus et d'autorisation fournissent au centre le premier maillon des corrélations d'attaques réseau.
+```
+
+La règle de corrélation elle-même tient en peu de lignes, à condition d'être écrite sur des champs déjà normalisés. Voici la forme que prend notre campagne une fois traduite : compter les échecs par compte et par adresse, exiger plusieurs comptes touchés depuis une même adresse, imposer l'ordre des faits, puis joindre les actions post-authentification. Le résultat s'affiche avec une gravité, un propriétaire et une procédure, exactement comme une règle simple.
+
+```yaml
+title: Campagne d'essai de mots de passe avec succes posterieur
+id: c4e88b2d-1f57-4a0e-9c31-77a0b5e2d934
+status: test
+logsource:
+  category: authentication
+detection:
+  echecs:
+    event.outcome: failure
+    event.action: authentication_failure
+  reussite:
+    event.outcome: success
+    event.action: authentication_success
+  post_auth:
+    event.action:
+      - inbox_rule_created
+      - mailbox_permission_added
+  selection:
+    SelectionEchecs: echecs
+    SelectionReussite: reussite
+    SelectionPost: post_auth
+  condition: selection
+groupby:
+  - user.name
+  - source.ip
+threshold:
+  count: 3           # 3 comptes distincts par adresse, fenêtre de 30 minutes
+  order: "echecs puis reussite puis post_auth"
+fields:
+  - user.name
+  - source.ip
+  - host.name
+level: high
+```
+
+Quatre pièges reviennent dans toutes les corrélations que l'on hérite. Une corrélation posée sur une seule source, qui ignore ce que les autres racontent — c'est une agrégation, pas une corrélation. Une corrélation sans enrichissement, où l'analyste doit reconstituer seul le contexte du compte. Une corrélation dont la fenêtre n'a jamais été testée sur historique. Enfin une corrélation qui ouvre un ticket par alerte levée : le volume revient par la fenêtre de ticket. Le remède commun est le regroupement par entité, une seule alerte et un seul dossier par séquence, et un test qui simule une campagne avant la mise en production.
+
+- Quatre motifs suffisent : cardinalité, fenêtre, séquence, cooccurrence.
+- Pivotez sur l'entité que l'attaquant doit toucher plusieurs fois, puis enrichissez avant d'afficher ; une alerte corrélée doit ouvrir un dossier unique, sinon le bruit revient par la porte des tickets.
+
+## Se repérer dans MITRE ATT&CK
+
+MITRE ATT&CK est un référentiel public qui décrit, sous forme de matrice, les comportements observés chez de vrais adversaires : les tactiques, c'est-à-dire les objectifs successifs d'une attaque, et pour chacune les techniques qui servent à les atteindre. Il se lit de gauche à droite comme une chaîne — accès initial, exécution, persistance, mouvement latéral, collection, exfiltration, impact — et chaque case se détaille en variantes plus fines. Il ne s'agit ni d'un standard à certifier ni d'une liste à cocher : c'est un vocabulaire commun qui permet à un centre et à sa direction de parler de la même chose sans ambiguïté.
+
+Son utilité opérationnelle tient en quatre emplois très concrets. Nommer : dire « nous ne couvrons aucune technique de mot de passe deviné » est plus exploitable que dire « notre détection des mots de passe est moyenne ». Communiquer : une matrice colorée se lit en deux minutes en réunion de direction, à condition d'expliquer ce que la couleur mesure. Prioriser : croiser les techniques couvertes avec les menaces réellement documentées contre votre secteur indique où investir le prochain mois de travail. Et éviter les doublons : deux règles couvrant la même technique sur des sources différentes sont souvent le signe d'un travail mal réparti.
+
+Deux précisions de lecture évitent les contresens. D'abord, chaque technique possède ses sources de données, c'est-à-dire les journaux dans lesquels elle laisse une trace : sans ces sources collectées, la technique ne peut pas être détectée. Ensuite, les techniques se détaillent en variantes fines, et c'est là que se joue la précision : deviner un mot de passe, pulvériser le même mot de passe sur plusieurs comptes et réutiliser une combinaison volée relèvent de trois variantes, avec trois signaux et trois règles. Cartographier au niveau trop grossier donne une fausse impression de complétude.
+
+```table
+| Tactique | Technique de notre campagne | Signal disponible | Détection existante | État |
+| --- | --- | --- | --- | --- |
+| Accès initial | Force brute sur un compte externe | Échecs d'authentification, refus VPN | Règle d'échecs par compte | Couvert |
+| Accès initial | Réutilisation d'un ancien compte | Compte dormant réveillé | Règle de compte inactif | Couvert partiellement |
+| Exécution | Exécution d'une commande après connexion | Journal de processus sur poste | Aucune | Angle mort |
+| Persistance | Création d'une règle de messagerie | Journal d'audit messagerie | Règle de règle créée | Couvert |
+| Exfiltration | Transfert du courriel vers un domaine externe | Journal de transport, trafic sortant | Aucune | Angle mort |
+| Impact | Filtrage du courriel entrant | Règles masquantes, plainte utilisateur | Signalement humain | Non couvert |
+```
+
+La table ci-dessus est le vrai produit du référentiel : une carte de couverture qui dit, ligne par ligne, ce qui est surveillé, ce qui l'est partiellement et ce qui ne l'est pas. Notez que trois lignes sur six ne sont pas couvertes par un outil, dont deux angles morts qui auraient permis d'agir plus tôt. Chaque case vide devient un chantier daté, avec un responsable, plutôt qu'une inquiétude générale.
+
+Une mise en garde s'impose, parce que l'abus est fréquent : cocher une technique ne signifie pas la détecter. Une règle en observation qui ne sonne jamais, une source collectée sans règle, un événement jamais interrogé — autant de cases colorées qui ne protègent rien. Trois niveaux d'assertion doivent être distingués dans votre carte : donnée disponible, règle écrite, détection vérifiée par simulation. Seul le troisième niveau mérite d'être présenté comme une couverture. Le référentiel vous donne le vocabulaire et la structure ; il ne vous donne pas la preuve.
+
+- ATT&CK fournit un vocabulaire commun : tactiques, techniques, variantes.
+- Distinguez trois états : donnée disponible, règle écrite, détection vérifiée.
+- Une case colorée non testée reste un angle mort avec un joli nom.
+
+## Playbooks et SOAR : automatiser la réponse
+
+Un playbook est une procédure d'incident écrite pas à pas, avec ses conditions, ses responsabilités et ses points de contrôle, que l'exécuteur soit un humain ou un programme. La plateforme d'orchestration qui l'exécute — l'acronyme SOAR désigne ce type d'outil — n'ajoute rien à la logique : elle ajoute la vitesse et la régularité. Distinguez deux régimes. La réponse assistée, où l'outil prépare tout — enrichissement, extraits de journaux, ticket pré-rempli — et laisse l'humain appuyer. La réponse automatisée, où l'outil exécute des actions réelles sans attendre. Le premier régime est sans risque et se déploie dès le premier jour ; le second se mérite.
+
+La structure d'un playbook tient en huit éléments, et l'absence d'un seul produit des dérives. Un déclencheur qualifié, c'est-à-dire une alerte de corrélation et non une ligne isolée. Des prérequis, dont une liste explicite de ce qu'il ne faut jamais faire. Un enrichissement automatique. Des décisions formulées en conditions testables. Des actions ordonnées, avec pour chacune son effet réversible ou non. Une notification, qui dit à qui, sur quel canal, avec quel niveau d'urgence. Un journal d'exécution horodaté, pièce du dossier. Et une clôture, qui impose de dire ce qui a été fait et ce qui reste à faire.
+
+Le principe de sélection tient en une phrase : on automatise d'abord ce qui est réversible et ce qui fait gagner du temps sans décider. Collecter les journaux, enrichir l'alerte, ouvrir le ticket, notifier le propriétaire, révoquer les sessions ouvertes : des actions à effet limité, dont l'absence coûte des minutes précieuses. On réserve à l'humain ce qui retire un service, supprime une donnée ou touche à un compte partagé. Entre les deux, un seuil de confiance : si l'alerte vient de deux sources indépendantes et d'un compte sensible, l'automatique va plus loin ; sinon, il s'arrête et demande une validation.
+
+```yaml
+# Pseudo-code de playbook — "compte professionnel compromis" (extrait)
+playbook: compte_compromis_detecte
+declencheur:
+  alerte: campagne_essai_mots_de_passe_avec_reussite
+  niveau_min: high
+  exigences: [alerte sur deux sources independantes, compte marque sensible]
+
+etapes:
+  1 - enrichir:      recuperer(titulaire, service, sessions, historique_30j)
+  2 - verrouiller:    revoquer_sessions(compte)            # reversible
+  3 - preuves:        exporter(journaux_compte, 30 jours, dossier INC)
+  4 - bloquer:        ajouter_liste_blocage(adresses_sources, pare-feu, duree=24h)
+  5 - decider:
+       si compte.service ou poste_de_production == vrai:
+            arreter(); demander_validation(analyste_niveau_2)
+       sinon:
+            desactiver_compte(compte, motif="incident", ticket=INC)
+            imposer_reset_mdp_au_titulaire(compte)
+  6 - notifier:       canal=email_titulaire + canal=equipe, modele=incident_majeur
+  7 - journaliser:    ecrire_audit(horodatage, etape, resultat, auteur="soar")
+  8 - cloturer:       si confirmation_humaine: fermer(INC) avec compte rendu
+
+gardefous:
+  - jamais de suppression de donnees ni de reinitialisation d'appareil
+  - chaque etape reversible dispose d'une etape opposee en une commande
+  - mode observation pendant 14 jours, puis journal non modifiable par la plateforme
+```
+
+Appliquons ce squelette à notre campagne. Sur le cas stage.accueil, l'exécution assistée seule aurait déjà fait gagner les huit minutes pendant lesquelles un analyste rassemble les journaux de trois sources. L'exécution automatisée ajoute la révocation des sessions et le blocage des quatre adresses avant la vague suivante. Elle n'ajoute rien, en revanche, à la décision de désactiver le compte : celle-ci appartient encore à l'humain.
+
+Remplissez ce tableau ensemble, une fois, avant le premier déploiement, plutôt que de trancher chaque cas le jour où l'alerte sonne pour la première fois.
+
+| Action | Automatisable | Garde-fou exigé |
+| --- | --- | --- |
+| Révoquer les sessions ouvertes | Oui, avec seuil de confiance | Journal d'exécution, nouvelle connexion contrôlée |
+| Bloquer une adresse au pare-feu | Oui, durée limitée | 24 heures maximum, renouvellement non automatique |
+| Désactiver un compte | Selon le compte | Validation humaine hors activité critique |
+| Isoler un poste du réseau | Partiellement | Confirmation de niveau 2, prévenir le titulaire |
+| Effacer une donnée ou réinitialiser un appareil | Non | Toujours un humain |
+
+Les limites se connaissent avant de les rencontrer. Un faux positif corrélé déclenche une réponse automatique : c'est le prix à payer, et il impose des actions réversibles. Une interface de pare-feu qui tombe au milieu d'une exécution laisse un playbook à moitié fini : le journal doit dire où il s'est arrêté. Une plateforme qui exécute sans laisser de trace rend l'incident inexploitable. Enfin, un playbook écrit mais jamais exercé n'existe pas : simulez-le sur un compte de test, chronométrez-le, corrigez les étapes fausses, puis seulement mettez-le en mode réel. Le gain, une fois vérifié, se mesure simplement : vingt-cinq minutes de manipulation manuelle contre quatre minutes d'exécution assistée.
+
+- Un playbook est une procédure écrite ; l'orchestration n'ajoute que la vitesse.
+- Automatisez d'abord l'enrichissement, la collecte de preuves et la notification.
+- Conservez à l'humain ce qui retire un service ou supprime une donnée, et exercez le playbook sur un compte de test avant toute exécution réelle.

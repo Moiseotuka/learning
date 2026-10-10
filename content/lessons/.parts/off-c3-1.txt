@@ -1,0 +1,126 @@
+Bienvenue dans le troisième chapitre du parcours Cybersécurité offensive. Les deux chapitres précédents vous ont appris à cartographier une surface d'attaque sans vous déclarer, puis à analyser et à hiérarchiser des vulnérabilités web sans confondre un signalement automatique avec une faille démontrée. Vous savez donc chercher et vous savez juger. Ce chapitre fait le pont : il s'agit de passer du « ce service semble vulnérable » au « j'ai obtenu une session, voici ce que j'ai pu faire, voici ce que je n'ai pas pu prouver ». C'est le moment le plus délicat du parcours, parce qu'il réunit une compétence technique exigeante et une responsabilité qui ne se négocie pas.
+
+Les objectifs sont au nombre de six et ils commandent toute la leçon. Le premier consiste à construire un laboratoire isolé, avec un hyperviseur, des réseaux host-only et des snapshots, parce que rien de ce qui suit n'est pensable sans un terrain où l'on peut se tromper sans conséquence. Le deuxième consiste à maîtriser les bases de Metasploit : console, modules, bases de données et recherche. Le troisième consiste à distinguer un module d'exploitation d'un module auxiliaire, puis à suivre pas à pas ce qui se réellement se passe entre le lancement d'un module et l'ouverture d'une session. Le quatrième consiste à comprendre les reverse shells, les bind shells, les stagers et le choix d'une couche de transport. Le cinquième consiste à stabiliser un shell, c'est-à-dire à lui survivre au-delà des trente premières secondes. Le sixième consiste à évaluer honnêtement un risque, à respecter des limites éthiques strictes, à sauvegarder et à documenter le travail.
+
+Le cadre, enfin, tient en une phrase que vous relirez à chaque session : tout ce qui est décrit dans ce chapitre se pratique dans un laboratoire isolé, sur des machines que vous avez vous-même créées, et jamais contre une cible réelle. Pour ancrer le propos, nous construisons ensemble un lab nommé lab-off3, composé d'une machine d'attaque, de deux cibles et d'un plan d'adressage fixe. Toutes les commandes, tous les exemples et tous les résultats cités dans la leçon proviennent de ce lab. Quand un point de méthode concerne le monde réel, il est signalé comme tel, et il concerne alors la manière de rendre un compte, pas la manière d'attaquer.
+
+## Construire le laboratoire : hyperviseurs, machines et images de base
+
+Un laboratoire d'exploitation n'est pas un agrégat de machines virtuelles au hasard : c'est un dispositif reproductible, dont chaque composant a un rôle, un nom et un état connu. La première décision est celle de l'hyperviseur, et elle se prend en fonction de trois contraintes seulement : le budget, le système hôte et la nécessité d'un scripting en ligne de commande. VirtualBox couvre la majorité des cas, car il est gratuit, disponible sous Windows, macOS et Linux, et il expose toute sa gestion dans la commande VBoxManage, ce qui permet de documenter et de rejouer une configuration. VMware Workstation Pro, gratuit pour un usage personnel depuis 2024, reste pertinent si votre organisme l'utilise déjà, avec une interface et des performances légèrement supérieures sur les cibles Windows. Si votre poste fonctionne sous Linux, KVM avec libvirt est une alternative native, plus légère, mais dont la prise en main demande davantage de confort avec la ligne de commande.
+
+Quel que soit votre choix, vérifiez d'abord la virtualisation matérielle, faute de quoi vos machines ralentiront au point de rendre les exercices pénibles. Sous Windows, l'outil System Information indique la valeur de la virtualisation de la mémoire à l'exécution ; sous Linux, la présence du module kvm_intel ou kvm_amd suffit ; dans le BIOS ou l'UEFI, l'option porte le nom VT-x ou AMD-V. Prévoyez ensuite une machine hôte correctement dotée : seize gigaoctets de mémoire vive est le minimum confortable, trente-deux sont préférables si vous lancez en même temps une machine d'attaque, deux cibles et un routeur, et un disque SSD évite les blocages prolongés lors des retours arrière.
+
+L'inventaire du lab tient en quatre machines, et chaque nom doit indiquer le rôle plutôt que le contenu. La machine d'attaque, nommée kali-lab, reçoit une distribution d'attaque classique installée à jour, avec Metasploit, Nmap, Wireshark et un éditeur de texte. La première cible, linux-target1, est une machine volontairement fragile : c'est l'usage classique d'une image pédagogique comme Metasploitable, conçue pour être compromise, avec des services anciens volontairement exposés comme un serveur FTP, un serveur SMB, un serveur web et une base de données. La deuxième cible, win10-lab, est une installation propre et légitime d'un poste Windows, sur laquelle vous appliquerez vous-même les correctifs, afin d'apprendre que l'exploitation d'un système à jour est un problème radicalement différent. Enfin, si vous voulez travailler avec plusieurs segments, un routeur virtuel tel qu'OPNsense ou pfSense jouera le rôle de frontière entre eux.
+
+La provenance des images est un point de méthode, pas un détail. Téléchargez uniquement depuis les dépôts officiels des éditeurs ou des projets, et vérifiez l'empreinte du fichier avant toute installation. Une image récupérée sur un forum, même si son nom est exactement celui attendu, peut contenir un backdoor qui transforme votre lab en machine compromise, et vous n'auriez aucun moyen de le savoir. La commande suivante illustre le réflexe à acquérir, et il doit preceder le premier démarrage comme il précèdera chaque réinstallation.
+
+```bash
+# vérifier l'empreinte d'une image avant de l'installer dans le lab
+sha256sum Metasploitable2-Linux.iso > lab-off3/empreintes.txt
+sha256sum kali-linux-2026-installer-amd64.iso >> lab-off3/empreintes.txt
+cat lab-off3/empreintes.txt
+# comparer à la valeur publiée par l'éditeur, puis archiver le fichier
+```
+
+Deux réglages d'hyperviseur méritent une attention particulière parce qu'ils trompent les débutants. Le premier concerne les fonctions de confort : dossier partagé, presse-papiers et glisser-déposer doivent être désactivés sur les cibles, car elles fabriquent des ponts entre votre poste et la machine exploitée qui n'existent pas dans une configuration réelle, et elles vous feraient conclure à la présence de services qui ne sont en fait que des ajouts d'hôtes invités. Le deuxième concerne le dos de disque : gardez une image dite propre, jamais utilisée pour un exercice, et dupliquez-la pour chaque nouvelle séance, afin de pouvoir recommencer sans hériter des dégâts de la session précédente.
+
+La capture ci-dessous montre la gestion des machines d'un hyperviseur tel que vous le verrez au quotidien : la liste des machines, leur état et le dossier qui les contient. Prenez l'habitude de nommer les machines et les snapshots avec une convention unique, parce que dans trois semaines vous ne vous rappellerez plus si win10-lab-02 est l'état propre ou l'état corrompu.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/Wcubuntu24041ltszhtwvbox20241030.png/960px-Wcubuntu24041ltszhtwvbox20241030.png
+| Fenêtre de gestion des machines virtuelles d'un hyperviseur, avec la liste des machines, leur état et le stockage associé, telle qu'elle s'affiche dans un laboratoire isolé.
+```
+
+Le tableau suivant résume les arbitrages entre les trois solutions courantes, avec pour chacune le point fort, la limite et la conséquence pour votre travail de lab.
+
+```table
+| Hyperviseur | Point fort | Limite à connaître | Conséquence pour le lab |
+| --- | --- | --- | --- |
+| VirtualBox | Gratuit, multiplateforme, gestion complète en VBoxManage | Performances graphiques et disque moyennes sous Windows | Scriptez la création et les snapshots en bash |
+| VMware Workstation Pro | Interface soignée, bonnes performances sur Windows | Écosystème propriétaire, licences selon usage | Moins pratique pour automatiser la documentation |
+| KVM et libvirt | Natif sous Linux, très léger | Prise en main plus technique | Excellent pour rejouer le lab depuis un dépôt de scripts |
+```
+
+Un dernier réflexe, avant de passer au réseau : constituez un dossier lab-off3 sur un disque dédié, contenant les images, les empreintes, les notes de séance et les scripts de création. Ce dossier est le vrai patrimoine du laboratoire ; les machines virtuelles ne sont que sa matérialisation, et la section sur la sauvegarde vous montrera pourquoi cette distinction est décisive.
+
+## Réseaux host-only, NAT et isolation : la barrière qui compte vraiment
+
+La qualité d'un laboratoire d'exploitation se mesure à une seule propriété : la capacité de ses machines à ne jamais joindre un système qui n'en fait pas partie. Tous les incidents pédagogiques les plus embarrassants viennent d'une carte réseau mal configurée, et tous sont évitables par une compréhension précise des modes de connexion proposés par l'hyperviseur. Prenons-les un par un, en partant de celui qu'il ne faut jamais utiliser dans ce chapitre.
+
+Le mode pont, souvent proposé par défaut ou presque, relie la carte virtuelle de la machine au réseau physique de votre poste, comme si elle en était un hôte de plus. Elle reçoit alors une adresse par le serveur DHCP de votre réseau, visible par tous les appareils, et ses paquets sortent sur le câble. Dans un exercice d'exploitation, c'est inacceptable : vos scans toucheraient votre réseau domestique ou l réseau de votre organisme, vos reverse shells s'adresseraient à des tiers, et les journaux de votre routeur enregistreraient une activité que vous n'auriez jamais dû produire. Le mode pont ne devrait même pas être envisagé dans ce chapitre, et il faut vérifier son absence avant chaque séance.
+
+Le mode NAT fait l'inverse : la machine peut joindre l'extérieur, mais personne de l'extérieur ne peut la joindre. C'est le mode adapté à une phase de préparation, c'est-à-dire au téléchargement des correctifs et des paquets, et à rien d'autre. Le mode réseau host-only, lui, crée un lien privé entre votre poste hôte et les machines configurées sur ce réseau : un commutateur virtuel sans sortie vers le monde. C'est l'échine dorsale du lab-off3. Le mode réseau interne va plus loin encore, puisqu'il relie exclusivement des machines virtuelles entre elles, sans impliquer le poste hôte, ce qui est utile pour isoler un segment sensible ou pour simuler un réseau que l'hôte ne doit pas voir.
+
+La configuration retenue pour notre lab associe deux cartes réseau à la machine d'attaque et une seule aux cibles. La première carte de kali-lab est rattachée au réseau host-only, avec une adresse fixe ; la seconde est en NAT, mais elle est déconnectée pendant les exercices, ce qui vous oblige à rester dans le périmètre. Les deux cibles n'ont qu'une carte host-only. Le plan d'adressage est le suivant : la passerelle du réseau host-only est en 192.168.56.1, kali-lab utilise la 192.168.56.10, linux-target1 la 192.168.56.20 et win10-lab la 192.168.56.30.
+
+Les adresses fixes ne sont pas une coquetterie. Avec le service DHCP de l'hyperviseur, une cible peut récupérer une adresse différente après un redémarrage, et vous perdrez alors vos notes, vos scripts et vos modules configurés sur l'ancienne valeur. Désactivez le serveur DHCP du réseau host-only, ou réservez systématiquement les adresses, puis consignez le plan dans un fichier que vous relirez à chaque séance. La reproductibilité d'un lab ne vient pas de la chance, elle vient d'un tableau écrit.
+
+Le contrôle d'isolation est un rituel de trois minutes, à mener avant toute exploitation et à noter dans le carnet. Depuis la machine d'attaque, vérifiez les adresses, la table de routage et l'absence de route par défaut vers l'extérieur, puis tentez délibérément de joindre une adresse publique. Depuis une cible, confirmez qu'elle ne voit que le segment host-only. Depuis le poste hôte, confirmez que la carte host-only ne porte pas de route vers le réseau physique.
+
+```bash
+# contrôle d'isolation depuis la machine d'attaque du lab-off3
+ip -brief address show          # la carte host-only doit être en 192.168.56.10
+ip route show                   # seule la route vers 192.168.56.0/24 doit exister
+ping -c 2 192.168.56.20         # la cible répond
+ping -c 2 1.1.1.1               # doit échouer : la carte NAT est déconnectée
+ss -tulpn                       # confirmer qu'aucun service d'écoute n'est exposé
+```
+
+Si la dernière commande échoue comme prévu, le lab est isolé et vous pouvez travailler. Si elle répond, la carte NAT est encore active ou une route par défaut subsiste : corrigez avant de continuer, sans exception. Le tableau ci-dessous compare les modes de réseau et indique pour chacun le rôle qu'il joue dans notre laboratoire.
+
+```table
+| Mode de réseau | Accès sortant | Accès entrant | Rôle dans le lab-off3 |
+| --- | --- | --- | --- |
+| Pont | Oui, sur le réseau physique | Oui, depuis le réseau physique | Interdit dans tout le chapitre |
+| NAT | Oui, vers internet | Non | Préparation et mises à jour seulement |
+| Host-only | Non | Depuis l'hôte et les machines du réseau | Segment de travail principal |
+| Réseau interne | Non | Uniquement entre machines virtuelles | Segments avancés et routeur virtuel |
+```
+
+Un piège fréquent mérite d'être signalé parce qu'il ressort de nombreux comptes rendus d'apprenants : l'isolement n'est pas toujours là où on le croit. Un poste Windows qui signale « réseau sans accès Internet » n'est pas pour autant isolé, et un pare-feu hôte peut, lui aussi, masquer le problème en refusant le trafic au lieu de le laisser fuiter. D'autres environnements, notamment ceux qui s'appuient sur une virtualisation système, ajoutent leurs propres commutateurs virtuels et leurs propres adresses, et il n'est pas rare de voir apparaître une troisième carte que personne n'a demandée. La consigne reste la même : inspectez les adresses, les routes et le trafic réel, plutôt que de faire confiance à l'interface graphique.
+
+Pour observer ce qui circule réellement sur le segment, branchez Wireshark sur l'interface host-only du poste hôte ou sur la carte de la machine d'attaque, puis déclenchez un simple ping. Vous verrez les requêtes ARP qui précèdent chaque communication, la résolution d'adresse et le trafic ICMP. Ce réflexe, pris dès le premier chapitre du lab, vous rendra un service considérable plus tard : la moitié des exploits qui échouent sans raison apparente se diagnostiquent en trois paquets capturés.
+
+## Snapshots : le retour arrière comme méthode de travail
+
+Le snapshot est l'outil qui transforme un laboratoire en un vrai lieu d'apprentissage, parce qu'il supprime la peur de casser. Comprendre ce qu'il est réellement, c'est comprendre à la fois son immense valeur et sa limite la plus dangereuse. Un snapshot fige l'état d'une machine virtuelle : le contenu des disques à l'instant T, l'état de la mémoire si la machine tournait encore, et les réglages associés. À la restauration, tout revient à cet instant. Techniquement, l'hyperviseur conserve l'état d'origine et écrit les modifications suivantes dans un disque différenciel ; cela explique la rapidité de la prise de snapshot et la lenteur de sa suppression.
+
+La conséquence pratique est immédiate : un snapshot n'est pas une sauvegarde. Il vit dans le même dossier que la machine, sur le même disque ; si le disque tombe en panne, machine et snapshots disparaissent ensemble. Il ne protège ni contre une corruption, ni contre une suppression accidentelle, ni contre le vol du poste. La sauvegarde du lab fait l'objet d'une section dédiée, et elle repose sur des copies déconnectées du laboratoire ; le snapshot, lui, sert à autre chose : à revenir en arrière, vite, autant de fois que nécessaire.
+
+La discipline du lab repose sur trois points de repère dans le temps. Le premier s'appelle base-propre : c'est l'état obtenu après installation, mise à jour et configuration du réseau, jamais modifié par la suite. Le deuxième s'appelle pret-exercice : c'est la base-propre avec les services vérifiés et les adresses fixes en place, à partir duquel chaque séance commence. Le troisième est un snapshot par séance, nommé avec la date et l'objectif, par exemple 2026-10-09-enum-smb. Une convention de nommage stricte vous évitera, dans un mois, de restaurer l'état corrompu en croyant reprendre l'état propre.
+
+```bash
+# créer et restaurer des snapshots depuis la ligne de commande
+VBoxManage snapshot "linux-target1" take "base-propre" --description "apres mise a jour"
+VBoxManage snapshot "linux-target1" take "pret-exercice" --description "reseau fixed, services verifies"
+VBoxManage snapshot "linux-target1" list
+VBoxManage snapshot "linux-target1" restore "pret-exercice"
+# regrouper les modifications supprimees, une operation lente a ne pas faire avant un delai
+VBoxManage closemedium disk "/vms/linux-target1/linux-target1.vdi" --delete  # jamais pendant un exercice
+```
+
+Le rythme de retour arrière que nous recommandons tient en un geste : documenter d'abord, restaurer ensuite. À l'issue d'un exercice, vous recopiez dans votre carnet la commande lancée, le résultat obtenu, l'artefact produit et le point de bascule, puis vous restaurez l'état pret-exercice. Vous recommencez ainsi dix fois en une heure si nécessaire, et chaque tentative repart d'un état identique. Sans cette discipline, vos résultats ne sont pas comparables : vous mesurez alors l'effet d'une série de dégâts accumulés, pas l'effet de la technique que vous étudiez.
+
+```table
+| État du snapshot | Quand le prendre | Ce qu'il garantit | Ce qu'il ne garantit pas |
+| --- | --- | --- | --- |
+| base-propre | Après installation et mise à jour | Un point de départ identique | Rien si le disque hôte tombe en panne |
+| pret-exercice | Avant chaque séance | Un réseau et des services connus | L'absence de dérive du système hôte |
+| en-cours | Au milieu d'un exercice long | La reprise après un crash | La comparabilité des résultats |
+| a-archiver | Après une séance concluante | La conservation d'un cas d'école | Une copie hors machine |
+```
+
+Trois pièges reviennent constamment. Le premier est la restauration d'un état pris pendant que la machine tournait : la mémoire figée contient d'anciens identifiants de session, un cache réseau périmé et souvent une horloge décalée, et vous vous retrouvez avec des comportements impossibles à expliquer. Le deuxième est la chaîne de snapshots : au-delà de quatre ou cinq enfilades, les performances chutent visiblement, et la suppression du premier maillon impose une fusion longue et risquée. Le troisième est l'accumulation : chaque snapshot consomme de l'espace, un disque presque plein empêche toute nouvelle prise d'état, et il faut donc purger régulièrement les états de séances closes.
+
+L'horloge mérite une mention particulière, car elle est la source d'erreurs les plus déroutantes dans un lab. Restaurer un snapshot ramène la date de la machine à celle de la prise : les journaux se décalent, les certificats semblent expirés ou pas encore valables, et les protocoles sensibles au temps refusent la connexion. Après chaque restauration, synchronisez l'horloge avant toute manipulation, et notez dans votre carnet l'écart constaté, faute de quoi vous attribuerez à un exploit un symptôme qui n'est qu'une affaire de fuseau.
+
+```bash
+# apres chaque restauration : remettre l'horloge et verifier le reseau
+sudo timedatectl set-ntp true && timedatectl
+ip -brief address show && ip route show
+# sous Windows, depuis une invite de commandes elevee
+w32tm /resync /rediscover
+ipconfig /all
+```
+
+La boucle complète, que vous devez être capable d'exécuter les yeux fermés avant la fin de ce chapitre, tient donc en cinq gestes : vérifier l'isolation, restaurer l'état pret-exercice, remettre l'horloge, dérouler l'exercice, puis documenter avant de restaurer à nouveau. Ce rythme est le fondement de tout ce qui suit : sans retour arrière fiable, ni Metasploit, ni les shells, ni l'évaluation d'un risque n'ont de sens, puisque vous ne saurez jamais dans quel état se trouve la machine que vous prétendez analyser.

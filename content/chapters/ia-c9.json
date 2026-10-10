@@ -1,0 +1,52 @@
+{
+  "exercise": "Vous venez d'être chargé du prototype de contrôle qualité par vision d'une ligne d'assemblage. Le responsable de production a déposé sur le serveur 620 photographies de pièces métalliques, réparties entre la classe conforme (480 images) et la classe défectueuse (140 images), prises en quatre sessions de capture distinctes. Écrivez le script d'entraînement complet en Python avec Keras : regroupez les fichiers par session pour obtenir l'entraînement, la validation et un jeu de test tenu à l'écart ; construisez un réseau convolutif de trois blocs suivi d'un global average pooling ; intégrez les couches d'augmentation dans le modèle et appliquez-les à la seule branche d'entraînement ; pondérez la perte pour la classe rare ; entraînez avec arrêt anticipé et réduction du taux d'apprentissage ; évaluez une seule fois sur le test. Livrable : le script exécutable, les deux courbes de perte, la matrice de confusion et un paragraphe justifiant par les chiffres le rappel retenu pour la classe défectueuse.",
+  "resources": [
+    {
+      "label": "Keras — exemple officiel de classification d'images de zéro",
+      "url": "https://keras.io/examples/vision/image_classification_from_scratch/"
+    },
+    {
+      "label": "PyTorch — tutoriel officiel du transfert d'apprentissage",
+      "url": "https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html"
+    },
+    {
+      "label": "TorchVision — modèles préentraînés, poids et prétraitements",
+      "url": "https://docs.pytorch.org/vision/main/models.html"
+    },
+    {
+      "label": "Vidéos tutorielles IA",
+      "url": "https://www.youtube.com/results?search_query=ia ia"
+    },
+    {
+      "label": "Grafikart — Python pour la data : pandas, numpy",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20pandas%20numpy"
+    },
+    {
+      "label": "Grafikart — Visualisation de données avec Python",
+      "url": "https://www.youtube.com/@grafikart/search?query=visualisation%20donn%C3%A9es%20python"
+    }
+  ],
+  "code_language": "python",
+  "starter_code": "import tensorflow as tf\n\nCHEMIN = \"data/usine\"\nTAILLE = (224, 224)\nLOT = 32\nEPOQUES = 40\n\n# TODO 1 : charger les images en trois ensembles separes par SESSION DE PRISE DE VUE\n#          (deux sessions pour l'entrainement, une pour la validation, une pour le test).\n#          Ne JAMAIS decouper au hasard des fichiers : deux cliches du meme objet\n#          ne doivent jamais se retrouver dans deux ensembles.\n#          Indice : lister les chemins avec pathlib, regrouper par dossier de session,\n#          puis construire un tf.data.Dataset a partir des listes resultantes.\n\n# TODO 2 : decoder, redimensionner a TAILLE, diviser par 255 et mettre en caches\n#          les ensembles d'entrainement et de validation uniquement.\n\n# TODO 3 : construire les couches d'augmentation (retournement horizontal,\n#          rotation de +/- 10 degres, zoom de 10 %, contraste) et les placer\n#          DANS le modele, avant la premiere convolution.\n\n# TODO 4 : construire le reseau convolutif : Conv2D(16) + MaxPooling,\n#          Conv2D(32) + MaxPooling, GlobalAveragePooling2D, Dense(64, relu),\n#          Dropout(0.3), Dense(2, softmax). Afficher le nombre de parametres.\n\n# TODO 5 : compiler avec Adam (1e-3) et sparse_categorical_crossentropy.\n\n# TODO 6 : calculer les class_weight a partir des denombrements reels\n#          (480 conformes contre 140 defectueuses) et les passer a fit().\n\n# TODO 7 : ajouter EarlyStopping(patience=5, restore_best_weights=True),\n#          ModelCheckpoint et ReduceLROnPlateau, puis lancer l'entrainement\n#          en conservant l'historique.\n\n# TODO 8 : sur le SEUL jeu de test, afficher l'exactitude, la matrice de\n#          confusion, ainsi que le rappel et la precision de chaque classe.\n\nif __name__ == \"__main__\":\n    print(\"a completer : voir les TODO ci-dessus\")",
+  "solution_code": "import tensorflow as tf\n\nCHEMIN = \"data/usine\"\nTAILLE = (224, 224)\nLOT = 32\nEPOQUES = 40\nCLASSES = [\"conforme\", \"defectueuse\"]\n\n\ndef inventaire(racine):\n    \"\"\"Liste (chemin, etiquette, session) pour chaque image du jeu.\n\n    Arborescence attendue : data/usine/<classe>/<session>/<image>.png\n    Le découpage se fera par session, jamais au hasard des fichiers.\n    \"\"\"\n    fichiers = []\n    for index, classe in enumerate(CLASSES):\n        for chemin in sorted(tf.io.gfile.glob(f\"{racine}/{classe}/*/*\")):\n            session = chemin.split(\"/\")[-2]\n            fichiers.append((chemin, index, session))\n    return fichiers\n\n\ndef decouper_par_session(fichiers):\n    \"\"\"Deux sessions pour l'entraînement, une pour la validation, une pour le test.\"\"\"\n    sessions = sorted({session for _, _, session in fichiers})\n    entrainement, validation, test = [], [], []\n    for session in sessions:\n        lot = [f for f in fichiers if f[2] == session]\n        if len(sessions) <= 3:\n            if not entrainement:\n                entrainement = lot\n            elif not validation:\n                validation = lot\n            else:\n                test = lot\n        else:\n            position = sessions.index(session)\n            cible = entrainement if position % 5 < 3 else (validation if position % 5 < 4 else test)\n            cible.extend(lot)\n    return entrainement, validation, test\n\n\ndef construire_dataset(lot, entrainement):\n    \"\"\"Decode, redimensionne, normalise, puis met en cache si besoin.\"\"\"\n    chemins = [fichier[0] for fichier in lot]\n    etiquettes = [fichier[1] for fichier in lot]\n    jeu = tf.data.Dataset.from_tensor_slices((chemins, etiquettes))\n\n    def charger(chemin, etiquette):\n        image = tf.io.decode_png(tf.io.read_file(chemin), channels=3)\n        image = tf.image.resize(image, TAILLE)\n        return image / 255.0, etiquette\n\n    jeu = jeu.map(charger, num_parallel_calls=tf.data.AUTOTUNE)\n    if entrainement:\n        jeu = jeu.shuffle(2000, seed=1337)\n    return jeu.batch(LOT).prefetch(tf.data.AUTOTUNE)\n\n\ndef modele_augmente():\n    augmentation = tf.keras.Sequential([\n        tf.keras.layers.RandomFlip(\"horizontal\"),\n        tf.keras.layers.RandomRotation(0.03),\n        tf.keras.layers.RandomZoom(0.1),\n        tf.keras.layers.RandomContrast(0.2),\n    ], name=\"augmentation\")\n\n    entree = tf.keras.layers.Input(shape=(224, 224, 3))\n    x = augmentation(entree)\n    x = tf.keras.layers.Conv2D(16, 3, padding=\"same\", activation=\"relu\")(x)\n    x = tf.keras.layers.MaxPooling2D()(x)\n    x = tf.keras.layers.Conv2D(32, 3, padding=\"same\", activation=\"relu\")(x)\n    x = tf.keras.layers.MaxPooling2D()(x)\n    x = tf.keras.layers.Conv2D(64, 3, padding=\"same\", activation=\"relu\")(x)\n    x = tf.keras.layers.GlobalAveragePooling2D()(x)\n    x = tf.keras.layers.Dropout(0.3)(x)\n    sortie = tf.keras.layers.Dense(len(CLASSES), activation=\"softmax\")(x)\n    return tf.keras.Model(entree, sortie)\n\n\nif __name__ == \"__main__\":\n    tous = inventaire(CHEMIN)\n    apprendre, valider, tester = decouper_par_session(tous)\n    print(f\"images : {len(apprendre)} entrainement, {len(valider)} validation, {len(tester)} test\")\n\n    jeu = construire_dataset(apprendre, entrainement=True)\n    validation = construire_dataset(valider, entrainement=False)\n    test = construire_dataset(tester, entrainement=False)\n\n    compte = {0: 0, 1: 0}\n    for _, etiquette, _ in apprendre:\n        compte[etiquette] += 1\n    poids = {classe: len(apprendre) / (len(CLASSES) * total) for classe, total in compte.items()}\n    print(\"class_weight :\", {CLASSES[k]: round(v, 2) for k, v in poids.items()})\n\n    modele = modele_augmente()\n    modele.summary()\n\n    modele.compile(\n        optimizer=tf.keras.optimizers.Adam(1e-3),\n        loss=\"sparse_categorical_crossentropy\",\n        metrics=[\"accuracy\"],\n    )\n    historique = modele.fit(\n        jeu,\n        validation_data=validation,\n        epochs=EPOQUES,\n        class_weight=poids,\n        callbacks=[\n            tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),\n            tf.keras.callbacks.ModelCheckpoint(\"usine-meilleur.keras\", save_best_only=True),\n            tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2),\n        ],\n    )\n\n    # Évaluation unique sur le jeu de test, mis à l'abri dès le départ.\n    resultats = modele.evaluate(test, verbose=0)\n    print(\"exactitude sur le test :\", round(resultats[1], 3))\n\n    reels = []\n    predits = []\n    for image, etiquette in test:\n        reels.extend(etiquette.numpy().tolist())\n        predits.extend(modele.predict(image, verbose=0).argmax(axis=1).tolist())\n\n    from sklearn.metrics import classification_report, confusion_matrix\n\n    print(confusion_matrix(reels, predits, labels=[0, 1]))\n    print(classification_report(reels, predits, target_names=CLASSES, digits=3))",
+  "concepts": [
+    "Préparation de données (CSV, structure)",
+    "Qualité de données (doublons, valeurs manquantes)",
+    "Analyse exploratoire (statistiques descriptives)",
+    "Visualisations (histogrammes, boxplot)",
+    "Introduction à la modélisation"
+  ],
+  "lecon": "ia-c9.txt",
+  "videos": [
+    {
+      "title": "Python pour la data : pandas, numpy",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20pandas%20numpy",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Visualisation de données avec Python",
+      "url": "https://www.youtube.com/@grafikart/search?query=visualisation%20donn%C3%A9es%20python",
+      "channel": "Grafikart"
+    }
+  ]
+}

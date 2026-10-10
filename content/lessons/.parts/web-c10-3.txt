@@ -1,0 +1,191 @@
+## TypeScript dans le projet : ce que le compilateur voit déjà
+
+Le site de l'atelier est écrit en TypeScript depuis les chapitres consacrés à React : les fichiers portent l'extension .tsx, les props sont décrites, le service d'inscription renvoie une promesse typée. Pourtant, deux vérités coexistent dans le même dépôt : l'application s'affiche, et le compilateur n'est peut-être pas passé sur l'ensemble du code depuis plusieurs semaines. C'est la situation la plus fréquente, et la plus dangereuse, parce qu'elle donne le sentiment d'être protégé alors que la vérification n'a simplement pas eu lieu.
+
+Ce chapitre change de régime. Il ne s'agit plus d'écrire des types, mais de les rendre contraignants : activer le mode strict, refuser les échappatoires, et faire de la sortie du compilateur une étape obligatoire de la chaîne de qualité, au même titre que les tests. Le mode strict rassemble un ensemble de règles dont quatre méritent d'être nommées. La vérification des valeurs nulles impose de traiter le cas où une valeur est absente avant de l'utiliser. L'interdiction de l'implicite exige qu'un paramètre de fonction possède un type déclaré ou déduit, jamais aucun. La compatibilité des fonctions vérifie que les gestionnaires d'événements et les rappels respectent bien la forme attendue. L'initialisation des propriétés garantit qu'un champ de classe n'existe pas sur le papier sans exister à l'exécution.
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+```
+
+Deux réglages de ce fichier méritent une explication particulière. L'accès hors bornes strict transforme chaque lecture d'élément d'un tableau ou de clé d'un objet en valeur éventuellement absente : votre fonction de filtre devra gérer le cas où aucun créneau ne correspond, ce qui est exactement ce que l'interface doit afficher de toute façon. Le non-émission rappelle que ce compilateur ne produit pas de fichiers exécutables : il est là pour parler, pas pour livrer. Le service de développement, lui, transpile sans vérifier, et cette distinction est le piège numéro un du typage front.
+
+Le tableau suivant montre, ligne par ligne, ce que le compilateur refuse en mode strict et le défaut que cette objection vous évite. Lisez la colonne du milieu comme un service rendu : chaque message est une question que personne ne vous posera à la relecture, et que la machine pose à chaque sauvegarde.
+
+| Écrite ainsi | Ce que dit le compilateur | Défaut évité |
+|---|---|---|
+| fonction sans type de paramètre | Le paramètre est implicite de type any | Une faute de frappe dans l'argument passe inaperçue |
+| Lecture d'une propriété absente | La propriété n'existe pas sur ce type | Rendu vide au lieu d'une erreur claire |
+| Utilisation d'une valeur pouvant être nulle | La valeur est peut-être nulle | Message d'erreur à l'exécution chez l'utilisateur |
+| Index de tableau non contrôlé | La valeur peut être absente | Élément undefined affiché à l'écran |
+| Retour de fonction incohérent | Le type de retour ne correspond pas | Branche de code qui renvoie autre chose qu'annoncé |
+| Fonction passée à un rappel | Les signatures de fonction sont incompatibles | Le gestionnaire reçoit des arguments imprévus |
+
+Le cas de `any` doit être tranché sans nuance. Ce type ne signifie pas inconnu : il signifie je renonce à vérifier, et l'abandon se propage. Dès qu'une valeur est de type any, tout ce qu'on lui demande passe — appel, propriété, méthode — et le défaut n'apparaît plus ici, mais beaucoup plus loin, chez l'utilisateur, sous la forme d'une propriété illisible ou d'une fonction non définie. Un seul any peut rendre aveugles une dizaine de fonctions appelantes, qui recevront toutes une valeur que le compilateur croit maîtrisée. La règle s'écrit donc en une phrase : any est interdit dans le code produit ; quand la donnée est réellement inconnue, on écrit unknown et on la vérifie avant usage, ce qui fait l'objet de la section suivante.
+
+```image
+typescript-logo
+| Le logo TypeScript : un carré bleu portant les deux lettres TS, emblème du langage qui vérifie les composants avant même leur exécution.
+```
+
+Une précision d'outillage s'impose, parce qu'elle explique la plupart des équipes qui croient être typées sans l'être. Le serveur de développement et le moteur de test transforment le code TypeScript en code exécutable sans jamais contrôler les types : leur travail est de transformer, pas de juger. Seul une commande explicite lance la vérification complète du projet, et c'est elle qui doit figurer dans la chaîne de qualité. Sans elle, le typage devient un décor : il rassure à la lecture et ne protège rien à l'exécution.
+
+```bash
+npx tsc --noEmit
+```
+
+La discipline qui accompagne le mode strict compte autant que les réglages. Trois habitudes à prendre : corriger l'erreur au lieu de l'ignorer, parce qu'un commentaire de désactivation posé aujourd'hui sera relu par personne demain ; justifier par une raison courte toute exception temporaire et lui attacher une échéance ; ne jamais desserrer le mode global pour faire passer une livraison, car la relâche se paie toujours sur le code suivant. Le compilateur ne vous fait pas perdre du temps : il vous rend le temps que vous auriez passé à chercher, dans la console du navigateur, pourquoi la page est blanche.
+
+## Typer props, état et rendu sans any
+
+Typer un composant, c'est décrire le contrat que le composant propose à ses appelants et les états qu'il peut traverser. Ce contrat se déclare une fois, à côté du composant, et le compilateur le vérifie ensuite à chaque appel, dans chaque fichier du projet. Commençons par les props, qui sont l'entrée visible du composant : un nom clair pour le type, des propriétés obligatoires distinctes de celles qui sont facultatives, et une règle simple qui consiste à ne jamais rendre facultative une donnée sans que le rendu prévoie l'absence.
+
+Deux pièges reviennent dans presque tous les codebases que l'on ouvre. Le premier est l'optionnalité mal placée : une prop dite facultative alors que le composant ne peut rien afficher sans elle, ce qui oblige chaque appelant à inventer une valeur bidon. Le second est la valeur par défaut écrite dans le corps du composant alors qu'elle pourrait être déclarée à la signature : le défaut devient invisible pour l'appelant, qui croit pouvoir omettre la prop alors que le résultat sera différent de celui qu'il attend.
+
+```tsx
+type AtelierProps = {
+  id: string;
+  titre: string;
+  date: string;
+  placesRestantes: number;
+  inscrit?: boolean;
+  onInscrire: (idAtelier: string) => void;
+};
+
+export function Atelier({ id, titre, date, placesRestantes, inscrit = false, onInscrire }: AtelierProps) {
+  const complet = placesRestantes === 0;
+
+  return (
+    <article aria-labelledby={`titre-${id}`}>
+      <h3 id={`titre-${id}`}>{titre}</h3>
+      <p>{date}</p>
+      <p>{placesRestantes} place(s) restante(s)</p>
+      <button
+        type="button"
+        disabled={complet || inscrit}
+        onClick={() => onInscrire(id)}
+      >
+        {inscrit ? "Déjà inscrit(e)" : complet ? "Complet" : "S'inscrire"}
+      </button>
+    </article>
+  );
+}
+```
+
+L'état mérite la même précision que les props, parce qu'il change au cours de la vie du composant. Chaque appel à la fonction de mise à jour porte un type, explicite quand la valeur initiale ne suffit pas à le déduire : un état qui commence par null ne peut pas deviner qu'il accueillera plus tard un tableau d'inscrits. Les références demandent le même soin : une référence de champ de saisie n'est jamais une valeur, c'est une valeur éventuellement absente au montage, et son type le dit. Les hooks personnalisés, enfin, doivent annoncer leur retour : un hook qui renvoie un objet décrit une fois sert d'API pour tout le composant qui l'appelle, et le compilateur vérifie alors chaque destructuration.
+
+```tsx
+type EtatListe =
+  | { phase: "chargement" }
+  | { phase: "succes"; inscrits: Inscrit[] }
+  | { phase: "erreur"; message: string };
+
+export function useInscrits(atelierId: string): EtatListe {
+  const [etat, setEtat] = useState<EtatListe>({ phase: "chargement" });
+
+  useEffect(() => {
+    let actif = true;
+    setEtat({ phase: "chargement" });
+
+    fetch(`/api/ateliers/${atelierId}/inscrits`)
+      .then((reponse) => {
+        if (!reponse.ok) throw new Error("réponse invalide");
+        return reponse.json() as Promise<Inscrit[]>;
+      })
+      .then((inscrits) => {
+        if (actif) setEtat({ phase: "succes", inscrits });
+      })
+      .catch(() => {
+        if (actif) setEtat({ phase: "erreur", message: "La liste n'a pas pu être chargée" });
+      });
+
+    return () => {
+      actif = false;
+    };
+  }, [atelierId]);
+
+  return etat;
+}
+```
+
+Les événements sont le troisième point de friction, et le plus souvent la source des any résiduels. La tentation consiste à écrire un gestionnaire sans paramètre typé, ou à déclarer l'événement comme any pour faire taire un message. La bonne pratique inverse le raisonnement : on donne au paramètre son type complet — l'événement de soumission d'un formulaire, l'événement de modification d'un champ de saisie — et le corps du gestionnaire hérite alors de toutes les propriétés utiles, y compris la cible et la valeur courante. Le gestionnaire reste lisible, et le compilateur contrôle l'accès à chaque propriété.
+
+Le contexte partagé hérité du chapitre précédent se type de la même manière, avec une seule particularité : il faut écrire ce qui se passe quand le fournisseur est absent. Décrire le contexte comme un objet éventuellement absent, puis exposer un hook qui refuse ce cas avec une erreur explicite, transforme une erreur obscure à l'exécution en message compréhensible au moment du développement. Ce petit surplus de typage vous rend service précisément le jour où un composant est placé hors du fournisseur par erreur.
+
+Le générique complète la boîte à outils. Un composant qui affiche une liste filtrable — créneaux, inscrits, ateliers — peut décrire sa forme une seule fois et laisser chaque appelant fournir son propre type : le composant promet de préserver ce type du début à la fin, et l'appelant reçoit les éléments qu'il a donnés, ni plus ni moins. Réservez ce mécanisme aux cas où un seul composant manipule plusieurs types ; au-delà, une interface explicite est plus claire qu'un paramètre de type que personne ne relira.
+
+| Modèle à éviter | Pourquoi c'est un défaut | Correction |
+|---|---|---|
+| props déclarées en any | Aucune vérification à l'appel | Décrire une interface dédiée |
+| useState sans type sur une valeur absente | Le type réel n'est jamais contrôlé | Annoncer la forme complète de l'état |
+| Gestionnaire d'événement en any | Les propriétés de l'événement ne sont pas vérifiées | Typer le paramètre, déduire le reste |
+| Cast vers any pour faire taire l'erreur | L'erreur est masquée, pas résolue | Corriger le type ou vérifier la valeur |
+| Retour de hook non déclaré | Chaque appelant invente sa propre lecture | Décrire le retour une fois pour toutes |
+
+## unknown, narrowing, contrats de données
+
+Les données qui arrivent du réseau sont le point où le typage rencontre la réalité : le serveur renvoie du texte, vous le convertissez en objet, et rien dans cette opération ne garantit que l'objet ressemble à ce que votre interface attend. La fonction de conversion universelle renvoie par défaut une valeur que le compilateur ne contrôle pas, ce qui signifie qu'un changement côté serveur — un champ renommé, une date devenue nombre, une liste devenue objet — se manifestera au meilleur endroit : chez l'utilisateur, pendant l'atelier. La parade consiste à considérer toute donnée extérieure comme inconnue, puis à la valider avant de lui faire confiance.
+
+Cette discipline change l'écriture du code de récupération. On déclare d'abord la forme attendue, comme une promesse faite à l'interface ; on récupère ensuite la réponse ; on la convertit en valeur inconnue ; on vérifie que cette valeur possède bien les propriétés attendues, avec le bon type, à l'aide d'une fonction de contrôle qui affirme explicitement : si cette fonction répond oui, alors la valeur est de ce type. Cette construction, couramment appelée prédicat de type, donne au compilateur la certitude qu'il cherche, et oblige l'auteur du contrôle à écrire, ligne à ligne, ce que le serveur promet.
+
+```ts
+type Inscrit = {
+  id: string;
+  nom: string;
+  courriel: string;
+  dateInscription: string;
+};
+
+function estChaine(valeur: unknown): valeur is string {
+  return typeof valeur === "string";
+}
+
+function estInscrit(valeur: unknown): valeur is Inscrit {
+  if (typeof valeur !== "object" || valeur === null) return false;
+  const objet = valeur as Record<string, unknown>;
+  return (
+    estChaine(objet.id) &&
+    estChaine(objet.nom) &&
+    estChaine(objet.courriel) &&
+    estChaine(objet.dateInscription)
+  );
+}
+
+export function lireInscrits(reponse: unknown): Inscrit[] {
+  if (!Array.isArray(reponse)) return [];
+  return reponse.filter(estInscrit);
+}
+```
+
+Une fois les données maîtrisées, il reste à typer les états de l'interface, et c'est ici que les unions discriminées rendent le plus de services. Plutôt que d'accumuler des booléens — enChargement, enErreur, reussi — dont la combinaison interdit des états absurdes comme enChargement et reussi ensemble, on déclare une seule propriété de phase dont chaque valeur emporte ses données propres. Le compilateur refuse alors d'accéder à la liste pendant le chargement, et un switch sur la phase devient exhaustif : ajoutez une phase sans la traiter, et le compilateur refuse de compiler, au lieu de laisser une branche oubliée à l'exécution.
+
+Le contrôle de forme repose sur un jeu de mécanismes courts qu'il faut connaître par cœur. La vérification du type primitif distingue le texte du nombre et de la valeur absente. La vérification de présence d'une clé dans un objet ouvre l'accès à cette clé. L'instance d'une classe distingue les objets construits. Enfin, le contrôle de flux hérité du langage transforme chaque condition en affirmation de type : après un test d'égalité sur une union, le compilateur sait exactement laquelle des branches vous occupez. Ces mécanismes se combinent, et c'est leur combinaison qui remplace avantageusement le cast brutal.
+
+Deux questions de forme reviennent souvent. Interface ou type de déclaration : les deux décrivent la même chose dans l'usage courant, la première seules autorise la fusion de déclarations, la seconde se compose plus volontiers en unions et en propriétés calculées ; choisissez-en une pour le projet et tenez-la. En revanche, la table associée à des clés de texte mérite une vigilance particulière : sa lecture par index n'est pas protégée par défaut, et un accès à une clé qui n'existe pas renvoie une valeur absente que le rendu affichera telle quelle. Préférez une union de clés connues, et laissez le mode strict exiger le contrôle.
+
+| Situation | Type approprié | Raison |
+|---|---|---|
+| Donnée lue dans un fichier ou reçue du réseau | unknown | Rien ne garantit sa forme avant vérification |
+| Résultat d'une vérification de forme | Type déduit par prédicat | Le compilateur accepte ce que vous avez prouvé |
+| Valeur qui prend une de plusieurs formes | Union discriminée | Chaque branche porte ses propres données |
+| Composant réutilisé sur plusieurs types | Générique | Le type de l'appelant est préservé |
+| Valeur impossible selon les règles du domaine | never | Une branche ne doit jamais être atteinte |
+| Fonction interne dont le code est connu | Type explicite du retour | Le contrat est lisible sans lire le corps |
+
+La frontière entre prudence et lourdeur se juge au coût réel : vérifier une liste de six champs prend cinq minutes et vous épargne une recherche d'erreur dans le rendu. En revanche, typer en détail un objet que vous construisez vous-même à deux lignes de distance est du bruit. Réservez donc la validation complète aux frontières du système — réseau, stockage de navigateur, paramètres d'adresse, messages d'autres onglets — et laissez le typage interne faire le reste du travail, puisque les valeurs y sont déjà connues.

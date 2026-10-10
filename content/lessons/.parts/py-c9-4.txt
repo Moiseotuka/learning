@@ -1,0 +1,166 @@
+## Choisir sans hésiter
+
+Vous avez désormais les trois outils sous les yeux : la boucle d'événements pour les attentes, les fils d'exécution pour les appels bloquants, les processus pour le calcul. La question qui suit n'est plus technique, elle est décisionnelle : devant une tâche réelle, lequel choisir sans perdre une journée à essayer les trois ? La réponse se construit à partir de deux critères seulement : ce que fait la tâche pendant son temps, et ce qu'elle doit partager avec le reste du programme. Posez ces deux questions dans cet ordre, et l'outil se dégagera presque toujours tout seul.
+
+Premier critère, la nature du temps passé. Si l'essentiel est d'attendre une réponse, une boucle d'événements chevauchera cinquante attentes pour le prix d'une, dans un seul fil, avec une empreinte mémoire dérisoire. Si l'attente vient d'une bibliothèque qui ignore la concurrence, un pool de fils isolera l'appel sans bloquer le reste, au prix d'une vigilance sur les données communes. Si le temps est consommé par le processeur, seul un pool de processus vous donnera plusieurs cœurs réellement occupés. Ce classement est celui du tableau de la première section, et il reste valable quel que soit le projet.
+
+Deuxième critère, le partage. Les tâches asyncio s'échangent des valeurs et se relaient à des points d'attente que vous écrivez vous-même : les surprises y sont rares, pourvu que vous ne laissiez pas une donnée à moitié mise à jour entre deux await. Les fils, eux, partagent tout, immédiatement, y compris ce que vous n'aviez pas prévu de partager : c'est la voie la plus rapide et la plus dangereuse. Les processus, enfin, ne partagent rien du tout, ce qui supprime le risque de corruption mais impose de sérialiser chaque échange. Vous payez la sécurité en mémoire et en complexité d'échange.
+
+Le tableau suivant met les trois voies face à face sur les points qui décident réellement.
+
+| Critère | asyncio | Fils d'exécution | Processus |
+|---|---|---|---|
+| Parallélisme réel | Non, alternation dans un fil | Non pour le bytecode, oui pour l'attente | Oui, un cœur par processus |
+| Mémoire | Une seule copie | Une seule copie, partagée | Une copie par processus |
+| Coût d'une unité de travail | Très faible | Faible | Élevé, mémoire et démarrage |
+| État partagé | Alternation contrôlée, risque faible | Risque fort, verrous obligatoires | Quasiment aucun, échange par valeurs |
+| Piège principal | La boucle bloquée | La condition de course | Le piquage et le garde du module principal |
+| Outil type | asyncio.gather | ThreadPoolExecutor | ProcessPoolExecutor |
+
+Appliquons le tableau à vos deux cas de figure. Récolter cinquante pages web : attente dominante, bibliothèque native aiohttp, aucune donnée lourde à partager, donc asyncio sans hésiter, avec un semaphore pour la politesse. Convertir deux cents photographies : calcul dominant, aucune attente, fichiers indépendants, donc pool de processus, avec un nombre de workers égal aux cœurs. Un troisième cas mérite d'être cité parce qu'il est fréquent : un script qui télécharge des images puis les redimensionne. La solution raisonnable est alors bâtie en deux étapes, téléchargement en asynchrone, transformation en pool de processus, plutôt qu'un mécanisme unique censé tout faire.
+
+Une mise en garde ferme clôt cette comparaison : ne choisissez pas par snobisme. Si votre travail dure trois secondes, un pool de processus ajoutera de la lourdeur pour gagner une fraction de seconde, et un simple script séquentiel reste parfait. Si vous traitez dix éléments, l'infrastructure de concurrence coûtera plus cher que le traitement. La règle professionnelle est de mesurer d'abord le séquentiel, de n'introduire la concurrence que si le budget de temps est dépassé, puis de mesurer à nouveau pour prouver le gain. Un outil de concurrence qui n'a pas été mesuré n'est qu'une promesse.
+
+## Producteur, consommateur et files d'attente
+
+Il existe un patron qui résout à lui seul la moitié des problèmes d'état partagé, et il porte un nom que vous rencontrerez partout : producteur-consommateur. L'idée est de séparer ceux qui fabriquent du travail de ceux qui l'exécutent, en plaçant entre les deux une file d'attente qui fait office de tampon. Les producteurs n'ont jamais à connaître le nombre de consommateurs, les consommateurs n'ont jamais à savoir d'où viennent les travaux, et surtout personne ne modifie la donnée d'un autre puisque personne ne touche à la même structure. Le découplage règle les à-coups : si le lecteur de fichiers est plus rapide que le traitement, la file absorbe l'écart.
+
+Le module queue.Queue fournit cette file pour les fils d'exécution, avec des opérations d'une simplicité pédagogique. Le producteur appelle put pour déposer un élément, le consommateur appelle get pour en retirer un. Si la file est vide, get attend ; si elle est pleine, put attend : la synchronisation est déjà faite, sans verrou à écrire. Trois méthodes complètent le dispositif : task_done signale qu'un élément retiré est traité, join attend que tous les éléments déposés le soient, et les variantes put_nowait ou get avec un délai permettent de détecter un blocage au lieu d'attendre éternellement.
+
+La forme canonique du consommateur est une boucle infinie interrompue par un signal d'arrêt. On dépose dans la file, en plus des vrais travaux, un nombre suffisant d'éléments marqueurs, souvent None, un par consommateur : chacun retire, reconnaît le marqueur, termine proprement et rend la main. Sans ce rituel, vos fils s'éternisent dans get et le programme ne se termine jamais, même une fois tout le travail fait. Ce motif se répète tel quel dans les serveurs de messages, les pipelines de traitement d'images et les importateurs de données : apprenez-le une fois, vous le reconnaîtrez partout.
+
+Attention toutefois à la tentation du raccourci : la file n'annule pas la règle sur l'état partagé, elle la rend inutile dans le cas simple. Tant que chaque consommateur ne manipule que l'objet retiré et son propre bilan local, aucun verrou n'est nécessaire. Dès que vous écrivez dans une structure commune, une liste de résultats par exemple, vous revenez au terrain de la section précédente et il faut verrouiller l'accès, ou mieux, renvoyer les résultats par une seconde file et laisser un seul fil agréger. Le verrou devient l'exception, pas la règle, et c'est précisément l'apport du patron.
+
+L'équivalent existe naturellement côté asyncio, avec asyncio.Queue, et il bénéficie d'une propriété supplémentaire : la file peut avoir une capacité maximale. Un producteur qui tente de déposer dans une file pleine rend la main au lieu de consommer de la mémoire, ce qui crée une contre-pression saine sur la source la plus rapide. C'est le mécanisme que vous utiliserez pour limiter le nombre de pages en cours de téléchargement, ou pour écrire dans un fichier au rythme de la production sans faire exploser la mémoire d'une machine qui reçoit plus vite qu'elle ne peut écrire. Un tampon de taille raisonnable est toujours préférable à une file qui grossit sans limite.
+
+```python
+import queue
+import threading
+import time
+
+travaux = queue.Queue()
+verrou = threading.Lock()
+resultats = []
+
+def producteur(total):
+    for numero in range(total):
+        travaux.put("image-%03d.jpg" % numero)
+    for _ in range(4):
+        travaux.put(None)
+
+def consommateur(nom):
+    traites = 0
+    while True:
+        element = travaux.get()
+        if element is None:
+            travaux.task_done()
+            break
+        time.sleep(0.05)
+        with verrou:
+            resultats.append((nom, element))
+        travaux.task_done()
+        traites += 1
+    print(nom, "a termine,", traites, "elements")
+
+lanceur = threading.Thread(target=producteur, args=(40,))
+lanceur.start()
+ouvriers = [threading.Thread(target=consommateur, args=("ouvrier-%d" % n,)) for n in range(4)]
+for ouvrier in ouvriers:
+    ouvrier.start()
+lanceur.join()
+for ouvrier in ouvriers:
+    ouvrier.join()
+print("bilan centralise :", len(resultats), "elements")
+```
+
+Le programme se termine seul, tous les travaux sont traités exactement une fois, et la liste centrale reste correcte grâce au verrou qui protège son écriture. Portez le total à mille, ajoutez un délai aléatoire au producteur, et vous verrez la file se vider et se remplir sans que personne n'ait à synchroniser quoi que ce soit d'autre.
+
+## Mesurer avant d'affirmer
+
+En concurrence, l'impression de vitesse est un mauvais conseiller : une machine chaude, un réseau de circonstance, un cache rempli ou une tâche plus légère que prévu suffisent à produire un gain imaginaire ou à masquer une régression. La seule attitude professionnelle consiste à mesurer, et à le faire proprement. Employez time.perf_counter, une horloge fine conçue pour les durées courantes, jamais time.time, dont la valeur peut être modifiée par le système entre deux lectures. Mesurez le séquentiel d'abord, avant toute optimisation, pour disposer d'une référence honnête.
+
+Une mesure unique ne vaut rien. Répétez chaque scénario plusieurs fois, écartez la première exécution qui paie le démarrage et la mise en cache, puis retenez la médiane plutôt que la moyenne, insensible aux pics isolés. Le module statistics fournit median en une ligne. Changez ensuite un seul paramètre à la fois : le nombre de workers, la taille des tranches, la limite de connexions. Si vous en modifiez deux, vous ne saurez plus lequel a produit l'écart, et vous recommencerez vos essais dans le doute.
+
+Comparez toujours à bon escient. Un facteur d'accélération de deux n'a aucune valeur si la tâche dure une demi-seconde au départ, car le gain absolu se noie dans le bruit. À l'inverse, un facteur de vingt sur un traitement de dix minutes change la journée d'un opérateur. Rapportez les deux chiffres dans votre bilan : le gain relatif, souvent spectaculaire, et le gain absolu, celui qui intéresse réellement celui qui paie. Ajoutez le coût, mémoire consommée, complexité ajoutée, code supplémentaire à maintenir : une optimisation qui triple le temps de développement pour gagner trois secondes par nuit n'est pas une optimisation.
+
+La mesure a aussi ses instruments. Pour le processeur, -m cProfile dresse le palmarès des fonctions appelées et désigne l'étape qui dévore le temps, bien au-delà de vos soupçons. Pour la mémoire, tracemalloc montre qui alloue, ce qui vous évite d'accuser le mauvais coupable. Pour la boucle d'événements, le mode débogage que vous avez vu signale les tâches trop longues. Enfin, dans un terminal, la commande time appliquée à l'exécution entière vous donne le temps réel, utilisateur et système, du programme complet, sans une ligne de code à ajouter.
+
+```python
+import statistics
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+def calcul(index):
+    total = 0
+    for nombre in range(400000):
+        total += (index + nombre) % 7
+    return total
+
+def sequentiel(blocs):
+    return [calcul(i) for i in range(blocs)]
+
+def chronometre(fonction, essais=3):
+    durees = []
+    for _ in range(essais):
+        debut = time.perf_counter()
+        fonction()
+        durees.append(time.perf_counter() - debut)
+    return statistics.median(durees)
+
+if __name__ == "__main__":
+    blocs = 8
+    base = chronometre(lambda: sequentiel(blocs))
+    print("sequentiel : %.2f s" % base)
+    with ThreadPoolExecutor(max_workers=4) as fils:
+        duree_fils = chronometre(lambda: list(fils.map(calcul, range(blocs))))
+    print("fils       : %.2f s" % duree_fils)
+    with ProcessPoolExecutor(max_workers=4) as procs:
+        duree_procs = chronometre(lambda: list(procs.map(calcul, range(blocs))))
+    print("processus  : %.2f s (facteur %.2f)" % (duree_procs, base / duree_procs))
+```
+
+Lancez ce banc d'essai sur votre machine : les deux pools sont créés avant la mesure, sinon le démarrage des processus écrase le résultat, et on retient la médiane de trois essais pour écarter les à-coups. Les fils restent proches du séquentiel, puisque le travail est calculatoire et que le GIL empêche tout gain, tandis que les processus descendent d'un facteur voisin du nombre de cœurs réels. Si vos chiffres diffèrent, vous venez de découvrir une particularité de votre machine, et cette découverte vaut mieux qu'un texte appris par cœur.
+
+```image
+linux-terminal
+| Capture d'un terminal Linux : c'est dans cette fenêtre que vous lancerez les bancs d'essai et que vous comparerez les durées affichées.
+```
+
+## À retenir
+
+- Un programme alterne calcul et attente : c'est la nature dominante du temps passé qui guide le choix de l'outil.
+- La concurrence fait avancer plusieurs tâches en alternant ; le parallélisme les fait avancer réellement ensemble sur plusieurs cœurs.
+- Une coroutine se déclare avec async def et ne s'exécute que sous await, dans create_task, dans gather ou via asyncio.run.
+- La boucle d'événements gère seule les tâches : une coroutine qui bloque fige toutes les autres.
+- asyncio.gather attend un ensemble de tâches et renvoie les résultats dans l'ordre des appels ; return_exceptions=True transforme les échecs en données.
+- Une session aiohttp se crée une fois, se réutilise partout et se ferme par un gestionnaire de contexte.
+- Limitez la concurrence réseau avec un asyncio.Semaphore et imposez un délai total à chaque requête.
+- Timeouts et annulations passent par CancelledError : ne la masquez jamais, et faites le nettoyage dans un finally.
+- Le GIL empêche deux fils de calculer en même temps dans un processus, mais il est relâché pendant les attentes.
+- Les fils partagent la mémoire : une lecture puis une écriture ne forment pas une opération atomique, il faut un threading.Lock autour des deux.
+- Un pool de processus offre le parallélisme réel, mais impose des données piquables et le garde if __name__ == "__main__":.
+- Le patron producteur-consommateur remplace le partage d'état par une file d'attente.
+- Aucune optimisation n'existe sans mesure : perf_counter, répétitions, médiane, comparaison avec le séquentiel.
+
+## Erreurs fréquentes
+
+- Rien ne se passe malgré des appels async → une coroutine appelée sans await n'exécute jamais son corps ; ajoutez await et lancez avec python -W always pour voir les avertissements.
+- Le programme ralentit alors que la concurrence devrait l'accélérer → time.sleep, requests ou une lecture de fichier a été placée sous await ; remplacez-les par asyncio.sleep, aiohttp ou asyncio.to_thread.
+- asyncio.run() lève RuntimeError: ... is already running → un deuxième asyncio.run est appelé alors qu'une boucle tourne déjà ; un seul asyncio.run au niveau module.
+- Un téléchargement reste bloqué à jamais → aucun délai n'est imposé ; utilisez asyncio.wait_for ou asyncio.timeout, et vérifiez que CancelledError n'est pas absorbée en silence.
+- Le script multiplie les processus jusqu'à épuisement de la mémoire → le module principal crée les processus sans garde ; enveloppez le lancement dans if __name__ == "__main__":.
+- Le compteur de threads donne un résultat faux → condition de course : la lecture et l'écriture sont deux opérations distinctes ; couvrez-les d'un même verrou, ou supprimez la donnée partagée.
+- TypeError: cannot pickle ... → une fonction locale, une lambda, un verrou ou un fichier ouvert est passé à un pool de processus ; placez la fonction au niveau module et échangez des données simples.
+- Le gain promis n'apparaît jamais → travail insuffisamment long, workers mal réglés ou tâche qui attend plus qu'elle ne calcule ; reprenez le banc d'essai en ne changeant qu'un paramètre à la fois.
+
+## Pour aller plus loin
+
+La documentation officielle de asyncio est la référence complète du sujet : y figurent la sémantique exacte de la boucle, les différences entre tâches, futures et coroutines, les stratégies d'annulation, la gestion des délais avec asyncio.timeout, les files d'attente asynchrones, les verrous et le modèle structuré des TaskGroup. Elle contient aussi un guide des recettes qui traite les cas concrets que cette leçon a simplifiés : limitations de concurrence, exécution de travail synchrone avec to_thread, exécution périodique, arrêt propre. Adresse : https://docs.python.org/3/library/asyncio.html
+
+Le module concurrent.futures, lui, documente la seconde moitié du chapitre : ThreadPoolExecutor et ProcessPoolExecutor, la soumission de travaux, la lecture des résultats par result ou as_completed, la propagation des exceptions et le cycle de vie des pools. Ses exemples sont courts et directement exploitables, ce qui en fait la meilleure page pour consolider la partie fils et processus après avoir codé vos propres essais. Adresse : https://docs.python.org/3/library/concurrent.futures.html
+
+Enfin, la documentation officielle d'aiohttp détaille la création des sessions, le réglage du connecteur, la limitation de concurrence, les délais de requête et les bonnes pratiques de fermeture. Consultez-la le jour où vos cinquante pages deviendront cinq mille, car c'est à cette échelle que se révèlent les options avancées de connexion, de proxy et d'authentification. Adresse : https://aiohttp.readthedocs.io/
+
+## Et maintenant : passez au banc d'essai
+
+La leçon s'achève sur une consigne de travail, pas sur une récitation. Prenez le script de banc d'essai, exécutez-le sur votre machine, notez les trois durées, puis modifiez un seul paramètre et relisez : vous venez de produire votre première preuve mesurée d'accélération. Rouvrez ensuite le projet des chapitres précédents et cherchez, honnêtement, une étape qui mériterait d'être parallélisée, sans oublier que la réponse honnête est souvent aucune. L'exercice qui suit vous mettra face à un vrai besoin de production, récolter et traiter un lot de pages en parallèle, avec pour critère de réussite non pas l'élégance du code, mais la justesse du bilan affiché et la stabilité du programme lancé plusieurs fois de suite.

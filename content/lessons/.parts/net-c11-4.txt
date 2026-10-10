@@ -1,0 +1,139 @@
+## SD-WAN : overlay, contrôleur, politiques et bénéfices
+
+Le réseau étendu traditionnel repose sur un compromis devenu difficile à assumer : une liaison louée chez un opérateur, fiable mais chère et lente à commander, à laquelle on ajoute une liaison large bande bon marché, et une politique unique qui fait passer par le datacenter le trafic destiné à des applications désormais hébergées chez des tiers. Ce détour, dit backhaul, était justifié quand l'application vivait sur site ; il ne l'est plus quand la messagerie, la visioconférence et la comptabilité sont chez un fournisseur. Le SD-WAN répond à ce décalage en séparant la couche de transport, qui peut être multiple, disparate et instable, de la couche de service, qui doit rester uniforme et pilotée par une politique.
+
+L'équipement de site établit des tunnels chiffrés vers ses pairs et vers l'Internet, mesure en continu la qualité de chaque chemin, puis applique des règles qui décident, application par application, par quel chemin le trafic part. Ce découplage porte un nom : l'overlay. Les sites communiquent par des tunnels IPsec qui portent leurs propres adresses, indépendamment des adresses du lien sous-jacent ; on peut changer d'opérateur, ajouter une liaison sans fil ou une fibre sans retoucher aux routes internes ni aux pare-feux du cœur. Sous l'overlay, le sous-jacent reste ce qu'il est : deux opérateurs, des adresses publiques qui changent, une qualité variable selon l'heure. C'est précisément l'intérêt de l'architecture : le transport devient interchangeable et la qualité cesse d'être une promesse pour devenir une mesure continue.
+
+Le contrôleur est la pièce qui distingue un SD-WAN d'un simple empilement de tunnels. Il centralise l'inventaire des sites, distribue les configurations et les clés, publie les politiques, agrège les mesures de chemin et fournit une vue commune à toute l'organisation. Il apporte aussi le provisionnement sans intervention : un boîtier déployé sur site se connecte, s'authentifie, reçoit sa configuration et devient opérationnel sans déplacement d'ingénieur. Le délai de mise en service d'un site passe alors de plusieurs semaines à quelques heures, et l'ajout d'une règle de qualité de service ne demande plus une modification sur chaque routeur, mais une publication unique.
+
+La décision de chemin repose sur des sondes périodiques qui mesurent, pour chaque voie, le temps de réponse, le taux de perte et la gigue. Sur cette base, la politique déclare des objectifs, par exemple un temps de réponse inférieur à cent cinquante millisecondes et une perte inférieure à un pour cent pour la voix, puis des actions : utiliser le meilleur chemin, basculer dès que l'objectif n'est plus tenu, dupliquer les paquets les plus critiques sur les deux liens, ou appliquer une correction d'erreur en amont pour masquer les pertes. Le tableau ci-dessous rassemble les bénéfices attendus et, surtout, la manière de les vérifier : un bénéfice qu'on ne peut pas mesurer est un argument commercial, pas un résultat d'exploitation.
+
+| Bénéfice annoncé | Ce qui change concrètement | Preuve à collecter |
+|---|---|---|
+| Réduction du coût de liaison | Remplacement partiel du lien loué par deux liens large bande | Facture mensuelle face au débit utile réellement servi |
+| Mise en service rapide | Boîtier configuré à distance, sans déplacement | Délai entre la commande et le service utilisable |
+| Résilience multi-liens | Bascule par application dès la dégradation mesurée | Nombre de bascules et durée de chacune, sur un mois |
+| Accès direct à Internet | Le trafic SaaS ne traverse plus le siège | Temps de réponse vers la messagerie avant et après |
+| Visibilité applicative | Détection des applications et de leur volume | Top d'applications par site et par lien |
+| Politique unique | Une règle publiée vaut pour tous les sites | Nombre de sites conformes à la politique publiée |
+
+Les limites se disent sans détour. Le contrôleur devient un maillon critique : sa perte empêche les changements de politique, rarement le trafic lui-même, mais il faut le superviser. Le diagnostic d'un overlay chiffré demande des outils spécifiques, car on ne lit plus les en-têtes au passage. La licence et le support représentent un coût récurrent, à comparer à l'économie réelle sur les liaisons. L'accès direct multiplie les sorties, donc chaque sortie exige le même filtrage qu'une sortie unique. Enfin, une politique trop fine devient illisible au moment de l'incident : on commence par trois règles globales, on mesure un trimestre, puis on affine.
+
+```text
+Exemple de politique de chemin (format type contrôleur)
+  regle 1  priorite 10
+    application : voip, visio
+    exigence    : latence < 150 ms, perte < 1 %, gigue < 30 ms
+    action      : meilleur chemin, bascule si exigence rompue
+    repli       : duplication sur les deux liens
+
+  regle 2  priorite 20
+    application : sauvegarde, mises a jour
+    exigence    : debit > 20 Mbit/s
+    action      : lien secondaire uniquement
+    repli       : attente du retour du lien principal
+
+  regle 3  priorite 30
+    application : toutes les autres
+    exigence    : aucune
+    action      : lien principal, bascule apres 3 echecs consecutifs
+```
+
+## Bascule et tests : provoquer la panne, mesurer la reprise
+
+La redondance n'existe que le jour où on la met à l'épreuve. Tout ce qui a été construit dans ce chapitre — pool de serveurs, contrôles d'état, répartiteurs en double, liens multiples, politiques de chemin — reste une hypothèse tant que personne n'a coupé quelque chose volontairement et chronométré ce qui s'est passé. Le test de bascule est donc un exercice planifié, pas un accident opportun : il se prépare, il s'annonce, il se déroule avec un observateur qui chronomètre et un opérateur qui agit, il se termine par un retour à l'état nominal et par un compte rendu. Cette discipline transforme la peur de la panne en une donnée d'exploitation : vous ne supposerez plus que la bascule prend deux secondes, vous le saurez.
+
+On distingue trois familles de tests, du moins destructeur au plus instructif. Le test de composant consiste à arrêter un membre du pool et à observer que les requêtes suivantes vont aux autres : c'est le test de base, exécutable à tout moment, qui valide le contrôle d'état et l'algorithme. Le test de chemin consiste à couper un lien opérateur ou une route, et à vérifier que la bascule se produit dans le délai attendu et que la traduction d'adresses reste cohérente. Le test d'infrastructure va plus loin : on éteint une machine, on débranche une alimentation, on coupe un câble dans la baie. Cette dernière catégorie exige une fenêtre, un plan de retour et la présence de quelqu'un capable de remettre la main sur le matériel ; elle est aussi la seule qui révèle les redondances de papier.
+
+```image
+patch-panel
+| Panneau de brassage en baie : deux liens d'entrée et deux sorties distinctes, car une redondance qui passe par le même connecteur ne protège de rien.
+```
+
+La mesure se fait à trois niveaux, et les trois doivent figurer dans le compte rendu. Le temps de détection est l'intervalle entre la coupure et le moment où le système a compris ; il dépend directement de l'intervalle du contrôle d'état et du nombre d'échecs requis. Le temps de bascule s'étend de la coupure à la première réponse correcte servie après l'événement ; c'est celui que l'usager ressent. Le taux d'erreur pendant la fenêtre de bascule indique combien de requêtes ont été perdues ou servies avec un code d'erreur. Un test qui produit zéro erreur et une bascule en deux secondes se célèbre ; un test qui produit cinq pour cent d'erreurs sur trente secondes désigne exactement le réglage à corriger.
+
+```text
+$ while true; do curl -s -o /dev/null -w "%{http_code} %{time_total}\n" \
+    https://site-lilas.example.fr/ ; sleep 1; done > /tmp/bascule.log
+
+200 0.042
+200 0.038
+000 0.000     <- coupure de lb-01 a t0
+000 1.006
+200 0.051     <- reponse de lb-02 a t0+2 s
+200 0.039
+
+$ journalctl -u haproxy --since "10:41:00" | grep -E "DOWN|UP"
+... server bk_web/web01 changed its state from UP to DOWN
+... server bk_web/web02 changed its state from UP to DOWN (maint)
+```
+
+La méthode d'exécution suit un ordre strict, du laboratoire à la production. On répète d'abord le scénario sur un environnement de test, où l'on peut se tromper sans conséquence ; on documente alors la procédure exacte, commande par commande. On l'exécute ensuite en production pendant une fenêtre annoncée, avec un plan de retour écrit avant de commencer et une personne qui ne touche à rien d'autre que le chronomètre. On valide enfin que l'état nominal est rétabli : tous les membres du pool sont sains, l'actif VRRP est le bon, les deux liens sont égaux, les statistiques sont revenues à leur niveau habituel. Une redondance qui bascule mais ne revient jamais à l'état initial reste un incident, même si elle a évité la coupure.
+
+La fréquence se décide par risque, pas par confort : un test annuel pour les mécanismes critiques, trimestriel pour les liens et les contrôles d'état, à chaque changement majeur pour le reste. Chaque exercice produit trois artefacts : la procédure datée, le relevé chronométré et la liste des corrections à apporter, rangés avec les runbooks du chapitre sur la supervision. Partagez le bilan, même quand il est mauvais : une bascule lente découverte en exercice est une réussite d'équipe, une bascule lente découverte par les usagers est un incident, et la différence tient uniquement à qui a été le premier à couper le cordon.
+
+## Mini-projet : fiabiliser le site Lilas et l'association Le Comptoir
+
+Le mini-projet final rassemble toutes les briques du chapitre dans deux contextes réels. Le premier est le site Lilas : deux routeurs de cœur, un pare-feu en bordure, des serveurs applicatifs en VLAN serveurs, une machine de supervision en VLAN de gestion, deux liens vers l'extérieur et une application web qui doit rester accessible. Le second est une association qui exploite un site public avec deux liens opérateur venant de deux fournisseurs différents, deux serveurs d'applications et une caisse en ligne dont l'arrêt se compte en recettes perdues. Dans les deux cas, la consigne est identique : éliminer les points de défaillance uniques, sans dépasser le budget et sans complexifier l'exploitation au point que plus personne ne comprenne l'installation.
+
+Le travail se déroule en cinq étapes, dans cet ordre. La première est la cartographie : on applique les sept questions du début de chapitre et l'on produit la liste des maillons uniques, classés par impact et probabilité. La seconde est la répartition : pool de serveurs, algorithme choisi, contrôles d'état applicatifs, persistance seulement si la session l'exige. La troisième est la redondance du répartiteur lui-même : deux instances, une adresse virtuelle, un script de contrôle et une priorité explicite. La quatrième traite les liens : suivi de route, politiques par application, éventuel SD-WAN si le nombre de sites et l'économie attendue le justifient. La cinquième est le test, exécuté, chronométré et documenté, qui seul autorise la mention haute disponibilité dans le rapport.
+
+Un point mérite d'être tranché avant d'ouvrir la moindre configuration : où s'arrête-t-on ? La redondance absolue n'existe pas, et poursuivre l'élimination de tous les maillons uniques conduirait à financer deux de tout, y compris là où la panne ne coûte rien. On décide donc à l'avance le niveau de service visé, on le convertit en durée d'arrêt acceptable sur un mois, puis on ne retient que les redondances qui ramènent l'architecture sous ce seuil. Ce filtre, appliqué ligne à ligne, protège le projet autant de la sous-traitance que de la surenchère technique.
+
+- Cartographie : sept questions, liste de maillons uniques classés par impact et probabilité.
+- Répartition : pool, algorithme choisi et justifié, contrôles applicatifs, persistance décidée.
+- Redondance du répartiteur : deux instances, adresse virtuelle, script de contrôle, priorités.
+- Liens multiples : suivi de route, politiques par application, qualité mesurée en continu.
+- Test : coupure, chronométrage, taux d'erreur, retour à l'état nominal, compte rendu daté.
+- Supervision : alerte sur la sortie d'un membre, sur la baisse des membres sains et sur la perte de l'actif.
+
+Les critères de réussite se lisent en quatre chiffres que le livrable doit contenir. Le temps de bascule mesuré, comparé à l'objectif de temps de reprise écrit au début du chapitre. Le taux d'erreur pendant la bascule, qui mesure la qualité réelle de la transition. Le nombre de points de défaillance uniques restants, assumés et justifiés, car il en restera toujours quelques-uns : un seul comptable, un seul registrar, une seule baie. Enfin, la durée avant qu'un second opérateur d'exploitation soit capable d'exécuter la procédure seule, ce qui mesure la transmission du savoir plutôt que la performance technique.
+
+Le rapport de fin de projet tient en quatre parties et se rédige comme un document destiné à être relu dans deux ans. On décrit l'architecture d'origine et ses maillons uniques, avec le schéma avant. On présente l'architecture cible et les décisions prises, en justifiant chaque redondance par un coût ou par un risque mesuré. On consigne les résultats des tests, avec les chronométrages et les corrections apportées après coup. Enfin, on liste les points restants non traités, la date du prochain exercice et la personne responsable. Ce dernier paragraphe est souvent le plus utile : c'est lui qui empêche la redondance de retomber dans l'oubli dès que la pression retombe.
+
+## À retenir
+
+La haute disponibilité n'est pas un achat, c'est un raisonnement suivi d'une preuve. On décrit la chaîne de dépendances, on élimine les maillons uniques, on double ce qui doit l'être, on configure la répartition avec des contrôles qui interrogent réellement le service, on sécurise les chemins multiples, puis on coupe pour mesurer. Sans cette dernière étape, tout le reste n'est qu'une hypothèse confortable.
+
+- Un point de défaillance unique se déplace : doubler la machine révèle le commutateur, l'alimentation ou la licence unique.
+- La disponibilité d'une chaîne est le produit des disponibilités de ses maillons indépendants.
+- RTO et RPO s'écrivent avant la conception ; ils décident de l'architecture, pas l'inverse.
+- Couche 4 pour les flux non HTTP, couche 7 dès qu'il faut lire un chemin, un nom ou un cookie.
+- Round-robin pour des requêtes égales, least connections pour des sessions longues, hachage pour l'affinité.
+- Un contrôle d'état qui vérifie seulement un port ouvert valide un système d'exploitation, jamais une application.
+- Intervalle, échecs, réussites et attente déterminent le temps réel de détection d'une panne.
+- Assurer la redondance du répartiteur avec keepalived revient à appliquer VRRP : priorité, préemption, script de contrôle.
+- Plusieurs liens exigent la symétrie : hachage de flux, synchronisation d'état ou adresse publique unique.
+- Un SD-WAN apporte overlay chiffré, contrôleur central, sélection de chemin selon la qualité et accès direct à Internet.
+- Un bénéfice de SD-WAN qui ne se mesure pas ne figure pas dans le bilan.
+- Une bascule non chronométrée n'a jamais eu lieu : temps de détection, temps de bascule, taux d'erreur.
+
+## Erreurs fréquentes
+
+La première erreur est de confondre réponse réseau et service disponible : le port quatre cent quarante-trois accepte la connexion, donc le serveur est sain. Un contrôle d'état qui teste la connexion seulement laissera dans le pool un serveur dont la base est injoignable, et le répartiteur enverra méthodiquement des requêtes à une machine qui répond par des erreurs cinq cents. La deuxième erreur est de choisir un algorithme par habitude : garder le round-robin sur une application à sessions longues produit une répartition inégale que personne ne comprend, alors que la page de statistiques l'aurait montrée en un coup d'œil.
+
+- Tester un serveur sur son port ouvert et conclure à la santé de l'application.
+- Laisser la persistance activée alors que la session est déjà partagée, ce qui dégrade la répartition.
+- Oublier l'en-tête d'origine : tous les journaux d'application affichent alors l'adresse du répartiteur.
+- Configurer deux instances VRRP avec des clés ou des routeurs virtuels différents, ce qui provoque deux maîtres.
+- Laisser la préemption désactivée : la bascule fonctionne, mais le retour à l'état nominal ne se fait jamais.
+- Ajouter un second lien sans traiter la symétrie : les sessions établies sur le premier sont rejetées en retour.
+- Publier une politique de chemin trop fine, impossible à relire pendant un incident.
+- Déployer un SD-WAN sans surveillance de la qualité des liens : on remplace une panne visible par une dégradation ignorée.
+- Réaliser un test de bascule sans plan de retour, puis découvrir que la redondance ne se réarme pas.
+
+La troisième erreur concerne les liens : on double l'accès mais on conserve un seul chemin physique dans la baie, une seule gaine ou un seul connecteur, et l'on découvre que les deux opérateurs partagent la même tranchée. La quatrième est de croire qu'un SD-WAN remplace la sécurité, alors que l'accès direct multiplie les sorties. La cinquième, enfin, est de ne jamais réarmer : après une bascule, l'actif d'origine reste en attente, un membre du pool reste en maintenance, une route reste en repli. Un exercice qui ne vérifie pas le retour à l'état nominal laisse l'installation fragile.
+
+## Pour aller plus loin
+
+La documentation de configuration de HAProxy reste la référence pour approfondir la répartition, les contrôles d'état et la persistance de session : les tutoriels décrivent, directive par directive, les fronts, les arrières, les ACL, les contrôles de couche 7 et les cookies de persistance, et se lisent au fil des besoins. Elle est accessible à l'adresse https://www.haproxy.com/documentation/haproxy-configuration-tutorials/. Pour la redondance du répartiteur, le site du projet keepalived publie le guide utilisateur, la synoptique de configuration et les études de cas consacrées aux contrôles d'état et à la bascule : https://www.keepalived.org/. Enfin, le centre d'apprentissage de Cloudflare consacre une page claire aux méthodes de répartition, au suivi de l'état des serveurs et à la bascule automatique, utile pour comparer l'approche logicielle à l'approche managée : https://www.cloudflare.com/learning/performance/what-is-load-balancing/.
+
+Au-delà des lectures, deux habitudes feront progresser plus vite que n'importe quel manuel. La première consiste à installer une pile complète sur un laboratoire, deux répartiteurs, trois serveurs, deux liens simulés, puis à provoquer méthodiquement chaque panne : arrêt d'un membre, coupure d'un lien, perte du script de contrôle, partition de l'adresse virtuelle, en chronométrant chaque reprise. La seconde consiste à relire vos incidents passés à l'aune de ce chapitre : chaque incident où les usagers ont subi une coupure correspond presque toujours à un maillon unique identifié trop tard, et chacun d'eux peut se transformer en une ligne de cartographie, en une alerte ou en une configuration de contrôle d'état.
+
+## Et maintenant : vous avez terminé le parcours Réseaux
+
+Vous voici au bout d'onze chapitres, et le dernier a ajouté la pièce qui manquait à votre maîtrise : la capacité à faire tenir un service malgré la panne. Vous savez repérer les points de défaillance uniques, dimensionner un pool, écrire des contrôles d'état qui interrogent l'application plutôt que le port, redonder le répartiteur lui-même, faire travailler plusieurs liens sans perdre la symétrie, et discuter d'un SD-WAN avec des critères mesurables plutôt qu'avec des promesses. Ce sont des compétences d'exploitation : elles ne valent que par les preuves qu'elles produisent en conditions réelles.
+
+Avant de conclure, prenez une heure pour le dernier exercice du parcours. Choisissez un service que vous connaissez, écrivez sa chaîne complète de dépendances, nommez ses trois points de défaillance uniques les plus probables, et pour chacun d'eux, décrivez la redondance que vous mettriez en place, le contrôle d'état qui la rendrait visible et le test qui la prouverait. Si vous parvenez à cette page sans hésiter, le parcours a fait son travail. Sinon, reprenez la section sur la cartographie, puis celle sur les contrôles d'état : c'est là que se joue la différence entre un réseau conçu et un réseau qui tient.
+
+Il ne reste plus qu'à passer du document à la machine. Installez la pile sur un laboratoire, coupez le premier câble, notez le chronomètre, puis remettez tout en état. Répétez cette opération jusqu'à ce qu'elle devienne un réflexe d'équipe : c'est ainsi que l'on transforme une architecture redondée en un service réellement disponible, et c'est ainsi que ce parcours trouve son utilité, non dans les pages que vous avez lues, mais dans les pannes que vous saurez éviter.

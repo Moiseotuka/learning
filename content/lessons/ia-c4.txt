@@ -1,0 +1,483 @@
+Jusqu'ici dans ce parcours, la variable à prédire était toujours un nombre : le prix d'un logement, la note d'un élève, le délai de livraison d'une commande. On parlait de régression, et l'objectif était d'estimer une valeur continue aussi précise que possible, quitte à se tromper de quelques unités. Or la très grande majorité des questions posées en entreprise ne demandent pas un nombre mais une étiquette : ce client va-t-il résilier ou non, cette transaction est-elle frauduleuse, ce message est-il un spam, ce patient présente-t-il la maladie, cette pièce sort-elle de l'usine conforme. La réponse attendue est une catégorie, parfois deux, parfois davantage. C'est exactement le champ de la classification supervisée, et c'est l'objet de ce chapitre. Vous y apprendrez deux familles de modèles, la régression logistique et l'arbre de décision, puis surtout — et c'est la partie la plus utile — la manière d'évaluer honnêtement un classifieur : matrice de confusion, choix du seuil de décision et métriques adaptées au déséquilibre des classes.
+
+Le plan du chapitre est volontairement ordonné comme le serait une vraie analyse. Nous commencerons par poser le vocabulaire : ce qu'est une cible catégorielle, la différence entre classification binaire et classification multiclasses, le découpage entraînement et test, et les deux types d'erreurs que l'on peut commettre. Nous construirons ensuite la régression logistique, modèle le plus utilisé en entreprise pour sa lisibilité : elle transforme une combinaison linéaire des variables en une probabilité, grâce à une fonction en S appelée sigmoïde. Nous verrons qu'un modèle ne se contente pas de produire une probabilité, il doit surtout décider, et qu'un seuil de 0,5 est une convention qu'on peut — et qu'on doit — questionner. À ce moment-là apparaîtra la matrice de confusion, comptage fondamental qui résume toutes les erreurs possibles. Puis viendront les arbres de décision, qui traitent des frontières que la régression logistique ne sait pas tracer, avant de revenir aux métriques : précision, rappel, F1, AUC-ROC et leur cousin AUC-PR.
+
+Un mot sur la manière de suivre cette leçon. Tout le code présenté est court, commenté et destiné à être tapé à la main : rien ne remplace le geste d'écrire une ligne, de l'exécuter, d'observer le résultat et parfois de provoquer une erreur. Les exemples en Python pur que vous verrez d'abord n'utilisent que la bibliothèque standard, afin de tourner sur n'importe quelle machine sans installation ; les exemples scikit-learn sont ensuite illustrés en prose, avec la syntaxe exacte des méthodes que vous appellerez, pour que vous compreniez ce que fait chaque appel avant de l'exécuter dans votre environnement de travail. Prévoyez un carnet à côté de vous : notez les formules, recalculez à la main les petits tableaux de confusion, et n'avancez pas tant que le comptage ne vous semble pas évident. Le quiz de quatre questions en fin de chapitre vérifiera précisément ces réflexes, et l'exercice pratique vous fera écrire seul un programme complet de seuil de décision.
+
+## Prédire une catégorie : le vocabulaire de la classification
+
+La classification supervisée consiste à apprendre, à partir d'exemples déjà étiquetés, une fonction qui associe une ligne de données à une catégorie. Le fonctionnement général est identique à celui de la régression : vous disposez d'un tableau dont les colonnes sont les variables, appelées features ou caractéristiques, et d'une colonne supplémentaire, la cible, qui contient l'étiquette attendue. L'algorithme ajuste ses paramètres sur le jeu d'entraînement, puis on l'interroge sur des données qu'il n'a jamais vues, le jeu de test, pour estimer sa capacité de généralisation. La seule différence tient à la nature de la cible : au lieu d'être continue, elle prend un nombre fini de valeurs discrètes. Si la cible n'en contient que deux, on parle de classification binaire, et par convention l'une des deux valeurs est notée 0, l'autre 1. Si elle en contient davantage, on parle de classification multiclasses : détecter le sujet d'un message parmi vingt, reconnaître une espèce de plante, identifier la catégorie d'un produit.
+
+Les exemples de classification binaire sont partout et ils ont tous la même structure cachée. En banque, on demande si une demande de crédit sera remboursée ou non ; la probabilité de remboursement sert à fixer le taux d'intérêt. En marketing, on demande si un client répondra à une campagne ; la probabilité sert à prioriser les appels. En cybersécurité, on demande si une connexion est malveillante ; la probabilité sert à déclencher un contrôle renforcé. Dans tous ces cas, l'entreprise ne veut pas seulement une prédiction, elle veut aussi une information de confiance, et c'est là que la classification se distingue réellement de ce que vous avez vu jusqu'ici : le modèle produit naturellement une probabilité entre 0 et 1, et la décision d'agir se prend séparément, en fonction du coût respectif des erreurs.
+
+La distinction entre classification binaire et multiclasses a des conséquences pratiques immédiates. Un modèle binaire renvoie une seule probabilité, celle de la classe positive, ce qui rend l'interprétation très simple. Un modèle multiclasses, lui, doit répartir une probabilité entre plusieurs issues ; les librairies le font soit en entraînant un classifieur par classe, une stratégie nommée un contre tous, soit en sortie directe avec une fonction d'activation qui normalise la somme des probabilités à exactement 1. Pour évaluer un tel modèle, la matrice de confusion devient un carré dont le nombre de lignes est égal au nombre de classes, et l'on généralise la précision et le rappel classe par classe, avant d'en calculer une moyenne pondérée. Nous resterons dans ce chapitre surtout sur le cas binaire, car il concentre toutes les difficultés conceptuelles ; une fois ceux-ci maîtrisés, le passage au multiclasses est mécanique.
+
+Le découpage des données mérite une attention particulière, plus que dans le cas d'une régression. Lorsque les classes sont déséquilibrées — ce qui est la norme, un churn représentant souvent 5 % des clients — un tirage aléatoire peut très bien placer presque tous les positifs dans l'entraînement et très peu dans le test. Votre évaluation devient alors unstable et trompeuse. On utilise pour cela un découpage stratifié, qui conserve dans chaque sous-jeu la proportion exacte de chaque classe. Concrètement, on demande au générateur de répartir les indices en respectant les fréquences de la cible, et l'on vérifie ensuite ces fréquences avant toute chose. Un autre réflexe à prendre : figer la graine aléatoire pour que vos résultats soient reproductibles, et ne jamais laisser de ligne de test influencer l'entraînement, y compris lors du prétraitement, car une normalisation calculée sur l'ensemble complet du fichier fuit déjà de l'information.
+
+L'évaluation d'un classifieur commence par une question que l'on oublie trop souvent : qu'aimeriez-vous en réalité éviter ? Une erreur n'est pas une erreur. Se tromper en prédisant frauduleuse une transaction honnête coûte un appel client et une frustration ; ne pas détecter une vraie fraude coûte de l'argent et parfois la confiance du client pour des années. Ces deux écarts ne se ressemblent pas, et pourtant un chiffre unique comme le taux de bonnes prédictions les additionne indifféremment. C'est pourquoi l'analyse d'un modèle de classification passe par un comptage détaillé des erreurs, réalisé dans la matrice de confusion que nous détaillerons plus loin. Avant même de choisir un algorithme, écrivez sur votre feuille ce qui vous coûte le plus cher : faux positifs ou faux négatifs. Cette décision de métier commande le seuil, et le seuil commande les métriques sur lesquelles vous comparerez vos modèles.
+
+Un tableau récapitulatif des métriques que vous rencontrerez dans la suite aide à se repérer, car leurs noms se ressemblent toutes et leurs définitions se confondent facilement. Elles seront reprises une à une, avec des exemples chiffrés, dans les sections consacrées au seuil et à l'imbalance.
+
+```table
+| Métrique | Ce qu'elle mesure | Question à laquelle elle répond | Sensible au déséquilibre |
+| --- | --- | --- | --- |
+| Accuracy | Part de toutes les prédictions correctes | Le modèle a-t-il globalement raison ? | Oui, très |
+| Précision | Part de vraies prédictions positives | Sur mes alertes, combien sont justes ? | Moyennement |
+| Rappel | Part de positifs effectivement trouvés | Sur les cas critiques, combien ai-je trouvés ? | Oui, fortement |
+| F1 | Moyenne harmonique de précision et rappel | L'équilibre des deux est-il bon ? | Oui |
+| AUC-ROC | Capacité à séparer les deux classes | Le classement par probabilité est-il bon ? | Peu en apparence |
+```
+
+
+Enfin, un classifieur ne produit pas seulement une étiquette : il produit un score, souvent une probabilité, et c'est ce score qui permet de comparer deux modèles entre eux indépendamment du seuil choisi. Deux modèles peuvent attribuer la même étiquette à tout le monde et pourtant classer parfaitement ou horriblement les clients du plus au moins à risque. Les métriques fondées sur le rang, comme l'aire sous la courbe ROC, mesurent exactement cette qualité de classement, tandis que les métriques fondées sur le comptage, comme la précision ou le rappel, dépendent du seuil retenu. Garder cette distinction en tête vous évitera de comparer un modèle évalué à 0,5 avec un autre évalué à 0,3 en croyant comparer des choses identiques.
+
+## La régression logistique : du score à la probabilité
+
+Le nom est trompeur, et beaucoup de débutants le subissent un moment : la régression logistique est bien un modèle de classification, pas de régression. Elle s'appelle ainsi parce qu'elle régresse — c'est-à-dire ajuste — le logarithme des probabilités, et non la catégorie elle-même. Son principe est d'une élégance remarquable. On commence comme pour une régression linéaire classique : on calcule une somme pondérée des variables, appelée score ou logit, à laquelle on ajoute un terme constant. Ce score peut valoir n'importe quel nombre réel, de moins l'infini à plus l'infini, ce qui en fait un candidat parfait pour exprimer une opinion : un score très négatif signifie une conviction forte en faveur de la classe 0, un score très positif une conviction forte en faveur de la classe 1. Il ne reste qu'à compresser cet intervalle infini dans l'intervalle [0 ; 1] pour obtenir une probabilité.
+
+Cette compression est réalisée par la fonction sigmoïde, notée souvent sigma. Elle prend n'importe quel réel et renvoie une valeur strictement comprise entre 0 et 1, symétrique par rapport à 0,5 : sigmoïde de 0 vaut exactement 0,5, sigmoïde de -4 vaut environ 0,018, sigmoïde de 4 environ 0,982. La conséquence pratique est qu'un score positif déclenche une probabilité supérieure à la moitié, un score négatif une probabilité inférieure. On retrouve ainsi la règle de décision intuitive : prédire la classe 1 lorsque la probabilité dépasse 0,5 revient à prédire la classe 1 lorsque le score est strictement positif. L'exécutable ci-dessous construit une probabilité à la main, sans aucune librairie externe, afin que vous voyiez chaque étape du calcul.
+
+```python
+import math
+
+def sigmoid(z):
+    return 1.0 / (1.0 + math.exp(-z))
+
+# score lineaire : z = b0 + b1 * x1 + b2 * x2
+b0, b1, b2 = -2.4, 0.06, 1.1
+anciennete, encours = 24, 1.5
+
+z = b0 + b1 * anciennete + b2 * encours
+p = sigmoid(z)
+
+print("score =", round(z, 4))
+print("probabilite =", round(p, 4))
+print("classe predite =", 1 if p >= 0.5 else 0)
+```
+
+L'interprétation des coefficients est ce qu'il y a d'appréciable dans la régression logistique en milieu professionnel. Chaque coefficient indique l'effet d'une unité de plus de la variable correspondante sur le logarithme des cotes, c'est-à-dire sur le rapport entre probabilité de succès et probabilité d'échec. Pour rendre cette lecture plus concrète, on en déduit le rapport de cotes, qui s'obtient en élevant le nombre e à la puissance du coefficient. Un coefficient de 0,5 donne un rapport de cotes d'environ 1,65 : à caractéristiques inchangées, augmenter la variable d'une unité multiplie par 1,65 les chances du client de churner. Ce vocabulaire — rapport de cotes, ou odds ratio en anglais — est celui que vous entendrez dans les revues de modèles, et il permet d'exprimer l'influence d'une variable sans jamais parler de probabilité brute, ce qui évite bien des contresens lorsque la probabilité de départ est très faible.
+
+En pratique, les paramètres du modèle ne sont pas choisis à la main : la bibliothèque scikit-learn les estime par maximisation de la vraisemblance, une procédure qui cherche les coefficients rendant les étiquettes observées les plus probables. L'algorithme de minimisation utilisé est de type gradient, c'est-à-dire qu'il descend la pente de l'erreur par petites étapes jusqu'à un plancher. Trois conséquences découlent de cette procédure et valent d'être connues avant d'écrire la moindre ligne. D'abord, la régression logistique est sensible à l'échelle : si une variable va de 0 à 1 et une autre de 0 à 100 000, la descente de gradient peine à trouver un équilibre, et l'on centre-réduit les variables au préalable. Ensuite, elle suppose que les effets sont linéaires sur l'échelle du logit : pour intégrer une relation non linéaire, il faut ajouter des termes polynomiaux ou des interactions. Enfin, elle supporte mal la colinéarité stricte entre variables, car plusieurs combinaisons de coefficients expliquent alors aussi bien les données.
+
+Le vocabulaire de l'API scikit-learn mérite d'être décrit précisément, car il revient dans tous les pipelines. Le classifieur s'obtient en instanciant LogisticRegression avec éventuellement le paramètre de régularisation C, dont la valeur inverse mesure la force du lissage, et le paramètre de stratégie de classe pour traiter le déséquilibre. L'apprentissage se fait par la méthode fit qui reçoit le tableau des variables et le vecteur de cibles. La prédiction d'étiquette se fait avec predict, qui renvoie 0 ou 1 pour chaque ligne. La prédiction de probabilité se fait avec predict_proba, qui renvoie un tableau à deux colonnes : la probabilité d'appartenir à la classe 0 et celle d'appartenir à la classe 1, chaque ligne sommant exactement 1. Une erreur classique consiste à confondre les deux : predict applique déjà un seuil, predict_proba ne fait que fournir l'information.
+
+```python
+# Illustration scikit-learn (a executer dans votre environnement)
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y)
+
+scaler = StandardScaler().fit(X_train)
+X_train_s = scaler.transform(X_train)
+X_test_s = scaler.transform(X_test)
+
+modele = LogisticRegression(C=1.0, max_iter=1000)
+modele.fit(X_train_s, y_train)
+
+print(modele.classes_)          # ordre des classes : [0, 1]
+print(modele.coef_)             # coefficients de chaque variable
+print(modele.intercept_)        # terme constant
+```
+
+La différence entre la sortie de predict et celle de predict_proba est suffisamment importante pour justifier un exemple complet. Supposons que le modèle estime, pour six clients, les probabilités suivantes de churn : 0,12 ; 0,31 ; 0,48 ; 0,52 ; 0,71 ; 0,94. Avec le seuil par défaut de 0,5, les deux derniers seulement sont prédits positifs, les autres non. Si votre équipe commerciale peut appeler quatre personnes par jour, vous pouvez tout à fait abaisser le seuil à 0,31 et attaquer les quatre profils les plus à risque : la probabilité reste une information continue, la décision est votre arbitrage. Le code ci-dessous montre cette bascule explicitement, en calculant les prédictions à partir des seuils retenus plutôt qu'en faisant confiance à la méthode toute faite.
+
+```python
+probas = [0.12, 0.31, 0.48, 0.52, 0.71, 0.94]
+reels  = [0,    0,    1,    0,    1,    1   ]
+
+for seuil in (0.3, 0.5, 0.7):
+    preds = [1 if p >= seuil else 0 for p in probas]
+    vp = sum(1 for r, p in zip(reels, preds) if r == 1 and p == 1)
+    fp = sum(1 for r, p in zip(reels, preds) if r == 0 and p == 1)
+    fn = sum(1 for r, p in zip(reels, preds) if r == 1 and p == 0)
+    print("seuil", seuil, "-> preds", preds, "vp", vp, "fp", fp, "fn", fn)
+```
+
+Les limites de la régression logistique sont en fait ses forces retournées, et les connaître vous évitera de la sur- ou sous-employer. Elle trace une frontière de décision linéaire : une droite dans le plan, un hyperplan dans l'espace. Si les deux classes s'entremêlent selon une courbe — un anneau autour d'un cluster central, par exemple — aucun coefficient ne pourra séparer correctement les points, et l'accuracy plafonnera au niveau du modèle trivial. Elle suppose enfin que chaque ligne est indépendante des autres, ce qui se vérifie rarement dans des données longitudinales. Ces situations ne signifient pas qu'il faut abandonner : elles signalent qu'il faut ajouter des variables dérivées, ou changer de famille de modèles. C'est précisément le rôle des arbres de décision, que nous aborderons après avoir installé l'outil indispensable pour juger de tout ceci, la matrice de confusion.
+
+
+## Le seuil de décision : transformer une probabilité en verdict
+
+Un modèle de classification bien entraîné ne vous rend jamais un simple 0 ou 1 : il rend d'abord un nombre entre 0 et 1, une probabilité qui exprime à quel point la ligne étudiée ressemble à la classe positive. Ce nombre est une information continue, riche et nuancée ; la décision, elle, est binaire, nette, définitive : on agit ou on n'agit pas. Entre les deux se trouve le seuil, ce point de passage que vous choisissez et qui transforme une probabilité en verdict. Comprendre que le seuil est une décision humaine, et non une propriété du modèle, est le tournant de ce chapitre. Deux équipes peuvent disposer exactement du même classifieur, des mêmes données, des mêmes scores, et prendre des décisions opposées pour la simple raison qu'une équipe protège ses réserves et que l'autre cherche à ne rien laisser passer. Le modèle fournit la mesure ; c'est votre métier qui fixe la règle.
+
+La règle est d'une simplicité trompeuse : prédire la classe 1 si la probabilité est supérieure ou égale au seuil, sinon prédire la classe 0. Avec un seuil de 0,5, la frontière est au milieu de l'intervalle, et c'est la valeur que presque toutes les bibliothèques retiennent par défaut. Ce choix n'a rien de magique : il correspond au cas où se tromper d'un côté coûte exactement autant que de se tromper de l'autre, et où l'on fait confiance au modèle pour être correctement calibré, c'est-à-dire pour que ses 70 % de probabilité correspondent à 70 % de cas réels. En entreprise, ces deux hypothèses sont presque toujours fausses. Un faux positif coûte un appel téléphonique de deux minutes ; un faux négatif coûte le départ définitif d'un client. Un seuil de 0,5 revient donc à dire que ces deux événements se valent, ce que personne ne dirait à voix haute.
+
+Le comportement du seuil est mécanique et il faut le connaître par cœur, car toutes les métriques en découlent. Abaisser le seuil, c'est élargir la porte : davantage de lignes sont classées positives. Le nombre de vrais positifs augmente ou reste stable, donc le rappel augmente ; mais davantage de négatifs entrent aussi, donc les faux positifs augmentent et la précision baisse. Augmenter le seuil produit exactement l'inverse : on devient sélectif, la précision grimpe, le rappel recule, et l'on manque des cas intéressants. Aucun réglage ne peut améliorer les deux simultanément — cette borne est une propriété mathématique, pas un défaut d'implémentation. Le choix du seuil revient donc à décider quel type d'erreur l'on préfère commettre, et il se formule souvent comme un problème de coût à minimiser ou de capacité à satisfaire.
+
+Le schéma suivant résume la chaîne complète, de la donnée d'entrée jusqu'à la décision évaluée, en rappelant que la matrice de confusion n'intervient qu'après le seuil, jamais avant.
+
+```
+   donnee -> modele -> probabilite -> SEUIL -> predication -> comparaison au reel
+                                                 |               |
+                                                 +-- 0 ou 1 -----+--> matrice
+                                                                     de confusion
+```
+
+Un balayage de seuils est la façon la plus directe d'observer ce compromis. On prend les probabilités prédites sur un jeu de validation, on les trie, on coupe à plusieurs endroits et l'on recalcule les métriques à chaque fois. Le programme ci-dessous le fait sur un petit échantillon volontairement réduit : six clients, quatre seuils, et pour chacun le comptage des erreurs. Exécutez-le et regardez comment le rappel monte quand le seuil descend, tandis que la précision décroît. Vous verrez aussi qu'aucun seuil ne domine tous les autres : l'un excelle en précision, l'autre en rappel, un troisième compromet les deux. C'est exactement le moment où l'analyse technique doit s'arrêter et où la décision métier doit commencer, car le bon seuil ne se lit pas dans un tableau, il se déduit de ce que l'organisation est prête à payer.
+
+```python
+probas = [0.05, 0.22, 0.34, 0.47, 0.55, 0.61, 0.78, 0.93]
+reels  = [0,     0,    1,    0,    1,    0,    1,    1    ]
+
+def evaluer(seuil):
+    preds = [1 if p >= seuil else 0 for p in probas]
+    vp = sum(1 for r, q in zip(reels, preds) if r == 1 and q == 1)
+    fp = sum(1 for r, q in zip(reels, preds) if r == 0 and q == 1)
+    fn = sum(1 for r, q in zip(reels, preds) if r == 1 and q == 0)
+    precision = vp / (vp + fp) if (vp + fp) else 0.0
+    rappel = vp / (vp + fn) if (vp + fn) else 0.0
+    f1 = 2 * precision * rappel / (precision + rappel) if (precision + rappel) else 0.0
+    return precision, rappel, f1
+
+for seuil in (0.2, 0.4, 0.5, 0.6):
+    precision, rappel, f1 = evaluer(seuil)
+    print("seuil {:.2f} | precision {:.2f} | rappel {:.2f} | f1 {:.2f}".format(
+        seuil, precision, rappel, f1))
+```
+
+Une autre façon de fixer le seuil consiste à partir du coût métier chiffré. Si un faux positif vous coûte 10 euros et un faux négatif 500 euros, le seuil optimal pour un modèle parfaitement calibré n'est pas 0,5 mais un nombre bien plus bas, de l'ordre du ratio des coûts. On peut aussi raisonner en capacité : l'équipe de support traite 200 alerts par jour, on choisira donc le seuil qui produit exactement 200 alertes, ce qui revient à classer les clients par probabilité décroissante et à couper à la 200e ligne. Cette approche par quantile est fréquente dans la détection de fraude et ne nécessite même pas que les probabilités soient bien calibrées, seulement qu'elles soient ordonnées correctement. Quelle que soit la méthode, le seuil retenu doit être figé avant l'évaluation finale, sur des données d'entraînement ou de validation, jamais choisi après coup sur le jeu de test sous peine de fausser les résultats.
+
+## La matrice de confusion : compter ses erreurs
+
+La matrice de confusion est le comptage fondamental de la classification : un petit tableau à deux lignes et deux colonnes qui place côte à côte ce que le modèle a prédit et ce qui s'est réellement passé. Ses quatre cases contiennent l'intégralité de l'information nécessaire pour évaluer un classifieur binaire. On y trouve les vrais positifs, les cas où réalité et prédiction disent toutes deux 1 ; les vrais négatifs, où les deux disent 0 ; les faux positifs, où l'on a prédit 1 alors que la réalité était 0 ; et les faux négatifs, où l'on a prédit 0 alors que la réalité était 1. Les Anglais utilisent des initiales commodes, respectivement TP, TN, FP et FN, que vous retrouverez dans toute la documentation technique. Toutes les métriques du chapitre — précision, rappel, F1, exactitude, taux de faux positifs — ne sont que des ratios de ces quatre nombres.
+
+Le tableau ci-dessous donne la disposition conventionnelle, où les lignes représentent la vérité et les colonnes la prédiction. Cette orientation est celle retenue par scikit-learn, et la connaître évite les confusions les plus fréquentes lorsqu'on lit une sortie de programme.
+
+```table
+| | Réel 0 | Réel 1 |
+| --- | --- | --- |
+| Prédit 0 | Vrais négatifs (VN) | Faux négatifs (FN) |
+| Prédit 1 | Faux positifs (FP) | Vrais positifs (VP) |
+```
+
+
+La construction de cette table à la main est un exercice que tout le monde devrait faire une fois, lentement, avec une dizaine d'exemples écrits au crayon. Le programme ci-dessous réalise ce comptage en Python pur, sans aucune dépendance, en parcourant une seule fois les paires formées d'une vérité et d'une prédiction. Notez la structure : quatre compteurs initialisés à zéro, une condition par cas, et une restitution sous forme de dictionnaire. C'est exactement ce que fait la fonction confusion_matrix de scikit-learn, à la différence que vous verrez ce qui se passe à l'intérieur.
+
+```python
+def matrice_confusion(reels, preds):
+    tp = fp = fn = tn = 0
+    for reel, pred in zip(reels, preds):
+        if reel == 1 and pred == 1:
+            tp += 1
+        elif reel == 0 and pred == 1:
+            fp += 1
+        elif reel == 1 and pred == 0:
+            fn += 1
+        else:
+            tn += 1
+    return {"vp": tp, "fp": fp, "fn": fn, "vn": tn}
+
+reels = [1, 0, 1, 1, 0, 0, 1, 0, 1, 0]
+preds = [1, 0, 1, 0, 1, 0, 1, 1, 1, 0]
+
+print(matrice_confusion(reels, preds))
+```
+
+Lire une matrice de confusion demande de se poser systématiquement la même question devant chaque case : quel est le coût de cette erreur pour mon activité ? Les faux positifs sont les alertes infondées, les recommandations inutiles, les contrôles qui embêtent un client honnête. Trop de faux positifs et l'outil perd sa crédibilité : les utilisateurs finissent par tout ignorer, c'est l'effet fatigue que connaissent les équipes de sécurité. Les faux négatifs sont les dangers qui passent, les fraudes payées, les tumeurs non signalées, les abonnements résiliés sans réaction. Ils sont souvent beaucoup plus coûteux, mais invisibles : personne ne vous remercie pour un incident que vous n'avez pas eu. C'est précisément pour cela qu'un taux de bonnes prédictions élevé ne suffit pas à rassurer : il peut masquer une colonne entière de faux négatifs que la moyenne dilue.
+
+Les quatre grandes métriques se déduisent immédiatement de ce comptage, et il vaut mieux les dériver soi-même une fois que de les apprendre par cœur. L'exactitude ajoute les deux cases correctes et divise par le total. La précision divise les vrais positifs par toutes les prédictions positives, elle répond à la question de la fiabilité de mes alertes. Le rappel divise les vrais positifs par tous les cas réels positifs, il répond à la question de ma couverture. Le F1 combine les deux par une moyenne harmonique, qui pénalise fortement les modèles très déséquilibrés entre précision et rappel : si l'un des deux est faible, le F1 s'effondre, ce que la moyenne arithmétique ne ferait pas. Le code ci-dessous calcule les quatre à partir du seul dictionnaire, en protégeant chaque division contre le cas où un dénominateur s'annule.
+
+```python
+def metriques(m):
+    total = m["vp"] + m["fp"] + m["fn"] + m["vn"]
+    exactitude = (m["vp"] + m["vn"]) / total if total else 0.0
+    precision = m["vp"] / (m["vp"] + m["fp"]) if (m["vp"] + m["fp"]) else 0.0
+    rappel = m["vp"] / (m["vp"] + m["fn"]) if (m["vp"] + m["fn"]) else 0.0
+    f1 = 2 * precision * rappel / (precision + rappel) if (precision + rappel) else 0.0
+    return {
+        "exactitude": exactitude,
+        "precision": precision,
+        "rappel": rappel,
+        "f1": f1,
+    }
+
+m = {"vp": 4, "fp": 1, "fn": 2, "vn": 5}
+print(metriques(m))
+```
+
+Prenons un chiffre pour ancrer tout cela. Sur 100 clients, votre modèle prédit 50 positifs : parmi eux, 40 sont réellement des churners et 10 ne le sont pas ; du côté des 50 prédits négatifs, 30 sont effectivement fidèles et 20 étaient en fait des churners. La matrice dit donc VP égale 40, FP égale 10, FN égale 20, VN égale 30. L'exactitude vaut 70 sur 100, soit 0,70. La précision vaut 40 sur 50, soit 0,80 : quatre de mes cinq alertes sont justes. Le rappel vaut 40 sur 60, soit 0,67 : je détecte deux churners sur trois, et j'en laisse un tiers filer. Le F1, entre les deux, vaut environ 0,73. Ces quatre chiffres se regardent ensemble ; en choisir un seul hors contexte, c'est raconter l'histoire que l'on souhaite entendre.
+
+On présente souvent la matrice normalisée, où chaque ligne est divisée par son total afin que les cases s'expriment en pourcentage. Le tableau devient alors immédiatement comparable d'un jeu de données à l'autre, quelle que soit sa taille. Lire une matrice normalisée revient à poser deux questions distinctes. Sur la ligne des réels 0, quelle part a été classée à tort comme positive : c'est le taux de faux positifs, le prix payé en incommodités inutiles. Sur la ligne des réels 1, quelle part a été correctement retrouvée : c'est le rappel, la couverture réelle du dispositif. Ces deux lectures se font ligne par ligne, indépendamment l'une de l'autre, et leur juxtaposition dit en un coup d'œil le tempérament d'un modèle : un outil prudent affiche une première ligne presque entièrement correcte et une seconde lacunaire, tandis qu'un outil agressif renverse le tableau.
+
+Trois pièges reviennent systématiquement dans les analyses de classification, et les éviter vous épargnera des conclusions erronées. Le premier consiste à évaluer le modèle sur les données qui ont servi à l'entraîner : les scores sont alors systématiquement optimistes, parfois de plusieurs dizaines de points, car le modèle a mémorisé les cas qu'on lui a montrés. Le deuxième consiste à choisir le seuil directement sur le jeu de test : on optimise bruyamment sur un échantillon trop petit, et la performance annoncée devient un artefact. On choisit le seuil sur une part de validation, puis on mesure une seule fois sur le test. Le troisième piège est de n'afficher que le rapport final sans la matrice : deux modèles ayant la même exactitude peuvent répartir leurs erreurs de façon radicalement différente, et c'est cette répartition qui décide de l'acceptation par les utilisateurs.
+
+En Python avec scikit-learn, la matrice s'obtient en appelant confusion_matrix avec le vecteur de vérités et celui des prédictions : la fonction renvoie un tableau à deux entrées dont la ligne correspond à la classe réelle et la colonne à la classe prédite. On peut rendre la sortie plus lisible en passant l'étiquette des classes, et l'afficher sous forme de tableau. La bibliothèque propose aussi un rapport complet qui assemble en un seul appel la précision, le rappel, le F1 et le nombre d'exemples par classe : dans un notebook, cette ligne remplace avantageusement un affichage manuel. L'essentiel, c'est de ne jamais vous contenter de ces chiffres sans ouvrir la matrice elle-même, car le rapport masque la répartition des erreurs.
+
+```python
+from sklearn.metrics import confusion_matrix, classification_report
+
+y_pred = modele.predict(X_test)
+matrice = confusion_matrix(y_test, y_pred, labels=[0, 1])
+print(matrice)
+print(classification_report(y_test, y_pred, digits=3))
+```
+
+La matrice de confusion a une limite qu'il faut connaître : elle dépend entièrement du seuil utilisé pour fabriquer les prédictions. Changer le seuil, c'est obtenir une autre matrice, donc d'autres métriques. Comparer deux modèles à seuils différents revient à comparer des situations réelles différentes, et il est plus honnête de les comparer d'abord sur une métrique indépendante du seuil, comme l'aire sous la courbe ROC que nous verrons plus loin. Pour un dernier modèle déployé, en revanche, une seule matrice compte : celle obtenue au seuil retenu pour la production, calculée sur des données que le modèle n'a jamais vues pendant son apprentissage. Cette exigence est la même que pour la régression : la performance annoncée doit être mesurée sur le jeu de test, une seule fois, à la toute fin.
+
+Lorsque les classes dépassent deux, la matrice devient un carré d'ordre égal au nombre de classes. Chaque case indique combien d'exemples d'une classe réelle ont été étiquetés comme appartenant à une autre classe, et la diagonale contient les réussites. On lit alors les confusions deux à deux : si votre modèle confond souvent le chiffre 4 avec le chiffre 9, la case correspondante le montrera, chose qu'aucun rapport de métriques agrégées ne dirait. Le principe reste identique, seuls les compteurs se multiplient ; les métriques deviennent des moyennes calculées classe par classe, ce que scikit-learn calcule automatiquement dans son rapport quand vous lui demandez l'option macro ou pondérée.
+
+
+## Arbres de décision : séparer par questions successives
+
+La régression logistique dessine une frontière droite : elle additionne des contributions pondérées et tranche. L'arbre de décision procède d'une toute autre manière, et beaucoup plus proche du raisonnement humain. Il pose une première question sur une variable — le revenu dépasse-t-il un certain montant, le client s'est-il connecté depuis plus de trente jours — puis sépare la population en deux branches, et recommence sur chacune d'elles avec une autre question, jusqu'à ce que chaque feuille finale contienne des exemples suffisamment homogènes. La prédiction se lit alors comme un parcours : on entre en haut de l'arbre, on suit les réponses, on sort en bas avec une étiquette. Ce schéma séduit naturellement les métiers, car il se raconte en langage naturel et se discute ligne à ligne, ce qu'aucun jeu de coefficients linéaires ne permet.
+
+Le point crucial est le choix des questions. Un arbre ne devine pas : à chaque étape, il évalue toutes les variables et tous les points de coupure possibles, puis retient le découpage qui rend les deux sous-ensembles les plus purs. La pureté se mesure par un indice d'impureté, le plus souvent l'indice de Gini ou l'entropie. L'indice de Gini vaut zéro lorsque tous les exemples d'un nœud appartiennent à la même classe, et il augmente à mesure que les classes se mélangent, atteignant sa valeur maximale pour un mélange parfaitement équilibré. L'entropie suit la même logique avec une autre courbe. Le découpage retenu est celui qui diminue le plus l'impureté moyenne des enfants, pondérée par leur taille : on ne veut pas qu'une petite branche devienne irréprochable au prix d'une grande branche confuse.
+
+Voici à quoi ressemble un tel arbre une fois appris, sous forme de schéma. Chaque nœud interne est une question, chaque branche une réponse, chaque feuille une prédiction avec, implicitement, la distribution des exemples qui y sont tombés. La profondeur compte le nombre de questions à poser avant de sortir une réponse, et c'est elle qui détermine à la fois la finesse du modèle et son coût en interprétabilité.
+
+```
+                      [ age <= 45 ? ]
+                      /             \
+                   oui               non
+                   /                   \
+      [ encours <= 800 ? ]         feuille : 1
+          /          \
+     feuille : 0    feuille : 1
+```
+
+Relire cet arbre à voix haute donne une phrase complète : si le client a moins de 45 ans et que son encours dépasse 800, alors il churne, sinon il reste. Toute la connaissance du modèle tient dans ces deux conditions. C'est cette transparence qui fait le succès des arbres dans les secteurs réglementés, où l'on doit justifier une décision individuelle, répondre à un client qui conteste et prouver qu'aucune variable interdite n'a été utilisée. Une régression logistique pourrait produire le même score, mais elle ne dirait jamais en une phrase pourquoi ce score a été obtenu plutôt qu'un autre.
+
+Le calcul ci-dessous montre une évaluation de découpage à la main, sans aucune bibliothèque. On imagine dix clients, une variable âge, et deux positions possibles pour la coupe. Pour chacune, on calcule le Gini de la branche gauche, celui de la branche droite, puis la moyenne pondérée par le nombre d'exemples. La meilleure coupe est celle dont le résultat est le plus faible.
+
+```python
+def gini(classes):
+    if not classes:
+        return 0.0
+    p = classes.count(1) / len(classes)
+    return 1.0 - p * p - (1.0 - p) * (1.0 - p)
+
+def impurete_split(valeurs, seuil, reels):
+    gauche = [r for v, r in zip(valeurs, reels) if v <= seuil]
+    droite = [r for v, r in zip(valeurs, reels) if v > seuil]
+    if not gauche or not droite:
+        return None
+    poids = len(gauche) / len(valeurs)
+    return poids * gini(gauche) + (1 - poids) * gini(droite)
+
+ages = [22, 25, 31, 38, 41, 47, 52, 58, 63, 71]
+reels = [0, 0, 1, 0, 1, 1, 1, 0, 1, 1]
+
+for seuil in (30, 40, 50, 60):
+    print("coupe a", seuil, "ans -> impurete", impurete_split(ages, seuil, reels))
+```
+
+La construction de l'arbre est dite gloutonne : à chaque nœud, on prend la meilleure décision locale sans jamais regarder plus loin, puis on recommence récursivement. Cette stratégie produit très vite des arbres profonds dont chaque feuille ne contient plus qu'un seul exemple. L'arbre a alors appris par cœur les bruits du jeu d'entraînement, atteint une exactitude de 100 % sur les données qu'il a vues et s'effondre sur celles qu'il n'a pas vues. Ce phénomène, présent dans tous les modèles mais particulièrement visible ici, se nomme le surapprentissage. Les paramètres de régularisation sont d'une efficacité directe : la profondeur maximale, le nombre minimal d'exemples pour autoriser une coupe, le nombre minimal d'exemples dans une feuille. En pratique, on commence par une profondeur modérée, on observe l'écart entre performance d'entraînement et performance de test, puis on ajuste en sens inverse si l'écart se creuse.
+
+```python
+from sklearn.tree import DecisionTreeClassifier, export_text
+
+arbre = DecisionTreeClassifier(
+    criterion="gini",
+    max_depth=3,
+    min_samples_leaf=10,
+    random_state=42,
+)
+arbre.fit(X_train, y_train)
+
+print("exactitude train :", arbre.score(X_train, y_train))
+print("exactitude test  :", arbre.score(X_test, y_test))
+
+print("profondeur :", arbre.get_depth())
+print("feuilles   :", arbre.get_n_leaves())
+print(arbre.predict_proba(X_test[:5]))
+```
+
+L'interprétation d'un arbre s'obtient directement depuis sa structure interne. Les tableaux d'attributs décrivent, nœud après nœud, la variable testée, la valeur de coupure, l'enfant gauche et l'enfant droit, ainsi que la répartition des classes dans le nœud. Pour un utilisateur métier, la lecture la plus simple reste l'export textuel, qui restitue l'arbre sous forme de règles imbriquées : si la condition est vraie, on descend à gauche, sinon à droite, jusqu'à une feuille qui porte une classe majoritaire et son score. S'y ajoutent les importances de variables, qui cumulent la diminution d'impureté apportée par chaque variable sur l'ensemble de l'arbre. Ces importances se lisent en pourcentage : une variable totalisant 0,54 a contribué à plus de la moitié des décisions de l'arbre, ce qui fournit un premier écran d'explicabilité avant de passer à des méthodes plus fines.
+
+```python
+print(export_text(arbre, feature_names=list(X.columns), max_depth=3))
+
+for nom, poids in sorted(
+    zip(X.columns, arbre.feature_importances_),
+    key=lambda paire: paire[1],
+    reverse=True,
+):
+    print("{:<24} {:.3f}".format(nom, poids))
+```
+
+Les forces et les faiblesses de l'arbre se compensent remarquablement avec celles de la régression logistique, et c'est pour cette raison que l'on compare presque toujours les deux. L'arbre ne demande aucun centrage-réduction, accepte des variables de natures différentes, détecte automatiquement les interactions entre variables puisqu'une branche n'est accessible que si la question précédente a reçu une réponse, et se lit sans calcul. En contrepartie, il est instable : déplacer quelques exemples d'entraînement peut changer complètement la racine et donc toute l'arborescence. Il ne fait pas d'extrapolation, car il ne produit que des valeurs déjà observées dans les feuilles, et ses probabilités sont des fréquences de feuilles, souvent extrêmes, de 0 ou de 1, donc mal calibrées. Un désavantage plus subtil encore : le critère de Gini favorise les variables à très nombreuses modalités, qui offrent artificiellement beaucoup de coupures possibles.
+
+De ces faiblesses naît l'idée qui domine aujourd'hui la pratique : multiplier les arbres. Si un arbre est sensible au hasard de l'échantillon, autant en entraîner beaucoup sur des sous-échantillons différents, avec des variables tirées au sort à chaque nœud, puis faire voter la majorité. On obtient la forêt aléatoire, nettement plus stable et plus robuste, au prix de la lisibilité — on perd la règle unique qu'un client peut suivre. La forêt conserve les importances de variables agrégées et les probabilités deviennent des moyennes de fréquences, donc mieux calibrées. La famille des méthodes d'accumulation pousse le principe plus loin en entraînant chaque nouvel arbre sur les erreurs du précédent. Ces techniques seront traitées à part dans le chapitre suivant : retenons ici que l'arbre individuel reste le briquet, et que comprendre son fonctionnement est indispensable pour comprendre ce que la forêt agrège.
+
+## Déséquilibre des classes : quand l'exactitude ment
+
+Dans presque tous les problèmes réels, les classes sont inégalement représentées. Une plateforme de vente constate quelques pour cent de commandes frauduleuses, un opérateur téléphonique quelques pour cent de résiliations, un service médical un nombre restreint de cas positifs. Ce déséquilibre n'est pas un défaut des données : il reflète la réalité, et il se creuse encore lorsqu'on remonte le temps ou que l'événement est rare. Le problème apparaît lors de l'évaluation. Si 5 % des clients churnent, un modèle stupide qui prédit partout ne churn pas obtient 95 % d'exactitude sans avoir appris quoi que ce soit. Ce chiffre flotte dans les rapports, rassure tout le monde, et coexiste avec un rappel de zéro : aucun churner n'est détecté. L'exactitude est devenue dans ce contexte une métrique presque inutile, et pourtant elle reste celle que présentent en premier les outils par défaut.
+
+Quatre familles de réponses existent au déséquilibre, et elles ne s'excluent pas. La première consiste à changer de métrique : on abandonne l'exactitude au profit de la précision, du rappel, du F1 et surtout de l'aire sous la courbe de précision-rappel, qui reste lisible quand la classe minoritaire est très rare, contrairement à l'aire sous la courbe ROC qui peut paraître optimiste. La deuxième consiste à rééquilibrer l'entraînement, en sous-échantillonnant la classe majoritaire ou en sur-échantillonnant la minoritaire, à condition de ne jamais toucher au jeu de test, qui doit rester fidèle à la distribution réelle. La troisième consiste à pondérer les erreurs : on indique au modèle que se tromper sur un positif coûte plus cher, et l'algorithme ajuste sa frontière en conséquence. La quatrième, la plus directe, consiste à conserver un modèle non modifié puis à baisser le seuil de décision.
+
+```python
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
+
+equilibre = LogisticRegression(max_iter=1000)
+equilibre.fit(X_train, y_train)
+print("sans pondération")
+print(classification_report(y_test, equilibre.predict(X_test), digits=3))
+
+pondere = LogisticRegression(class_weight="balanced", max_iter=1000)
+pondere.fit(X_train, y_train)
+print("avec pondération")
+print(classification_report(y_test, pondere.predict(X_test), digits=3))
+```
+
+Le paramètre de pondération automatique attribue à chaque classe un poids inversement proportionnel à sa fréquence : la classe rare pèse davantage dans la fonction de coût que l'algorithme minimise. Concrètement, la frontière de décision se déplace vers la classe majoritaire, ce qui augmente le rappel et diminue souvent la précision. On observe exactement le même effet qu'un abaissement de seuil, mais pour des raisons différentes : la pondération agit pendant l'apprentissage, le seuil agit après. Il est tout à fait possible de combiner les deux, et il est tout à fait possible aussi que cela nuise — d'où la nécessité de valider chaque variante sur un jeu de contrôle plutôt que de raisonner a priori. Aucune de ces techniques ne crée de l'information : si la classe minoritaire est représentée par quelques dizaines d'exemples, aucun artifice ne remplacera davantage de données.
+
+Le choix de la métrique de référence dépend du problème, et il est sain de l'écrire noir sur blanc avant de lancer une expérience. Pour une détection de fraude où chaque faux négatif coûte très cher, on optimise le rappel sous contrainte de précision minimale. Pour une campagne marketing où le budget impose un nombre limité d'actions, on optimise la précision ou l'on classe par probabilité et l'on prend les premiers. Pour un classement de candidatures où l'ordre compte plus que la coupure, on utilise l'aire sous la courbe ROC. Pour un screening médical, on regarde souvent le rappel à précision fixée, ou l'on utilise le score F-beta qui pondère le rappel plus fortement que la précision lorsque le coefficient de pondération bêta est supérieur à 1. Dire je cherche à maximiser le F1 sans savoir pourquoi revient à choisir la médiane de ses propres incertitudes.
+
+Le rééquilibrage par échantillonnage mérite une mise en garde concrète. Sous-échantillonner la classe majoritaire fait gagner du temps de calcul et réduit le bruit, mais on jette des informations qui ne reviendront pas ; sur-échantillonner la classe minoritaire en dupliquant ses exemples crée un modèle qui mémorise ces quelques cas et les reconnaît plutôt que les généraliser. Les méthodes de synthèse comblent la différence en générant des exemplaires interpolés entre voisins proches, ce qui produit de meilleurs résultats tant que l'on ne mélange pas deux classes à l'intersection. Quelle que soit la technique, une règle demeure : on rééquilibre sur le jeu d'entraînement seulement. Le jeu de test doit conserver la proportion réelle du terrain, sinon vous mesurez la performance du modèle sur une population qui n'existe pas.
+
+La courbe de précision-rappel mérite d'être distinguée de la courbe ROC, car leur comportement diverge nettement dès que la classe positive devient rare. La courbe ROC trace le taux de vrais positifs en fonction du taux de faux positifs ; or ce dernier se calcule sur la classe négative, très nombreuse ici, et reste donc petit même quand le modèle produit beaucoup d'alertes infondées. La courbe ROC a alors l'air excellente alors que le système envoie des milliers de fausses alarmes. La courbe de précision-rappel ne souffre pas de cet artifice : elle relie directement la qualité des alertes envoyées à la proportion des cas réels retrouvés, et son aire s'effondre visiblement dès que le modèle décroche. Pour des événements rares, on présente donc l'aire sous la courbe de précision-rappel en premier, et l'on garde l'aire ROC pour les comparaisons entre modèles sur des bases équilibrées.
+
+Enfin, le déséquilibre n'est pas figé : il évolue avec la saison, les campagnes, la politique tarifaire et les comportements des fraudeurs, qui s'adaptent eux aussi au modèle déployé. Un système de détection conçu sur une base à 2 % d'anomalies peut se retrouver face à 8 % six mois plus tard, sans que la qualité du modèle ait changé. C'est pourquoi l'on surveille la distribution des probabilités prédites, la part des alertes émises et, lorsque les étiquettes arrivent avec retard, la valeur réelle des métriques. Une dérive suffit à déclencher la réévaluation du seuil, puis l'entraînement d'une nouvelle version. Le déséquilibre des classes est ainsi moins un problème ponctuel à résoudre qu'une propriété du système à suivre dans la durée.
+
+```python
+from sklearn.model_selection import StratifiedKFold
+
+def validation_stratifiee(X, y, modele, n_splits=5):
+    croise = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    scores = []
+    for indices_train, indices_test in croise.split(X, y):
+        modele.fit(X[indices_train], y[indices_train])
+        scores.append(modele.score(X[indices_test], y[indices_test]))
+    return scores
+
+print("par mesure :", validation_stratifiee(X, y, pondere))
+```
+
+La restitution finale doit réunir trois éléments indissociables : la matrice de confusion au seuil retenu, les métriques calculées sur cette matrice, et la description du protocole utilisé. Sans le seuil, le lecteur ne peut pas reproduire votre résultat ; sans le protocole, il ne peut pas en estimer la fiabilité. Ajoutez la distribution des classes du jeu de test, le nombre d'exemples par classe, et l'écart observé entre validation croisée et jeu de test final. Ce niveau de rigueur semble lourd pour un premier modèle, mais il devient indispensable dès que la décision est automatisée, car c'est sur ces chiffres que l'on auditera le système plusieurs mois plus tard, une fois que les données auront changé et que les auteurs de l'analyse auront changé de poste.
+
+
+## Évaluer sans se mentir : courbe ROC, aire sous la courbe, validation croisée
+
+Une seule matrice de confusion ne décrit qu'un point de fonctionnement : celui du seuil que vous avez choisi. Or un modèle produit tout un continuum de seuils possibles, et sa qualité se juge à sa capacité à bien ordonner les exemples, indépendamment de la coupure retenue. La courbe ROC offre cette vue d'ensemble. Elle balaye tous les seuils imaginables, du plus exigeant au plus permissif, et pour chacun reporte deux grandeurs : le taux de vrais positifs, qui est exactement le rappel, et le taux de faux positifs, obtenu en divisant les faux positifs par le nombre total de cas réels négatifs. On trace ensuite le premier en fonction du second. Le point bas à gauche correspond au seuil extrême où l'on ne prédit jamais positif ; le point haut à droite au seuil opposé où l'on prédit positif partout ; entre les deux se dessine la courbe propre au modèle.
+
+La diagonale du graphique est la référence : elle relie l'angle inférieur droit à l'angle supérieur gauche et représente un modèle qui décide au hasard, sans aucun pouvoir discriminant. Plus la courbe se plaque vers le coin supérieur gauche, plus le modèle est bon, car cela signifie qu'il obtient beaucoup de vrais positifs tout en produisant peu de faux positifs. La déformation globale se résume par l'aire sous la courbe, notée AUC. Cette aire possède une lecture probabiliste particulièrement claire : elle donne la probabilité pour qu'un exemple pris au hasard dans la classe positive reçoive un score plus élevé qu'un exemple pris au hasard dans la classe négatif. Une valeur de 0,5 correspond au hasard, une valeur de 0,75 à un classement correct trois fois sur quatre, une valeur de 1,0 à une séparation parfaite.
+
+Le calcul de cette aire n'a rien de mystérieux : il suffit de parcourir les seuils par ordre décroissant, de mémoriser la suite des points parcourus, puis d'additionner les aires des trapèzes successifs. Le programme ci-dessous construit la courbe à partir de scores bruts et mesure son aire, sans aucune bibliothèque externe. Regardez la liste des points : chaque ligne correspond à un seuil, et vous verrez que les valeurs se déplacent par paliers, un palier par exemple dont le score change de classe lorsqu'on abaisse la coupure.
+
+```python
+def courbe_roc(scores, reels):
+    seuils = sorted(set(scores), reverse=True)
+    total_pos = sum(reels)
+    total_neg = len(reels) - total_pos
+    tp = fp = 0
+    points = [(0.0, 0.0)]
+    for seuil in seuils:
+        for score, reel in zip(scores, reels):
+            if score >= seuil and reel == 1 and score == seuil:
+                tp += 1
+            elif score >= seuil and reel == 0 and score == seuil:
+                fp += 1
+        points.append((fp / total_neg, tp / total_pos))
+    aire = 0.0
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        aire += (x2 - x1) * (y1 + y2) / 2.0
+    return points, aire
+
+scores = [0.97, 0.84, 0.72, 0.63, 0.55, 0.44, 0.31, 0.18]
+reels  = [1,     1,    0,    1,    0,    1,    0,    0   ]
+
+points, aire = courbe_roc(scores, reels)
+print("AUC =", round(aire, 4))
+for faux, vrai in points:
+    print("taux faux positifs {:.2f} | taux vrais positifs {:.2f}".format(faux, vrai))
+```
+
+Côté scikit-learn, la même opération tient en deux appels, et il est bon de savoir ce qu'ils attendent. La fonction roc_curve reçoit les vérités et les scores de probabilité — non les étiquettes prédites, ce qui est une erreur fréquente — puis renvoie les taux de faux positifs, les taux de vrais positifs et les seuils associés. La fonction roc_auc_score calcule directement l'aire à partir des mêmes éléments. Attention : si vous passez des étiquettes 0 et 1 au lieu des probabilités, le calcul reste valide mais ne produit qu'un seul point de la courbe, et l'aire devient dénuée de sens. Pour tracer la courbe, on utilise ensuite la bibliothèque de graphiques habituelle, en affichant la diagonale de référence et en annotant l'aire obtenue pour rendre la figure parlante dans un rapport.
+
+```python
+from sklearn.metrics import roc_curve, roc_auc_score
+
+scores = modele.predict_proba(X_test)[:, 1]
+tfaux, tvrais, seuils = roc_curve(y_test, scores)
+aire = roc_auc_score(y_test, scores)
+
+print("AUC-ROC =", round(aire, 4))
+meilleur = max(zip(tvrais, tfaux), key=lambda p: p[0] - p[1])
+print("point le plus haut :", meilleur)
+```
+
+La validation croisée répond à un autre problème, celui de la fiabilité de la mesure. Sur un petit jeu de test, la performance varie fortement selon le tirage : quelques exemples rares déplacés d'un côté à l'autre suffisent à faire bouger les chiffres de plusieurs points, et il est tentant de présenter le tirage le plus flatteur. La validation croisée découpe l'ensemble des données en un nombre égal de parts, conserve la proportion de chaque classe dans chacune, puis répète l'entraînement en réservant tour à tour une part comme contrôle. On obtient ainsi une mesure par part, dont on reporte la moyenne et l'écart-type. Un écart-type élevé est une information précieuse : il signale que la performance dépend du hasard du découpage et qu'il faut davantage de données ou un modèle plus robuste. L'important est de n'exécuter cette boucle que sur la part entraînement, jamais de laisser une ligne de contrôle influencer l'ajustement.
+
+```python
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+
+folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+scores = cross_val_score(
+    modele, X, y, cv=folds, scoring="f1", n_jobs=-1)
+
+print("F1 par part :", scores.round(3))
+print("moyenne {:.3f} +/- {:.3f}".format(scores.mean(), scores.std()))
+```
+
+Un dernier point distingue le classement de la prédiction et clôt cette section. Un modèle peut ordonner parfaitement les clients du plus au moins à risque tout en attribuant des probabilités fautives : dire 0,90 à un client qui ne churnera qu'une fois sur deux, c'est un excellent rangement mais une mauvaise probabilité. On parle alors de calibration, et elle se vérifie en regroupant les prédictions par tranches de probabilité et en comparant chaque tranche à la fréquence observée. Une courbe de calibration bien alignée sur la diagonale permet d'utiliser les chiffres tels quels pour du calcul de coût ; sans elle, on se contente de l'ordre et l'on raisonne en seuils plutôt qu'en valeurs absolues. scikit-learn fournit une courbe de calibration dédiée, et une transformation de probabilité peut corriger un modèle systématiquement trop confiant ou trop timide.
+
+## Exercice guidé : fixer le seuil et rendre compte
+
+Voici le scénario complet que vous devez être capable de rejouer de bout en bout, en une dizaine de minutes. On dispose d'un jeu de données déséquilibré, on veut une classification binaire, et l'on doit livrer à un responsable métier un modèle dont on pourra justifier du fonctionnement. L'ordre des opérations compte autant que les opérations elles-mêmes : d'abord le découpage stratifié en entraînement et test, puis tout apprentissage de paramètres de transformation sur l'entraînement uniquement, puis l'entraînement du modèle, puis la recherche du seuil sur une part de validation, et enfin une évaluation unique et définitive sur le test. Inversez deux de ces étapes et vos chiffres seront trop beaux, très convaincants, et faux.
+
+La dernière étape consiste à transformer ce travail en livrable lisible. On y fait figurer la distribution des classes, le modèle retenu et son raisonnement simplifié, la matrice de confusion au seuil choisi, les métriques associées avec leur intervalle issu de la validation croisée, la courbe ROC et la courbe de précision-rappel, la comparaison des seuils envisagés avec leur coût métier estimé, et enfin les limites connues du modèle. Le code ci-dessous assemble la boucle de balayage et la production du rapport final : il parcourt les seuils, calcule les métriques, retient le meilleur F1 puis affiche la matrice correspondante. C'est ce dernier affichage, et non le score agrégé, que vous présenterez.
+
+```python
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+
+probas = modele.predict_proba(X_valid)[:, 1]
+meilleur_seuil, meilleur_f1 = 0.5, -1.0
+
+for seuil in [i / 20 for i in range(1, 20)]:
+    preds = (probas >= seuil).astype(int)
+    score = f1_score(y_valid, preds)
+    if score > meilleur_f1:
+        meilleur_f1, meilleur_seuil = score, seuil
+
+preds_test = (modele.predict_proba(X_test)[:, 1] >= meilleur_seuil).astype(int)
+print("seuil retenu :", meilleur_seuil)
+print("precision :", round(precision_score(y_test, preds_test), 3))
+print("rappel    :", round(recall_score(y_test, preds_test), 3))
+print(confusion_matrix(y_test, preds_test))
+```
+
+Pour rédiger votre conclusion, revenez à la question de départ, celle du métier, et non à celle du modèle. Demandez-vous ce que change concrètement le seuil retenu pour l'équipe qui exploitera le système, combien d'alertes elle recevra par jour, quelle proportion sera infondée, et quel sera le coût des cas manqués. Si ces réponses ne tiennent pas en quelques phrases chiffrées, c'est que l'analyse n'est pas encore terminée, quelle que soit la finesse des métriques calculées. La classification n'a de valeur que transformée en décision, et une décision sans estimation d'erreur n'est qu'une intuition déguisée en résultat.
+
+## À retenir
+
+- La classification prédit une catégorie ; la probabilité produite par le modèle et la décision prise à partir d'un seuil sont deux choses distinctes.
+- La régression logistique additionne des variables pondérées, comprime le résultat par la sigmoïde et obtient une probabilité ; elle suppose une frontière linéaire et des variables centrées-réduites.
+- L'arbre de décision pose des questions successives, minimise l'impureté de Gini ou de l'entropie, s'interprète en une phrase mais se surapprend vite s'il est profond.
+- Abaisser le seuil augmente le rappel et diminue la précision ; l'inverse se produit quand on le relève. Aucun seuil n'améliore les deux à la fois.
+- La matrice de confusion compte VP, FP, FN et VN ; précision, rappel, exactitude et F1 n'en sont que des ratios.
+- L'exactitude devient trompeuse dès que les classes sont déséquilibrées : un modèle qui prédit toujours la classe majoritaire peut atteindre 95 % sans rien détecter.
+- L'aire sous la courbe ROC mesure le pouvoir de séparation indépendamment du seuil ; en cas de classes très rares, préférez l'aire sous la courbe de précision-rappel.
+- Le seuil se choisit sur des données de validation, jamais sur le jeu de test, et on ne mesure la performance finale qu'une seule fois.
+- La validation croisée stratifiée fournit une moyenne et un écart-type : annoncez toujours les deux.
+- La pondération des classes agit à l'entraînement, l'ajustement du seuil agit après coup ; les deux sont complémentaires et se valident séparément.
+
+## Erreurs fréquentes
+
+La première erreur consiste à présenter une exactitude élevée comme une preuve de qualité, en omettant de préciser la proportion de chaque classe dans les données de test. Une seconde consiste à appeler la méthode de prédiction d'étiquette quand c'est la probabilité qui est attendue, ce qui revient à figer le seuil à 0,5 sans le dire. Une troisième consiste à tuner le seuil directement sur le jeu de test, ce qui revient à choisir le meilleur résultat après avoir vu les réponses. Viennent ensuite l'oubli de la stratification lors du découpage, la normalisation calculée sur l'ensemble du fichier avant le découpage, et la comparaison de deux modèles évalués à des seuils différents présentée comme une comparaison de modèles.
+
+Une erreur plus sournoise consiste à évaluer un modèle sur les données qui ont servi à l'entraîner, très fréquent lorsqu'on ne crée pas de jeu de test par méconnaissance du découpage. Une autre consiste à ne regarder que le F1 global d'un modèle multiclasses, qui masque une classe entière très mal traitée et qui a pourtant une importance métier considérable. Enfin, il faut se méfier des seuils figés définitivement : la population change, les coûts changent, et un seuil qui était optimal au lancement peut devenir pire que le défaut de 0,5 quelques mois plus tard sans que personne ne s'en aperçoive. Ces sept pièges ont en commun de rendre un chiffre plus beau qu'il ne l'est.
+
+```table
+| Symptôme | Cause probable | Correctif |
+| --- | --- | --- |
+| Exactitude très élevée, rappel nul | Classes déséquilibrées | Métriques adaptées, pondération, seuil bas |
+| Score parfait en entraînement, médiocre en test | Arbre trop profond | Réduire la profondeur, échantillon minimum par feuille |
+| Métriques excellentes et reproductibles nulle part | Fuite ou seuil calé sur le test | Reprendre le découpage, valider le seuil sur la part dédiée |
+| Modèle juste en classement mais probabilités inutilisables | Mauvaise calibration | Vérifier la courbe de calibration, recalibrer si besoin |
+```
+
+
+## Pour aller plus loin
+
+Le guide d'utilisation de scikit-learn consacré à l'apprentissage supervisé présente en détail la régression logistique, les arbres et les méthodes ensemblistes, avec les paramètres de régularisation et de profondeur évoqués ici : https://scikit-learn.org/stable/supervised_learning.html. La page des métriques d'évaluation contient les définitions exactes de la matrice de confusion, de l'aire sous la courbe ROC, des courbes de précision-rappel et des scores dérivés, ainsi que les exemples de code correspondants : https://scikit-learn.org/stable/modules/model_evaluation.html. Enfin, l'ouvrage d'introduction à la statistique prédictive souvent employé en formation détaille la régression logistique, l'analyse des arbres et la validation croisée avec des exemples complets : https://www.statlearning.com/. Collez ces adresses dans la barre d'adresse de votre navigateur et ouvrez-les le jour où une question précise se pose plutôt que de chercher à tout retenir.
+
+Un conseil de méthode pour terminer. Les métriques de classification s'apprennent comme les formules d'un sport : en les recalculant à la main sur de petits exemples, jusqu'à ce que le lien entre une case de la matrice et un rapport devienne immédiat. Prenez dix prédictions, écrivez les quatre compteurs, dérivez-en la précision, le rappel et le F1, puis changez le seuil et recommencez. Une fois ce geste acquis, les rapports de bibliothèque ne seront plus des chiffres à recevoir mais des vérifications à contrôler.
+
+## Et maintenant : la vidéo du chapitre
+
+La vidéo du chapitre prolonge cette leçon en reprenant les mêmes étapes dans l'ordre : passage d'une probabilité à une décision, construction pas à pas de la matrice de confusion, calcul de la précision et du rappel à la main, puis balayage des seuils sur un jeu de données déséquilibré. Regardez-la avec votre éditeur ouvert à côté de vous et interrompez la lecture à chaque exemple pour exécuter le code, recalculer les compteurs et vérifier que vous obtenez les mêmes valeurs. Une fois la visionnage terminé, passez à l'exercice pratique : vous y écrirez seul, en Python pur, le programme qui lit un fichier de transactions, applique plusieurs seuils, construit la matrice de confusion, calcule les quatre métriques et recommande le seuil retenu en justifiant votre choix par le coût des erreurs.
+

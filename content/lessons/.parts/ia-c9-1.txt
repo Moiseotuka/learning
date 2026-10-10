@@ -1,0 +1,167 @@
+Bienvenue dans le neuvième chapitre du parcours Intelligence artificielle et Data Science, et dans le premier du bloc vision par ordinateur. Jusqu'ici, vos données tenaient dans un tableau : une ligne par observation, une colonne par variable. Vous avez exploré, nettoyé, régressé, classé, validé et déployé sur ce format, et vous avez acquis le réflexe qui domine tout le métier : découper avant de transformer, mesurer plusieurs fois, refuser le score isolé. Ce réflexe reste entièrement valable ici. Ce qui change, c'est la matière première : au lieu de dix colonnes, vous recevez une matrice de pixels, souvent plusieurs centaines de milliers de nombres par observation, et aucun de ces nombres n'est une variable au sens où vous l'entendez. Personne ne viendra vous dire que la luminosité du quadrant supérieur gauche est la caractéristique qui compte.
+
+Une photographie de 224 pixels de côté, en couleurs, contient 224 × 224 × 3 = 150 528 valeurs. Vous ne fabriquerez pas à la main une colonne par pixel, ni une statistique par zone de l'image. C'est précisément à cela que sert le réseau de neurones convolutif que vous allez étudier : il apprend lui-même quelles combinaisons locales de pixels sont utiles, puis il les combine en formes de plus en plus abstraites — un bord, une texture, une courbe, une tache, un défaut — jusqu'à produire une probabilité par classe. Le mot convolution désigne l'opération mécanique qui rend cet apprentissage abordable : au lieu de reliér chaque pixel à chaque neurone, on applique un petit motif pondéré un peu partout sur l'image, et l'on partage les mêmes poids d'un bout à l'autre du champ.
+
+Les trois objectifs annoncés pour ce chapitre sont concrets et chacun se vérifie en code. Premier objectif : entraîner un classifieur d'images, c'est-à-dire construire un réseau de bout en bout, suivre ses courbes d'apprentissage et l'évaluer en situation multiclasse, avec une matrice de confusion plutôt qu'un simple pourcentage. Deuxième objectif : augmenter les données pour éviter le surapprentissage, ce qui consiste à fabriquer mécaniquement des variantes réalistes de vos images d'entraînement afin qu'un modèle entraîné sur six cents photographies se comporte comme s'il en avait vu dix mille. Troisièmement : interpréter les cartes de caractéristiques, c'est-à-dire regarder ce que le réseau regarde réellement et produire une carte de chaleur qui montre sur quel morceau d'image il a fondé sa décision.
+
+Le fil rouge de ce chapitre sera un contrôle qualité industriel, le cas d'honnêteté le plus exigeant pour la vision. Une petite usine produit des pièces métalliques qui défilent sous une caméra : la caisse d'arrivée contient six cents photographies réparties entre la classe conforme et la classe défectueuse, avec un léger déséquilibre, un éclairage qui varie selon l'heure et un objet qui n'est jamais parfaitement centré. Vous disposerez de la matière première de tous les projets de vision réels : trop peu d'images, une variance nuisible et une conséquence métier si l'on se trompe. Nous reviendrons régulièrement à ce cas, mais les mêmes mécanismes s'appliquent à un classificateur de chats et de chiens, à des radios, à des plantes malades ou à des panneaux routiers. Un mot sur la manière de suivre le cours : les blocs de code sont faits pour être exécutés, pas seulement lus. Installez Keras ou PyTorch avant de commencer et gardez un éditeur ouvert à côté de vous.
+
+## Du tableau de pixels au tenseur d'entrée
+
+Une image numérique, pour la machine, est un tableau de nombres réguliers. En niveaux de gris, il s'agit d'une matrice deux dimensions où chaque case contient l'intensité mesurée par le capteur, généralement entre 0 et 255. En couleurs, ce sont trois de ces matrices empilées, une par canal — rouge, vert, bleu — qui décrivent la composition lumineuse de chaque point. L'unité fondamentale reste le pixel : un échantillon de la scène, pas une caractéristique calculée. La distinction est essentielle, car tout le travail d'extraction des caractéristiques, que l'on appelait autrefois à la main, est désormais délégué au réseau.
+
+Pour exploiter ces matrices en lot, on les empile dans un tenseur à quatre dimensions. TensorFlow et Keras rangent les axes hauteur, largeur, canaux, puis le lot : un lot de trente-deux images de 224 pixels carrés en couleurs mesure donc 32, 224, 224, 3. PyTorch place les canaux juste après le lot : 32, 3, 224, 224. Mélanger les deux conventions donne un tenseur apparemment valide mais faussé, dont les canaux sont lus comme des lignes d'image. Affichez toujours la forme avant la première itération d'entraînement, pas après une heure de calcul.
+
+Le prétraitement crée le contrat entre l'entraînement et la production. On redimensionne à une taille fixe — le réseau exige une forme constante —, puis on ramène les valeurs dans une plage commode : la division par 255, ou la normalisation par la moyenne et l'écart-type de chaque canal calculés sur ImageNet, soit 0,485, 0,456 et 0,406 pour le rouge, le vert et le bleu. Ce qui compte n'est pas le choix en soi, c'est l'identité stricte entre ce que vous faites à l'entraînement et à l'inférence : une image normalisée différemment en production est une image inconnue pour le modèle.
+
+La résolution a un coût quadratique : doubler le côté quadruple le nombre de pixels, la mémoire d'entrée et le temps de calcul de chaque couche. Le tableau suivant donne les ordres de grandeur pour un lot de trente-deux images en virgule flottante sur quatre octets ; servez-vous-en pour choisir votre taille d'entrée avant d'écrire la moindre ligne de modèle.
+
+| Taille d'entrée | Pixels par image | Mémoire du lot de 32 images | Observation typique |
+|---|---|---|---|
+| 96 × 96 × 3 | 27 648 | environ 3,5 Mo | Pratique pour un prototype rapide |
+| 160 × 160 × 3 | 76 800 | environ 9,8 Mo | Compromis courant sur GPU modeste |
+| 224 × 224 × 3 | 150 528 | environ 19,3 Mo | Standard des modèles préentraînés |
+| 416 × 416 × 3 | 519 168 | environ 66,4 Mo | Objets petits dans l'image |
+
+Les étiquettes se traitent comme dans tout problème de classification, avec une nuance. Une étiquette entière, 0 ou 1, suffit pour l'entraînement ; la forme éparse, un vecteur avec un 1 à la position de la classe, sert aux couches de sortie softmax. La convention universelle est le dossier par classe : un répertoire train contenant un sous-dossier par étiquette, un répertoire val structuré à l'identique. Adoptez l'habitude qui vous sauvera : conserver la correspondance entre indices de classe et noms de dossiers dans un fichier, car l'ordre alphabétique ne correspond pas nécessairement à l'ordre attendu par votre code d'affichage.
+
+Un piège mérite d'être signalé avant même que vous n'écriviez un modèle : deux photographies du même exemplaire prises sous différents angles sont des observations presque identiques. Si elles atterrissent de part et d'autre du découpage, votre test contient des doublons de l'entraînement, le score s'envole et la déception arrive en production. La règle du chapitre six sur les entités se transpose sans concession : on découpe par objet ou par session de prise de vue, jamais au hasard des fichiers. Le bloc suivant place en tête de tout script les vérifications minimales de forme et d'échelle.
+
+```python
+import numpy as np
+
+chemins = ["usine/conforme/pièce-0001.png", "usine/defectueuse/pièce-0002.png"]
+etiquettes = [0, 1]
+
+for chemin, etiquette in zip(chemins, etiquettes):
+    with open(chemin, "rb") as fichier:
+        brut = fichier.read(8)
+    print(chemin, "en-tête lu :", brut[:4], "classe :", etiquette)
+
+lots = np.random.randint(0, 256, size=(32, 224, 224, 3)).astype("float32")
+entree = lots / 255.0
+print("forme du lot :", entree.shape, "plage :", entree.min(), entree.max())
+
+moyenne = np.array([0.485, 0.456, 0.406])
+ecart = np.array([0.229, 0.224, 0.225])
+normalise = (entree - moyenne) / ecart
+print("après normalisation ImageNet :", round(float(normalise.mean()), 4))
+```
+
+Ce bloc contient toute la discipline de la section : forme affichée avant tout calcul, plage de valeurs contrôlée, normalisation explicite. Les erreurs de débutant en vision sont presque toujours des erreurs de forme ou de mise à l'échelle, visibles en une seconde quand on les affiche.
+
+## Ce que le perceptron entièrement connecté ne voit pas
+
+La première réaction devant une image est souvent d'aplatir le tableau en un grand vecteur, puis d'empiler des couches denses comme au chapitre quatre. La méthode tourne : le réseau s'entraîne, la perte baisse, et le score d'entraînement devient spectaculaire. Elle échoue pour deux raisons structurelles qu'aucune astuce d'optimisation ne corrigera, et les comprendre vous évitera de régler un modèle qui n'avait aucune chance.
+
+Calculons l'ampleur du désastre arithmétique. Une image de 224 pixels carrés en couleurs donne après aplatissement un vecteur de 150 528 entrées. Une seule couche dense de 4 096 neurones reliée à ce vecteur compte 150 528 × 4 096 = 616 523 776 poids, auxquels s'ajoutent 4 096 biais. En virgule flottante sur quatre octets, ces poids seuls occupent environ 2,5 gigaoctets. Tenez-en compte : la moitié de votre mémoire vidéo disparaît avant même la seconde couche, et tout ce capital de paramètres doit être ajusté sur, au mieux, quelques milliers d'images.
+
+Le schéma suivant montre cette architecture, chaque neurone relié à tous ceux de la couche précédente : le nombre de connexions y explose et aucune d'elles ne porte d'information sur la position.
+
+```image
+neural-net
+| Schéma d'un perceptron multicouche : chaque neurone d'une couche est relié à tous les neurones de la couche précédente, ce qui multiplie rapidement le nombre de paramètres.
+```
+
+La deuxième raison est plus subtile et plus grave. Dans un vecteur aplati, l'entrée numéro 7 412 n'a plus d'emplacement : elle a été arrachée à sa position dans la matrice. Le réseau ignore donc que les pixels voisins sont voisins, qu'un bord est une suite de points contigus et qu'un décalage de deux pixels produit exactement la même forme, simplement déplacée. Pour repérer une rayure, un réseau dense devra réapprendre la même règle à chaque position possible de cette rayure : il mémorise des millions de configurations au lieu d'apprendre un petit nombre de règles réutilisables, et c'est exactement le profil qui produit un surapprentissage brutal dès que le jeu de données est modeste.
+
+Comparez les deux familles de couches. Le tableau ci-dessous ne sert pas de catalogue : il vous donne les cinq critères à examiner chaque fois qu'on vous proposera une architecture.
+
+| Critère | Couche dense, image aplatie | Couche convolutive |
+|---|---|---|
+| Structure exploitée | Aucune, le vecteur est sans ordre | Voisinage des pixels dans les deux dimensions |
+| Partage des poids | Chaque poids est propre à une entrée | Un même filtre s'applique à toute l'image |
+| Nombre de paramètres | Croît avec la taille de l'image | Indépendant de la taille de l'image |
+| Invariance | Absente, le décalage change tout | Partielle, le filtre détecte partout |
+| Rôle typique | Couche de sortie, décision finale | Extraction des caractéristiques |
+
+La conséquence tient en une phrase : un modèle convolutif peut avoir moins de paramètres qu'un modèle dense tout en étant bien plus puissant, car il investit sur des règles réutilisables plutôt que sur des souvenirs de positions. Le calcul suivant compare les deux approches sans aucune bibliothèque ; modifiez la taille de l'image et observez l'écart se creuser.
+
+```python
+def params_denses(largeur, hauteur, canaux, couches):
+    entree = largeur * hauteur * canaux
+    total = 0
+    for couche in couches:
+        total += entree * couche + couche
+        entree = couche
+    return total
+
+
+def params_convolutifs(hauteur, largeur, canaux, filtres, noyau=5):
+    total = noyau * noyau * canaux * filtres[0] + filtres[0]
+    precedents = filtres[0]
+    for suivants in filtres[1:]:
+        total += noyau * noyau * precedents * suivants + suivants
+        precedents = suivants
+    return total
+
+
+entree = (224, 224, 3)
+denses = params_denses(*entree, [4096, 4096, 10])
+convo = params_convolutifs(*entree, [16, 32, 64])
+print("entree aplatie :", 224 * 224 * 3, "valeurs")
+print("MLP trois couches denses :", denses, "parametres")
+print("CNN trois blocs convolutifs :", convo, "parametres")
+print("rapport :", round(denses / convo, 1), "fois plus pour le MLP")
+```
+
+Sur ce gabarit, le perceptron dépasse le convolutif de plusieurs ordres de grandeur alors que sa capacité à reconnaître un défaut est bien moindre. Notez que les paramètres d'une couche convolutive dépendent du noyau, des canaux et du nombre de filtres, jamais de la taille de l'image : on peut donc entraîner à 128 pixels et inférer à 256 sans reconstruire le modèle. Que fait donc réellement une couche convolutive ?
+
+## La convolution, une opération locale et partageable
+
+La convolution, en vision, est une multiplication matricielle locale très simple. On choisit un petit carré de poids, le filtre ou noyau, de forme 3 × 3 ou 5 × 5. On le place sur un morceau de l'image de même taille, on multiplie chaque poids par le pixel qu'il recouvre, on somme les produits, et l'on écrit ce unique nombre dans la carte de sortie. On déplace ensuite le filtre d'un pas, la stride, et on recommence jusqu'à avoir balayé toute la surface. Un filtre produit ainsi une carte de caractéristiques, qui mesure à quel point le motif qu'il porte est présent en chaque point.
+
+Reprenons les chiffres. Une entrée de 32 × 32 pixels sur trois canaux, traitée par seize filtres de 5 × 5 appliqués sans marge d'attente, donne une sortie de 28 × 28 × 16, puisque 32 − 5 + 1 = 28. Le nombre de paramètres de cette couche est de 5 × 5 × 3 × 16 = 1 200 poids, plus seize biais, soit 1 216 au total. Comparez avec la couche dense de 616 millions de la section précédente : non seulement l'écart est gigantesque, mais ces 1 216 paramètres suffisent à détecter seize motifs distincts partout dans l'image. C'est le partage des poids qui opère ce miracle : le même filtre est utilisé à chaque position, donc ce que l'on apprend à un endroit vaut pour tous les autres.
+
+La marge d'attente, ou padding, ajoute une bordure de zéros autour de l'entrée pour que la sortie ne rétrécisse pas et pour que les pixels de bord soient traités comme les autres. Le pas, ou stride, indique de combien de cases on avance ; un pas de deux divise la taille de sortie par deux. La formule qui relie tout cela tient en une ligne : la sortie vaut l'entrée moins le filtre, plus deux fois la marge, le tout divisé par le pas, le résultat plus un. Retenez-la : elle vous épargnera la majorité des erreurs de dimensionnement, ces erreurs qui annoncent inopinément qu'un tenseur de forme 14 × 14 est attendu là où l'on produit 15 × 15.
+
+Le schéma suivant montre le mécanisme : un filtre glisse sur l'image d'entrée et écrit, case après case, la carte de caractéristiques qui devient l'entrée de la couche suivante.
+
+```image
+cnn-diagram
+| Schéma de la convolution : un filtre appliqué sur l'image d'entrée glisse fenêtre par fenêtre et produit une carte de caractéristiques par produit scalaire local.
+```
+
+Implémentons la convolution à la main, sans bibliothèque, sur une petite matrice. Ces trois boucles imbriquées sont exactement ce que votre bibliothèque exécute en C sous le capot, sur des millions de fenêtres et avec le calcul des dérivées. Lire cette version une fois, c'est comprendre la couche pour toujours.
+
+```python
+def convolution(Entree, noyau):
+    hauteur = len(Entree)
+    largeur = len(Entree[0])
+    taille = len(noyau)
+    sortie = []
+    for y in range(hauteur - taille + 1):
+        ligne = []
+        for x in range(largeur - taille + 1):
+            somme = 0.0
+            for i in range(taille):
+                for j in range(taille):
+                    somme += Entree[y + i][x + j] * noyau[i][j]
+            ligne.append(round(somme, 2))
+        sortie.append(ligne)
+    return sortie
+
+
+image = [
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0],
+]
+
+bord_vertical = [
+    [-1, 0, 1],
+    [-1, 0, 1],
+    [-1, 0, 1],
+]
+
+carte = convolution(image, bord_vertical)
+for ligne in carte:
+    print(ligne)
+```
+
+La colonne allumée produit des valeurs positives là où le filtre trouve la transition qu'il cherche, et zéro ailleurs : la barre verticale est détectée, quelle que soit la ligne à laquelle elle apparaît. Changez le filtre en matrice de détection de bord horizontal, et la même image renverra zéro partout. Un filtre seul ne voit qu'un motif élémentaire ; c'est l'empilement des couches qui construira la complexité.
+
+Qu'est-ce qui produit l'apprentissage ? Les poids du filtre ne sont pas fixés par vous : ils sont des paramètres entraînables, initialisés au hasard, ajustés par rétropropagation comme les poids d'un réseau classique. Au début, les filtres détectent du bruit. Après quelques époques, les premières couches convergent vers des motifs familiers — des contours dans toutes les orientations, des dégradés de couleur, des textures —, puis les couches suivantes combinent ces contours en formes, et les couches profondes en parties d'objet. Personne n'a programmé cette hiérarchie : elle émerge du seul fait que chaque couche compose des règles de plus en plus larges.

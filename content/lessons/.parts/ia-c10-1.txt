@@ -1,0 +1,100 @@
+Bienvenue dans le dixième chapitre du parcours Intelligence artificielle et Data Science. Les huit chapitres qui précèdent vous ont appris à explorer un jeu de données, à le décrire avec des statistiques, à prédire une variable continue par régression, à attribuer une étiquette par classification, à regrouper des individus par clustering, à valider honnêtement un modèle, à le mettre en production et à dialoguer avec un modèle d'IA générative. Toutes ces compétences reposaient sur une hypothèse rarement formulée : les observations sont interchangeables, on peut les mélanger, les répartir au hasard entre un jeu d'entraînement et un jeu de test, sans que le sens du fichier en souffre le moins du monde. Ce chapitre commence exactement là où cette hypothèse cesse d'être vraie.
+
+Une série temporelle est un ensemble d'observations numériques indexées par le temps, dans cet ordre et aucun autre. Le cours de clôture d'un titre, la consommation électrique d'un bâtiment heure par heure, le chiffre d'affaires d'un commerce chaque soir, la température relevée toutes les dix minutes : autant de séries qui partagent le même trait. Le temps n'est pas une variable parmi les autres, c'est l'ossature de l'objet. Il impose un ordre irréversible, il crée des dépendances entre les observations voisines, il apporte des motifs qui reviennent et des ruptures qui surprennent. Ignorer cette ossature produit des modèles qui surprennent surtout celui qui les a écrits, avec des scores bluffants sur du futur déjà connu.
+
+À la fin de cette leçon, vous saurez faire trois choses, et vous les aurez déjà écrites dans du code. Premièrement, décomposer une série en ses composantes — tendance, saisonnalité, résidus — et lire ce que cette séparation révèle sur le mécanisme qui produit les données. Deuxièmement, construire une prévision de référence, une baseline honnête, puis l'évaluer avec un découpage temporel et des métriques adaptées. Troisièmement, détecter une anomalie sans noyer l'alerte sous les faux positifs, ce qui suppose de distinguer l'extraordinaire de l'inattendu. Ces trois compétences forment la chaîne complète : comprendre, prédire, surveiller.
+
+Notre fil rouge durera tout le chapitre : un commerce de quartier, le Café du Marché, qui enregistre deux séries quotidiennes depuis deux ans. La première est la consommation électrique en kilowattheures, lue par le compteur, qui raconte l'activité du lieu. La deuxième est le chiffre d'affaires encaissé chaque soir, qui raconte le portefeuille des clients. Le gérant veut anticiper sa commande de marchandises et son planning, puis être prévenu le lendemain matin si la caisse de la veille a dérapé. Deux séries, deux questions, une seule méthode, que nous construirons étape par étape. Vous travaillerez au clavier : chaque bloc de code est fait pour être recopié, exécuté, modifié, cassé, puis corrigé.
+
+## Une série temporelle n'est pas un tableau ordinaire
+
+Commençons par le défaut qui cause le plus de dégâts : traiter une série comme un tableau dont la colonne date sert seulement à étiqueter les lignes. Dans un tel tableau, rien n'interdit de trier par une autre colonne, de mélanger les lignes, de découper au hasard. Pour une série, cette liberté est destructrice, parce que l'index temporel porte trois informations à lui seul : l'ordre, l'écart entre deux observations et la position de chacune par rapport au passé. L'ordre dit ce qui a précédé. L'écart, appelé fréquence, dit à quelle cadence l'on observe. La position dit si l'on se trouve en début, au milieu ou en fin d'historique, ce qui change tout pour une prévision.
+
+L'ordre est de l'information au même titre qu'une colonne. Prenez le chiffre d'affaires du Café du Marché sur douze mois : mêmes valeurs, même moyenne, mêmes écart-types, mais attribuées à des dates différentes, et vous venez de raconter une histoire différente — une croissance, une décroissance ou un plateau. Si vous mélangez les lignes, la moyenne ne bouge pas d'un centime et pourtant vous avez tout détruit. C'est pour cette raison qu'aucun découpage aléatoire n'a de sens sur une série, et que les fonctions de mélange de données, si pratiques ailleurs, sont ici des outils de sabotage. Un signal lissé à plat, une tendance effacée, une saisonnalité dispersée : voilà le prix d'un shuffle.
+
+```image
+stock-chart
+| Graphique boursier : le cours d'un titre se lit d'un seul coup d'œil — direction générale, à-coups répétés, pics isolés — parce que les points restent dans leur ordre chronologique, ce qui serait détruit par un mélange des observations.
+```
+
+La deuxième information est la fréquence, c'est-à-dire l'écart régulier entre deux observations. Un compteur électrique peut donner une valeur toutes les heures, la caisse une valeur chaque soir, un service client un total chaque lundi. Une fréquence régulière se code dans un index de type horodatage, que pandas sait exploiter pour réinitialiser l'index, agréger par période ou combler les trous. Une fréquence irrégulière, elle, exige une décision explicite avant toute analyse : régulariser l'index sur un pas constant et traiter les absences comme des valeurs manquantes, ou conserver l'irrégularité et accepter des méthodes qui la tolèrent. La pire des réponses est de laisser passer une ligne sans horodatage exploitable.
+
+Attention à une confusion fréquente et coûteuse : une absence n'est pas un zéro. Si le compteur du café n'a rien transmis le 3 mars, la consommation de ce jour-là est inconnue, pas nulle. Un zéro réel, lui, se produit : jour de fermeture annuelle, panne de caisse, coupure complète. Remplacer les trous par zéro revient à affirmer que le commerce n'a consommé ni vendu, ce qui tire la moyenne vers le bas, déforme la tendance et provoque ensuite des alertes d'anomalie totalement fausses. Traitez les trous comme des trous : repérez-les, comptez-les, décidez s'ils sont rares ou structurés, puis imputez ou excluez en connaissance de cause.
+
+La troisième information est la dépendance : dans une série, deux observations voisines se ressemblent plus que deux observations prises au hasard. Hier et aujourd'hui partagent la même météo, le même jour de la semaine, les mêmes habitudes de clientèle. Cette corrélation entre une observation et son propre passé s'appelle l'autocorrélation, et elle a une conséquence très concrète pour le chiffre : mille jours d'historique ne valent pas mille observations indépendantes. L'information réellement disponible est plus pauvre, l'incertitude des prévisions plus grande que ne le suggère la taille brute du fichier, et un modèle qui croit avoir mille exemples indépendants surjuge sa propre précision.
+
+Ajoutons les précautions pratiques qui séparent un amateur d'un professionnel. Faites pointer tous vos horodatages sur un fuseau unique et explicite, sous peine de voir deux séries d'événements se croiser à tort. Méfiez-vous des changements d'heure : une journée de vingt-trois ou vingt-cinq heures casse silencieusement une agrégation horaire. Vérifiez si vos données sont révisées après coup, comme le font certains indicateurs économiques, auquel cas une rétrospective réalisée aujourd'hui avec les valeurs révisées ne correspond pas à ce que vous auriez su alors. Enfin, notez à côté de chaque série sa source, son périmètre et les événements connus : fermeture pour travaux, promotion, panne, changement de caisse. Ce carnet, si court soit-il, vous sauvera la vie au moment de l'interprétation.
+
+Le tableau suivant rassemble les trois séries que nous croiserons dans ce chapitre et la question que chacune pose.
+
+| Série | Fréquence | Ce qu'elle raconte | Question posée |
+| --- | --- | --- | --- |
+| Consommation électrique du café | Journalière, en kWh | L'activité physique du lieu | Que consommera-t-on la semaine prochaine ? |
+| Chiffre d'affaires de la caisse | Journalière, en euros | Le portefeuille des clients | Quel encaissement attendre et quand alerter ? |
+| Cours de clôture d'un titre | À la minute ou au jour | L'avis collectif sur une valeur | Quelle direction et quelle amplitude attendre ? |
+
+## Les trois composantes d'une série
+
+Une série se lit comme un mélange, et tout le travail consiste à la séparer. Dans la pratique, on distingue trois composantes qui se superposent : une tendance lente, une saisonnalité qui revient, et des résidus, c'est-à-dire ce qui reste une fois les deux premières retirées. Cette séparation n'est pas un exercice de vocabulaire : elle conditionne la méthode de prévision choisie, la manière d'évaluer un modèle et la définition même de l'anomalie. Une anomalie, on le verra, n'a de sens que par rapport à ce qui devait se passer.
+
+La tendance est la composante lente qui exprime la direction générale sur longue période. Elle monte quand le commerce gagne des clients, descend quand le quartier se vide, plafonne quand la capacité d'accueil est atteinte. Une tendance n'est pas nécessairement une droite : elle peut s'accélérer, fléchir, s'inverser. Prétendre le contraire, en forçant un ajustement linéaire sur toute l'historique, revient à lisser la réalité jusqu'à l'incrédibilité. La tendance se juge sur plusieurs années pour une série journalière, sur plusieurs mois pour une série horaire, et se réestime périodiquement parce que le monde, lui, ne cesse pas de bouger.
+
+La saisonnalité est le motif qui se reproduit à périodicité fixe et connue. Le Café du Marché ferme le lundi, affiche un pic le samedi matin, s'essouffle en août quand les habitants partent, et voit ses meilleures semaines arriver avant les fêtes. Toutes ces régularités sont saisonnières parce que leur période est arrêtée : sept jours, douze mois, une heure. Ne confondez pas avec la cyclicité, qui désigne des fluctuations dont la période varie — les vagues d'activité économique par exemple, dont personne ne garantit la durée. La distinction a une conséquence pratique immédiate : une saisonnalité se projette, une cyclicité se décrit seulement.
+
+Les résidus sont ce qui subsiste quand on a retiré la tendance et la saisonnalité. Dans un bon modèle, il ne reste que du bruit : ni structure, ni motif, ni persistance. Si vos résidus montrent encore un motif hebdomadaire, c'est que votre décomposition était incomplète ; s'ils sont corrélés entre eux, c'est que l'ordre contient encore de l'information non exploitée. C'est aussi dans les résidus que vivent les anomalies : une valeur inhabituelle au regard de la période, pas au regard de la série entière. Examiner les résidus, donc, revient à examiner ce que votre compréhension de la série n'a pas expliqué.
+
+Voici comment ces trois composantes se matérialisent sur notre commerce. La tendance reflète la fréquentation du quartier et les décisions du gérant : ouverture d'une terrasse supplémentaire, ajout d'un créneau de vente à emporter. La saisonnalité porte le calendrier : le lundi fermé, le week-end dense, l'été creux, la Saint-Sylvestre record. Les résidus absorbent le reste, c'est-à-dire l'imprévisible : une matinée de pluie battante, une rue fermée pour travaux, un mariage qui réserve toute la salle, un oubli d'encaissement. Un modèle qui confond ces trois niveaux traite la pluie comme une tendance et Noël comme un accident — deux erreurs qui coûtent cher en stock comme en personnel.
+
+Le tableau suivant sert de référence rapide pour reconnaître chaque composante et l'outil qui la contrôle.
+
+| Composante | Ce que c'est | Exemple au Café du Marché | Outil de contrôle |
+| --- | --- | --- | --- |
+| Tendance | Direction lente sur longue période | Fréquentation en hausse depuis la rénovation | Moyenne mobile longue, STL, régression sur le temps |
+| Saisonnalité | Motif à période fixe connue | Lundi fermé, pic du samedi, creux d'août | Décomposition saisonnière, décalage d'une semaine, ACF |
+| Résidus | Ce qui reste après retrait des deux autres | Pluie, travaux, événement de rue | Écart-type des résidus, test d'autocorrélation |
+
+## Décomposer : additive ou multiplicatif
+
+Décomposer, c'est séparer sans perdre : la réunion des trois composantes doit reconstituer la série d'origine. Cette exigence donne le choix entre deux familles de modèles. Le modèle additif pose que la série est égale à la somme d'une tendance, d'une saisonnalité et d'un résidu ; il convient quand l'amplitude des oscillations reste constante quelle que soit le niveau. Le modèle multiplicatif pose que la série est le produit des trois mêmes composantes ; il convient quand l'amplitude grandit avec le niveau, comme les ventes de décembre qui décollent parce que la base est déjà haute. Choisir à tort n'est pas anodin : un modèle additif appliqué à une série multiplicative laisse des résidus qui gonflent quand le niveau monte, ce qui déclenche des alertes systématiquement vers le haut.
+
+Le test se fait à l'œil avant de se faire par calcul. Regardez vos oscillations saisonnières : si leur hauteur reste à peu près identique d'une année sur l'autre, l'additif convient ; si elles s'écartent de plus en plus quand la série monte, passez au multiplicatif. Une alternative classique consiste à travailler sur le logarithme de la série, ce qui transforme un produit en somme et permet de réutiliser toutes les méthodes additives, à condition de réexponentier ensuite vos prévisions et de savoir que l'exponentiation d'une médiane ne donne pas la moyenne attendue. Pour un commerce, l'additif reste souvent suffisant tant que la fréquentation ne change pas d'ordre de grandeur.
+
+Plusieurs méthodes permettent d'opérer la séparation. La plus ancienne est la moyenne mobile classique : on retire une tendance lente calculée par moyenne mobile, puis on moyenne les écarts par position dans la période pour obtenir la saisonnalité. statsmodels la propose sous le nom de seasonal_decompose, simple et pédagogique. La méthode STL va plus loin : elle repose sur un lissage itératif de type loess, accepte des périodes longues et, surtout, existe en version robuste qui ignore les valeurs extrêmes pendant le calcul — qualité décisive quand la série contient justement les anomalies que vous chercherez plus tard. Les agences statistiques utilisent des cousins plus lourds, comme la méthode X-13, dont le principe reste le même : séparer, itérer, contrôler.
+
+Le bloc suivant reproduit la chaîne complète sur une série de consommation électrique de huit semaines, volontairement synthétique pour rester lisible. Exécutez-le tel quel, puis remplacez la série simulée par la vôtre.
+
+```python
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.seasonal import STL, seasonal_decompose
+
+rng = np.random.default_rng(7)
+dates = pd.date_range("2025-03-03", periods=56, freq="D")
+t = np.arange(len(dates))
+tendance = 118 + 0.45 * t
+saison = 14 * np.sin(2 * np.pi * (t - 3) / 7)
+serie = pd.Series(tendance + saison + rng.normal(0, 5, len(dates)),
+                   index=dates, name="kwh")
+
+res = seasonal_decompose(serie, model="additive", period=7)
+print("tendance, 10 premiers jours")
+print(res.trend.dropna().head(10).round(1))
+print("saison, une semaine")
+print(res.seasonal.iloc[:7].round(1))
+print("residus")
+print(res.resid.describe().round(1))
+
+stl = STL(serie, period=7, robust=True).fit()
+alertes = stl.resid.abs() > 3 * stl.resid.std()
+print("jours suspects :", stl.resid[alertes].index.tolist())
+```
+
+Trois lectures doivent devenir automatiques devant cette sortie. La tendance, d'abord, est manquante aux extrémités : une moyenne mobile centrée n'a pas de valeurs complètes sur les premiers et derniers points, et il serait malhonnête de les combler par le premier chiffre disponible. La saisonnalité, ensuite, se lit sur une seule période : regardez les sept valeurs, confirmez que le pic tombe bien au jour attendu, et vérifiez qu'elles s'annulent approximativement sur la période entière. Les résidus, enfin, se jugent par leur dispersion et par leur absence de structure : un écart-type stable, pas de motif visible, aucune série de mêmes signes. Dès que l'une de ces trois lectures échoue, le modèle de décomposition est inadapté ou la période choisie est fausse.
+
+Quatre précautions fermes termineront cette étape. Réglez la période sur une justification métier, sept pour une saisonnalité hebdomadaire, douze pour une mensuelle, jamais sur un chiffre qui donnerait de jolies courbes. Comptez au moins deux périodes complètes avant de décomposer, idéalement trois, sinon la tendance est estimée sur du vide. Régularisez l'index et traitez les trous avant de décomposer, la méthode ne les devine pas. Et surtout, calculez la décomposition sur la période d'entraînement seulement quand elle sert une prévision : une tendance estimée avec le futur, puis utilisée pour prédire ce futur, c'est exactement la fuite de données que la section sur l'évaluation temporelle vous apprendra à éviter.
+
+- Une série se lit dans son ordre : mélanger les lignes détruit le signal sans changer les moyennes.
+- Fréquence, régularité et fuseau se vérifient avant toute analyse ; une absence n'est jamais un zéro.
+- Tendance, saisonnalité, résidus : trois composantes dont la réunion doit reconstituer la série.
+- Additif si l'amplitude est constante, multiplicatif si elle grandit avec le niveau.
+- La décomposition robuste de type STL isole la tendance sans se faire manipuler par les valeurs extrêmes.

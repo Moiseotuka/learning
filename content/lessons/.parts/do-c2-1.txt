@@ -1,0 +1,89 @@
+Bienvenue dans le deuxième chapitre du parcours DevOps. Le premier chapitre vous a donné les gestes essentiels de Git : créer un dépôt, ajouter des fichiers à l'index, produire un commit, pousser sur un serveur distant, récupérer les travaux des autres et ouvrir une branche pour isoler un correctif. Ces commandes suffisent pour travailler seul sur un projet court, mais elles ne tiennent pas face à la vraie vie d'une équipe : une branche qui dérive pendant deux semaines, un correctif d'urgence à répliquer sur trois versions, un travail suspendu que l'on croit perdu, une remise à zéro trop zélé qui semble avoir détruit trois jours de travail. Ce chapitre vous donne les commandes et les réflexes pour ces situations.
+
+À la fin de cette leçon, vous saurez réécrire proprement l'extrémité d'une branche avec le rebase, y compris en mode interactif pour fusionner, renuméroter ou reformuler vos propres commits. Vous saurez transplanter un correctif précis d'une branche à l'autre avec le cherry-pick, suspendre un travail inachevé sans le committer avec le stash, et retrouver n'importe quel état passé, même celui que vous croyez détruit, grâce au reflog. Vous connaîtrez enfin la règle d'or qui sépare les opérations privées des opérations partagées, celle qui décide de savoir si une commande est anodine ou potentiellement désastreuse pour vos collègues.
+
+La méthode de travail reste celle du chapitre précédent, adaptée à un outil qui se pratique au clavier. Créez un dépôt d'entraînement vide, avec quelques fichiers de texte sans importance, et exécutez chaque commande sur ce terrain d'essai avant de l'utiliser sur un vrai projet. Annoncez votre prédiction avant chaque exécution : si vous estimez que le rebase va replacer trois commits au-dessus de la branche principale, écrivez-le noir sur blanc, puis vérifiez avec l'historique affiché. L'écart entre votre prédiction et la sortie réelle de Git est votre zone d'apprentissage, et c'est la seule qui compte. Gardez ce dépôt d'essai sous la main tout au long du chapitre : les sections suivantes le sollicitent l'une après l'autre.
+
+Un mot sur ce que cette leçon n'est pas. Elle n'est pas un cours sur les mécanismes internes de Git : les objets blob, arbre et commit, les références symboliques et les paquets ne sont évoqués qu'autant qu'ils éclairent une commande. Elle n'est pas non plus un manuel exhaustif des options : chaque commande est présentée avec son usage quotidien et ses deux ou trois options qui comptent vraiment, les autres se découvrant dans la page d'aide quand le besoin survient. Ce qu'elle suppose en revanche, c'est que vous savez déjà créer un commit, ouvrir une branche et pousser, et que vous acceptez de passer une heure dans un dépôt jetable pour gagner ensuite des heures sur vos projets réels.
+
+## Le rebase : rejouer une histoire proprement
+
+Le rebase répond à un problème précis. Vous avez ouvert il y a dix jours une branche de fonctionnalité, la branche principale a avancé de vingt-cinq commits entre-temps, et vos retours de fusion contiennent des conflits qui mélangent vos changements et ceux des autres. Sans rebase, la fusion finale produira un historique où vos commits et leurs commits s'entremêlent, avec des points de fusion successifs difficiles à lire dans six mois. Avec un rebase, vous rejouez vos propres commits au-dessus de la pointe actuelle de la branche principale : l'historique devient une ligne droite, vos modifications restent regroupées, et chaque conflit se résout une fois pour toutes, commit par commit.
+
+Concrètement, la commande la plus courante s'écrit git rebase main, exécutée depuis votre branche de fonctionnalité. Git repère le point de divergence, fabrique une copie de vos commits un par un, les applique sur la pointe de main, puis déplace votre branche sur ce nouveau pied. Le contenu final du travail est le même que celui d'une fusion, mais l'historique raconte une autre histoire : non plus deux lignes qui se rejoignent, mais une ligne unique rebâtie sur la base la plus récente. C'est cette différence de narration, et elle seule, qui motive l'opération : le rebase ne change pas le résultat fonctionnel, il change la lisibilité du passé.
+
+Le mode interactif, déclenché par git rebase -i main, est l'outil de sculpteur du même geste. Git ouvre un éditeur listant vos commits du plus ancien au plus récent, chacun précédé d'une action à choisir : retenir, réprimer, fusionner, renuméroter, reformuler ou arrêter. Fusionner deux commits en un, souvent appelé squash, permet de transformer une série de correctifs de mise en place en un seul commit explicite. Reformuler permet de réécrire le message final une fois le travail terminé. La boucle classique d'un développeur expérimenté tient en trois temps : travailler par petits commits provisoires, pousser, puis avant la revue, réécrire l'extrémité pour n'offrir au lecteur que des étapes logiques et correctement nommées.
+
+```bash
+git checkout feature-paiement
+git fetch origin
+git rebase -i origin/main
+# éditeur : choisir fixup, reword, renuméroter selon le plan
+git push --force-with-lease origin feature-paiement
+```
+
+L'option --force-with-lease mérite une explication, car elle distingue l'amateur du professionnel. Un rebase a déplacé des commits déjà connus du serveur : votre poussée suivante sera refusée, car le serveur détient des objets que votre branche ne contient plus. La solution naive, git push --force, écrase la branche distante sans poser de question. La solution sûre, --force-with-lease, vérifie d'abord que la branche distante est toujours à l'endroit que vous aviez au dernier fetch : si quelqu'un a poussé entre-temps, la poussée échoue au lieu d'écraser son travail. Adoptez-la par défaut, elle ne vous coûte rien et vous sauve la mise.
+
+La règle d'or du rebase tient en une phrase : ne rebasedez jamais une branche que d'autres ont déjà récupérée. Rebaser réécrit l'historique, donc tous les commits postérieurs au point de divergence changent d'identité. Vos collègues, qui travaillent encore sur les anciennes versions, se retrouveront avec un historique dupliqué à l'intégrer, et les prochaines fusions seront un enfer de conflits. Réécrivez vos propres commits avant publication, autant de fois que vous voulez ; une fois la branche partagée et stable, privilégiez la fusion ou, en dernier recours, coordonnez un rebase collectif annoncé à l'avance et assorti d'une poussée force contrôlée par tous.
+
+Enfin, le rebase possède une variante utile : git pull --rebase. Par défaut, git pull crée un commit de fusion dès que la branche distante a avancé, ce qui parseme l'historique local de nœuds de fusion dès la première synchronisation. L'option --rebase rejoue à la place vos commits non poussés au-dessus de l'origine, préservant la ligne droite. Beaucoup d'équipes la rendent obligatoire pour les branches longue durée via la configuration git config pull.rebase true. Attention toutefois : même cette option reste interdite sur une branche que vous partagez et sur laquelle d'autres ont des commits en attente, car elle réécrit alors votre propre travail publié.
+
+## Le cherry-pick : transplanter un correctif
+
+Le cherry-pick sert à déplacer un changement précis, identifié par son commit, d'une branche vers une autre sans emporter le reste de l'histoire. Son nom évoque la cueillette : vous ne prenez que la cerise que vous voulez. L'usage typique est le correctif d'urgence. Une faille est corrigée sur la branche de développement, mais la version 2.3 en production, qui ne recevra plus de fonctionnalités, doit bénéficier du même correctif. Plutôt que de refaire le correctif à la main, vous repérez son identifiant avec git log, vous basculez sur la branche de maintenance, et vous appliquez git cherry-pick a1b2c3d. Le correctif devient un nouveau commit sur la branche cible, avec le même contenu mais un identifiant propre à cette ligne d'histoire.
+
+Plusieurs options changent l'issue. L'option -n, pour no-commit, applique les changements dans la zone de préparation sans produire de commit, ce qui permet de rassembler plusieurs cherry-picks en une seule opération finale. L'option -x ajoute au message la mention du commit d'origine, sous la forme cherry-picked from commit a1b2c3d : c'est un investissement de lisibilité que vous apprécierez quand, un an plus tard, une anomalie vous demandera de savoir si le correctif existe déjà sur telle version. L'option -e ouvre l'éditeur de message, et l'option --abort annule proprement l'opération si les conflits deviennent ingérables.
+
+```bash
+git log --oneline --grep="faille" main
+git checkout release-2.3
+git cherry-pick -x a1b2c3d
+# en cas de conflit :
+git status
+git add <fichiers-resolus>
+git cherry-pick --continue
+```
+
+Les conflits sont fréquents, et leur résolution ressemble à celle d'une fusion : Git arrête, signale les fichiers en désaccord, et vous demande de trancher avant de continuer. Si le contexte a trop changé entre les deux branches, le correctif peut ne plus s'appliquer du tout ; vous le résolvez alors manuellement, ou vous abandonnez avec cherry-pick --abort. C'est aussi le moment de mesurer une réalité d'équipe : plus les branches vivent longtemps séparément, plus les cherry-picks coûtent cher. Un correctif transplante un contenu, pas une relation historique : si la branche cible évolue ensuite indépendamment, les deux copies du correctif divergeront silencieusement.
+
+Deux écueils reviennent souvent. Le premier consiste à cherry-pick une série entière de dix commits, un par un, pour la reproduire sur une autre branche : le résultat fonctionne, mais vous dupliquez toute une histoire, et les deux lignes ne seront plus synchrones. Dès qu'il s'agit d'une série, préférez une fusion ou un rebase, qui conservent la relation d'origine. Le second écueil est de cherry-picker un commit déjà présent sur la branche cible : l'opération fabrique alors un doublon au contenu identique, et la prochaine fusion affichera un conflit absurde. Vérifiez avec git log --oneline la présence du correctif avant d'agir, ou recherchez le marqueur cherry-picked from si vos équipes utilisent systématiquement l'option -x.
+
+Enfin, gardez à l'esprit ce que le cherry-pick ne fait pas : il ne déplace pas le commit, il le recopie. L'original reste sur sa branche d'origine. Cette distinction devient importante quand vous décidez d'abandonner une fonctionnalité : annuler une branche abandonnée n'annule pas les correctifs que vous en avez prélevés ailleurs. Pensez au cherry-pick comme à un outil de distribution ponctuelle, excellent pour les correctifs isolés, mal adapté à la relocalisation de travail continu.
+
+## Le stash : suspendre sans committer
+
+Le stash est le tiroir de secours de Git. Vous êtes au milieu d'une modification, le responsable de projet vous demande un correctif urgent sur une autre branche, et vos fichiers sont dans un état inachevé : certains prêts, d'autres à moitié, sans que le travail mérite un commit. Fermer une session sans rien faire revient à tout laisser exposé ; créer un commit bâclé pollue l'historique. Le stash résout le dilemme en rangeant l'état courant de la zone de préparation et du répertoire de travail dans une pile à part, puis en remettant le dépôt dans l'état du dernier commit. Vous basculez, traitez l'urgence, et vous revenez reprendre exactement où vous étiez.
+
+La séquence quotidienne tient en trois commandes. git stash push -u enregistre les modifications suivies, y compris les fichiers non suivis grâce à l'option -u, puis nettoie le répertoire. git stash list affiche la pile, chaque entrée étant identifiée par un identifiant du type stash@ plus deux et un message généré automatiquement. Après votre passage sur la branche d'urgence, git stash pop réapplique la première entrée et la supprime de la pile. Si vous hésitez sur la fin de l'opération, remplacez pop par apply : le contenu est restauré mais l'entrée reste enregistrée, ce qui vous laisse une copie de sécurité.
+
+```bash
+git stash push -u -m "formulaire-commande, validation moitié faite"
+git stash list
+git stash apply stash@{1}
+git stash drop stash@{1}
+```
+
+L'option -m est souvent négligée et se révèle précieuse au bout d'une semaine. Sans message, la pile affiche un résumé généré depuis le premier fichier modifié, ce qui devient illisible quand vous cumulez trois suspendus. Un intitulé court qui décrit l'état du travail vous évite de restaurer la mauvaise entrée. Pour une entrée qui mérite vraiment d'être conservée, créez une branche dédiée avec git stash branch nom-de-la-branche : Git ouvre une branche à partir du commit d'ancrage du stash, y applique le contenu et retire l'entrée de la pile. C'est la sortie propre lorsque le travail suspendu s'avère être le début d'une fonctionnalité à part entière.
+
+Les pièges du stash sont de deux ordres. D'abord, la pile n'est pas sauvegardée : elle vit dans le dépôt local, disparaît avec votre clone, et expire au bout de quatre-vingt-dix jours par défaut, puisque git fsck expire automatiquement les entrées les plus anciennes. Ne confiez jamais au stash seul une journée de travail : un commit provisoire sur une branche jetable, poussé sur le serveur, est infiniment plus sûr. Ensuite, les fichiers non suivis sans l'option -u restent en place et peuvent se retrouver écrasés par l'application d'un stash plus ancien, ou masqués par git stash pop qui les réintroduit à côté de fichiers créés entre-temps.
+
+Un réflexe professionnel consiste d'ailleurs à se passer du stash dès que le travail dépasse quelques heures. Un commit avec un message tel que wip avant démonstration, poussé sur une branche personnelle, offre les mêmes avantages que le stash et deux de plus : il traverse les clones, il est versionné et commentable. Réservez le stash aux suspendus très courts, de quelques minutes à quelques heures, où la commodité l'emporte sur la pérennité. Et notez au passage que le stash ne suit pas les commits : si vous committez puis oubliez d'ajouter un fichier, il faudra le stasher séparément, ce que l'option -u fait précisément.
+
+## Le reflog : l'archive qui sauve
+
+Le reflog, abréviation de reference log, est l'historique local des déplacements de vos références. Chaque fois que HEAD change de position, que ce soit par un commit, un checkout, un rebase, une fusion, un reset ou un ammend, Git note l'opération et l'ancienne valeur dans un journal vivant dans le répertoire de travail. Ce journal n'est pas poussé sur le serveur, il n'appartient qu'à votre clone, et il vous donne un accès direct à n'importe quel état récent. C'est le filet de sécurité de Git : presque rien n'est définitif tant que le reflog n'a pas expiré.
+
+La commande git reflog affiche une liste dont chaque ligne commence par un identifiant du type HEAD moins trois, suivi de l'opération et de son message. Chaque identifiant désigne un état précis du dépôt. Pour revenir à l'un d'eux, vous disposez de deux gestes. git reset --hard HEAD plus trois replace la branche courante sur cet état, en écrasant le répertoire de travail. Une variante plus prudente consiste à créer une branche de récupération avec git branch sauvegarde HEAD plus trois, ce qui fige l'état dans une référence stable sans rien détruire, puis à examiner les choses à tête reposée. Préférez toujours cette seconde voie quand l'état récupéré contient du travail que vous n'avez pas encore inspecté.
+
+```bash
+git reflog
+git reflog show main
+git branch recuperation main@{2}
+git reset --hard HEAD@{7}
+```
+
+Les scénarios de récupération les plus courants sont connus par cœur. Un git reset --hard prononcé trop tôt vient d'effacer trois heures de modifications non poussées : le reflog de HEAD les montre, un reset ou un checkout les ramène. Une branche vient d'être supprimée par erreur : git reflog show nom-de-la-branche conserve la trace de sa dernière position, et git branch -f nom-de-la-branche identifiant la recrée. Un rebase mal calibré a déplacé vos commits au-dessus de la mauvaise base : tant que vous n'avez pas poussé, git reset --hard HEAD plus l'identifiant d'avant l'opération vous rend exactement à votre point de départ.
+
+Une subtilité mérite attention : il existe deux reflog, l'une pour HEAD, l'autre pour chaque branche. git reflog show nom-de-la-branche montre les déplacements de cette branche, alors que git reflog montre ceux de HEAD. Dans la majorité des cas, c'est la première qui vous sauve, car après un reset, HEAD désigne désormais une position nouvelle et non pas celle que vous cherchez. Si vous avez déjà poussé un état détruit, le reflog local ne suffit plus : les objets existent toujours sur le serveur, mais il faudra les y chercher par leur identifiant, par exemple avec git fetch origin identifiant, puis créer une branche dessus.
+
+Deux limites encadrent ce filet de sécurité. La première est temporelle : par défaut, les entrées de reflog sont conservées quatre-vingt-dix jours, puis purgées par la récupération automatique des objets inutiles. Un état plus ancien peut donc disparaître définitivement, surtout si une commande de nettoyage agressif a été lancée. La seconde est géographique : le reflog n'existe que dans votre clone, il n'est donc d'aucun secours sur la machine d'un collègue ni après la perte de votre disque. La vraie protection combine les trois niveaux : un reflog pour les accidents du quotidien, une branche poussée pour les travaux importants, et un serveur distant qui conserve l'essentiel.

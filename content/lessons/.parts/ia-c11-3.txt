@@ -1,0 +1,164 @@
+## Déployer sans risque : shadow, canary et retour arrière
+
+Publier un modèle n'est pas un événement, c'est une progression. Le réflexe naturel consiste à remplacer l'ancienne version par la nouvelle, à constater le lendemain si quelqu'un se plaint, et à découvrir une semaine plus tard que les décisions ont changé de sens sans que personne ne l'ait décidé. L'industrie a remplacé cette séquence par des stratégies de mise en service qui ont toutes le même principe : faire courir l'ancien et le nouveau en parallèle, comparer, puis augmenter la part du nouveau tant que la comparaison reste favorable.
+
+Le mode silencieux, souvent appelé shadow pour ombre, est la première étape et la plus prudente. Le trafic réel est dupliqué : une copie part vers le nouveau modèle, qui calcule et journalise sa réponse, mais seule l'ancienne réponse est rendue à l'utilisateur. Le coût est purement computationnel, l'impact utilisateur est nul, et l'on gagne quelque chose d'inappréciable : des jours de prédictions réelles, sur des entrées réelles, que l'on pourra comparer ligne à ligne aux réponses du modèle en service quand les étiquettes de vérité arriveront. Le mode silencieux est idéal pour valider une chaîne technique ; il est insuffisant pour valider un comportement métier, puisque personne n'en subit les effets.
+
+Le déploiement canary, du nom de l'oiseau minier dont les premiers individus envoyés dans les galeries détectaient le gaz, pousse le modèle devant une fraction du trafic réel. On commence par un pourcent, quelques requêtes seulement, puis cinq, puis vingt-cinq, chaque palier étant conditionné à des critères mesurés : taux d'erreur, latence, et les indicateurs métier qui peuvent l'être en continu. Si un palier échoue, le retour arrière est automatique et immédiat ; si les paliers passent, la mise à zéro cent pour cent devient une formalité. Le déploiement canary transforme un pari en séquence d'expériences, chacune réversible.
+
+```text
+  Deploiement progressif d'une version 12 du modele de credit
+
+  1. version 12 enregistree, etat "preparation", tests verts
+  2. mode silencieux 24 h      : 100 % du trafic simule, 0 % servi
+       -> 12 400 comparaisons, ecart moyen de score +0.01, aucun incident
+  3. canary 1 %   (lundi 08h)  : portee critique de l'API au vert
+  4. canary 5 %   (lundi 12h)  : latence 95e percentile 41 ms, erreurs 0,02 %
+  5. canary 25 %  (mardi 09h)  : taux d'accord metier stable, PSI entrees 0.04
+  6. mise a 100 %  (mercredi)  : version 11 enregistree comme "archive"
+  7. retour arriere teste      : version 11 servie en 8 s, sans coupure
+```
+
+Le blue-green est la troisième stratégie, et la plus coûteuse : deux environnements complets coexistent, l'un en production, l'autre en attente, et le basculement se fait d'un coup, en reparamétrant l'équilibreur de charge. Sa vertu est un retour arrière instantané, sans calcul, puisqu'il suffit de repointer vers l'autre environnement ; son défaut est de doubler l'infrastructure. Il convient aux services dont la version doit changer d'un seul bloc, applicatives et modèle compris, et il devient pénible quand la mémoire réservée aux modèles se compte en gigaoctets.
+
+Quand les modèles sont empaquetés en conteneurs, c'est un orchestrateur qui assure la progression. Il gère le démarrage des nouvelles instances, leur passage à santé saine, la réduction progressive des anciennes, et l'arrêt net d'un déploiement qui ne répond pas. Le logo suivant est celui de l'outil le plus répandu pour ce travail.
+
+```image
+kubernetes
+| Kubernetes orchestre le déploiement progressif : les anciennes instances restent en service pendant que les nouvelles démarrent et passent leur contrôle de santé.
+```
+
+Quel que soit l'outil, la mécanique de bascule reste la même, et vaut la peine d'être écrite à la main une fois pour comprendre ce que les tableaux de bord cachent. Le bloc ci-dessous montre la séquence réelle d'une montée de version, y compris la dernière ligne, celle que l'on espère ne jamais exécuter et que l'on teste pourtant chaque trimestre.
+
+```bash
+# 1. Mise en place de la nouvelle image, sans extinction des anciennes
+kubectl set image deployment/credit-api api=registry.local/credit-api:12
+kubectl rollout status deployment/credit-api --timeout=180s
+
+# 2. Reduction progressive de l'ancienne version (palier de 5 %)
+kubectl scale deployment/credit-api-v11 --replicas=1
+kubectl wait --for=condition=available deployment/credit-api-v11 --timeout=60s
+
+# 3. Verification : metriques de palier consultees avant d'aller plus loin
+#    latence p95, taux d'erreur, part de reponses classees "accord"
+
+# 4. Retour arriere : la version precedente reprend la totalite du trafic
+kubectl rollout undo deployment/credit-api
+kubectl rollout status deployment/credit-api --timeout=60s
+```
+
+La comparaison des stratégies se lit en un coup d'œil. Aucune n'est supérieure aux autres : chacune achète un niveau de risque avec un niveau de ressources.
+
+| Stratégie | Trafic exposé au nouveau | Coût d'infrastructure | Retour arrière | Quand la choisir |
+|---|---|---|---|---|
+| Remplacement direct | 100 % d'un coup | Faible | Lent, manuel | Rien de critique, testé partout |
+| Mode silencieux | 0 %, réponses simulées | Double calcul | Immédiat | Valider la chaîne, pas le métier |
+| Canari | 1 % à 100 %, par paliers | Légère hausse | Automatique à chaque palier | Modèle à impact métier |
+| Blue-green | 0 % puis 100 % | Double | Instantané | Version applicative et modèle liées |
+
+Un dernier point décide de la crédibilité de toute cette mécanique : les critères de palier doivent être décidés avant le premier pourcent, pas inventés pendant l'observation. Décrivez-les dans le même fichier que le pipeline — latence maximale, taux d'erreur maximal, fenêtre d'observation, durée minimale de chaque palier — et faites-en une étape automatique. Un palier que l'on peut sauter parce que le vendredi approche n'est pas un garde-fou, c'est une formalité.
+
+## Dérive : données, concept, et ce qui les sépare
+
+La surveillance commence par un vocabulaire exact, car trois situations très différentes partagent le même mot dans le langage courant. La dérive désigne toute évolution d'une distribution entre deux périodes. On la découpe en trois familles, et confondre les deux premières conduit à prendre les mauvaises décisions : réentraîner quand il faut changer le problème, ou changer le problème quand un réentraînement aurait suffi.
+
+La dérive de données, dite aussi dérive de covariables, se produit quand la distribution des entrées change alors que la relation entre entrées et cible reste la même. Le porteur type est un changement de collecte : un formulaire qui demande désormais le revenu annuel au lieu du revenu mensuel, un canal d'acquisition qui apporte une clientèle plus jeune, une nouvelle région ouverte avec des profils différents. Le modèle n'a pas tort, il est simplement sollicité sur une zone de l'espace qu'il a peu vue. C'est le cas le plus favorable, et un réentraînement sur les données récentes le répare généralement bien.
+
+La dérive de concept est plus grave : c'est la relation entre entrées et cible qui change, à entrées identiques. Après une hausse brutale des taux, un dossier dont la mensualité pèse trente-cinq pour cent du revenu passe du bon payeur au risqué, sans qu'une seule variable d'entrée n'ait bougé. Après une réforme réglementaire, certains comportements deviennent interdits ou encouragés. Après une campagne de fraude massive, la signature de la fraude se déplace. Aucun réentraînement automatique ne suffit tant que les nouvelles étiquettes n'ont pas été observées, et le modèle reste trompeur pendant toute la période de latence.
+
+La dérive de prédictions est le symptôme le plus rapide à observer : c'est la distribution des sorties du modèle qui bouge. Si la part de dossiers classés à risque double en une semaine, quelque chose a changé — les entrées, la relation, ou le modèle lui-même après une modification de prétraitement. Elle ne dit pas quoi, seulement où regarder, ce qui en fait un excellent signal d'alerte précoce et un très mauvais diagnostic posé seul.
+
+| Type de dérive | Ce qui change | Ce qui ne change pas | Détection typique | Réponse attendue |
+|---|---|---|---|---|
+| Covariables (données) | Distribution des entrées | Relation entrées, cible | PSI, KS par variable | Réentraînement sur fenêtre récente |
+| Concept | Relation entrées, cible | Parfois les entrées | Étiquettes différées, métrique en ligne | Reproblématisation, réentraînement complet |
+| De prédictions | Distribution des sorties | Tout, parfois | Histogramme des scores | Investigation de la cause |
+| De labels | Distribution de la cible | Entrées | Taux de défaut observé | Réévaluation du seuil de décision |
+| Amont (schéma) | Forme ou code des données | Sens métier | Contrat de données | Réparation de la source |
+
+Le schéma suivant illustre ce qui se joue dans le cas de concept : les poids du réseau ont figé une frontière entre classes, apprise à une époque donnée. Quand la frontière bouge dans le monde réel, les poids, eux, restent exactement où ils étaient.
+
+```image
+neural-net
+| Un réseau de neurones aux couches colorées : ses poids figent la frontière apprise à l'entraînement, qui ne suit pas tout seul le déplacement de la réalité.
+```
+
+Prenons le cas concret qui nous suit depuis le début. Le modèle de crédit est remis en production chaque semaine, et plusieurs mécanismes de dérive y jouent en même temps. La collecte évolue : le partenaire qui fournit les dossiers ajoute un partenaire bancaire, dont les relevés ont un format voisin mais des colonnes renseignées autrement. Le portefeuille vieillit : les emprunteurs souscrits il y a trois ans voient leur endettement monter naturellement. Enfin le contexte change : une variation des taux modifie le comportement de remboursement sans modifier les fiches. Trois causes, trois réponses possibles, et aucun d'entre eux n'est un bug.
+
+La mise en place de la surveillance, elle, obéit à une règle que le chapitre 7 a déjà posée : on ne compare jamais la production au jeu d'entraînement brut. On compare une fenêtre récente à une fenêtre de référence représentative de la période pendant laquelle le modèle s'est comporté correctement. La fenêtre de référence est versionnée avec le modèle ; elle est trop petite, la mesure bruitera, trop grande, elle noiera un changement réel dans une moyenne ancienne. Pour un flux hebdomadaire, une référence de quatre à huit semaines et une fenêtre courante de sept jours donnent des comparaisons lisibles.
+
+Deux écueils structurent le reste du travail. Le premier est la saisonnalité : les dossiers du lundi ne ressemblent pas à ceux du dimanche, et comparer un lundi à une moyenne de sept jours fabriquerait une dérive fantôme chaque semaine ; la correction consiste à comparer jour à jour ou à agréger sur des cycles complets. Le second est la multiplicité : surveiller cent variables avec un seuil chacune, c'est recevoir des alertes au hasard, même en l'absence de changement ; il faut donc une politique d'alerte — seuils plus stricts sur les variables critiques, confirmation sur deux périodes consécutives, et un niveau de synthèse global en plus du détail variable par variable.
+
+## Mesurer : PSI et test de Kolmogorov-Smirnov
+
+Deux mesures dominent la surveillance univariée, et il faut savoir ce que chacune mesure réellement pour ne pas les opposer à tort. L'indice de stabilité de population, ou PSI, découpe la distribution de référence en classes — dix quantiles le plus souvent — puis compare, classe par classe, la part observée récemment à la part attendue. Il agrège les écarts en un seul nombre, pondéré par le logarithme du rapport, ce qui pénalise surtout les classes où la masse a fortement bougé.
+
+Les seuils usuels sont stables dans l'industrie et méritent d'être mémorisés : en dessous de 0,10, la variable est considérée stable ; entre 0,10 et 0,25, elle appelle la vigilance ; au-delà, la dérive est avérée. Le chapitre 7 retenait 0,20 comme seuil d'alerte pour une variable critique du modèle de crédit, et cette valeur reste une bonne borne de départ, à condition de la fixer avant de voir les données, jamais après.
+
+Le test de Kolmogorov-Smirnov aborde le problème autrement : au lieu de classes, il compare les deux fonctions de répartition empiriques et retient la plus grande distance verticale entre elles. Il ne dépend donc pas du découpage, ce qui le rend plus propre quand les distributions sont continues, et il est sensible à toute forme d'écart, déplacement, élargissement ou modification de forme. On lui associe souvent une valeur de probabilité, mais sur de grands échantillons cette valeur devient minuscule pour des écarts insignifiants : c'est la taille de l'échantillon qui parle, pas l'importance du changement.
+
+| Mesure | Ce qu'elle compare | Seuil usuel | Force | Limite |
+|---|---|---|---|---|
+| PSI | Masses par classe entre deux périodes | 0,10 et 0,25 | Un chiffre unique, interprétable | Dépend du découpage |
+| KS | Distance maximale entre fonctions de répartition | 0,05 à 0,10 selon le domaine | Indépendante du découpage | Aveugle aux queues extrêmes |
+| Chi-deux | Écarts relatifs aux effectifs attendus | Valeur de probabilité | Adaptée aux classes discrètes | Sensible aux petites classes |
+| Wasserstein | Distance de transport entre distributions | Échelle de la variable | Utilise l'échelle réelle | Difficile à comparer d'une variable à l'autre |
+| Jensen-Shannon | Divergence symétrique entre deux lois | 0,10 environ | Bornée, symétrique | Moins répandue dans les outils métier |
+
+Le bloc ci-dessous implémente le PSI et le KS en pur Python, sans bibliothèque externe, afin que vous puissiez les relire ligne à ligne et les emporter partout. Les classes de référence sont calculées sur la fenêtre de référence, puis réutilisées telles quelles sur la fenêtre surveillée : c'est ce détail qui rend la comparaison honnête.
+
+```python
+import math
+from bisect import bisect_left
+
+def bornes_quantiles(valeurs, classes=10):
+    trie = sorted(valeurs)
+    points = []
+    for i in range(1, classes):
+        position = i * len(trie) // classes
+        points.append(trie[min(position, len(trie) - 1)])
+    return points
+
+def repartition(valeurs, bornes):
+    compteurs = [0] * (len(bornes) + 1)
+    for valeur in valeurs:
+        compteurs[bisect_left(bornes, valeur)] += 1
+    total = max(len(valeurs), 1)
+    return [compteur / total for compteur in compteurs]
+
+def psi(reference, courant, classes=10):
+    bornes = bornes_quantiles(reference, classes)
+    attendu = repartition(reference, bornes)
+    observe = repartition(courant, bornes)
+    somme = 0.0
+    for p, q in zip(attendu, observe):
+        p = max(p, 1e-6)
+        q = max(q, 1e-6)
+        somme += (q - p) * math.log(q / p)
+    return somme
+
+def kolmogorov(reference, courant):
+    ref = sorted(reference)
+    cur = sorted(courant)
+    n, m = len(ref), len(cur)
+    i = j = 0
+    distance = 0.0
+    while i < n and j < m:
+        if ref[i] <= cur[j]:
+            i += 1
+        else:
+            j += 1
+        distance = max(distance, abs(i / n - j / m))
+    return distance
+
+reference = [42000, 43500, 45000, 47000, 48500, 51000, 53000, 55500] * 12
+recent =   [31000, 33000, 35500, 38000, 47000, 52000, 58000, 61000] * 12
+print("PSI revenu :", round(psi(reference, recent), 4))
+print("KS  revenu  :", round(kolmogorov(reference, recent), 4))
+```
+
+Pour lire le résultat, appliquez la règle du trois niveaux. Un PSI inférieur à 0,10 sur toutes les variables : on continue, rien à faire. Un PSI entre 0,10 et 0,25 sur une variable non critique : on note, on observe la période suivante, et on confirme avant d'alerter. Un PSI supérieur à 0,25 sur une variable importante du modèle, ou deux périodes consécutives au-dessus de 0,10 : on déclenche l'alerte, on regarde la fenêtre de récentes à la main, et on décide de la suite avec quelqu'un qui porte la responsabilité métier.
+
+Trois limites doivent être connues pour ne pas trop faire confiance à ces nombres. D'abord, toute mesure est univariée : un modèle peut subir une dérive multivariée — des relations entre variables qui changent sans que aucune seule ne bouge suffisamment — que ni le PSI ni le KS ne verront ; les détecteurs appris, entraînés à distinguer référence et production, existent pour cela et complètent l'arsenal. Ensuite, les variables à faible effectif, catégories rares ou valeurs manquantes nombreuses, produisent des mesures instables : agrégez ou écartez-les. Enfin, la mesure doit être accompagnée d'un contexte : un PSI de 0,30 causé par une nouvelle source de données légitime n'appelle pas la même réponse qu'un PSI de 0,30 causé par une erreur de conversion d'unité.
+
+La fréquence, elle, se décide sur deux contraintes simultanées : il faut assez d'observations pour que la mesure soit stable, et assez souvent pour que l'alerte arrive avant le préjudice. Pour un flux de dossiers traités chaque jour, une mesure quotidienne sur sept jours glissants, complétée par un rapport hebdomadaire de synthèse, donne le meilleur compromis : l'alerte tombe au plus tôt après quelques centaines d'observations, le rapport donne le recul nécessaire pour décider.

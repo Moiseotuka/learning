@@ -1,0 +1,89 @@
+Jusqu'ici, chaque conteneur a été considéré isolément, comme une application posée seule sur la machine. La réalité d'un projet en déployé plusieurs : une base de données, un serveur d'application, un service de cache, un reverse proxy, parfois un outil de surveillance. Dès que deux conteneurs doivent se parler, la question du réseau se pose, et elle se pose avec une précision particulière, parce que le réseau d'un conteneur n'est pas celui de la machine. Comprendre ce qui est visible depuis l'intérieur, ce qui ne l'est pas et comment Docker relie les conteneurs entre eux est la condition pour éviter les configurations qui fonctionnent par accident sur un poste de développement et s'effondrent au premier changement de contexte.
+
+Docker aborde le réseau avec la même philosophie que pour le système de fichiers : des objets isolés par défaut, créés et gérés par le moteur, auxquels on relie les conteneurs au lancement. Un réseau Docker est une interface logique sur la machine hôte, assortie d'une plage d'adresses, d'un pont ou d'un autre mécanisme de transit, et de ses propres règles de pare-feu. Les conteneurs attachés au même réseau se voient mutuellement et peuvent échanger des paquets librement ; ceux qui n'y sont pas attachés sont inaccessibles, y compris depuis l'extérieur. Cette cloison remplace avantageusement les sublistes de pare-feu que l'on maintenait à la main autrefois.
+
+Cette partie aborde d'abord le modèle général des réseaux Docker et les commandes qui les pilotent, puis les deux modes d'attache les plus courants, le réseau pont par défaut et le mode hôte. La troisième section traite de la communication entre conteneurs, avec la découverte par nom qui rend les adresses IP obsolètes dans le code. La dernière introduit Docker Compose, l'outil qui décrit un ensemble de services avec leurs réseaux, leurs volumes et leurs dépendances, et qui transforme une collection de commandes docker run en un fichier versionnable. Le piège que cette partie combat est le suivant : faire communiquer deux conteneurs par leur adresse IP attribuée au hasard, ou exposer tous les ports sur l'hôte faute de savoir ce qui est réellement nécessaire.
+
+## Les réseaux Docker
+
+Docker fournit plusieurs types de réseaux dès son installation. Le réseau bridge, nommé bridge, est le réseau par défaut auquel tout conteneur est rattaché si vous ne précisez rien. Le réseau host supprime la coupure réseau et donne au conteneur l'accès complet à la pile de la machine hôte. Le réseau none coupe tout accès, utile pour un traitement de fichier qui n'a aucune raison d'émettre le moindre paquet. À ces trois modèles s'ajoutent des réseaux personnalisés, créés par vos soins, qui reprennent le comportement pont mais avec une isolation et une découverte nettement meilleures. La commande docker network ls les liste, et docker network inspect suivi du nom montre la plage d'adresses, le passerelle utilisée et la liste des conteneurs rattachés.
+
+La création d'un réseau personnalisé tient en une ligne : docker network create reseau-boutique. Ce réseau est un objet durable, indépendant de tout conteneur, et il se supprime avec docker network rm une fois qu'aucun conteneur ne l'utilise plus. L'attachement se fait à l'aide de l'option --network placée dans la commande docker run. À partir de ce moment, le conteneur ne reçoit plus l'adresse du réseau pont par défaut, mais une adresse dans la plage du réseau choisi, et il perd tout contact avec les conteneurs des autres réseaux, sauf s'on le rattache volontairement à plusieurs réseaux simultanément, ce que Docker autorise parfaitement et ce qui permet de faire pont entre un réseau interne et un réseau exposé.
+
+L'apport décisif du réseau personnalisé est la résolution de noms. Docker embarque un serveur de noms de domaine interne, joignable à une adresse réservée, qui répond au nom de chaque conteneur rattaché, ainsi qu'aux alias que vous lui attribuez. Le nom de conteneur devient ainsi une adresse stable : si la base de données s'appelle boutique-db, une ligne de configuration peut se contenter de viser boutique-db plutôt qu'une adresse attribuée à la création et susceptible de changer au prochain lancement. Ce mécanisme remplace les anciens liens entre conteneurs, aujourd'hui dépréciés, et il fonctionne sans aucune configuration supplémentaire dès que les conteneurs partagent un réseau.
+
+Un réseau personnalisé isole également davantage que le pont par défaut. Sur le pont par défaut, tous les conteneurs se voient par défaut, ce qui est pratique pour un premier essai et dangereux dès que plusieurs projets cohabitent sur la même machine : un conteneur d'un projet peut atteindre la base de données d'un autre projet sans même connaître son existence. Sur un réseau personnalisé, l'isolation est la règle, et la visibilité résulte d'un choix explicite. La recommandation qui découle de tout cela tient en une phrase : ne déployez jamais vos conteneurs sur le réseau bridge par défaut, créez un réseau par projet, nommez-le clairement, et rattachez-y uniquement les services qui ont réellement besoin de se parler.
+
+Un réseau se compose aussi de règles de sortie vers l'extérieur. Un conteneur dans un réseau isolé conserve en général la possibilité d'accéder à Internet pour télécharger une mise à jour, à moins de lui couper explicitement la route. À l'inverse, l'accès depuis l'extérieur vers l'intérieur ne se fait pas par le réseau, mais par la publication de ports, dont il sera question plus bas. Pour vérifier ce qui est réellement ouvert, utilisez docker port suivi du conteneur, qui affiche les correspondances de ports en cours, et docker network inspect pour voir à quel réseau le conteneur est attaché. Ces deux commandes répondent, en quelques lignes, à la question que se pose tout administrateur devant un service inaccessible.
+
+## Les réseaux bridge et host
+
+Le réseau pont est une interface réseau virtuelle créée sur la machine hôte, assortie d'une adresse propre et d'une table de routage. Chaque conteneur rattaché à un pont reçoit une adresse dans la plage de ce pont, une route par défaut qui passe par lui, et un couple d'espaces de noms qui lui donne l'illusion d'être la seule machine sur ce lien. Le trafic destiné à l'extérieur est traduit par la mise en correspondance d'adresses, ce qui explique qu'un conteneur voie sa propre adresse interne lorsqu'il interroge la machine, tandis que la machine hôte le voit sous l'adresse du pont. Ce fonctionnement est familier à quiconque a configuré un routeur domestique, et il se comporte de la même manière.
+
+La conséquence pratique du pont est que les ports du conteneur ne sont pas accessibles depuis l'extérieur sans publication. L'option -p relie un port du conteneur à un port de l'hôte, en respectant la syntaxe hôte:conteneur vue dans la partie précédente. Sans -p, un serveur qui écoute sur le port 8080 à l'intérieur du conteneur reste parfaitement joignable par ses voisins de réseau et totalement invisible depuis la machine ou le réseau local. Cette dissimulation est une sécurité gratuite : elle évite d'exposer par inadvertance un service de développement sur un réseau partagé, et elle force à décider, port par port, ce qui doit être accessible.
+
+Deux réglages du pont méritent d'être connus. Le premier concerne la plage d'adresses, que l'on peut ajuster lors de la création du réseau pour éviter un conflit avec un réseau d'entreprise déjà en place. Le second concerne l'option --icc, qui autorise ou interdit la communication directe entre conteneurs d'un même pont. Docker le permet par défaut, ce qui est cohérent avec l'idée d'un réseau de projet, mais on peut le désactiver sur le pont par défaut pour imposer une communication passant par des règles explicites. Sur un réseau personnalisé, l'isolation entre projets suffit le plus souvent, et l'on préfère intervenir au niveau des réseaux plutôt qu'au niveau de cette option globale.
+
+Le mode hôte, obtenu avec --network host, supprime l'isolation réseau : le conteneur partage la pile complète de la machine hôte, ses interfaces, ses adresses et ses ports. Une application qui écoute sur le port 8000 dans un conteneur en mode hôte écoute réellement sur le port 8000 de la machine, sans aucune publication nécessaire. Ce mode offre les meilleures performances, puisqu'aucune traduction d'adresses ni aucun pontage n'interfère, et il résout certains problèmes d'itinéraire réseau particulièrement pénibles. Il faut en contrepartie accepter que les ports ne soient plus isolés, qu'un conflit de port devienne possible, et que la même commande de lancement ne fonctionne plus de la même manière selon le mode choisi.
+
+Le choix entre pont et hôte suit donc une règle simple. Le pont est la valeur par défaut parce qu'il conserve l'isolation, rend les ports explicites et permet à plusieurs instances d'un même service de coexister sur des ports différents. Le mode hôte se réserve aux cas où la performance ou la compatibilité avec un réseau existant l'impose, par exemple pour un agent de surveillance qui doit voir toutes les interfaces, ou pour une application qui doit répondre à des protocoles spécifiques que la traduction complique. Dans les deux cas, déclarez le choix dans le fichier de configuration plutôt que de le laisser implicite, car il modifie le comportement du service de manière trop importante pour rester une simple ligne oubliée dans un script.
+
+Un dernier point sur la publication de ports en environnement partagé. Lorsque plusieurs services d'une même machine publient des ports, il faut une attribution explicite : 80 pour le site, 8080 pour l'interface d'administration, 5432 pour la base si elle doit être joignable de l'extérieur, et rien du tout pour le cache. Éviter la publication automatique, ne publier que ce qui doit l'être, et consigner la correspondance dans le fichier du projet sont trois gestes qui transforment une machine incompréhensible en une machine documentée. Un service non publié n'est pas un service cassé, c'est un service correctement cloisonné.
+
+## La communication entre conteneurs
+
+La règle fondamentale tient en une phrase : deux conteneurs se parlent s'ils partagent un réseau, et ils se parlent alors par leur nom. Concrètement, créez un réseau, lancez la base de données sur ce réseau avec un nom fixe, puis lancez l'application sur le même réseau avec une configuration qui pointe vers ce nom. L'application n'a jamais besoin de connaître l'adresse IP de la base, ni de la deviner, ni de la mettre à jour après un redémarrage. Le serveur de noms interne de Docker répond à la demande, et le nom reste valide aussi longtemps que le conteneur porte ce nom sur ce réseau.
+
+Cette stabilité transforme la manière d'écrire la configuration d'une application. Plutôt que de codifier une adresse, on codifie un nom, et l'on laisse l'environnement décider de la résolution. Dans un fichier de configuration d'application, la chaîne de connexion à la base devient un paramètre, avec un nom de service pour valeur, et les identifiants arrivent par des variables d'environnement, jamais écrits dans le dépôt. Le résultat se transporte sans modification d'un poste de développement à une machine d'intégration : seul le fichier d'environnement change, et le code, lui, reste identique.
+
+La publication de ports ne concerne pas cette communication interne. Deux conteneurs sur le même réseau se joignent directement sur les ports que le serveur écoute, sans -p, sans exposition particulière, sans rien d'autre que le partage du réseau. Le -p intervient uniquement pour le trafic qui vient de la machine hôte ou du réseau physique. Cette distinction, une fois assimilée, dissipe la majorité des incompréhensions sur Docker : l'exposition et la publication servent l'extérieur, le réseau sert l'intérieur. Un service qui doit être atteint par les deux le déclare sur le réseau du projet et publie le port minimum nécessaire sur l'hôte.
+
+Dans le sens inverse, la question de l'adresse locale revient souvent. Depuis l'intérieur d'un conteneur, se joindre soi-même sur 127.0.0.1 signifie se joindre soi-même, pas la machine hôte ni les autres conteneurs. Pour atteindre un service qui tourne sur la machine hôte depuis un conteneur en mode pont, il faut un nom réservé particulier sur les systèmes où Docker Desktop le prend en charge, ou un montage réseau, ou encore l'adresse réelle du pont. Pour atteindre un autre conteneur, la méthode reste le nom du conteneur sur un réseau partagé. Ne vous fiez jamais au fonctionnement accidentel d'un accès à l'hôte : vérifiez-le explicitement lors de la mise en place, car il varie selon la plateforme, la version et la configuration du démon.
+
+Les cas de communication qui dépassent ce modèle simple ont chacun leur réponse. Deux réseaux peuvent être reliés si un service doit rester accessible depuis deux contextes. Un alias permet d'attribuer à un conteneur un nom court et stable indépendant de son nom de déploiement, utile quand plusieurs instances cohabitent. Un service qui doit recevoir du trafic de l'extérieur passe généralement par un reverse proxy placé en tête de réseau, le seul conteneur à publier un port, tandis que les services derrière restent joignables uniquement par leur nom. Cette topologie, un point d'entrée unique et des services internes invisibles, est la structure que l'orchestration de conteneurs reproduira à plus grande échelle dans les chapitres avancés du parcours.
+
+## Docker Compose pour plusieurs services
+
+Docker Compose décrit une application complète dans un fichier YAML, puis lance l'ensemble avec une commande. Le fichier liste des services, chacun comportant une image ou un Dockerfile, des ports, des volumes, des variables d'environnement, des dépendances et le réseau sur lequel il s'attache. Le moteur lit ce fichier, crée le réseau du projet, crée les volumes déclarés, puis démarre les services dans l'ordre utile. La même description sert au démarrage, à l'arrêt, à la lecture des journaux et à la reconstruction, ce qui supprime la longue suite de commandes docker run que tout projet finit par accumuler.
+
+Voici un fichier Compose complet et commenté, tel qu'il pourrait piloter un site web avec sa base de données. Traitez-le comme le document de référence du projet : c'est lui qui décrit comment l'application démarre, pas une note dans un fichier texte.
+
+```yaml
+services:
+  web:
+    build: ./web
+    ports:
+      - "8080:80"
+    environment:
+      DATABASE_URL: postgres://boutique:@base-donnees/boutique
+    volumes:
+      - ./web/src:/app/src
+    networks:
+      - reseau-boutique
+    depends_on:
+      - base-donnees
+
+  base-donnees:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: boutique
+      POSTGRES_PASSWORD: exemple
+    volumes:
+      - donnees-sql:/var/lib/postgresql/data
+    networks:
+      - reseau-boutique
+
+volumes:
+  donnees-sql:
+
+networks:
+  reseau-boutique:
+```
+
+Le bloc services porte les deux conteneurs. Le service web est construit à partir du Dockerfile du dossier ./web, publie son port 8080 sur le port 80 du conteneur, reçoit son paramètre de connexion par variable d'environnement, monte le dossier source pour le développement et rejoint le réseau nommé. Le service base-donnees utilise une image officielle, crée la base au démarrage et range ses données dans le volume nommé déclaré plus bas. Les blocs volumes et networks, en fin de fichier, déclarent les objets partagés : Compose crée ceux qui n'existent pas encore et les nomme en préfixant le nom du dossier du projet, ce qui permet à plusieurs projets de coexister sur la même machine sans se marcher dessus.
+
+Les commandes du quotidien sont peu nombreuses. docker compose up -d construit et démarre l'ensemble en arrière-plan, docker compose ps affiche l'état, docker compose logs -f suit les journaux de tous les services, docker compose down arrête et supprime les conteneurs et le réseau du projet sans toucher aux volumes déclarés, et docker compose down -v ajoute la suppression de ces volumes, geste réservé aux environnements jetables. docker compose exec ouvre une commande dans un service en marche, et docker compose restart redémarre un service après un changement de configuration. Ces quelques verbes couvrent l'essentiel du travail quotidien.
+
+Deux comportements méritent une attention particulière. Le premier concerne l'ordre de démarrage : depends_on garantit que les conteneurs sont lancés dans l'ordre, mais pas que l'application du service de destination est prête à répondre. Une base de données met un temps considérable à initialiser ses fichiers lors du premier lancement, et l'application, elle, démarre en quelques secondes. L'application doit donc réessayer sa connexion au démarrage plutôt que d'abandonner au premier échec, sinon vous observerez un redémarrage apparemment aléatoire qui dépend du temps de préparation de la base. Le second concerne les secrets : tout ce qui figure dans le fichier Compose est lisible par qui a accès au dépôt, si bien que les mots de passe réels se placent dans un fichier d'environnement séparé, exclu du versionnement, référencé par le Compose.
+
+Passer de commandes isolées à un fichier Compose modifie aussi votre rapport au projet. L'état décrit devient versionnable, un nouveau collaborateur démarre l'application complète avec une commande, et la différence entre deux environnements se résume à un diff de fichier plutôt qu'à la comparaison de scripts improvisés. Les sections précédentes de cette leçon, images, volumes et réseaux, y retrouvent chacune leur place : le Dockerfile fournit l'image, la section volumes garantit la persistance des données, et la section networks organise la communication. Le fichier Compose n'apporte aucun nouveau concept, il assemble ceux que vous venez d'acquérir dans un ordre stable et lisible.

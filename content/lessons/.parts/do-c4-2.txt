@@ -1,0 +1,113 @@
+## Le Deployment, déclarer une application
+
+Le pod est l'unité que l'on observe, mais il n'est presque jamais l'unité que l'on crée. Entre votre intention et le pod se dresse un contrôleur, et le plus utilisé de tous est le Deployment. Comprendre ce décalage est la clé de tout le reste de la leçon : vous ne demandez jamais trois pods, vous demandez un Deployment dont la spécification indique trois réplicas, et c'est ce Deployment qui, à travers un ReplicaSet, fabriquera, comptera, remplacera et nettoiera les pods. Cette indirection n'est pas une complication gratuite, elle est ce qui rend possibles l'historique des versions, la montée en charge automatique et le retour arrière.
+
+Un Deployment fait trois choses simultanément. Il conserve l'état déclaré de votre application, à savoir l'image à utiliser, le nombre d'exemplaires et les paramètres de démarrage. Il pilote un ReplicaSet, c'est-à-dire une machine à maintenir un effectif, qui lui-même fabrique les pods. Il garde en mémoire plusieurs révisions, ce qui vous permet de revenir à la précédente en une commande. Quand vous modifiez le manifeste, par exemple en changeant l'étiquette de l'image, le Deployment ne touche pas les pods existants : il en crée un nouveau ReplicaSet qui fabrique les nouveaux, puis réduit progressivement l'ancien. C'est le mécanisme de mise à jour progressive, et il est décrit en détail plus loin.
+
+La distinction entre ce que vous déclarez et ce que le cluster exécute se vérifie en trois commandes. La première liste les objets de déploiement, la seconde montre combien d'exemplaires sont prêts par rapport à ceux qui sont désirés, la troisième relie enfin le Deployment à la liste concrète des pods qu'il pilote. Lire cette chaîne dans cet ordre est la méthode la plus rapide pour comprendre un incident : si le compte de prêts est incomplet, le problème est en amont des pods ; si les pods existent mais répondent mal, il est en aval.
+
+```bash
+kubectl get deployments
+kubectl rollout status deployment/api
+kubectl get pods -l app=api -o wide
+```
+
+Il est utile de savoir que le même résultat s'obtient de façon impérative, en demandant au cluster de fabriquer un objet à partir d'une ligne de commande. Cette approche convient à un essai sur une table de laboratoire, car elle ne laisse aucune trace durable hors du registre d'API : personne d'autre ne saura comment recréer ce que vous avez lancé. La discipline adoptée dans la pratique consiste à écrire les manifestes dans un dépôt de code, à les faire relire comme du code, puis à les appliquer. Le fichier devient alors la source de vérité, la seule que l'on puisse versionner, comparer et relancer ailleurs.
+
+Cette démarche possède un atout découpé rarement exploité par les débutants : la possibilité de visualiser l'écart avant de le produire. La commande de comparaison soumet votre fichier au serveur et renvoie la différence entre l'état actuel et l'état que votre fichier produirait, sans rien modifier. Elle permet de répondre à la question que tout intégrateur devrait se poser : si j'applique ce fichier, qu'est-ce qui va réellement changer dans le cluster ? Un champ modifié par erreur, une étiquette retirée, un nombre de réplicas qui repart à une valeur par défaut, tout cela apparaît dans le diff avant que la moindre ressource ne soit recréée. Après l'application, une commande de comparaison du déploiement confirme que l'objet attendu est bien en place, et l'historique indique si une nouvelle révision a été créée. Trois gestes, comparer, appliquer, confirmer, qui transforment une opération à risque en procédure maîtrisée. Conservez-les quel que soit l'outil de gestion de configuration que vous adopterez plus tard, car ils sont le fondement de toute livraison reproductible vers un cluster partagé.
+
+## Les réplicas : combien d'exemplaires et pourquoi
+
+Le champ des réplicas est le nombre d'exemplaires que le cluster doit maintenir en vie. Sa valeur dépend d'objectifs qui n'ont rien de technique en eux-mêmes : la capacité à absorber la charge, la tolérance aux pannes, et la capacité à effectuer une mise à jour sans coupure. Pour un service critique, deux exemplaires ne suffisent pas car la maintenance d'une node peut emporter les deux à la fois ; trois ou plus, répartis sur des zones distinctes, permettent d'en perdre un tout en restant servi. Pour un worker asynchrone, un seul peut suffire s'il n'y a pas d'enjeu de disponibilité.
+
+Le calcul de la capacité est le second critère. Si une instance absorbe deux cents requêtes par seconde et que vous attendez six cents, il vous en faut trois, mais cette estimation doit être vérifiée par le mesurage et non par l'intuition. Réduire le nombre de réplicas au-dessous du nécessaire produit des files d'attente, puis des délais, puis des timeouts en cascade. En augmenter sans réfléchir multiplie le coût et peut épuiser le cluster, ce qui déclenche l'éviction des pods les plus gourmands. La bonne valeur est celle que vous pouvez justifier par une métrique, et elle se réévalue à chaque évolution significative du trafic.
+
+Un troisième paramètre intervient souvent : la capacité du cluster à accueillir vos pods. Si les demandes de ressources, ce que chaque pod réclame pour être planifié, dépassent la capacité libre des nodes, les nouveaux pods restent en attente. Le champ des réplicas affiche alors trois souhaités, un prêt, et la liste des pods en révèle un autre qui attend une place. La correction n'est pas d'augmenter les réplicas mais d'ajouter de la capacité, de réduire les demandes si elles sont excessives, ou de libérer des ressources en supprimant des objets inutiles. Ce cas de figure est fréquent après une première montée en charge et trompe souvent l'opérateur pressé.
+
+La relation entre réplicas et mise à jour mérite d'être posée maintenant, car elle commande tout le mécanisme suivant. Pour interrompre une mise à jour sans jamais couper le service, il faut pouvoir exécuter côte à côte, le temps d'une transition, plus d'exemplaires que la valeur finale. Avec un seul réplica, il est impossible de démarrer la nouvelle version avant d'avoir arrêté l'ancienne, et la coupure est inévitable. D'où une règle simple : tout service exposé publiquement mérite au moins deux réplicas, non par goût de la redondance, mais parce que c'est la condition de base d'une mise à jour sans interruption.
+
+## Mises à jour progressives et retour arrière
+
+La mise à jour progressive, ou rolling update, remplace les pods un par un ou par petits groupes, en veillant à ce que la capacité disponible ne descende jamais sous un seuil. Le Deployment définit deux paramètres pour cela : la valeur maximale de pods excédentaires par rapport au nombre désiré, et le nombre maximal de pods qui peuvent être indisponibles pendant l'opération. Avec trois réplicas, un maximum de un indisponible et un maximum de un excédentaire, le cluster crée un quatrième pod, attend qu'il soit prêt, en arrête un ancien, recommence, et ainsi de suite jusqu'à ce que les trois anciens aient été remplacés. À aucun instant le service ne se retrouve sans serveur.
+
+Cette patience a un coût : la mise à jour est lente. Le cluster attend que chaque nouveau pod franchisse sa vérification de disponibilité avant de poursuivre. Si l'image est volumineuse, le téléchargement rallonge l'opération ; si l'application met trente secondes à être prête, trente secondes s'ajoutent à chaque vague. Un déploiement qui semble bloqué n'est presque jamais bloqué : il attend une condition. La commande de suivi de progression affiche le nombre de pods prêts et l'état de l'opération, et il faut la consulter avant de conclure à une panne, sous peine d'interrompre une mise à jour qui allait aboutir.
+
+Le retour arrière est l'autre moitié du dispositif, et il est conçu pour être rapide puisque les anciens pods ne sont pas détruits mais mis à l'échelle à zéro dans leur ReplicaSet. Déclarer un retour à la révision précédente ne reconstruit rien : le cluster reprend la configuration conservée, en relance les pods, et remet l'effectif où il était. Conservez donc toujours un historique suffisant, cinq révisions par défaut, et pratiquez le retour arrière au moins une fois en environnement de recette. Une procédure d'urgence qu'on n'a jamais exécutée n'est pas une procédure, c'est une espérance.
+
+Deux commandes complètent la boîte à outils du déploiement. La première met l'opération en pause, ce qui suspend la création de nouveaux pods sans annuler ce qui a déjà été fait : elle est utile quand vous voulez inspecter la première vague de pods, vérifier leurs métriques et décider ensuite s'il faut poursuivre ou annuler. La seconde reprend l'opération ou la révoque définitivement, en ramenant l'ensemble à la révision précédente. Le mot révoque est important : il ne s'agit pas d'effacer l'historique, mais de créer une nouvelle révision qui reproduit l'ancienne configuration, de sorte que l'audit reste intact et que chaque bascule soit datée.
+
+L'historique lui-même se consulte avant toute décision sensible. La commande d'historique affiche le numéro de chaque révision, le nombre de pods associés et la date du changement, et il est d'usage d'annoter chaque révision avec le numéro de build ou l'identifiant du commit. Sans cette annotation, la liste montre bien qu'une version a changé, mais pas laquelle, et le retour arrière devient un pari. Une équipe qui relie le numéro de révision à l'identifiant de build peut remonter de l'incident observé en production jusqu'au code exact qui l'a introduit, ce qui réduit considérablement le temps de diagnostic.
+
+Les garde-fous valent mieux que l'habitude. Une vérification de disponibilité bien écrite, qui appelle un endpoint répondant seulement quand l'application est réellement prête, empêche le cluster de router du trafic vers un processus encore en cours d'initialisation. Des limites de ressources, enfin, évitent le scénario inverse où la nouvelle version, plus gourmande, monopolise la node et provoque l'éviction d'autres pods pendant le déploiement. Ces deux points, la vérification et les limites, reviendront dans la section des erreurs fréquentes.
+
+## Anatomie d'un manifeste YAML
+
+Un manifeste est un document YAML soumis à l'API. Sa structure suit toujours le même squelette : la version de l'API, le type d'objet, ses métadonnées, puis sa spécification, qui porte les champs propres à ce type. Le YAML étant sensible à l'indentation, deux espaces par niveau et jamais de tabulation, la principale qualité d'un manifeste lisible est la constance. Regardez le déploiement suivant : l'image est épinglée à une étiquette de version, le nombre de réplicas est explicite, la vérification de disponibilité interroge un endpoint, et les ressources sont déclarées avant même la première exécution.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: registry.example.com/api:1.4.2
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: api-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 5
+```
+
+Chaque bloc de ce document mérite une explication courte. Le champ du sélecteur relie le Deployment aux pods qu'il pilote, et il doit correspondre exactement aux étiquettes du gabarit, sous peine que le contrôleur en revendique d'autres ou aucun. L'étiquette app: api sert à la sélection par le sélecteur, par les services et par vos requêtes de lecture ; c'est une convention que vous choisissez et que vous devez tenir. Le conteneur reçoit un nom, une image, un port et, cruciallement, une section de ressources qui n'est pas facultative.
+
+Les deux vérifications ne jouent pas le même rôle. La vérification de disponibilité décide si le pod peut recevoir du trafic ; tant qu'elle échoue, le pod existe mais reste hors rotation, ce qui protège vos utilisateurs pendant le démarrage. La vérification de vivacité décide si le conteneur doit être redémarré ; un échec répété déclenche un redémarrage du conteneur, mesure utile contre les dépendances qui se figent, dangereuse si elle est trop agressive, car elle provoque une boucle de redémarrages qui vide la mémoire de vos données. Commencez par la seule vérification de disponibilité, puis ajoutez la seconde seulement si vous savez ce qu'elle répare.
+
+La question des ressources se formule ainsi : les demandes servent à la planification, le cluster additionne les demandes des pods d'une node et refuse d'y placer ce qui ne tient pas ; les limites servent à la contention, un conteneur qui dépasse sa limite mémoire est tué et redémarré, un conteneur qui dépasse sa limite processeur est simplement ralenti. Oublier les demandes rend la planification aveugle, oublier les limites rend la node vulnérable. Un manifeste sans cette section est un manifeste incomplet, et c'est l'erreur la plus répandue que nous détaillerons plus loin.
+
+Un dernier réflexe avant d'appliquer un manifeste : demandez au cluster ce qu'il en pense, sans rien modifier. La commande de validation côté serveur vérifie la structure, les champs inconnus et la cohérence du sélecteur, et renvoie une erreur explicite avant que quoi que ce soit ne soit créé. Elle coûte une seconde et vous évite le message incompréhensible d'une ressource refusée en pleine intégration. Appliquez ensuite, puis affichez le résultat pour confirmer que l'objet attendu existe bien avec la forme attendue. L'organisation des fichiers compte autant que leur contenu. Deux conventions coexistent : un fichier multi-documents séparé par des marqueurs, qui garde l'ensemble d'une application au même endroit et se valide d'un seul geste, ou un fichier par objet, plus commode à relire et à modifier en revue de code. Les deux fonctionnent, à condition d'être appliqués par un répertoire plutôt qu'à la main, pour que rien ne soit oublié. Quel que soit le choix, nommez les objets de façon stable et prévisible, car ces noms apparaissent dans les journaux, les alertes et les scripts de diagnostic ; un nom changeant à chaque version rend l'outillage aveugle.
+
+Les étiquettes et annotations méritent la même attention. Les étiquettes structurées selon un schéma commun, avec les valeurs de l'application, de la composante, de la version et d'environnement, permettent de sélectionner par requête tout un ensemble, de filtrer les journaux et de rattacher un pod à la version qui l'a produit. Les annotations, elles, portent de l'information que le moteur ignore, comme l'identifiant du build, le lien vers le ticket ou la date de la revue : elles ne participent à aucune sélection, mais elles relient l'objet déployé à son histoire. Une équipe qui tient ces deux listes à jour gagne un temps considérable dès le premier incident, parce que la question « quelle version tourne et depuis quand » trouve sa réponse dans les métadonnées plutôt que dans la mémoire de quelqu'un.
+
+Cette discipline, valider puis appliquer puis vérifier, s'applique à tous les objets que cette leçon va parcourir.
+
+```bash
+kubectl apply --dry-run=server -f deployment.yaml
+kubectl apply -f deployment.yaml
+kubectl get deployment api -o wide
+```

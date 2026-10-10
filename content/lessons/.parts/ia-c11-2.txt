@@ -1,0 +1,167 @@
+## Un pipeline de bout en bout
+
+Un pipeline est une suite d'étapes ordonnées, chacune dotée d'une entrée explicite, d'une sortie explicite et d'un résultat vérifiable. Sa qualité ne se juge pas à sa longueur mais à trois propriétés : il est déterministe, on obtient la même sortie pour la même entrée ; il est idempotent, on peut le relancer après un échec sans produire un état corrompu ; il est observable, à chaque exécution on sait quelle étape tourne, combien de temps elle prend et pourquoi elle échoue. Ces trois propriétés ne sont pas des raffinements d'architecte, ce sont les conditions de sommeil tranquille de l'équipe.
+
+Détaillons les étapes de la chaîne que nous allons assembler pour le modèle de crédit, car chacune remplit un rôle qu'aucune autre ne peut absorber. L'extraction récupère les observations brutes sur la période retenue. La validation vérifie qu'elles respectent le contrat de données avant qu'on ne fasse quoi que ce soit d'autre. La préparation construit les variables à partir des règles versionnées. L'entraînement fit le modèle sur le jeu d'apprentissage. L'évaluation le confronte au jeu de test et aux coupes sensibles. L'enregistrement verse l'artefact, ses métriques et son empreinte dans le registre. La publication change son état, puis le déploiement progressif le met devant le trafic. Chaque étape écrit ses sorties sur un stockage adressable, jamais dans un dossier écrasé.
+
+| Étape | Entrée | Sortie | Garantie attendue |
+|---|---|---|---|
+| Extraction | Entrepôt, plage de dates | Jeu brut horodaté | Empreinte enregistrée |
+| Validation | Jeu brut | Jeu accepté ou rejeté | Contrat de données respecté |
+| Préparation | Jeu accepté | Matrice de variables | Règles versionnées, sans fuite |
+| Entraînement | Matrice, paramètres | Modèle, métriques | Reproductible, graine fixée |
+| Évaluation | Modèle, jeu de test | Rapport, verdict | Seuils de publication respectés |
+| Enregistrement | Modèle, rapport | Entrée au registre | Lien code, données, métriques |
+| Déploiement | Entrée du registre | Service en ligne | Retour arrière possible |
+
+La question du déclenchement vient juste après celle des étapes. Trois modes se complètent dans la pratique. Le déclenchement temporel convient aux entraînements réguliers : chaque lundi à six heures, le modèle est réappris sur la dernière fenêtre glissante. Le déclenchement par données convient quand c'est le volume qui compte : un nouveau lot arrive, on réactive la chaîne. Le déclenchement manuel reste indispensable pour tout ce qui touche à la publication, car publier est une décision, pas une conséquence automatique du calendrier. Un pipeline qui ne distingue pas ces trois modes finit par déployer dans la nuit un modèle que personne n'a regardé.
+
+L'orchestration consiste à décrire ces étapes comme un graphe orienté acyclique, puis à laisser un moteur s'occuper des rappels, des dépendances, des caches et des journaux. On parle de graphe parce qu'une étape peut dépendre de plusieurs autres, et de acyclique parce qu'une boucle dans une chaîne de traitement n'a aucun sens opérationnel. Les outils se ressemblent tous sur l'essentiel — déclaration des étapes, état de chaque exécution, relance à partir de l'échec — et diffèrent sur l'habillage : certains tournent en conteneur léger sur un serveur unique, d'autres s'appuient sur un orchestrateur de grappe. Choisissez-les pour la lisibilité de leurs journaux, pas pour la longueur de leur liste de fonctionnalités.
+
+Le conteneur est le maillon qui rend l'environnement réellement portable. Plutôt que d'installer les dépendances sur la machine qui exécute, on construit une image : un système de base, l'interpréteur, les bibliothèques verrouillées, le code du projet. Cette image porte une version, elle est la même sur le poste de développement, sur le serveur d'entraînement et sur le service de prédiction. C'est la réponse concrète à la deuxième source de non-reproductibilité identifiée en début de chapitre : si l'image ne change pas, l'environnement ne change pas.
+
+```image
+docker-container
+| Un conteneur Docker : l'application, ses bibliothèques et leur version voyageant ensemble, de la machine de développement jusqu'au serveur de production.
+```
+
+Le bloc suivant montre la déclaration d'un tel pipeline, sous la forme déclarative la plus courante : les étapes, leurs dépendances, leurs commandes et leurs artefacts. Lisez-le comme un plan de chantier, pas comme un script : on y décrit ce qui doit être vrai à la fin de chaque étape, et c'est le moteur qui décide dans quel ordre exécuter.
+
+```yaml
+stages:
+  - name: extract
+    cmd: python src/extract.py --start 2026-01-01 --out data/raw
+    deps: [src/extract.py]
+    outs: [data/raw/credit.csv]
+
+  - name: validate
+    cmd: python src/validate.py data/raw/credit.csv
+    deps: [data/raw/credit.csv, contracts/credit.yaml]
+    metrics: [reports/validation.json]
+
+  - name: train
+    cmd: python src/train.py --seed 42 --data data/raw/credit.csv
+    deps: [src/train.py, data/raw/credit.csv, requirements.lock]
+    outs: [models/model.pkl]
+    metrics: [reports/train_metrics.json]
+
+  - name: evaluate
+    cmd: python src/evaluate.py models/model.pkl --baseline 0.81
+    deps: [models/model.pkl, data/credit_test.csv]
+    outs: [reports/evaluation.json]
+
+  - name: register
+    cmd: python src/register.py reports/evaluation.json
+    deps: [reports/evaluation.json, models/model.pkl]
+    outs: [reports/registry_entry.json]
+```
+
+Trois détails de cette déclaration méritent votre attention, car ils séparent un pipeline robuste d'un empilement de commandes. D'abord, les dépendances sont déclarées fichier par fichier : si seule l'étape de préparation change, l'entraînement est relancé, mais l'extraction, dont la sortie est inchangée, est mise en cache. Ensuite, l'empreinte des données et le verrou d'environnement figurent parmi les dépendances : modifier une bibliothèque rend la sortie obsolète et force un nouvel entraînement, ce qui est exactement le comportement voulu. Enfin, les métriques sont produites comme des fichiers à part, ce qui permet de comparer deux exécutions sans rouvrir de notebook.
+
+Notez enfin que le pipeline s'arrête tout seul. L'étape d'évaluation porte un seuil — une métrique au moins égale à celle du modèle en service — et si elle n'est pas atteinte, la publication n'est pas déclenchée. Ce garde-fou est ce qui distingue l'usine du toboggan : dans un toboggan, ce qui entre sort toujours ; dans une usine, un produit non conforme ne passe pas l'étape suivante, et le constat est écrit quelque part.
+
+## Le registre de modèles
+
+Au chapitre 7, vous avez fabriqué un registre à la main : un numéro de version, une empreinte, un fichier de métadonnées posé à côté du modèle. Ce dispositif fonctionne, et il reste la bonne réponse tant qu'une seule personne publie. Dès que plusieurs équipes publient plusieurs modèles, la même question — quel modèle sert, depuis quand, avec quelles données — devient ingérable sans un registre central, c'est un catalogue partagé dans lequel chaque modèle entre, circule et sort, avec son historique complet.
+
+Un registre ne stocke pas seulement des fichiers : il stocke des relations. À chaque version, il relie l'artefact, la signature de ses entrées, les métriques d'évaluation, l'empreinte du jeu d'entraînement, le commit du code, le verrou d'environnement, l'auteur et la raison de la publication. Cette chaîne, qu'on appelle lignée, est ce qui permet de répondre en une requête à la question redoutée : ce modèle qui refuse un dossier ce matin, sur quoi a-t-il été appris, et qui a décidé de le mettre en ligne ?
+
+Les outils de registre partagent un vocabulaire d'états qu'il vaut mieux apprendre une fois pour toutes. Le modèle commence en brouillon, personne ne le consomme. Il passe en préparation quand il a réussi les tests et attend une validation humaine. Il passe en production quand un responsable l'a approuvé, et c'est cet état, et lui seul, qui est servi aux applications clientes. Il est archivé quand un successeur l'a remplacé, mais il reste consultable, parce qu'un incident survenu hier peut porter sur un modèle retiré aujourd'hui.
+
+| État | Qui le consulte | Condition de passage | Conséquence |
+|---|---|---|---|
+| Brouillon | Son auteur seulement | Enregistrement initial | Aucun trafic |
+| Préparation | L'équipe, l'intégration continue | Tests et métriques validés | Sert aux tests de bout en bout |
+| Production | Les utilisateurs et services | Approbation humaine enregistrée | Reçoit du trafic réel |
+| Archivé | Personne, sauf investigation | Remplacement ou incident | Retiré, historique conservé |
+
+Les commandes suivantes sont celles que vous utiliserez chaque semaine. Elles montrent le cycle complet : entraîner, enregistrer, consulter, puis basculer le pointeur de production vers la nouvelle version — et, si besoin, le ramener à l'ancienne.
+
+```bash
+# Enregistrer un modele avec ses metriques et sa signature d'entrees
+mlflow experiments create -n credit-scoring
+mlflow run . -P seed=42 -P depth=12
+mlflow models log-model --name credit-scoring --path models/model.pkl
+
+# Consulter l'historique : versions, metriques, auteur, etat
+mlflow models list --name credit-scoring
+mlflow runs search --experiment credit-scoring --order-by "metrics.auc DESC"
+
+# Basculer la production, puis verrou par empreinte
+mlflow models transition-stage --name credit-scoring --version 12 --stage Production
+mlflow models transition-stage --name credit-scoring --version 11 --stage Archived
+
+# Retour arriere immediat : le pointeur repart vers la version precedente
+mlflow models transition-stage --name credit-scoring --version 11 --stage Production
+```
+
+Deux pratiques renforcent considérablement l'utilité de cette table. La première est la signature de modèle : décrire les colonnes attendues, leur type et leur ordre, de sorte qu'une requête dont le schéma diffère soit refusée au bord du service plutôt que traitée à l'aveugle. La seconde est l'étiquette d'alias, une lecture publique du type production courant ou candidate, à laquelle vos services s'adressent ; au lieu de codifier en dur le numéro de version, ils résolvent l'alias, et le changement de modèle devient une ligne de commande sans redéploiement applicatif. Le retour arrière, lui, consiste exactement à repointer cet alias : c'est pourquoi il doit prendre secondes, et non heures.
+
+Le registre rend également possible une comparaison honnête. Enregistrer une métrique sans son contexte ne sert à rien : un taux de rappel de 0,84 ne dit rien tant qu'on ignore le jeu, la période, le seuil de décision et la valeur du modèle précédent. Chaque enregistrement porte donc systématiquement la référence du modèle qu'il prétend améliorer, et l'évaluation est toujours un écart, jamais un nombre isolé. C'est cette discipline qui transforme un tableau de bord en historique exploitable.
+
+## Tester avant de publier : données, code, modèle
+
+Dans le logiciel classique, on teste du code. Dans le machine learning, on teste trois choses différentes, qui échouent de façons différentes et exigent trois réponses distinctes : les données, qui peuvent être fausses sans être invalides ; le code, qui peut être correct mais branché sur le mauvais fichier ; le modèle, qui peut être parfaitement entraîné sur un problème que la situation d'origine n'est plus. Une chaîne qui ne teste qu'une seule de ces familles a une couverture illusoire.
+
+Les tests de données portent sur la forme et le fond. On vérifie le schéma : colonnes présentes, types conformes, clé primaire unique. On vérifie les bornes : un revenu négatif, un âge supérieur à cent-vingt ans, un taux supérieur à un, sont des erreurs de saisie qui dégraderont le modèle en silence. On vérifie les taux de remplissage et la fraîcheur : une colonne qui se vide à dix pour cent du jour au lendemain signale une panne en amont. On vérifie enfin la fuite d'information : une variable qui n'existe qu'après la survenance du défaut doit être écartée, sinon vos métriques seront spectaculaires et vos décisions calamiteuses.
+
+Les tests de code suivent les règles connues : unitaires sur les transformations de variables, car c'est là que se cachent les fautes les plus coûteuses ; d'intégration sur la chaîne complète, en envoyant un dossier d'exemple dont on connaît la réponse attendue ; de non-régression sur la signature de l'API, pour qu'un changement de format ne se révèle qu'au premier client. Le point propre au machine learning est le dossier de référence : quelques observations, figées, dont la prédiction est connue et comparée à chaque exécution.
+
+Les tests de modèle sont des tests de seuil, pas de vérité. On ne teste pas que le modèle est bon, on teste qu'il n'est pas devenu pire que ce que l'on accepte. Trois familles reviennent : une métrique globale au moins égale à celle du modèle en service, des métriques par coupe — âge, région, montant — pour qu'une amélioration moyenne ne cache pas une régression sur un sous-groupe, et des contraintes opérationnelles comme la latence maximale ou la taille de l'artefact. Le bloc suivant est un jeu de tests de ce type, exécutable tel quel avec pytest.
+
+```python
+import json
+import joblib
+import numpy as np
+import pytest
+
+SEUIL_AUC = 0.81          # metrique du modele actuellement en production
+ENTREES = ["revenu", "anciennete", "dette", "historique"]
+
+
+@pytest.fixture(scope="module")
+def modele():
+    return joblib.load("models/model.pkl")
+
+
+def test_signature_conforme(modele):
+    assert list(modele.feature_names_in_) == ENTREES
+
+
+def test_auc_au_moins_egale_au_referentiel(modele, jeu_test):
+    rapport = json.load(open("reports/evaluation.json"))
+    assert rapport["auc"] >= SEUIL_AUC, f"AUC {rapport['auc']} < {SEUIL_AUC}"
+
+
+def test_auc_par_tranche_de_revenu(modele, jeu_test):
+    rapport = json.load(open("reports/evaluation.json"))
+    for tranche, valeur in rapport["auc_par_tranche"].items():
+        assert valeur >= SEUIL_AUC - 0.05, f"regression sur {tranche} : {valeur}"
+
+
+def test_prediction_nulle_ni_positive_ni_un():
+    sorties = modele.predict_proba(np.array([[45000, 3, 0.3, 1]]))[:, 1]
+    assert np.all((sorties > 0) & (sorties < 1))
+
+
+def test_latence_inferieure_au_contrat(modele, jeu_test):
+    import time
+    debut = time.perf_counter()
+    modele.predict_proba(jeu_test)
+    par_appel = (time.perf_counter() - debut) / len(jeu_test)
+    assert par_appel < 0.002, f"latence {par_appel:.4f} s par dossier"
+```
+
+Ces tests ont une caractéristique qu'il faut assumer : ils échoueront parfois à tort. Un seuil trop serré déclenchera des alertes pour un écart insignifiant, et l'équipe finira par les ignorer, ce qui est pire que de ne pas en avoir. À l'inverse, un seuil trop souple ne détecte rien. Réglez-les comme on règle une alarme : en observant pendant quelques semaines la variation naturelle d'une métrique en l'absence de changement, puis en plaçant le seuil nettement au-delà de cette variation.
+
+| Type de test | Exemple concret | Bloquant ? | Réaction en cas d'échec |
+|---|---|---|---|
+| Schéma de données | Colonne revenu absente ou texte | Oui | Arrêt du pipeline, alerte sur la source |
+| Bornes métier | Taux supérieur à 100 % | Oui | Arrêt, investigation de la saisie |
+| Code unitaire | Transformation de variable | Oui | Correction avant fusion de la branche |
+| Dossier de référence | Prédiction connue inchangée | Oui | Rejet du modèle proposé |
+| Métrique globale | AUC sous le modèle en service | Oui | Publication refusée |
+| Métrique par coupe | Dégradation sur une tranche | Oui si critique | Investigation obligatoire |
+| Latence et taille | Réponse au-delà du contrat | Non, avertissement | Signalement dans le rapport |
+
+La dernière pièce de cette mécanique est le moment où les tests s'exécutent. Les tests de données vont le plus tôt possible, dès l'extraction, parce qu'il est absurde d'entraîner un modèle sur des entrées qu'on sait invalides. Les tests de code vont à chaque fusion de branche. Les tests de modèle vont avant chaque enregistrement au registre, et de nouveau après le déploiement, sur le service réel, avec les données réelles : c'est le seul endroit où l'on peut vérifier que la chaîne complète, du formulaire à la réponse, se comporte comme en laboratoire.

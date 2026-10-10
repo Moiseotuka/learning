@@ -1,0 +1,560 @@
+Bienvenue dans le quatrième chapitre du parcours Cybersécurité, un chapitre entièrement consacré au durcissement d'un système, c'est-à-dire à l'ensemble des gestes qui rendent une machine moins fragile une fois qu'elle est installée, branchée au réseau et confiée à des usagers. Jusqu'ici, vous avez appris ce qu'est une vulnérabilité, comment lire une annonce de sécurité et pourquoi certaines failles se propagent si vite. Ce chapitre fait le pas suivant : il vous apprend à agir sur votre propre parc, poste par poste, service par service, journal par journal. Le fil rouge du parcours reste en place : le parc informatique de la Médiathèque des Lilas, une petite structure tout à fait ordinaire avec ses contraintes ordinaires, douze postes publics consultables sans réservation, deux postes de staff derrière le comptoir, un serveur qui héberge le catalogue en ligne et l'imprimante partagée du rez-de-chaussée. Rien d'exotique : c'est exactement le genre d'environnement que vous rencontrerez en poste, et c'est sur lui que vous appliquerez chaque étape de ce chapitre.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, et vous les aurez déjà manipulées sur des exemples réels. Vous comprendrez pourquoi un système livré par le fabricant est vulnérable par défaut, et vous saurez traduire une annonce de CVE en décision de priorité à l'aide du score CVSS. Vous dresserez l'inventaire complet de ce qui tourne réellement sur un poste ou un serveur, puis vous désactiverez les services inutiles sans rien casser. Vous réduirez les privilèges : comptes nominatifs, groupe des administrateurs, étendue de sudo et droits fichiers POSIX, avec le tableau des permissions rwx sous les yeux. Vous vous appuierez sur des guides de référence publiés par des organismes reconnus plutôt que sur des listes de recettes anonymes, vous chiffrerez le disque et les sauvegardes locales, puis vous installerez une journalisation exploitable : quels journaux, où les stocker, combien de temps les conserver. Vous appànerez à lire ces journaux pour y détecter des connexions répétées, des fichiers modifiés et des comptes créés, à centraliser les journaux avec un horodatage fiable, et à suivre une procédure de réponse en six étapes face à un signalement de malware. Le tout sera assemblé dans un mini-projet guidé : la fiche de durcissement du poste d'accueil de la médiathèque.
+
+Une recommandation sur la manière d'aborder ce chapitre, avant d'entrer dans le vif du sujet. Le durcissement s'apprend comme on apprend un métier de la main : en le pratiquant sur une machine que vous pouvez vous permettre de casser, jamais directement sur la production. Si vous n'avez pas encore de machine de test, une machine virtuelle ou un vieil ordinateur suffisent largement : installez-y une distribution Debian ou Ubuntu, appliquez les commandes de la leçon, redémarrez, et observez ce qui casse. Une session qui ne se connecte plus après un changement dans sudo est une leçon bien plus durable qu'une page de documentation relue d'un bout à l'autre. Les commandes de cette leçon sont illustrées sous Debian ou Ubuntu, une famille de distributions très répandue en collectivité ; les noms de paquets, les chemins de configuration et les outils peuvent différer sur Red Hat, sur SUSE ou sur un système BSD, et il vous faudra les traduire. Nous avancerons par étapes, en alternant explications, extraits de journaux commentés et bonnes pratiques de terrain. Après la leçon, vous rédigerez seul la fiche de durcissement complète du poste d'accueil, puis vous vérifierez vos acquis avec le quiz de quatre questions.
+
+## Pourquoi un système par défaut est vulnérable
+
+Lorsqu'un poste sort de sa boîte, ou lorsqu'une distribution serveur vient d'être installée, la machine n'est ni bonne ni mauvaise : elle est simplement réglée pour être utile au plus grand nombre dans le plus grand nombre de situations. Or servir tout le monde signifie, concrètement, ouvrir un maximum de fonctionnalités, activer un maximum de services, accepter un maximum de protocoles et laisser les comptes d'administration avec leurs mots de passe d'usine. Le fabricant ne peut pas deviner que ce poste servira uniquement à consulter un catalogue de bibliothèque : il livre donc un système prêt à imprimer, prêt à partager des fichiers, prêt à recevoir des connexions distantes, prêt à se mettre à jour depuis n'importe quel dépôt. Chacune de ces capacités est utile à quelqu'un, et inutile à votre poste d'accueil. Le résultat est un écart permanent entre ce que la machine sait faire et ce dont votre usage a besoin, et cet écart constitue la première porte d'entrée d'un attaquant.
+
+La notion de surface d'attaque sert à mesurer cet écart. Elle désigne l'ensemble des points par lesquels quelqu'un peut tenter d'entrer dans un système : ports réseau à l'écoute, services accessibles, comptes utilisables, logiciels installés, périphériques acceptés, fichiers modifiables. Plus cette surface est grande, plus l'attaquant a de prises, et plus il lui faudra peu de choses pour trouver une ouverture. Un poste qui n'écoute sur aucun port réseau est excessivement difficile à atteindre à distance ; le même poste qui exécute quatre services en écoute, dont un vieil outil de partage jamais mis à jour, devient une cible de choix. Le durcissement consiste précisément à rogner cette surface : supprimer ce qui est inutile, refermer ce qui doit l'être, restreindre ce qui reste.
+
+Cette logique est d'autant plus pertinente dans une médiathèque que les menaces qui visent ce type de structure ne ressemblent pas à celles d'un film d'espionnage. Dans la pratique, la majorité des compromissions viennent de robots qui balayent des plages d'adresses à grande vitesse, à la recherche de mots de passe par défaut, de services obsolètes ou de failles publiées depuis plusieurs semaines. Ces robots ne savent pas que votre poste est le poste d'accueil de la Médiathèque des Lilas : ils testent tout, systématiquement, et repartent dès qu'ils ne trouvent rien. D'autres viennent d'une clé USB trouvée dans le hall, d'un logiciel téléchargé pour convertir un fichier, d'un lien de courriel cliqué par un membre du personnel. La question n'est donc pas de savoir si quelqu'un essaiera, mais combien de fois par jour, et si ces tentatives laissent des traces que vous pourrez lire.
+
+Trois propriétés structurent le raisonnement de sécurité que vous utiliserez tout au long du chapitre. La confidentialité, d'abord, garantit que l'information reste lisible par les seules personnes autorisées : un fichier d'adhésion n'est pas un catalogue public. L'intégrité, ensuite, garantit que l'information n'est pas modifiée sans que personne ne s'en aperçoive : une date d'atelier changée par un inconnu est un problème de confiance autant qu'un problème technique. La disponibilité, enfin, garantit que le service fonctionne quand on en a besoin : un catalogue inaccessible pendant trois jours est déjà un incident de sécurité, même sans aucune donnée volée. Ces trois propriétés, souvent réunies sous le nom d'objectif triptyque, vous serviront de balance pour arbitrer chaque décision de durcissement, parce que tout réglage est un compromis et qu'aucun réglage n'est gratuit.
+
+Enfin, une mise au point sur ce que le durcissement n'est pas. Il ne remplace ni le bon sens ni la maintenance : un système durci et jamais mis à jour reste vulnérable, et un système à jour mais ouvert à tout venant reste exposé. Le durcissement non plus ne vise pas l'excellence absolue, il vise la réduction raisonnable du risque avec les moyens disponibles. Une médiathèque ne peut pas consacrer vingt heures par semaine à la sécurité de douze postes ; elle peut en consacrer deux, de manière régulière, si ces deux heures sont les bonnes. Voici, résumée en une image, la pile de durcissement que ce chapitre va construire, couche par couche, depuis la base jusqu'au sommet.
+
+```text
+              pile de durcissement — du sol au sommet
+
+   4.  [ surveillance ]   journaux centralisés, alertes, relectures
+   3.  [ détection ]      recherches récurrentes dans les journaux
+   2.  [ durcissement ]   comptes, droits, services, configuration
+   1.  [ mise à jour ]    correctifs appliqués puis vérifiés
+   0.  [ inventaire ]     ce qui tourne, ce qui écoute, qui a les droits
+   ----------------------------------------------------------
+       le système tel que le fabricant l'a livré
+```
+
+Chaque couche s'appuie sur celle du dessous : sans inventaire, vous ne savez pas quoi mettre à jour ; sans mise à jour, le durcissement masque des failles connues ; sans durcissement, les journaux enregistrent trop de bruit ; sans journalisation, vous ne détectez rien ; sans détection, la surveillance n'est qu'un disque qui se remplit. C'est pourquoi nous suivrons l'ordre du bas vers le haut dans toute la leçon, et c'est aussi la façon dont vous procéderez dans le mini-projet, qui reprendra exactement cette séquence.
+
+## Gestion des mises à jour et correctifs
+
+La première couche, et de loin la plus rentable, consiste à appliquer les mises à jour de sécurité. Un correctif est une modification du code d'un logiciel publiée par son éditeur pour fermer une faille déjà identifiée. Le rythme des attaques automatisées est tel qu'un intervalle de plusieurs semaines entre la publication d'un correctif et son installation suffit souvent à voir apparaître des scans ciblant précisément la faille corrigée. Dans une petite structure, cette fenêtre est le principal facteur de risque : ce n'est pas l'absence de pare-feu coûteux qui fait perdre un poste, c'est le correctif repoussé trois mois parce que personne n'a eu le temps.
+
+Sous Debian ou Ubuntu, le mécanisme de base est celui des gestionnaires de paquets. Une mise à jour de paquet corrige généralement un défaut de fonctionnement, tandis qu'une mise à niveau peut changer la version majeure d'un logiciel et introduire des incompatibilités. Les annonces de sécurité portent une référence propre : sous Debian, chaque annonce critique est publiée sous la forme d'un bulletin signé que vous retrouverez sur le site officiel debian.org, avec la version corrigée et, souvent, un identifiant CVE. Pour votre poste d'accueil, la consigne pratique tient en deux gestes : récupérer la liste des mises à jour disponibles, puis les appliquer à une heure où une interruption est acceptable, en prévoyant un redémarrage si le noyau lui-même a été touché.
+
+```text
+$ sudo apt update
+Hit:1 http://deb.debian.org/debian bookworm InRelease
+Get:2 http://security.debian.org/debian-security bookworm-security InRelease [48,0 kB]
+...
+Reading package lists... Done
+
+$ apt list --upgradable 2>/dev/null
+openssh-server/stable-security 1:9.2p1-2+deb12u3 amd64 [upgradable from: 1:9.2p1-2+deb12u2]
+firefox-esr/stable-security 115.12.0esr-1~deb12u1 amd64 [upgradable from: 115.11.0esr-1~deb12u1]
+libc6/stable-security 2.36-9+deb12u4 amd64 [upgradable from: 2.36-9+deb12u3]
+```
+
+La ligne de commande ci-dessus est propre à la famille Debian et Ubuntu ; sous Red Hat, la commande équivalente relève de dnf, et la sortie prend un autre aspect. Quel que soit l'outil, l'idée reste la même : distinguer ce qui attend une décision de ce qui tourne déjà correctement, et conserver une trace de ce que vous avez appliqué. Notez que la sortie ci-dessus mélange trois paquets : un serveur distant, un navigateur et une bibliothèque système. Ils n'ont ni la même criticité ni le même niveau d'exposition, et c'est précisément le rôle du score CVSS de vous aider à les départager.
+
+Le Common Vulnerability Scoring System attribue à chaque vulnérabilité publiée une note de base comprise entre zéro et dix, calculée à partir de caractéristiques techniques : difficulté d'exploitation, exigence d'interaction humaine, portée de l'attaque, impact sur la confidentialité, sur l'intégrité et sur la disponibilité. La note ne mesure pas le danger réel pour votre médiathèque, elle mesure le danger intrinsèque de la faille décrite dans son contexte technique idéal pour l'attaquant. C'est une aide à la décision, jamais un verdict : une faille notée neuf sur dix dans un service que vous n'exposez pas au réseau reste moins urgente qu'une faille notée six sur dix sur le moteur du catalogue que tout le monde consulte depuis le hall. Vous trouverez le détail de chaque CVE et son score sur la base publique nvd.nist.gov, tenue par le National Institute of Standards and Technology.
+
+```table
+| Plage de score CVSS | Niveau déclaré | Délai à viser sur un poste public | Réaction attendue |
+| --- | --- | --- | --- |
+| 9,0 à 10,0 | Critique | Sous 48 heures | Appliquer le correctif ou couper l'exposition le temps de le faire |
+| 7,0 à 8,9 | Élevé | Sous 7 jours | Planifier l'installation et vérifier le redémarrage |
+| 4,0 à 6,9 | Moyen | Sous le cycle mensuel | Regrouper avec les mises à jour ordinaires |
+| 0,1 à 3,9 | Faible | Au prochain cycle de maintenance | Traiter avec les corrections de fonctionnement |
+```
+
+
+Pour transformer ce barème en action, cinq règles suffisent et tiennent dans une routine mensuelle de deux heures. Premièrement : traitez d'abord les correctifs concernant un service réellement exposé, même s'ils sont notés un cran en dessous. Deuxièmement : ne reportez jamais un correctif critique sans motif écrit, parce que l'oubli devient vite la norme. Troisièmement : appliquez les correctifs du noyau et de la bibliothèque système avec un créneau de redémarrage prévu, car un système mis à jour sans redémarrage conserve parfois l'ancienne version en mémoire. Quatrièmement : testez sur un poste de staff avant de déployer sur les douze postes publics. Cinquièmement : consignez la date et la version dans un registre, parce que le jour où un incident surviendra, la première question posée sera de savoir si la machine était à jour.
+
+```text
+# Exemple de configuration d'installation automatique sous Debian
+# Fichier : /etc/apt/apt.conf.d/50unattended-upgrades
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Mail "resp-info@mediatheque-lilas.example";
+```
+
+L'installation automatique des seuls correctifs de sécurité, proposée nativement par Debian et Ubuntu, convient bien à un parc de postes publics que personne ne surveille en permanence. Gardez toutefois le redémarrage manuel : un poste qui redémarre tout seul pendant une séance d'atelier crée un problème d'usage, et un serveur qui redémarre sans prévenir crée un problème de service. Le réglage idéal consiste donc à laisser le correctif s'installer et à programmer le redémarrege à la fenêtre de maintenance hebdomadaire.
+
+## Inventaire : ce qui tourne réellement sur un poste ou un serveur
+
+On ne durcit pas ce qu'on ne connaît pas. Avant de désactiver quoi que ce soit, il faut répondre avec précision à trois questions : quels logiciels tournent, quels ports sont ouverts sur le réseau, et qui a le droit de faire quoi. L'inventaire n'est pas une perte de temps préalable au travail réel, il en est la moitié : c'est lui qui vous évitera de couper le service dont dépend le catalogue, et c'est lui qui vous permettra, six mois plus tard, de savoir si la machine a changé depuis la dernière vérification.
+
+Sous Debian ou Ubuntu, quatre commandes suffisent à dessiner le portrait du système. La première liste les connexions réseau actives et, surtout, les programmes qui les écoutent. La seconde liste les services en fonctionnement. La troisième énumère les paquets installés, ce qui donne la base de vos mises à jour. La quatrième montre les processus réellement exécutés, utile pour repérer un programme qui ne vient d'aucun paquet connu. Aucune de ces commandes n'est universelle : les équivalents changent sur d'autres systèmes, et les droits d'observation peuvent nécessiter l'élévation aux privilèges.
+
+```text
+$ sudo ss -tulpn
+Netid  State   Local Address:Port   Process
+tcp    LISTEN  0.0.0.0:22           users:(("sshd",pid=712,fd=3))
+tcp    LISTEN  127.0.0.1:631        users:(("cupsd",pid=845,fd=12))
+tcp    LISTEN  0.0.0.0:8080         users:(("python3",pid=1204,fd=7))
+udp    UNCONN  0.0.0.0:68           users:(("dhclient",pid=601,fd=6))
+```
+
+Lisez cette sortie ligne à ligne, et demandez-vous de chaque port : qui en a besoin, et pourquoi. Le port vingt-deux, pour les connexions distantes, se justifie sur le serveur si l'administrateur travaille à distance, et se justifie rarement sur un poste du hall. Le port quatre-vingt-quinze de l'imprimante, absent de cet extrait, apparaîtra chez vous si un service d'impression tourne. L'adresse de bouclage à la gauche signifie que le service n'est joignable que depuis la machine elle-même, ce qui est une protection réelle : c'est le cas de l'imprimante système dans cet exemple. La dernière ligne appartient au client de configuration réseau, normal sur un poste connecté. Un port qui écoute sur toutes les interfaces sans raison documentée doit déclencher une question, pas un clic immédiat.
+
+Une fois le portrait technique dressé, consignez-le dans un document simple, daté, que vous relirez à chaque changement. Ce tableau d'inventaire n'a pas besoin d'outil particulier : un tableur ou un fichier texte convient, à condition d'être à jour. L'essentiel est d'y noter la justification de chaque service, car la justification, et non la présence, est ce qui détermine si le service reste ou part.
+
+```text
+Inventaire du poste d'accueil — 2026-10-02 — Debian 12 « bookworm »
+
+Composant          | État         | Port  | Justification
+sshd               | actif        | 22    | aucune : intervention sur place uniquement
+cups               | actif        | 631   | impression des reçus, en écoute locale
+catalogue-client   | actif        | 8080  | consultation du catalogue, exposé au LAN
+dhclient           | actif        | 68    | adresse IP du poste
+firefox-esr        | installé     | -     | navigation des usagers, correctifs suivis
+bluetooth          | désactivé    | -     | aucun périphérique autorisé
+```
+
+Deux catégories d'éléments échappent souvent à l'inventaire et méritent une ligne à part. Les tâches planifiées, qui s'exécutent à heure fixe sans intervention : elles peuvent être légitimes, comme une sauvegarde nocturne, ou suspectes, comme un script déposé par un logiciel gratuit. Les comptes, eux, se listent depuis le fichier des comptes système et depuis le groupe des administrateurs, et il est fréquent d'y découvrir un compte créé lors d'un déménagement il y a trois ans, toujours actif et toujours doté d'un mot de passe partagé. Comptez les comptes, comptez les droits, comptez les ports : tout le reste de ce chapitre repose sur ces trois nombres.
+
+## Désactiver les services inutiles
+
+Chaque service qui tourne est une porte. La règle la plus simple du durcissement consiste à fermer toutes celles dont personne n'a besoin, et cette règle produit souvent les gains les plus rapides d'un parc entier. Contrairement à ce qu'on croit, désactiver un service ne le supprime pas : il reste installé, consultable, réactivable en une commande si le besoin apparaît réellement. Le risque est donc faible et réversible, à la différence d'une suppression qui demanderait une réinstallation.
+
+Sous Debian ou Ubuntu, la commande de base liste les unités en état d'exécution, puis les services peuvent être arrêtés et empêchés de redémarrer. Trois verbes se distinguent, et les confondre est la première source d'erreur : arrêter couche le service pour la session en cours, empêcher son démarrage automatique au prochain redémarrage, et masquer bloque toute réactivation, y compris par une dépendance qui le réclamerait. Pour un poste public, la séquence prudente est d'abord d'observer, puis d'arrêter, puis de redémarrer la machine, et seulement ensuite de décider s'il faut empêcher le service.
+
+```text
+$ systemctl list-units --type=service --state=running
+  UNIT                     LOAD   ACTIVE SUB     DESCRIPTION
+  ssh.service              loaded active running OpenBSD Secure Shell server
+  cups.service             loaded active running CUPS Scheduler
+  bluetooth.service        loaded active running Bluetooth service
+  gnome-shell.service      loaded active running GNOME Shell
+  rsyslog.service          loaded active running System Logging Service
+
+$ sudo systemctl stop bluetooth.service
+$ sudo systemctl disable bluetooth.service
+$ sudo systemctl mask bluetooth.service
+$ sudo reboot
+```
+
+Le redémarrage n'est pas un détail de confort : c'est lui qui prouve que votre changement tient dans la durée. Un service qui ne repart pas après un redémarrage vous l'apprend en échouant à démarrer, et il vaut mieux le découvrir sur le poste de staff que le lundi matin sur les douze postes du hall. Après le redémarrage, relancez la commande d'observation des ports : si le service est vraiment éteint, sa ligne a disparu, et c'est cette disparition qui constitue votre preuve, pas votre souvenir d'avoir tapé la commande.
+
+Trois cas méritent une attention particulière dans un parc de médiathèque. Les services de partage de fichiers, utiles sur un serveur documentaire mais rarement sur un poste consulteur, exposeront vos lecteurs à tout le réseau. Les services d'impression, en revanche, sont légitimes à l'accueil, mais ils doivent rester en écoute locale tant que l'imprimante n'a pas besoin d'être partagée au-delà de la machine. Les services distants, enfin, se justifient sur le serveur administré à distance et se justifient rarement sur un poste public : leur présence y signifie presque toujours une installation oubliée. Avant de désactiver quoi que ce soit, vérifiez toujours la liste des dépendances, parce qu'un service apparemment anodin peut être réclamé par le logiciel métier du catalogue.
+
+- Notez avant de changer : l'état initial, la raison du changement et la date.
+- Vérifiez les dépendances, un service peut être réclamé par un autre logiciel.
+- Arrêtez d'abord, puis redémarrez, et seulement ensuite empêchez le démarrage.
+- Conservez un service légitime en écoute locale plutôt que de le supprimer.
+- Relancez l'observation des ports après redémarrage : la preuve est la ligne disparue.
+- Gardez le masquage pour les services que vous ne voulez jamais voir revenir.
+- Testez chaque changement sur un poste de staff avant de le déployer ailleurs.
+
+## Réduire les privilèges : comptes, sudo et droits fichiers
+
+La couche suivante porte sur les personnes et sur les fichiers. Le principe est ancien et tient en une phrase : chaque compte doit disposer du minimum de droits qui lui permet de travailler, ni plus. Un compte administrateur utilisé pour consulter le catalogue transforme une simple erreur de clic en modification durable du système, et un mot de passe partagé entre quatre agents rend impossible toute imputation : le jour où quelque chose change, vous ne saurez pas qui l'a changé. La réduction des privilèges n'est donc pas seulement une défense contre l'extérieur, c'est aussi votre seule possibilité de comprendre ce qui se passe à l'intérieur.
+
+Dans le cadre du chapitre, le parc de la Médiathèque des Lilas repose sur trois comptes aux rôles nets. Le compte d'administration, nominatif, est celui de la personne responsable du parc : il installe, met à jour, lit les journaux et ne sert jamais à la consultation. Le compte de staff est celui des agents derrière le comptoir : ils utilisent les logiciels métier, impriment et consultent le catalogue, mais n'installent rien. Le compte usager, éphémère ou partagé selon l'organisation, sert à la consultation publique : session courte, dossier personnel volatile, aucun droit hors du répertoire de navigation. Trois comptes, trois rôles, trois ensembles de droits : c'est cette séparation qui rend la suite du chapitre applicable, puisque sans comptes distincts, ni journal ni restriction n'ont de sens.
+
+La distribution des rôles passe par deux mécanismes distincts. Le premier est l'appartenance aux groupes : sous Debian ou Ubuntu, les membres du groupe sudo sont autorisés à élever leurs privilèges. Le second est le fichier de règles d'élévation, consultable avec la commande dédiée, qui décrit précisément quel utilisateur peut exécuter quelle commande avec quel niveau d'élévation. L'erreur classique consiste à y accorder un interpréteur de commandes avec tous les droits : l'utilisateur n'a alors plus aucune restriction et le fichier de règles ne sert plus à rien. L'erreur opposée consiste à donner le mot de passe d'administration à chacun, ce qui revient au même résultat en moins visible. La bonne pratique accorde des commandes nommées, ou un groupe restreint, et conserve la trace de chaque élévation dans les journaux que vous installerez plus loin.
+
+```text
+# Fichier : /etc/sudoers.d/parc-mediatheque — édité avec visudo, jamais avec un éditeur ordinaire
+Defaults        env_reset
+Defaults        mail_badpass
+Defaults        logfile="/var/log/sudo.log"
+
+# L'administrateur du parc exécute tout ce qui est nécessaire à la maintenance
+nadia   ALL=(ALL:ALL) ALL
+
+# L'équipe de staff peut redémarrer le service d'impression, et rien d'autre
+%sstaff ALL=(root) /usr/bin/systemctl restart cups.service
+%sstaff ALL=(root) /usr/bin/systemctl status cups.service
+
+# Aucun accès pour le compte de consultation publique
+usager  ALL=(ALL) NOPASSWD: NONE
+```
+
+Les droits fichiers constituent le deuxième volet de cette réduction. Sous les systèmes de type Unix, chaque fichier porte trois catégories de permissions, pour son propriétaire, pour son groupe et pour les autres, et chaque catégorie reçoit trois droits : lecture, écriture et exécution. Le tableau suivant résume les neuf cases possibles et leur signification pratique ; c'est le tableau que vous garderez sous les yeux pendant tout le mini-projet.
+
+```table
+| Droit | Sur un fichier | Sur un répertoire | Notation symbolique | Notation chiffrée |
+| --- | --- | --- | --- | --- |
+| lecture | voir le contenu | lister les entrées | r | 4 |
+| écriture | modifier le contenu | créer ou supprimer des entrées | w | 2 |
+| exécution | lancer le programme | traverser le répertoire | x | 1 |
+| propriété | le propriétaire du fichier | le propriétaire du répertoire | u | premier chiffre |
+| groupe | les membres du groupe associé | les membres du groupe associé | g | deuxième chiffre |
+| autres | tout autre utilisateur | tout autre utilisateur | o | troisième chiffre |
+```
+
+
+La lecture, l'écriture et l'exécution ne signifient pas la même chose selon qu'on regarde un fichier ou un répertoire, et cette distinction explique la plupart des dysfonctionnements. Exécuter un fichier program veut dire le lancer ; traverser un répertoire veut dire pouvoir accéder à ce qui s'y trouve, ce qui suppose donc l'exécution sur le répertoire lui-même, même sans aucun droit de lecture. Écrire dans un répertoire, enfin, permet d'y créer et d'y supprimer des entrées, indépendamment du propriétaire réel de ces entrées : c'est pourquoi les répertoires partagés d'une équipe se règlent en lecture et écriture pour le groupe, et pourquoi un répertoire de fichiers sensibles reçoit l'autorisation d'exécution réservée aux seuls propriétaires. Sous Debian ou Ubuntu, la commande d'attribution accepte une forme symbolique, commode pour un ajustement ponctuel, et une forme chiffrée, préférable pour une application explicite.
+
+```text
+$ ls -l /srv/catalogue/
+-rw-r----- 1 nadia staff  4096 oct.  2 09:12 index.html
+-rw-rw---- 1 nadia staff 12288 oct.  2 09:15 articles.db
+drwxr-x--- 2 nadia staff  4096 oct.  1 18:40 media/
+
+$ sudo chmod 640 /srv/catalogue/articles.db
+$ sudo chown nadia:staff /srv/catalogue/articles.db
+$ sudo chmod 750 /srv/catalogue/media
+$ umask 027
+```
+
+Porté à soixante-quarante, le premier fichier reste lisible par son propriétaire et écrit par son groupe, mais devient illisible pour les autres : personne ne pourra récupérer la base des articles depuis un compte de consultation. Porté à soixante-quinze-zéro, le répertoire de médias devient accessible à son propriétaire et à son groupe, fermé à tous les autres, et l'utilisateur devra y entrer pour y accéder. Le masque de création, enfin, applique automatiquement ces règles aux nouveaux fichiers, si bien que vous n'aurez plus à y penser une fois configuré. Réglez l'origine des fichiers, c'est-à-dire le propriétaire et le groupe, avant d'ajuster les permissions : attribuer des droits sur un fichier mal propriétaire ne fait que déplacer le problème.
+
+Au-delà des droits, la politique de mots de passe mérite elle aussi d'être posée par écrit, parce qu'elle est le point où l'humain rencontre la technique. La longueur prime aujourd'hui sur la sophistication : une phrase de plusieurs mots est plus résistante et plus mémorisable qu'un mot de passe court mêlant chiffres et symboles. Interdisez les mots de passe partagés, expirez les comptes dormants plutôt que les mots de passe fréquemment changés, et verrouillez automatiquement le compte après un nombre raisonnable d'échecs, sous Debian ou Ubuntu avec les outils de gestion des comptes fournis par la distribution. Enfin, exigez l'élévation pour toute modification système et vérifiez, dans les journaux, qu'elle est bien enregistrée : un compte de staff qui peut redémarrer un service d'impression doit le pouvoir une fois par mois, pas cent fois par jour.
+
+- Ne vous connectez jamais directement en administrateur : élevez les privilèges à la demande.
+- Éditez les règles d'élévation avec l'outil dédié, qui vérifie la syntaxe avant d'enregistrer.
+- Accordez des commandes nommées plutôt qu'un interpréteur avec tous les droits.
+- Un compte public ne possède aucun droit hors de son répertoire de travail.
+- Appliquez le masque de création aux comptes qui produisent des fichiers partagés.
+- Relisez chaque trimestre la liste des comptes et celle des membres du groupe sudo.
+- Consignez par écrit la politique de mots de passe et la durée de verrouillage.
+
+## Durcissement de configuration : s'appuyer sur des guides de référence
+
+À présent que les services sont triés, les correctifs posés et les droits réduits, reste la couche la plus fastidieuse : les options de configuration, celles dont personne ne se soucie jusqu'au jour où elles font défaut. Plutôt que d'inventer votre propre liste, reposez-vous sur des guides publiés par des organismes reconnus. Le Center for Internet Security publit des ensembles de règles de configuration, dits benchmarks, qui décrivent pour chaque système un ensemble de recommandations numérotées. L'Agence nationale de la sécurité des systèmes d'information, l'organisme public français chargé de la cyberdéfense, publie de son côté des guides de durcissement et des recommandations adaptés aux administrations. Les éditeurs de distributions, Debian et Ubuntu en tête, documentent également les bonnes pratiques propres à leur système. Aucun de ces documents n'est à appliquer aveuglément : ils sont à lire, à filtrer, et à adapter.
+
+Un benchmark se lit de la même manière quel que soit son auteur. Chaque recommandation comporte un identifiant stable, une justification qui explique le risque couvert, une commande de vérification qui prouve l'état actuel et une procédure de remédiation. L'ordre de traitement est le vôtre : vous n'appliquerez pas tout, vous appliquerez ce qui correspond à votre modèle de menace et à votre usage. Un poste public du hall n'a pas les mêmes exigences qu'un serveur exposé sur internet, et une recommandation pertinente pour un système bancaire peut être sans effet utile ici. Ce qui est indispensable, en revanche, c'est de consigner les écarts : si vous décidez volontairement de conserver un réglage non conforme, notez la raison et la date, sinon la prochaine personne chargée du contrôle le corrigera sans savoir qu'il s'agissait d'un choix.
+
+Trois domaines concentrent l'essentiel du travail. Le premier est le noyau et ses paramètres réseau : ils décident notamment de ce que la machine accepte comme trafic et de la manière dont elle répond à certaines situations de charge. Le second est le serveur d'accès distant, présent sur le serveur de la médiathèque s'il est administré depuis un bureau : il doit refuser les connexions d'administration directes et limiter les tentatives. Le troisième est la politique de mots de passe au niveau système, qui complète ce que vous avez posé à la section précédente. Sous Debian ou Ubuntu, ces réglages vivent dans des fichiers de configuration éditables en texte, ce qui se prête très bien au versioning et à la comparaison d'une machine à l'autre.
+
+```text
+# Fichier : /etc/sysctl.d/90-durcissement.conf
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+kernel.randomize_va_space = 2
+
+# Fichier : /etc/ssh/sshd_config.d/90-durcissement.conf
+PermitRootLogin no
+MaxAuthTries 3
+X11Forwarding no
+AllowGroups sudo staff-admin
+ClientAliveInterval 300
+ClientAliveCountMax 2
+
+$ sudo sshd -t && sudo systemctl reload ssh
+```
+
+Chaque ligne de cet extrait mérite qu'on la relise avant de l'appliquer. Les filtres de chemin inversé aident la machine à rejeter les paquets dont l'adresse d'origine paraît falsifiée ; les cookies de synchronisation permettent de résister à certains épuisements de ressources ; les redirections refusées empêchent la machine de se faire le relais involontaire d'un trafic dirigé ailleurs ; l'aléatisation de l'espace d'adressage rend les exploits mémoire sensiblement plus difficiles côté serveur d'accès. La ligne qui limite les groupes autorisés à se connecter est souvent celle qui produit le plus grand gain : elle interdit d'emblée toute connexion au compte d'administration depuis un hôte non prévu, et fait tomber la majorité des tentatives automatisées avant même l'authentification. La dernière commande vérifie la syntaxe avant de recharger, ce qui vous évite d'être déconnecté par une faute de frappe.
+
+Le réglage le plus délicat reste celui qui vous enferme hors de votre propre machine. Une configuration trop stricte appliquée à distance, sur un serveur que vous ne pouvez redémarrer que depuis le local technique, se paie en escaliers et en déplacement. Appliquez donc toujours les changements réseau par étapes : conservez une session ouverte pendant que vous testez la nouvelle, prévoyez une voie d'accès physique, et validez la connexion depuis une seconde machine avant de fermer la première. La prudence vaut aussi pour les mises à jour de configuration : un fichier de réglages modifié pendant trois mois sans version connue est impossible à diagnostiquer, alors versionnez-le ou archivez au moins sa copie précédente.
+
+- Choisissez un guide de référence reconnu et un seul comme base de départ.
+- Lisez la justification de chaque recommandation avant d'en appliquer la procédure.
+- Vérifiez l'état actuel, appliquez, puis revérifiez avec la commande de contrôle.
+- Consignez par écrit chaque écart volontaire, avec sa raison et sa date.
+- Testez toute règle d'accès distant depuis une seconde session avant de fermer la première.
+- Archivez la version précédente de chaque fichier de configuration modifié.
+- Adaptez l'exigence au poste : un consulteur n'a pas les mêmes besoins qu'un serveur.
+
+## Chiffrement du disque et des sauvegardes locales
+
+Les sections précédentes ont réduit ce que l'on peut faire sur la machine ; celle-ci réduit ce que l'on peut emporter avec elle. Le chiffrement du disque protège les données au repos, c'est-à-dire celles qui dorment sur le stockage quand la machine est éteinte. Son cas d'usage le plus fréquent dans une médiathèque tient en une ligne : un poste volé ou perdu lors d'un déménagement, un disque retiré d'un serveur réformé, une clé de secours oubliée dans un tiroir. Sans chiffrement, la récupération des fichiers ne demande qu'un câble et un système d'exploitation d'appoint ; avec chiffrement, elle demande la clé, que vous n'avez pas donnée.
+
+Sous Debian ou Ubuntu, le chiffrement de volume repose sur LUKS et sur l'outil associé, qui crée un conteneur chiffré au sein duquel un système de fichiers conventionnel est formaté. Trois décisions accompagnent toujours cette opération. La première est la taille de l'en-tête de clé, qui conditionne le nombre de clés de secours que vous pourrez enregistrer. La seconde est la récupération : prévoyez une clé de secours déposée en lieu sûr, hors de l'établissement, parce qu'un disque chiffré dont la seule clé a été perdue est un disque perdu. La troisième est l'impact sur le redémarrage : une machine à disque chiffré redémarre en demandant une saisie manuelle, ce qui exclut tout redémarrage distant automatique et impose de planifier une présence physique.
+
+```text
+# Sur Debian ou Ubuntu : chiffrer une partition de données (opération destructive)
+$ sudo cryptsetup luksFormat /dev/sdb2
+$ sudo cryptsetup open /dev/sdb2 sauvegarde-chiffree
+$ sudo mkfs.ext4 /dev/mapper/sauvegarde-chiffree
+$ sudo mount /dev/mapper/sauvegarde-chiffree /srv/sauvegardes
+
+# Sauvegarde chiffrée d'un répertoire de données
+$ tar czf - /srv/catalogue | gpg --symmetric --cipher-algo AES256 \
+    --output /srv/sauvegardes/catalogue-2026-10-02.tar.gz.gpg
+
+# Vérification : la sauvegarde doit pouvoir être lue avant d'être utile
+$ gpg --decrypt --output /dev/null /srv/sauvegardes/catalogue-2026-10-02.tar.gz.gpg
+```
+
+L'opération de formatage est irréversible : elle détruit ce qui existait déjà sur la partition visée. C'est pourquoi toute procédure de chiffrement commence par une vérification du nom de périphérique, et pourquoi vous ne l'exécuterez jamais sur un disque dont vous n'avez pas confirmé le contenu. La sauvegarde chiffrée, elle, se justifie indépendamment du chiffrement du poste : les données copiées sur un support de secours hébergent les mêmes informations que l'original et méritent la même protection, sous réserve d'un point important : la clé de déchiffrement ne doit jamais voyager avec les données. Gardez-la sur un autre support, idéalement sous forme imprimée ou sur un dispositif dédié.
+
+Pour la politique de sauvegarde elle-même, retenez la règle des trois exemplaires, deux supports, un exemplaire hors site. Trois exemplaires parce qu'un support mécanique tombe en panne, deux supports parce qu'un incendie ou un vol frappe souvent plusieurs disques rangés ensemble, un exemplaire hors site parce qu'une inondation du local technique emporte tout ce qui s'y trouve. Dans une médiathèque, l'exemplaire hors site peut être une sauvegarde chiffrée confiée une fois par mois à un autre service de la commune, ou un envoi chiffré vers un stockage distant. Quelle que soit la méthode, exécutez une restauration complète au moins une fois par an : une sauvegarde jamais testée est une hypothèse, pas une sauvegarde.
+
+- Chiffrez les volumes de données, pas seulement les sauvegardes : les deux se protègent.
+- Déposez la clé de secours hors de l'établissement et notez qui en a connaissance.
+- Rappelez que tout disque chiffré exige une présence physique au redémarrage.
+- Appliquez la règle des trois exemplaires, deux supports, un exemplaire hors site.
+- Conservez la clé de déchiffrement sur un support différent des données.
+- Testez une restauration complète au moins une fois par an, avec date consignée.
+- Notez dans l'inventaire les périphériques chiffrés et leur procédure d'accès.
+
+## Journalisation : quels journaux, où et combien de temps
+
+La dernière couche du socle est la mémoire du système. Une machine sans journalisation est une machine sur laquelle vous ne pouvez répondre à aucune question après coup : s'est-on connecté ? à quelle heure ? depuis quelle adresse ? quel fichier a changé ? lequel des quatre comptes de staff a lancé cette commande ? Le journal ne vous empêche pas d'être attaqué, il vous donne les éléments pour le constater, pour limiter l'impact et pour corriger la cause. C'est aussi la condition de toute amélioration : sans trace, chaque incident repart de zéro et chaque correction reste une opinion.
+
+Sous Debian ou Ubuntu, deux mécanismes coexistent et se complètent. Le journal du système, tenu par l'unité centrale, conserve les messages émis par le noyau, les services et les commandes d'administration, avec un horodatage précis et, pour chaque entrée, l'identité du processus émetteur. Le démon de journalisation traditionnel, lui, écrit les fichiers de texte rangés dans le répertoire des journaux, avec une rotation automatique qui empêche les fichiers de grossir indéfiniment. Par défaut, le journal du système peut n'être conservé qu'en mémoire, ce qui le fait disparaître à chaque redémarrage : pour un poste public dont on veut relire l'historique, il faut opter pour le stockage persistant sur disque.
+
+```text
+# Rendre le journal persistant sous Debian ou Ubuntu
+$ sudo mkdir -p /var/log/journal
+$ sudo systemctl restart systemd-journald
+$ journalctl --disk-usage
+
+# Lire le journal : unité, période, priorité, forme suivie
+$ journalctl -u ssh --since "2026-10-01 08:00" --until "2026-10-01 18:00"
+$ journalctl -p err -b
+$ journalctl -f
+$ journalctl --list-boots
+```
+
+Les quatre commandes de l'exemple couvrent l'essentiel de la lecture quotidienne. La première restreint la lecture à un service et à une plage horaire, ce qui transforme des milliers de lignes en une liste tenable. La seconde n'affiche que les messages d'erreur et au-dessus de la session en cours, ce qui convient à un contrôle rapide du matin. La troisième suit le journal en direct, utile pendant un test que vous êtes en train d'observer. La quatrième liste les sessions de démarrage, ce qui permet de savoir si la machine a redémarré entre deux événements, détail déterminant dans une enquête. Ces commandes relèvent de la famille Debian et Ubuntu ; d'autres systèmes proposent des outils voisins mais différents.
+
+La question du temps de conservation se règle ensuite, et elle oppose deux besoins réels. Conserver trop longtemps fait grossir le disque et finit par coûter de l'espace utile au service ; conserver trop peu efface la preuve au moment précis où elle devient intéressante, car un incident est souvent découvert plusieurs semaines après son commencement. Le bon réglage part de la question à laquelle vous devez pouvoir répondre, puis remonte vers la durée. Pour une médiathèque, une politique simple tient dans le tableau suivant, à adapter à la taille des disques et à la fréquence des incidents.
+
+```table
+| Type de journal | Exemples | Durée de conservation | Espace approximatif pour douze postes |
+| --- | --- | --- | --- |
+| Authentification et droits | connexions, élévations, comptes | 12 mois | quelques centaines de mégaoctets |
+| Services métier | catalogue, impression, sauvegardes | 6 mois | quelques centaines de mégaoctets |
+| Erreurs système | échecs de démarrage, pannes | 3 mois | quelques dizaines de mégaoctets |
+| Journal de debug | détails de fonctionnement | 7 jours | variable, souvent le plus gros |
+```
+
+
+Deux limites techniques complètent la politique. La rotation des fichiers de texte, déjà en place, s'exprime en taille et en durée : vous fixez un maximum de taille par fichier et un nombre de fichiers conservés, et le système écrase le plus ancien. Le journal du système, de son côté, dispose de plafonds globaux d'espace et d'un âge maximal au-delà duquel les entrées sont purgées. Réglez ces deux valeurs ensemble, vérifiez l'espace consommé réel après une semaine de fonctionnement, puis ajustez : une politique de conservation n'est juste qu'une fois mesurée sur votre propre parc.
+
+- Activez le stockage persistant si vous voulez survivre aux redémarrages.
+- Conservez au minimum douze mois les journaux d'authentification et d'élévation.
+- Notez la question à laquelle vous devez pouvoir répondre, puis fixez la durée.
+- Réglez ensemble la rotation des fichiers et les plafonds du journal du système.
+- Vérifiez l'espace réel occupé après une semaine, puis corrigez la politique.
+- Datez la dernière vérification de la conservation dans votre registre du parc.
+
+## Détecter dans les journaux : connexions répétées, modifications de fichiers, comptes créés
+
+Avoir des journaux ne suffit pas : encore faut-il les lire, et les lire suppose de savoir quoi chercher. Une recherche dans un journal est une hypothèse : vous postulez qu'un événement s'est produit, vous cherchez sa trace, et vous interprétez le résultat. Trois hypothèses reviennent dans la quasi-totalité des incidents de premier niveau, et chacune correspond à une commande simple. La première cherche des tentatives d'authentification répétées, signature d'un balayage automatisé ou d'une personne qui teste plusieurs mots de passe. La seconde cherche des modifications de fichiers sensibles. La troisième cherche la création ou la modification de comptes, qui marque souvent le passage d'une intrusion opportuniste à une installation durable.
+
+Commençons par les connexions répétées. Sous Debian ou Ubuntu, les tentatives d'authentification distante abouties ou refusées sont enregistrées par le service d'accès distant, et chaque ligne indique l'heure, l'adresse d'origine, le compte visé et l'issue. Le motif à repérer tient en peu de mots : un grand nombre de lignes identiques, à quelques secondes d'intervalle, sur un même compte ou sur plusieurs comptes inexistants. L'extrait ci-dessous est typique d'un poste du hall interrogé pendant une nuit : aucune connexion aboutie, mais une dizaine de tentatives par minute, ce qui suffit à déclencher une investigation.
+
+```text
+# Extrait : /var/log/auth.log — poste d'accueil, nuit du 1er au 2 octobre
+oct.  2 03:12:44 poste-accueil sshd[2411]: Failed password for invalid user admin from 203.0.113.44 port 51234 ssh2
+oct.  2 03:12:47 poste-accueil sshd[2413]: Failed password for invalid user admin from 203.0.113.44 port 51240 ssh2
+oct.  2 03:12:51 poste-accueil sshd[2415]: Failed password for invalid user root from 203.0.113.44 port 51247 ssh2
+oct.  2 03:13:02 poste-accueil sshd[2418]: Failed password for nadia from 203.0.113.44 port 51266 ssh2
+oct.  2 03:13:05 poste-accueil sshd[2421]: error: maximum authentication attempts exceeded for invalid user admin from 203.0.113.44 port 51272 ssh2 [preauth]
+oct.  2 03:13:05 poste-accueil sshd[2421]: Connection closed by authenticating user root 203.0.113.44 port 51272 [preauth]
+```
+
+Trois informations ressortent immédiatement. Les comptes visés, dont deux n'existent pas, montrent que l'attaquant travaille sur une liste de noms courants. L'adresse source unique indique une source unique, ce qui permet de la distinguer d'un balayage massif diffusé depuis mille machines. L'absence de ligne indiquant une session ouverte prouve qu'aucune connexion n'a abouti, ce qui change radicalement la nature de l'événement : ici, il n'y a pas eu intrusion, il y a eu tentative. Cette distinction guide la suite : on consigne, on surveille, on renforce, et on n'enclenche pas pour autant la procédure d'urgence. Sur Debian ou Ubuntu, un outil de la distribution peut automatiser ce comptage et bloquer temporairement une adresse qui dépasse le seuil, mais l'automatisation ne remplace pas la lecture hebdomadaire des mêmes lignes.
+
+```text
+# Trois recherches de base et ce qu'elles cherchent à prouver
+
+# 1. Qui a tenté de se connecter, et combien de fois ? (comptage par compte)
+$ sudo grep "Failed password" /var/log/auth.log | \
+    awk '{print $(NF-3)}' | sort | uniq -c | sort -rn
+      41 admin
+      12 root
+       3 nadia
+
+# 2. Quelles commandes d'administration ont été exécutées, par qui, à quelle heure ?
+$ journalctl -u ssh --since "yesterday" | grep -i "session opened"
+
+# 3. Un compte a-t-il été créé ou ajouté à un groupe d'administration ?
+$ journalctl --since "2026-09-01" | grep -E "useradd|usermod|adduser"
+```
+
+La deuxième hypothèse porte sur les fichiers. Les journaux système n'enregistrent pas chaque écriture : c'est le rôle d'outils dédiés, présents dans les dépôts de Debian et d'Ubuntu, qui surveillent des répertoires et signalent les changements. À défaut d'un tel outil, deux alternatives gratuites existent. La première consiste à lire le journal des commandes d'administration, où chaque élévation indique le compte, le terminal, l'adresse et la commande exacte : voir modifier un fichier de configuration avec un éditeur y laisse une trace explicite. La seconde consiste à comparer les dates de modification des fichiers sensibles avec celles que vous avez consignées dans l'inventaire : une date qui change sans ticket correspondant est un signal. Dans un service web, l'accès log peut lui aussi révéler une tentative, par une série anormale de chemins inconnus renvoyant des erreurs, qui précède souvent une exploitation.
+
+```text
+# Commandes d'administration récentes : ce que dit chaque ligne
+oct.  1 14:02:11 serveur sudo: nadia : TTY=pts/0 ; PWD=/home/nadia ; \
+    USER=root ; COMMAND=/usr/bin/systemctl restart catalogue.service
+oct.  1 14:09:37 serveur sudo: nadia : TTY=pts/0 ; PWD=/home/nadia ; \
+    USER=root ; COMMAND=/usr/bin/vim /etc/ssh/sshd_config
+oct.  2 09:41:02 serveur sudo: inconnu : 3 incorrect password attempts
+
+# Création d'un compte : la trace attendue le jour d'une installation non autorisée
+oct.  2 02:55:19 serveur useradd[1902]: new user: name=backup2, UID=1005, \
+    GID=1005, home=/home/backup2, shell=/bin/sh, from=203.0.113.44
+```
+
+La troisième hypothèse est la plus grave, parce qu'un compte créé en dehors de tout ticket représente une porte installée pour durer. Cherchez les lignes de création, les lignes de modification d'appartenance à un groupe d'administration, et les lignes d'activation d'un compte qui était désactivé. Croisez ensuite chaque résultat avec ce que vous savez : la création du compte de sauvegarde le 2 octobre à deux heures du matin, depuis une adresse qui figure parmi celles qui ont tenté des connexions la veille, forme une chaîne cohérente que le hasard n'explique pas. Ce croisement, plus que la lecture isolée d'une ligne, constitue le cœur du travail d'investigation : chaque indice acquiert son sens par comparaison avec un autre.
+
+- Cherchez d'abord les tentatives répétées, puis les élévations, puis les comptes.
+- Distinguez toujours tentative aboutie et tentative refusée : ce ne sont pas deux incidents.
+- Rapprochez les adresses, les heures et les comptes : le croisement fait la preuve.
+- Notez l'heure exacte du premier indice : elle fixe le point de départ de l'enquête.
+- Relisez le journal hebdomadairement, pas seulement après un signalement.
+- Comptez les comptes créés depuis la dernière vérification, à chaque contrôle.
+
+## Centralisation des journaux et horodatage
+
+Un attaquant qui prend la main sur une machine commence souvent par effacer les traces qu'il y a laissées. C'est la raison d'être de la centralisation : dès qu'un événement a une importance réelle, ses journaux doivent être copiés ailleurs, sur une machine que l'attaquant ne contrôle pas. Le principe tient en une phrase : le poste subit l'incident, le serveur de journaux en garde la mémoire. Pour une médiathèque, un seul petit serveur de stockage suffit, il peut héberger le catalogue et la copie des journaux des quatorze machines du parc, à condition qu'il soit lui-même durci et sauvegardé.
+
+Le mécanisme le plus simple repose sur le protocole de journalisation standard, que les systèmes parlent nativement. Le démon de journalisation local, sous Debian ou Ubuntu, sait envoyer une copie des messages vers un hôte distant ; le récepteur, du côté du serveur, écoute sur le port dédié et écrit chaque machine dans son propre fichier. L'essentiel est de préserver l'adresse d'origine : si les quatorze machines écrivent dans un fichier unique sans identification, vous ne saurez plus quel poste a émis quelle ligne, et le fichier central deviendra illisible. Écrivez chaque hôte dans un répertoire portant son nom, et ne donnez à ce service que le droit d'écrire, jamais celui de lire ou de supprimer.
+
+```text
+# Côté poste : /etc/rsyslog.d/50-centralisation.conf
+*.* action(type="omfwd" target="journaliers.mediatheque.local" port="514"
+           protocol="tcp" queue.type="linkedList" queue.filename="fwd")
+
+# Côté serveur : réception et séparation par machine
+module(load="imtcp")
+input(type="imtcp" port="514")
+template(name="ParHote" type="string" string="/var/log/centralise/%HOSTNAME%/messages.log")
+*.* action(type="omfile" dynaFile="ParHote")
+
+# Vérifier que l'horloge est juste, condition de toute corrélation
+$ timedatectl
+               Local time: jeu. 2026-10-02 10:15:43 CEST
+           Universal time: jeu. 2026-10-02 08:15:43 UTC
+  Synchronized to time server: yes
+```
+
+L'horodatage mérite une attention égale, parce que la corrélation entre machines repose entièrement sur la comparaison des heures. Si le poste affiche dix heures et le serveur dix heures quatre, la recherche par plage horaire manquera l'événement ou en attribuera un mauvais. Synchronisez toutes les machines sur une même source de temps, de préférence locale au réseau, et vérifiez la synchronisation à chaque intervention. Conservez les heures en format standard dans les archives, et notez le décalage horaire d'été quand vous relisez des journaux d'une saison précédente : un décalage d'une heure explique plus d'enquêtes avortées qu'on ne croit.
+
+Trois précautions complètent la mise en place. Premièrement, chiffrez ou protégez le transport si les journaux transitent hors du réseau local, parce qu'un journal en clair donne à un observateur la carte exacte de votre activité. Deuxièmement, dimensionnez : quatorze machines qui émettent quelques milliers de lignes par jour produisent une taille prévisible, mesurez-la après une semaine avant de fixer vos plafonds. Troisièmement, restreignez l'accès au serveur central à la ou deux personnes chargées de la lecture, et journalisez à votre tour les accès à ce serveur : la mémoire du parc doit être surveillée comme un actif à part entière.
+
+- Copiez les journaux importants vers une machine que l'incident ne peut pas atteindre.
+- Séparez les journaux par hôte : un fichier unique sans origine est illisible.
+- Donnez au service central le droit d'écrire, jamais celui de supprimer.
+- Synchronisez toutes les machines sur une même source de temps, et revérifiez-la.
+- Mesurez le volume quotidien avant de fixer les plafonds de conservation.
+- Protégez l'accès au serveur de journaux et comptez celui-ci dans l'inventaire.
+
+## Réponse à un signalement de malware sur un poste public
+
+Tôt ou tard, un signalement arrive : une alerte s'affiche dans le navigateur, une fenêtre propose de payer, un agent du comptoir signale que le poste affiche un contenu inhabituel ou que la souris se déplace seule. Ce moment est celui où la préparation paye, et où l'affolement coûte cher. Une procédure de réponse en six étapes, écrite à l'avance et placée à portée de main, transforme un événement stressant en une suite de gestes méthodiques. Les six étapes sont les suivantes : préparer, isoler, préserver, investiguer, éradiquer et restaurer, puis capitaliser. Elles s'enchaîtent dans cet ordre et ne se sautent jamais.
+
+La préparation est faite avant l'incident : vous disposez de l'inventaire, des journaux centralisés, des comptes nominatifs, du point de contact responsable et de la procédure elle-même. C'est l'étape que vous avez construite avec tout le chapitre. L'isolation consiste à cesser toute communication du poste suspect avec le réseau, en débranchant le câble réseau ou en désactivant l'interface sans fil, sans éteindre la machine. Cette dernière précision est essentielle : les preuves les plus précieuses, les processus en cours, les connexions ouvertes, les fichiers chargés en mémoire, disparaissent à l'extinction. Un poste isolé reste infecté mais cesse de nuire aux autres machines, ce qui suffit dans l'immense majorité des cas.
+
+L'étape de préservation consiste à figer la situation avant d'agir. Notez l'heure exacte du signalement, photographiez l'écran, relevez le nom du compte connecté, copiez les journaux du poste vers le serveur central si la connexion est encore possible avant isolation, et ne nettoyez rien. La tentation d'effacer est forte et toujours mauvaise : elle détruit l'indice qui aurait permis de comprendre comment l'intrusion est entrée, et donc de fermer la porte. Si votre organisation conserve des images de restauration, c'est le moment de s'assurer qu'une image à jour existe : elle raccourcira dramatiquement l'étape de restauration.
+
+```text
+ Chronologie type — réponse à un signalement sur un poste public
+
+  T0        T0 + 5 min      T0 + 30 min     T0 + 2 h        T0 + 24 h
+   |             |               |               |               |
+ signalement  isolation      préservation    investigation   décision
+   |          réseau coupé    photos, heures   journaux,       restauration
+   |             |            journaux copiés  processus       image connue
+   |             |               |               |               |
+   +-------------+---------------+---------------+---------------+
+        on n'éteint pas, on ne nettoie pas, on ne devine pas
+
+ Etapes : 1 preparer | 2 isoler | 3 preserver | 4 investiguer
+          5 eradiquer et restaurer | 6 capitaliser
+```
+
+L'investigation répond à trois questions, dans cet ordre : que fait la machine, depuis quand, et comment est-ce entré. Sur le poste suspect, on regarde les processus en cours et leur origine, les programmes lancés automatiquement au démarrage, les extensions du navigateur récemment ajoutées et les fichiers modifiés pendant les heures qui précèdent le signalement. On relit ensuite le journal du service d'accès distant et les commandes d'administration des jours précédents, en cherchant l'entrée légitime qui a précédé l'anomalie : un téléchargement exécuté, un mot de passe deviné, une clé USB ouverte. Cette question de l'entrée est la plus importante de l'enquête, parce que restaurer sans la connaître revient à rouvrir la porte quelques jours plus tard.
+
+L'éradication suit un principe sans exception : on ne répare pas un système compromise, on le reconstruit à partir d'une image de référence connue propre, puis on remet en place les données nécessaires après vérification. On change ensuite tous les mots de passe concernés, depuis une machine non compromise, en commençant par ceux des comptes d'administration. On applique enfin le correctif ou la configuration qui a permis l'entrée, si elle est identifiée. La dernière étape, la capitalisation, consiste à écrire ce qui s'est passé en une page : chronologie, cause, décisions prises, correctifs appliqués, et surtout les trois questions à laquelle cette page doit répondre : que corriger dans le parc, que corriger dans la procédure, que surveiller désormais.
+
+- Isoler en débranchant, jamais en éteignant : la mémoire vive contient les preuves.
+- Photographiez l'écran et notez l'heure du signalement avant toute autre action.
+- Ne nettoyez rien avant d'avoir identifié le chemin d'entrée.
+- Reconstruisez à partir d'une image de référence plutôt que de réparer sur place.
+- Changez les mots de passe depuis une machine dont vous êtes certain qu'elle est saine.
+- Écrivez une page de retour d'expérience et rangez-la avec la procédure.
+
+## Mini-projet guidé : la fiche de durcissement du poste d'accueil
+
+Vous voici arrivé à l'assemblage. Le mini-projet du chapitre consiste à produire un seul document, la fiche de durcissement du poste d'accueil de la Médiathèque des Lilas, qui doit pouvoir être remis à un collègue n'ayant jamais vu la machine et lui permettre de reprendre le travail sans vous. Ce n'est pas un rapport de synthèse : c'est un outil de travail, daté, vérifiable, composé de six parties qui reprennent exactement l'ordre des couches de la pile de durcissement. Prenez le temps d'écrire chaque partie dans l'ordre, parce que chaque réponse s'appuie sur la précédente et que l'ordre révèle lui-même la méthode.
+
+La première partie est l'inventaire. Vous y décrivez le poste tel qu'il est : système d'exploitation et version, logiciels installés, services en fonctionnement, ports à l'écoute et comptes existants avec leur rôle. Les commandes de la section correspondante produisent le matériau brut ; votre travail consiste à le transformer en tableau lisible, avec une justification à côté de chaque service et une colonne de décision. La deuxième partie traite de la désactivation : vous y listez les services retirés, la commande employée, la date, et le résultat du contrôle effectué après redémarrage. Une décision sans preuve de contrôle ne doit pas figurer dans la fiche.
+
+La troisième partie est la matrice de droits des trois comptes. Vous y croisez les trois comptes du parc avec les ressources qu'ils doivent atteindre : les répertoires de travail, les fichiers de configuration, les services qu'ils peuvent redémarrer, les journaux qu'ils peuvent lire. Chaque cellule contient un droit précis et, s'il est refusé, la justification. Cette matrice se lit en trente secondes et remplace avantageusement trois pages de prose : elle montre d'un coup d'œil que le compte de consultation ne peut rien écrire hors de son dossier, que le compte de staff ne touche qu'à l'impression, et que seul le compte d'administration manie les correctifs.
+
+```text
+ FICHE DE DURCISSEMENT — poste d'accueil, Médiathèque des Lilas
+ Réf. P-07 / version 1 / établie le 2026-10-02 par N. Benali
+
+ 1. INVENTAIRE
+    Système : Debian 12 « bookworm » (réinstallation du 2026-06-14)
+    Services actifs : sshd, cups, catalogue-client, rsyslog
+    Ports : 22 (LAN uniquement), 631 (bouclage), 8080 (LAN)
+    Comptes : nadia (administration), staff (poste), usager (consultation)
+
+ 2. SERVICES DESACTIVES — justification, commande, controle
+    bluetooth : aucun peripherique autorise / stop + disable + masque /OK apres reboot
+    avahi     : pas d'advertisement réseau necessaire / idem /OK apres reboot
+
+ 3. MATRICE DES DROITS
+    Ressource          | nadia | staff | usager
+    /srv/catalogue     | rw    | r     | r
+    /etc/ssh           | rw    | -     | -
+    systemctl restart  | tout  | cups  | -
+    /var/log           | r     | -     | -
+
+ 4. PLAN DE CORRECTIFS — priorite par score CVSS
+    Paquet            | CVE           | score | echeance
+    openssh-server    | CVE-2026-XXXX | 9,8   | 48 h
+    libc6             | CVE-2026-YYYY | 7,5   | 7 jours
+    firefox-esr       | CVE-2026-ZZZZ | 6,5   | cycle mensuel
+
+ 5. JOURNAUX — politique et recherches
+    Persistance activee / auth : 12 mois / erreurs : 3 mois / debug : 7 jours
+    Recherche 1 : tentatives echouees repetees (comptage par compte)
+    Recherche 2 : commandes d'administration depuis 24 heures
+    Recherche 3 : comptes crees ou ajoutes a sudo depuis 30 jours
+
+ 6. REPONSE A UN INCIDENT — six etapes
+    preparer / isoler / preserver / investiguer / eradiquer-restaurer / capitaliser
+```
+
+Les trois dernières parties complètent la fiche. La quatrième liste les correctifs en attente, classés par score de sévérité et par exposition réelle du service, avec une échéance chiffrée pour chacun : c'est ici que le barème de la section mise à jour devient un calendrier. La cinquième décrit la politique de conservation des journaux et consigne, sous forme de commentaires, les trois recherches que vous exécuterez chaque semaine avec leurs résultats attendus. La sixième rappelle la procédure de réponse en six étapes, avec le nom de la personne à prévenir en premier et l'emplacement du serveur central. Une fiche complète se reconnaît à ce détail : elle contient des dates, des noms et des preuves de contrôle, jamais des intentions.
+
+Avant de rendre le document, passez-le à la liste de contrôle suivante. Vérifiez que chaque service listé à l'inventaire porte une décision motivée ; que chaque commande de désactivation est suivie de la mention du contrôle post-redémarrage ; que la matrice ne contient aucune case vide ; que chaque correctif porte un score et une échéance ; que la durée de conservation est chiffrée pour chaque type de journal ; que les trois recherches sont exprimées avec la commande exacte et ce qu'elles doivent trouver ; que la procédure d'incident nomme des personnes et non des rôles abstraits. Relisez enfin le document à voix haute : s'il vous oblige à chercher une information manquante, un collègue perdra le même temps, et il est encore temps de le compléter.
+
+- Établissez la fiche dans l'ordre des couches : inventaire, services, droits, correctifs, journaux, incident.
+- Joignez à chaque décision la preuve du contrôle effectué après application.
+- Exprimez la matrice des droits en tableau, une ligne par ressource.
+- Chaque correctif porte un score de sévérité et une échéance datée.
+- Chaque durée de conservation est chiffrée et justifiée par une question à traiter.
+- Désignez par leur nom la personne prévenue en premier et celle de secours.
+
+## À retenir
+
+- Un système livré par le fabricant est ouvert par conception : l'écart entre ce qu'il sait faire et votre usage constitue votre surface d'attaque.
+- La pile de durcissement suit un ordre : inventaire, mise à jour, durcissement, journalisation, détection, surveillance.
+- Une CVE identifie une faille ; le score CVSS l'évalue de zéro à dix ; votre décision combine ce score avec l'exposition réelle du service.
+- Traitez en priorité les failles critiques sur un service exposé, sous quarante-huit heures, et consignez chaque report motivé.
+- On ne durcit pas ce qu'on ne connaît pas : ports à l'écoute, services en fonctionnement, paquets installés, comptes et tâches planifiées.
+- Chaque service retiré se vérifie par la disparition de sa ligne après redémarrage, pas par le souvenir de la commande.
+- Trois comptes aux rôles distincts rendent possibles la restriction des droits comme l'imputation des actes.
+- Les règles d'élévation accordent des commandes nommées, jamais un interpréteur sans restriction, et chaque élévation est journalisée.
+- Le tableau rwx distingue lecture, écriture et exécution selon qu'on regarde un fichier ou un répertoire, où l'exécution signifie la traversée.
+- Un guide de référence publié par un organisme reconnu vaut mieux qu'une recette anonyme, à condition de consigner ses écarts volontaires.
+- Le chiffrement protège les données au repos et impose une présence physique au redémarrage ; la clé ne voyage jamais avec les données.
+- La règle des trois exemplaires, deux supports et un exemplaire hors site s'applique à toute sauvegarde, chiffrée elle aussi.
+- Activez la persistance du journal, fixez une durée de conservation chiffrée par type de journal et vérifiez l'espace réel consommé.
+- Trois recherches hebdomadaires suffisent au premier niveau : tentatives d'authentification, commandes d'administration, comptes créés.
+- Centralisez les journaux sur une machine que l'incident ne contrôle pas et synchronisez toutes les horloges.
+- La réponse suit six étapes : préparer, isoler, préserver, investiguer, éradiquer et restaurer, capitaliser.
+- On isole en débranchant, on ne répare pas un système compromis, on le reconstruit à partir d'une image de référence.
+
+## Erreurs fréquentes
+
+- Piège : durcir un poste sans en avoir dressé l'inventaire au préalable. Correction : relevez systématiquement ports, services, paquets et comptes, puis agissez sur ce relevé daté.
+- Piège : repousser un correctif critique au motif que la machine fonctionne. Correction : appliquez-le sous quarante-huit heures ou coupez l'exposition du service le temps de l'installer.
+- Piège : confondre une mise à jour et une mise à niveau, et provoquer une incompatibilité la veille d'un événement. Correction : testez sur un poste de staff et planifiez sur une fenêtre de maintenance.
+- Piège : désactiver un service sans vérifier ses dépendances. Correction : identifiez ce qui le réclame, arrêtez d'abord, redémarrez, puis empêchez le démarrage.
+- Piège : s'authentifier en direct avec le compte d'administration pour la consultation quotidienne. Correction : utilisez un compte de staff et élevez les privilèges uniquement pour la tâche concernée.
+- Piège : accorder un interpréteur sans restriction dans les règles d'élévation. Correction : nommez les commandes nécessaires et éditez le fichier avec l'outil dédié.
+- Piège : appliquer des permissions sans avoir corrigé le propriétaire et le groupe. Correction : corrigez d'abord l'origine, ajustez ensuite les droits, puis fixez un masque de création.
+- Piège : copier intégralement un guide de durcissement sans adapter ni justifier. Correction : appliquez les items pertinents pour votre usage et consignez chaque écart avec sa raison.
+- Piège : laisser le journal uniquement en mémoire et le perdre au redémarrage. Correction : activez le stockage persistant et vérifiez l'espace disque occupé après une semaine.
+- Piège : ne conserver les journaux que quelques jours, alors que l'incident se découvre après plusieurs semaines. Correction : gardez douze mois les journaux d'authentification et d'administration.
+- Piège : lire un journal isolément, sans le croiser avec les autres indices. Correction : rapprochez adresses, heures, comptes et commandes avant de conclure.
+- Piège : éteindre ou nettoyer un poste suspect dès le signalement. Correction : isolez en débranchant, photographiez, préservez, puis investiguez.
+- Piège : réparer un système compromis au lieu de le reconstruire. Correction : restaurez à partir d'une image de référence connue propre, puis changez les mots de passe depuis une machine saine.
+- Piège : produire une fiche de durcissement pleine d'intentions mais sans preuves. Correction : joignez à chaque décision la date, la commande et le résultat du contrôle.
+
+## Pour aller plus loin
+
+La première source à garder en favori reste la base nationale des vulnérabilités, consultable à l'adresse https://nvd.nist.gov : chaque CVE y est décrite avec son score de base, sa chronologie de publication et les références qui l'accompagnent. Prenez l'habitude d'y vérifier un identifiant avant de paniquer à la lecture d'un titre alarmant, et inversement de vérifier qu'un paquet que vous différez ne correspond pas à une faille déjà active. À côté de cette base internationale, suivez les annonces de sécurité de votre distribution : sous Debian, le suivi officiel est publié sur www.debian.org, et sous Ubuntu, les bulletins et le calendrier de publication des correctifs sont disponibles sur ubuntu.com. Ces deux circuits vous disent non seulement ce qui est corrigé, mais quand le correctif est réellement disponible pour votre version.
+
+Deuxième axe d'approfondissement : les guides de durcissement. Les ensembles de règles du Center for Internet Security, référencés sous l'acronyme CIS, structurent chaque recommandation en justification, vérification et remédiation, et constituent le format le plus utile pour construire vos propres fiches. Côté français, les guides publiés par l'Agence nationale de la sécurité des systèmes d'information, souvent désignée par son acronyme ANSSI, détaillent les mesures de durcissement et les politiques de journalisation adaptées aux organisations publiques. Feuilletez-les plutôt que de les lire d'un bout à l'autre, et revenez-y au moment où une question précise se pose sur un poste précis.
+
+Troisième axe, la lecture des journaux : elle s'apprend à force d'exemples. Les dossiers de référencement et de sécurité publient des catalogues de motifs d'attaque décrits en langage naturel, avec les traces que chaque type d'attaque laisse derrière lui ; le projet OWASP, consultable à l'adresse https://owasp.org, reste la référence en matière de listes de risques et de bonnes pratiques, y compris pour ce qui touche aux applications web qui hébergent votre catalogue. Enfin, pratiquez : reprenez un journal de test, inventez une histoire plausible, cherchez les lignes qui la racontent. C'est en cherchant une trace que vous finissez par la voir spontanément, et c'est cette seconde nature qui fait la différence le jour du signalement.
+
+## Et maintenant : transformer la fiche en habitude
+
+Vous disposez à présent d'une méthode complète : connaître ce qui tourne, mettre à jour ce qui tourne, restreindre ce qui reste, chiffrer ce qui dort, journaliser ce qui se passe et lire ce qui est écrit. L'exercice pratique qui suit cette leçon vous demandera de rédiger seul la fiche de durcissement du poste d'accueil, sans vous référer à l'exemple guidé : c'est à ce moment-là que vous mesurerez ce que vous avez réellement retenu de la lecture d'un score CVSS, du tableau des permissions et des trois recherches hebdomadaires. Le quiz de quatre questions qui accompagne le chapitre vous permet, en quelques minutes, de vérifier les notions essentielles avant de vous lancer.
+
+Passé cet exercice, deux habitudes valent mieux que toutes les autres, et elles tiennent en deux rendez-vous récurrents. Le premier est mensuel : une heure pour les mises à jour, l'inventaire et les comptes. Le second est hebdomadaire : dix minutes pour relire les trois recherches dans les journaux et vérifier qu'aucune ligne ne dépasse le seuil que vous avez fixé. Un parc durci n'est pas un parc figé, c'est un parc que l'on reprend régulièrement, et la régularité fait plus pour sa sécurité que n'importe quel outil acheté. Le chapitre suivant du parcours vous montrera comment surveiller automatiquement ces mêmes signaux, à l'échelle de tout un réseau, sans dépendre d'une relecture manuelle : la base que vous venez de poser servira exactement à cela.

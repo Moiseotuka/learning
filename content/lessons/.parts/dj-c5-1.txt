@@ -1,0 +1,151 @@
+# Tests, performance et cache
+
+Dans le parcours Django, vous avez appris à construire des vues, à modéliser vos données et à sécuriser vos accès. Ce chapitre aborde un autre pilier du développement professionnel : la qualité logicielle et la performance. Il ne suffit pas que votre application fonctionne, il faut qu'elle reste maintenable, rapide et fiable en production. Nous allons explorer l'écosystème de test de Django, les techniques d'optimisation de requêtes, le framework de cache intégré, les signaux et leurs limites, le profiling avec la debug toolbar, le throttling avec Django REST Framework, et enfin une checklist complète pour la mise en production.
+
+## Pourquoi tester une application Django
+
+Les tests automatisés sont la première ligne de défense contre les régressions. Dans un projet Django, ils vous permettent de vérifier que vos vues renvoient les bonnes réponses, que vos modèles se comportent comme prévu, que vos formulaires valident correctement les données, et que vos permissions sont appliquées. Sans tests, chaque modification devient un pari risqué. Avec une suite de tests solide, vous pouvez refactorer avec confiance, ajouter des fonctionnalités sans craindre de casser l'existant, et documenter le comportement attendu de votre code.
+
+Django s'appuie sur le module unittest de Python, mais propose également des outils spécifiques comme le Client de test, qui simule des requêtes HTTP sans passer par un serveur réel. Vous pouvez également utiliser pytest avec le plugin pytest-django, qui offre une syntaxe plus concise et des fonctionnalités avancées comme les fixtures paramétrées. Quelle que soit votre approche, l'objectif est le même : écrire des tests rapides, isolés et déterministes.
+
+## Le Client de test Django
+
+Le Client de test est l'outil central pour tester vos vues. Il vous permet d'envoyer des requêtes GET, POST, PUT, PATCH, DELETE et de vérifier la réponse. Contrairement à un vrai navigateur, il ne rend pas le JavaScript ni le CSS, mais il vous donne accès au contexte de template, aux cookies, à la session et à l'utilisateur authentifié. Voici un exemple simple :
+
+```python
+from django.test import TestCase, Client
+from django.urls import reverse
+
+class MaVueTest(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.utilisateur = User.objects.create_user(
+            username='testeur', password='motdepasse123'
+        )
+
+    def test_vue_publique_accesible(self):
+        reponse = self.client.get(reverse('accueil'))
+        self.assertEqual(reponse.status_code, 200)
+        self.assertTemplateUsed(reponse, 'accueil.html')
+
+    def test_vue_protegee_redirige(self):
+        reponse = self.client.get(reverse('profil'))
+        self.assertEqual(reponse.status_code, 302)
+        self.assertRedirects(reponse, '/login/?next=/profil/')
+
+    def test_connexion_valide(self):
+        self.assertTrue(self.client.login(
+            username='testeur', password='motdepasse123'
+        ))
+        reponse = self.client.get(reverse('profil'))
+        self.assertEqual(reponse.status_code, 200)
+```
+
+Le Client de test gère automatiquement les cookies de session, les tokens CSRF (en mode non sécurisé par défaut), et vous permet d'accéder à l'utilisateur connecté via reponse.context['user']. Vous pouvez également tester les requêtes POST avec des données de formulaire ou du JSON.
+
+## Les fixtures et les factories
+
+Les fixtures sont des fichiers JSON, XML ou YAML que Django charge automatiquement dans la base de données de test. Elles sont utiles pour des données de référence comme les catégories ou les permissions, mais deviennent rapidement illisibles pour des objets complexes. Les factories, proposées par des bibliothèques comme factory_boy, sont une alternative plus souple : elles génèrent des objets Python avec des valeurs par défaut et permettent de les personnaliser à la volée.
+
+```python
+import factory
+from django.contrib.auth.models import User
+from monapp.models import Article, Categorie
+
+class UserFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = User
+
+    username = factory.Sequence(lambda n: f'utilisateur{n}')
+    email = factory.LazyAttribute(lambda o: f'{o.username}@exemple.fr')
+
+class CategorieFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Categorie
+
+    nom = factory.Sequence(lambda n: f'Catégorie {n}')
+
+class ArticleFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Article
+
+    titre = factory.Sequence(lambda n: f'Article {n}')
+    contenu = factory.Faker('paragraph', locale='fr_FR')
+    auteur = factory.SubFactory(UserFactory)
+    categorie = factory.SubFactory(CategorieFactory)
+```
+
+Les factories vous permettent de créer des objets avec des relations complexes en une seule ligne, et de ne spécifier que les attributs pertinents pour votre test. Elles sont particulièrement utiles pour tester des vues qui nécessitent des données liées.
+
+## pytest-django et les fixtures pytest
+
+pytest-django intègre pytest avec Django et vous permet d'écrire des tests plus concis. Les fixtures pytest remplacent les méthodes setUp et tearDown, et peuvent être partagées entre plusieurs tests. Vous pouvez également utiliser des marqueurs pour indiquer qu'un test nécessite accès à la base de données.
+
+```python
+import pytest
+from django.urls import reverse
+
+@pytest.mark.django_db
+def test_liste_articles(client, article):
+    reponse = client.get(reverse('liste_articles'))
+    assert reponse.status_code == 200
+    assert article.titre in reponse.content.decode()
+
+@pytest.mark.django_db
+def test_creation_article(admin_client, categorie):
+    reponse = admin_client.post(reverse('creer_article'), {
+        'titre': 'Nouvel article',
+        'contenu': 'Contenu de test',
+        'categorie': categorie.id,
+    })
+    assert reponse.status_code == 302
+    assert Article.objects.filter(titre='Nouvel article').exists()
+```
+
+Pour utiliser pytest-django, vous devez créer un fichier pytest.ini ou une section [tool.pytest] dans pyproject.toml avec DJANGO_SETTINGS_MODULE pointant vers vos paramètres. Vous pouvez également utiliser le plugin pytest-cov pour mesurer la couverture de code.
+
+## Mesurer la couverture de code
+
+La couverture de code mesure la proportion de lignes de code exécutées par vos tests. Elle vous aide à identifier les parties non testées de votre application, mais ne garantit pas que vos tests sont pertinents. Une couverture de 100 % ne signifie pas que votre application est sans bugs, seulement que chaque ligne a été exécutée au moins une fois.
+
+Pour mesurer la couverture avec pytest, installez pytest-cov et exécutez :
+
+```bash
+pytest --cov=monapp --cov-report=term-missing --cov-report=html
+```
+
+Le rapport terminal affiche le pourcentage de couverture par fichier et les lignes manquantes. Le rapport HTML généré dans le dossier htmlcov offre une visualisation plus détaillée, avec les lignes non testées surlignées en rouge. Visez une couverture élevée pour les parties critiques de votre application (modèles, vues, formulaires), mais ne sacrifiez pas la qualité des tests pour atteindre un chiffre arbitraire.
+
+## Les tests d'intégration et les tests de bout en bout
+
+Les tests unitaires vérifient une fonction ou une méthode en isolation. Les tests d'intégration vérifient que plusieurs composants fonctionnent ensemble (par exemple, une vue qui interroge la base de données et rend un template). Les tests de bout en bout simulent un utilisateur réel qui navigue dans l'application, souvent avec un outil comme Selenium ou Playwright.
+
+Dans un projet Django, la majorité de vos tests devraient être des tests d'intégration rapides, utilisant le Client de test. Réservez les tests de bout en bout aux parcours critiques (inscription, paiement, commande) et acceptez qu'ils soient plus lents et plus fragiles. Une bonne pyramide de tests comporte beaucoup de tests unitaires, moins de tests d'intégration, et très peu de tests de bout en bout.
+
+## Organiser votre suite de tests
+
+Une suite de tests bien organisée est plus facile à maintenir et à exécuter. Regroupez vos tests par application, puis par module. Utilisez des noms de classes et de méthodes descriptifs : TestArticleCreation, test_creation_avec_donnees_invalides. Évitez les tests qui dépendent les uns des autres ou de l'ordre d'exécution. Chaque test doit être indépendant et pouvoir être exécuté seul.
+
+Vous pouvez également utiliser des tags ou des marqueurs pour exécuter uniquement certains tests. Par exemple, marquez les tests lents avec @pytest.mark.slow et exécutez-les uniquement avant un déploiement. Utilisez également le mode --fail-fast pour arrêter la suite dès le premier échec, ce qui accélère la détection des problèmes.
+
+## À retenir
+
+Les tests automatisés sont indispensables pour maintenir la qualité d'une application Django. Le Client de test vous permet de simuler des requêtes HTTP et de vérifier les réponses de vos vues. Les factories et les fixtures pytest simplifient la création de données de test. Mesurez votre couverture de code pour identifier les zones non testées, mais ne faites pas de la couverture une fin en soi. Organisez votre suite de tests de manière hiérarchique et nommez vos tests de façon explicite pour faciliter la maintenance.
+
+## Erreurs fréquentes
+
+La première erreur consiste à écrire des tests trop couplés à l'implémentation. Si vous testez des détails internes plutôt que le comportement observable, vos tests casseront à chaque refactorisation légitime. Concentrez-vous sur les entrées et les sorties : une vue doit renvoyer un code de statut, un template et un contexte appropriés.
+
+La deuxième erreur est de négliger la base de données de test. Si vos tests partagent des données ou dépendent de l'ordre d'exécution, vous obtiendrez des résultats non déterministes. Utilisez des transactions (TestCase) ou des fixtures qui nettoient après chaque test (pytest-django avec db).
+
+La troisième erreur est d'oublier de tester les cas limites. Les tests heureux sont nécessaires mais insuffisants : testez les formulaires vides, les permissions insuffisantes, les identifiants incorrects, les données malformées. Ce sont souvent ces cas qui révèlent les failles de sécurité.
+
+Enfin, beaucoup de développeurs écrivent des tests trop lents en utilisant le Client de test pour des scénarios complexes qui seraient mieux gérés par des tests unitaires. Gardez vos tests d'intégration légers et réservez les tests de bout en bout aux parcours critiques.
+
+## Pour aller plus loin
+
+Pour approfondir vos connaissances sur les tests Django, consultez la documentation officielle de Django sur les tests, qui couvre le Client de test, les TestCase et les outils de test intégrés. Le livre « Two Scoops of Django » contient un chapitre excellent sur les bonnes pratiques de test. Enfin, explorez la documentation de pytest-django pour découvrir les fixtures avancées, les marqueurs et les options de configuration.
+
+## Et maintenant
+
+Vous avez maintenant une vision complète de l'écosystème de test de Django. Dans la partie suivante, nous aborderons la performance des requêtes avec select_related et prefetch_related, et nous apprendrons à identifier et à résoudre les problèmes de requêtes N+1.

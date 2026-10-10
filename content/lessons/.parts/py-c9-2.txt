@@ -1,0 +1,177 @@
+## Des tâches, pas des appels
+
+Une coroutine lancée à la volée n'est pas encore une tâche. Quand vous appelez une fonction async sans rien faire de l'objet renvoyé, vous ne lancez rien : vous fabriquez une coroutine endormie qui attend toujours son tour. Pour qu'elle entre dans la file d'attente de la boucle, il faut la confier à asyncio.create_task, qui crée une tâche, la planifie immédiatement et vous rend la main. Cette distinction entre appel et tâche est la première que vous devez maîtriser, car elle décide de ce qui tourne réellement en arrière-plan, de ce qui attend sagement son tour, et de ce qui ne tourne jamais du tout.
+
+create_task renvoie un objet Task dans lequel vous devez conserver une référence. Ce point, souvent négligé, a des conséquences concrètes : la collecte des déchets de Python peut décider qu'une tâche dont personne ne garde la trace est devenue inutile, et vous perdez alors son résultat au beau milieu de l'exécution, sans message d'erreur exploitable. Rangez donc systématiquement vos tâches dans une liste, un dictionnaire indexé par URL ou un objet de travail. Cette liste a d'ailleurs un second mérite : elle vous permet d'attendre les tâches une par une, de les annuler ensemble, ou d'afficher leur avancement, autant de besoins qui apparaissent dès le premier vrai projet.
+
+Attendre des tâches déjà créées est un raffinement utile. Si vous créez dix tâches puis que vous les attendez à la suite dans une boucle, le chevauchement a déjà eu lieu : toutes ont démarré au moment de leur création, et vos await ne font que récupérer des résultats déjà en formation. En revanche, si vous écrivez await tache_dans_une_boucle_de_creation, vous revenez au séquentiel, car la tâche suivante n'est même pas encore née. La règle se formule ainsi : créez d'abord tout ce qui peut démarrer, attendez ensuite. C'est l'inverse de la logique séquentielle que vous avez suivie depuis le premier chapitre, et c'est précisément là que réside le gain.
+
+Lorsque les résultats arrivent à des vitesses différentes, attendre l'ensemble puis trier devient pénible. La fonction asyncio.as_completed résout le problème en renvoyant, à chaque tour de boucle, la tâche qui se termine en premier. Vous traitez ainsi chaque page au fil de son arrivée, vous affichez une progression honnête et vous pouvez interrompre le travail après un nombre maximal de résultats sans gaspiller le travail déjà fait. Elle s'utilise exactement comme gather, mais son ordre est celui du réseau, non celui de vos intentions : deux lectures indifférentes, deux usages complémentaires que vous choisirez d'après le besoin réel de votre programme.
+
+Les exceptions demandent la même attention que les résultats. Par défaut, asyncio.gather laisse les tâches continuer mais fait remonter la première erreur vers l'appelant, si bien que le programme peut s'arrêter en affichant un échec alors que quarante-neuf pages ont été récoltées correctement. Pour un récolteur, l'attitude raisonnable consiste à isoler la panne dans la tâche elle-même : chaque coroutine attrape ses propres erreurs et renvoie soit une donnée, soit un objet d'échec que l'appelant comptabilisera. Vous récupérez alors une vue complète du travail, y compris ses trous, ce qui est exactement ce dont vous avez besoin pour décider d'une relance.
+
+```python
+import asyncio
+import random
+
+async def relever(numero):
+    await asyncio.sleep(random.uniform(0.1, 0.4))
+    if numero % 7 == 0:
+        raise ValueError("page %d illisible" % numero)
+    return numero
+
+async def principal():
+    taches = [asyncio.create_task(relever(n)) for n in range(1, 16)]
+    utiles = 0
+    for futur in asyncio.as_completed(taches):
+        try:
+            numero = await futur
+        except ValueError as erreur:
+            print("echec :", erreur)
+        else:
+            utiles += 1
+            print("ok", numero, "(%d/15)" % utiles)
+    return utiles
+
+print("pages utiles :", asyncio.run(principal()))
+```
+
+Le programme ci-dessus illustre les trois gestes de base : création groupée des tâches, traitement au fil de l'arrivée, capture des erreurs à l'intérieur de la boucle plutôt que leur propagation jusqu'au bout du monde. Portez le comptage à cinquante, ajoutez un affichage du temps écoulé, et vous tienez l'ossature de tout récolteur sérieux. Il ne lui manque que du vrai réseau, et c'est le rôle de la bibliothèque aiohttp.
+
+## Récolter cinquante pages avec aiohttp
+
+La bibliothèque requests que la plupart des développeurs Python connaissent est synchrone : chaque appel suspend votre fil d'exécution jusqu'à la réponse complète. Dans un programme asyncio, cet appel serait un mur dressé au milieu de la boucle, qui gèlerait toutes les autres tâches pendant la latence. aiohttp, lui, parle le protocole de la boucle : sa méthode get attend une réponse sans bloquer, rend la main pendant l'attente, et reprend exactement là où elle s'était arrêtée. L'installation tient en une ligne de pip, et l'écriture, malgré quelques différences de forme, ressemble à celle que vous connaissez déjà.
+
+La première règle de performance d'aiohttp tient en trois mots : une seule session. L'objet ClientSession regroupe le pool de connexions, les en-têtes, les cookies et les certificats ; le recréer pour chaque page reviendrait à rouvrir une connexion TCP et à renégocier un certificat TLS cinquante fois de suite. On le crée donc une fois, avec un async with, à l'intérieur d'une coroutine, puis on le transmet à chaque tâche : la bibliothèque réutilise alors les connexions déjà établies. Sa fermeture, elle aussi, passe par le même gestionnaire de contexte, ce qui garantit que plus aucune socket ne reste ouverte quand le programme se termine.
+
+La seconde règle concerne la politesse et la robustesse : limitez la concurrence. Cinquante requêtes lâchées en même temps risquent d'être refusées, limitées ou sanctionnées par le serveur distant, sans compter votre propre consommation de mémoire. aiohttp expose deux réglages pour cela : la limite du connecteur, qui borne le nombre de connexions ouvertes simultanément, et un verrou asynchrone, un asyncio.Semaphore, qui borne le nombre de tâches en vol, y compris celles qui patientent. Ajoutez un délai total de requête, sans quoi une page muette retient votre programme indéfiniment.
+
+La troisième règle est celle de l'isolement des pannes. Une page sur cinquante renverra un code d'erreur, une autre expirera, une troisième contiendra un HTML inattendu : aucune de ces situations ne doit interrompre le lot. Chaque tâche vérifie donc son code de statut, attrape ses propres exceptions et renvoie un résultat porteur du succès ou de l'échec, de sorte que le bilan final compte exactement ce qui a été obtenu. Cette défense en profondeur est ce qui sépare un script d'essai, qui tombe au premier échec, d'un outil de production, qui signale ses trous et poursuit son travail.
+
+Le dernier point est celui du traitement. La réponse est un texte : vous extrayez les liens avec une expression régulière ou le parseur html.parser de la bibliothèque standard, vous comptez les occurrences de mots, vous écrivez le contenu dans un fichier. Ces opérations sont rapides et restent acceptables dans la boucle pour des pages de quelques dizaines de kilo-octets ; si elles deviennent lourdes, vous les confierez à asyncio.to_thread, que nous détaillerons plus loin. Notez enfin que les résultats arrivent dans l'ordre du réseau : nommez vos fichiers d'après l'URL et non d'après un numéro d'ordre, sous peine de classer vos pages au hasard.
+
+```python
+import asyncio
+import re
+import aiohttp
+
+LIMITE = 10
+TIMEOUT = aiohttp.ClientTimeout(total=15)
+
+async def telecharger(session, verrou, url):
+    async with verrou:
+        try:
+            async with session.get(url, timeout=TIMEOUT) as reponse:
+                if reponse.status != 200:
+                    return (url, "statut %d" % reponse.status)
+                texte = await reponse.text()
+        except Exception as erreur:
+            return (url, type(erreur).__name__)
+    liens = re.findall(r'href="([^"]+)"', texte)
+    return (url, "%d caracteres, %d liens" % (len(texte), len(liens)))
+
+async def principal(urls):
+    verrou = asyncio.Semaphore(LIMITE)
+    async with aiohttp.ClientSession() as session:
+        taches = [telecharger(session, verrou, url) for url in urls]
+        resultats = await asyncio.gather(*taches)
+    bonnes = [r for r in resultats if not r[1].startswith(("statut", "Time"))]
+    print("succes : %d/%d" % (len(bonnes), len(urls)))
+    return resultats
+
+urls = ["https://example.com/page/%d" % n for n in range(1, 51)]
+asyncio.run(principal(urls))
+```
+
+Exécuté sur cinquante adresses, ce script termine en une poignée de secondes là où une boucle séquentielle réclamerait plusieurs minutes, et il affiche honnêtement le nombre de pages réellement obtenues. Prenez le temps de le lancer tel quel, puis de relever la limite du connecteur à un seul et de comparer : vous verrez la concurrence disparaître, ce qui vous donnera une intuition bien plus solide qu'un long discours sur les connexions simultanées.
+
+## Timeouts, annulation et sortie propre
+
+Aucune requête réseau ne doit pouvoir retenir votre programme indéfiniment. Un serveur qui ne répond pas, une connexion qui tombe au mauvais moment, un traitement qui dépasse son budget : sans garde-fou, votre script s'endort en plein lot de cinquante pages et personne n'est là pour le réveiller. Un délai maximal n'est donc pas une précaution accessoire, c'est une exigence de fonctionnement. asyncio fournit deux écritures pour cela : asyncio.wait_for, qui enveloppe directement un await, et asyncio.timeout, un gestionnaire de contexte plus souple qui peut couvrir plusieurs opérations à la fois. Les deux produisent le même effet : passé le délai, la tâche est annulée sur place.
+
+Le mécanisme mérite d'être compris, car il explique les messages d'erreur que vous rencontrerez. À l'expiration du délai, la boucle lance une annulation dans la coroutine en attente : l'appel await courant lève CancelledError à l'endroit exact où il se trouvait. Si votre code intercepte cette exception et la referme sans rien dire, la tâche paraît se terminer normalement alors qu'elle n'a rien fini, et le programme affiche un résultat incomplet. La bonne pratique consiste à n'attraper que les erreurs que vous savez traiter, à convertir l'annulation en une erreur métier que vous journalisez, et à laisser remonter toute autre annulation vers la boucle.
+
+L'annulation n'est pas réservée aux délais : vous pouvez l'enclencher vous-même. Une interface qui offre un bouton d'abandon, un lot de téléchargement interrompu par l'utilisateur, un service qui redémarre, autant de cas où il faut dire à une tâche d'arrêter net. L'appel task.cancel() produit exactement le même mécanisme que le délai : CancelledError apparaît au prochain point d'attente, les blocs finally s'exécutent, vos fermetures de session et vos écritures partielles ont leur mot à dire. C'est la raison pour laquelle tout nettoyage réel doit vivre dans un finally ou dans un gestionnaire de contexte, jamais dans la suite heureuse du code.
+
+Il existe pourtant des zones à ne pas interrompre, et asyncio le sait. Un moment où vous mettez à jour un fichier, où vous libérez un verrou, où vous écrivez un résultat déjà calculé ne doit pas être coupé en deux. Le gestionnaire asyncio.shield protège exactement cela : il poursuit la tâche interne même si la tâche extérieure est annulée entre-temps. Utilisez-le avec parcimonie, car un travail protégé qui dépasse le délai rend l'annulation inefficace : shield règle un problème précis, il ne remplace pas un délai bien choisi.
+
+Depuis Python 3.11, une forme plus stricte existe : asyncio.TaskGroup. Le groupe attend tous ses membres, les annule tous si l'un d'eux échoue et propage l'erreur d'origine, ce qui produit une sémantique tout-ou-rien très lisible. C'est aujourd'hui l'écriture à privilégier pour des lots homogènes, tandis que gather avec des exceptions capturées dans les tâches reste préférable pour un récolteur qui veut survivre à ses trous. Dans les deux cas, la sortie du programme doit être nette : plus de tâche en attente, plus de socket ouverte, plus d'avertissement du type Task was destroyed but it is pending.
+
+```python
+import asyncio
+
+async def page_lente():
+    await asyncio.sleep(3)
+    return "contenu"
+
+async def principal():
+    try:
+        resultat = await asyncio.wait_for(page_lente(), timeout=1)
+    except asyncio.TimeoutError:
+        print("delai depasse : la page n'a pas repondu en 1 s")
+        return None
+    return resultat
+
+async def avec_groupe():
+    try:
+        async with asyncio.TaskGroup() as groupe:
+            groupe.create_task(asyncio.wait_for(page_lente(), timeout=1))
+            groupe.create_task(asyncio.wait_for(page_lente(), timeout=1))
+    except* asyncio.TimeoutError:
+        print("un membre du groupe a expire et a entraine le groupe")
+
+async def depart():
+    print("resultat simple :", await principal())
+    await avec_groupe()
+
+asyncio.run(depart())
+```
+
+La sortie affiche le message de délai et non une trace technique incompréhensible, parce que l'expiration a été prévue et traitée à l'endroit où elle survenait. Reportez ce réflexe à vos cinquante pages : un délai par requête, un bilan d'échecs, une relance éventuelle, et votre récolteur tiendra debout même face à un serveur capricieux.
+
+## Quand la boucle se fige
+
+Voici un symptôme que vous rencontrerez, et que vous ne relierez pas d'abord à votre code asynchrone : le programme démarre, la première tâche s'exécute, puis plus rien ne s'affiche, aucune erreur, aucune progression, seulement la patience du système. La boucle d'événements ne s'est pas cassée, elle est bloquée. Une seule coroutine, quelque part, détient la main et refuse de la rendre, et comme il n'existe qu'un seul fil d'exécution, tout le reste attend derrière. Le diagnostic consiste donc à retrouver l'appel qui retient la main, ce qui est facile quand on sait où chercher.
+
+Le catalogue des coupables est court et se mémorise vite. time.sleep met la boucle en sommeil au lieu de mettre la coroutine en pause. Les bibliothèques synchrones de réseau, requests en tête, suspendent le fil jusqu'à la réponse. Une lecture volumineuse sur disque, un appel de base de données synchrone, une boucle de calcul sur un gros volume de données, un input qui attend une frappe au clavier : tous produisent le même effet, à des degrés divers. Une expression régulière maladroite sur un fichier de plusieurs mégaoctets suffit également, et c'est d'autant plus trompeur que le même code tournait parfaitement avant votre passage à l'asynchrone.
+
+La détection ne demande aucune bibliothèque. Passez asyncio.run(principal(), debug=True) : en mode débogage, la boucle signale les tâches dont l'exécution a dépassé un seuil, avec le nom de la tâche et la durée observée, ce qui désigne presque toujours le coupable. Deuxièmement, habillez votre programme de repères de temps : un petit journal indiquant l'heure de début et de fin de chaque phase révèle immédiatement l'étape qui dévore les secondes. Enfin, procédez par élimination en commentant les appels suspects : si la boucle reprend vie, le verdict est rendu sans avoir à installer quoi que ce soit.
+
+Les remèdes s'ordonnent par ordre de préférence. Le meilleur est de remplacer l'appel synchrone par sa version asynchrone : aiohttp pour le réseau, asyncio.sleep pour temporiser, des bibliothèques conçues pour la boucle quand elles existent. À défaut, asyncio.to_thread délègue l'appel à un fil d'exécution séparé : la boucle reste libre pendant que le fil synchrone travaille, et la fonction se retrouve sous await comme les autres. C'est la solution de choix pour un appel bloquant que vous ne pouvez pas réécrire, une bibliothèque tierce ou un fichier local par exemple. Le recours ultime reste le processus, que nous étudierons dans la partie parallèle du chapitre.
+
+Le tableau suivant sert de mémo devant un code qui traîne.
+
+| Appel courant | Effet sur la boucle | Alternative |
+|---|---|---|
+| time.sleep(1) | Fige toutes les tâches une seconde | await asyncio.sleep(1) |
+| requests.get | Fige jusqu'à la réponse complète | aiohttp |
+| Lecture d'un gros fichier | Fige le temps de l'E/S disque | asyncio.to_thread |
+| Boucle de calcul dense | Fige jusqu'à la fin du calcul | Processus, ou découpage du travail |
+| input | Fige indéfiniment | Saisie déléguée à un fil |
+
+La règle de conduite qui découle de tout cela tient en une phrase : dans un code asynchrone, chaque fonction placée sous await doit être garantie non bloquante. Vérifiez vos imports, relisez vos bibliothèques, et considérez un appel bloquant découvert en production comme un défaut à corriger, non comme une fatalité. Le prochain bloc montre la délégation d'un appel lent vers un fil, sans jamais geler la boucle.
+
+```python
+import asyncio
+import time
+
+def calcul_lourd(debut, fin):
+    total = 0
+    for nombre in range(debut, fin):
+        total += nombre * nombre
+    return total
+
+async def principal():
+    debut = time.perf_counter()
+    taches = [
+        asyncio.create_task(asyncio.to_thread(calcul_lourd, i * 10**6, (i + 1) * 10**6))
+        for i in range(4)
+    ]
+    resultats = await asyncio.gather(*taches)
+    duree = time.perf_counter() - debut
+    print("quatre tranches traites en %.2f s :" % duree, resultats)
+
+asyncio.run(principal())
+```
+
+La boucle reste réactive pendant que les fils travaillent, et vous pouvez ajouter au milieu du programme un affichage de progression qui continuera de tourner. C'est la signature d'un code asynchrone sain : même quand'une partie du travail est déléguée, le fil principal garde la maîtrise. Ce transfert vers les fils d'exécution ouvre toutefois une nouvelle question, celle du partage des données entre eux, et c'est l'objet de la partie suivante du chapitre.

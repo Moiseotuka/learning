@@ -1,0 +1,89 @@
+La leçon précédente a montré ce que fait une jointure interne : elle ne conserve que les paires de lignes qui s'apparent. C'est le comportement attendu quand on veut uniquement les emprunts rattachés à un lecteur existant, ou les exemplaires d'un ouvrage connu. Mais une question essentielle se heurte immédiatement à cette logique : comment lister les lecteurs qui n'ont jamais emprunté ? La jointure interne les écarte, précisément parce qu'ils n'ont aucune correspondance dans la table des emprunts. La donnée existe pourtant, et le métier s'en soucie : c'est même l'une des requêtes les plus demandées, celles qui nourrissent les campagnes de relance et les bilans d'activité.
+
+Les jointures externes répondent à ce besoin. Elles conservent toutes les lignes d'une table, dite table maîtresse, et y accrochent les lignes correspondantes de l'autre table quand elles existent ; à défaut, elles complètent les colonnes manquantes par des valeurs nulles. La même mécanique s'applique ensuite dans les deux sens, et même des deux à la fois. Vous découvrirez aussi deux outils voisins : l'auto-jointure, qui consiste à comparer une table à elle-même, et la famille des écritures alternatives USING, NATURAL JOIN et CROSS JOIN, qui modifient la façon d'exprimer la condition de jonction. Ces notions forment le second bloc du chapitre.
+
+Comme précédemment, la meilleure façon de les ancrer est de les exécuter sur la base de la bibliothèque. Préparez quelques données asymétriques, c'est-à-dire des lecteurs sans emprunt, des emprunts orphelins volontaires si vous désactivez temporairement la contrainte référentielle, et un ouvrage sans exemplaire. Sans cette asymétrie, une jointure interne et une jointure externe renvoient exactement le même résultat, et la démonstration ne prouve rien. Un bon jeu de test contient toujours des cas où rien ne correspond : c'est là que se révèlent les vraies différences entre les types de jointure.
+
+## LEFT JOIN : conserver les lignes sans correspondance
+
+La jointure LEFT JOIN conserve toutes les lignes de la table placée à gauche de INNER JOIN, c'est-à-dire celle qui suit FROM. Pour chaque ligne de gauche, le moteur cherche les lignes de droite qui satisfont la clause ON ; s'il en trouve, il les associe, et s'il n'en trouve aucune, il produit tout de même une ligne dont les colonnes de droite valent NULL. Ce mécanisme s'appelle l'enrichissement par complément : on parte d'un ensemble complet, on le complète quand c'est possible. Il en résulte immédiatement une propriété importante : le nombre de lignes du résultat n'est jamais inférieur à celui de la table de gauche.
+
+```sql
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       e.identifiant   AS emprunt,
+       e.date_sortie
+FROM lecteurs AS l
+LEFT JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+ORDER BY l.nom, e.date_sortie;
+```
+
+Reprenez l'exemple avec deux cents lecteurs et mille emprunts. La requête renvoie au moins deux cents lignes, et davantage si certains lecteurs ont contracté plusieurs emprunts. Les lecteurs sans emprunt figurent, avec un identifiant d'emprunt vide et une date de sortie vide. Ces valeurs vides ne sont pas des zéros ni des chaînes vides : ce sont des NULL, signifiant qu'aucune correspondance n'a été trouvée. Cette distinction a des conséquences pratiques immédiates. Une colonne NULL échappe à la plupart des comparaisons ordinaires, et surtout, e.date_sortie IS NULL devient le marqueur universel de l'absence de correspondance. C'est ainsi qu'on isole les lecteurs jamais empruntés.
+
+```sql
+SELECT l.identifiant, l.nom, l.prenom, l.date_inscription
+FROM lecteurs AS l
+LEFT JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+WHERE e.identifiant IS NULL;
+```
+
+## RIGHT JOIN et FULL OUTER JOIN : joindre dans les deux directions
+
+Le RIGHT JOIN est le miroir exact du LEFT JOIN : il conserve toutes les lignes de la table placée à droite et complète celles de gauche. Écrire la requête des lecteurs sans emprunt avec un RIGHT JOIN revient à placer les emprunts à gauche et les lecteurs à droite. Puisque le résultat est identique à un LEFT JOIN dont on inverse les tables, beaucoup de praticiens n'utilisent jamais le RIGHT JOIN : ils inversent simplement l'ordre des tables et gardent une seule habitude de lecture. Une seule et même convention, toujours lire la table maîtresse en premier avec LEFT JOIN, supprime une source d'hésitation dans les revues de code.
+
+Le FULL OUTER JOIN va plus loin en conservant toutes les lignes des deux côtés. Les lignes qui trouvent une correspondance sont appariées ; celles qui n'en trouvent pas apparaissent avec NULL du côté manquant. On obtient ainsi l'union complète des deux tables, ce qui convient aux rapprochements entre deux systèmes, par exemple une table de comptes tenue par le service commercial et une table de facturation tenue par la comptabilité : chaque compte figure, qu'il soit présent d'un seul côté ou des deux. Attention cependant : MySQL ne propose pas le FULL OUTER JOIN, et il faut alors simuler l'opération en combinant un LEFT JOIN et un RIGHT JOIN avec UNION, ce qui rallonge la requête mais produit exactement le même résultat.
+
+Une erreur classique mérite d'être signalée ici, tant elle annule le bénéfice du LEFT JOIN. On écrit une jointure externe pour conserver tous les lecteurs, puis on place dans WHERE une condition portant sur la table de droite, par exemple WHERE e.date_retour IS NULL. Cette condition s'applique après la jointure et écarte les lignes dont la colonne vaut NULL, c'est-à-dire exactement les lignes que l'on cherchait à conserver. Le résultat se transforme en jointure interne déguisée, sans que la syntaxe signale quoi que ce soit. La correction consiste à déplacer la condition du côté droit dans la clause ON, ou à vérifier que la colonne filtrée appartient bien à la table maîtresse. Chaque fois que vous filtrez une table de droite dans une jointure externe, posez-vous la question de savoir si le filtre doit précéder ou suivre l'appariement.
+
+Il existe un troisième cas fréquent, la recherche de correspondances manquantes, qui se traite avec la même mécanique que les lecteurs sans emprunt mais sur des tables où la contrainte référentielle devrait tout interdire. On cherche par exemple les exemplaires dont l'ouvrage référencé a été supprimé, ou les emprunts dont le lecteur a disparu. La jointure externe suivi d'un IS NULL sur la clé primaire de la table de droite détecte ces orphelins. En pratique, l'opérateur NOT EXISTS, que la partie suivante sur les sous-requêtes approfondira, produit le même résultat et se lit souvent mieux. Les deux approches sont valables ; l'essentiel est de comprendre qu'il s'agit d'une anti-jointure, c'est-à-dire d'une jointure dont on retient précisément les lignes sans correspondance.
+
+## L'auto-jointure : comparer une table à elle-même
+
+L'auto-jointure est une jointure ordinaire dont les deux opérandes sont la même table. Elle paraît étrange au premier abord : comment joindre une table à elle-même sans obtenir un catalogue de correspondances absurdes ? La réponse tient dans les alias. On donne à la table deux noms différents, un pour sa première apparition et un pour sa seconde, et l'on énonce une clause ON qui distingue les deux rôles. Le moteur traite alors ces deux alias comme deux tables distinctes, sans se préoccuper de leur origine commune. L'auto-jointure devient ainsi l'outil naturel dès qu'une table contient en elle-même une référence vers une autre ligne d'elle-même.
+
+Le cas le plus courant est la structure hiérarchique. Reprenons la bibliothèque : chaque ouvrage peut recommander un autre ouvrage, ou chaque lecteur peut être parrainé par un lecteur plus ancien. On ajoute une colonne marraine_id à la table lecteurs, qui référence une autre ligne de lecteurs. Pour afficher chaque lecteur avec le nom de sa marraine, il faut lire la table deux fois : une fois comme fille, une fois comme marraine. Sans alias, la requête serait illisible ou invalide ; avec eux, elle devient limpide.
+
+```sql
+SELECT fille.identifiant,
+       fille.nom          AS lecteur,
+       marraine.nom       AS marraine
+FROM lecteurs AS fille
+LEFT JOIN lecteurs AS marraine
+       ON marraine.identifiant = fille.marraine_id
+ORDER BY marraine.nom, fille.nom;
+```
+
+Remarquez deux détails dans cet extrait. D'abord, le LEFT JOIN et non INNER JOIN : une lectrice qui n'a pas de marraine doit rester dans le résultat, avec une valeur nulle côté marraine. Ensuite, la clause ON compare deux colonnes de la même table d'origine, l'identifiant d'une ligne à la référence portée par une autre ligne. C'est exactement la mécanique d'une clé étrangère, sauf que la table référencée est elle-même. Rien de nouveau sous le soleil : l'auto-jointure réutilise toutes les notions déjà acquises, et sa seule originalité est dative.
+
+L'auto-jointure sert à bien d'autres usages. On l'emploie pour comparer chaque valeur d'une série à la valeur précédente, par exemple la date d'emprunt par rapport à la précédente du même lecteur, ce qui permet de calculer des écarts entre emprunts successifs. On l'utilise pour détecter les doublons potentiels, en joignant la table à elle-même sur le courriel avec une condition d'inégalité sur l'identifiant : chaque paire de lignes trouvée signale deux comptes identiques. On s'en sert pour les plages de dates qui se chevauchent, un exercice classique de réservation ou de planification, où l'on compare la date de début d'une ligne à la date de fin d'une autre. Dans tous les cas, la structure est identique : un alias pour l'entité étudiée, un alias pour l'entité de comparaison, et une condition qui exprime le lien.
+
+Un piège d'ordre mérite d'être signalé. Quand on joint une table à elle-même avec une relation de hiérarchie, une requête INNER JOIN n'affiche que les lignes qui possèdent un parent ; elle oublie donc la racine de l'arbre. Pour restituer une hiérarchie complète, on utilise LEFT JOIN, comme dans l'exemple. Si la hiérarchie possède plusieurs niveaux et que vous voulez remonter jusqu'à la racine, une jointure supplémentaire s'impose, ou mieux, une sous-requête récursive, que la prochaine partie sur les CTE vous fera découvrir. L'auto-jointure reste parfaite pour un seul niveau, et sa lisibilité décroît rapidement au-delà.
+
+Enfin, un conseil de nommage : choisissez des alias qui décrivent le rôle, et non la table. Écrire t1 et t2 fonctionne, mais impose de relire la clause ON pour comprendre le rôle de chaque alias. Des alias comme fille et marraine, ou commande et commande_precedente, rendent la requête lisible à la première lecture, y compris trois mois plus tard. C'est d'autant plus important que l'auto-jointure est la forme de jointure la plus déroutante visuellement : une phrase métier claire, traduite en alias parlants, suffit à rendre le code évident.
+
+## USING, NATURAL JOIN et ON : choisir sa condition de jonction
+
+SQL propose plusieurs façons d'exprimer la condition de jonction, et les débutants hésitent souvent entre elles. La forme ON, que vous maîtrisez déjà, est la plus générale : elle accepte n'importe quelle condition, égalité ou non, entre n'importe quelles colonnes, y compris des colonnes de noms différents. ON est la seule à pouvoir joindre exemplaires.ouvrage_id à ouvrages.identifiant, ou à exprimer une inégalité comme un chevauchement de dates. Elle reste donc la référence, celle que l'on retrouve dans la majorité des bases de code.
+
+```sql
+-- ON : noms de colonnes différents, condition explicite
+SELECT o.titre, x.cote
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant;
+
+-- USING : même nom des deux côtés, écriture plus courte
+SELECT o.titre, x.cote
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x USING (ouvrage_id);
+```
+
+La clause USING, suivie d'une liste de noms entre parenthèses, est une abréviation pour les cas d'égalité sur des colonnes de même nom. Le moteur comprend que l'on souhaite apparier la colonne ouvrage_id de la table de gauche avec celle de la table de droite. USING présente deux avantages. Il est plus court, et il fusionne les deux colonnes en une seule dans le résultat : écrire SELECT ouvrage_id est possible sans préfixe, et un SELECT étoile n'affiche qu'une colonne au lieu de deux. Ce comportement peut être pratique dans un explorateur de données, mais il surprend ceux qui s'attendaient à voir deux colonnes côte à côte.
+
+USING impose en revanche une contrainte forte : les colonnes doivent porter exactement le même nom des deux côtés. Si votre schéma utilise lecteur_id d'un côté et identifiant de l'autre, USING échoue. De plus, USING ne peut exprimer qu'une égalité simple ; toute condition supplémentaire, une inégalité ou un critère de date, doit partir en ON. Une écriture hybride, USING pour l'égalité puis ON pour le reste, n'existe pas : dès que vous avez besoin de deux critères différents, revenez à ON. En somme, USING est un raccourci confortable sur des schémas rigoureusement nommés, et un obstacle dès que la réalité s'écarte de cette rigueur.
+
+La clause NATURAL JOIN va encore plus loin en supprimant toute condition : le moteur repère lui-même les colonnes de même nom dans les deux tables et les apparie. L'intention est séduisante, une jointure sans écrire une ligne de plus, mais le résultat est dangereux. Si le schéma évolue, si l'on ajoute par erreur une colonne code_postal commune aux deux tables, la condition de jonction change silencieusement et le rapport avec elle. De plus, en l'absence de colonne commune, NATURAL JOIN se comporte comme un produit cartésien, ce qui ramène au piège vu précédemment. Très peu d'équipes l'autorisent en production, et la plupart des guides de style le proscrivent explicitement.
+
+Voici un tableau de décision pratique. Utilisez ON par défaut, toujours : il est explicite, portable et sans surprise. Privilégiez USING quand vos clés portent rigoureusement le même nom, que vous écrivez du code jetable dans un explorateur et que vous souhaitez éviter les préfixes. Réservez CROSS JOIN aux produits cartésiens voulus, et écrivez INNER JOIN avec ON ailleurs. Évitez NATURAL JOIN dans tout code destiné à durer. Cette grille vous épargne les discussions de style improductives : la règle est la lisibilité explicite, et ON est la seule écriture qui montre la condition au lieu de la faire deviner.
+
+Un dernier point sur la portabilité entre moteurs. La syntaxe des jointures est standard, mais les détails varient : MySQL accepte INNER JOIN et LEFT JOIN sans le mot INNER, Oracle exige FROM dual pour certaines sous-requêtes sans table, SQL Server préfère APPLY pour joindre une table à une fonction, et le FULL OUTER JOIN manque à MySQL. Écrire du SQL portable revient donc à choisir les formes les plus courantes, INNER JOIN et LEFT JOIN avec ON, à éviter les raccourcis comme NATURAL JOIN, et à tester ses requêtes sur le moteur cible avant de les figer dans une vue ou dans une procédure. Une requête validée sur SQLite peut échouer ailleurs sur un détail d'agrégation ou de date ; la vérification précoce reste la plus sûre des économies de temps.

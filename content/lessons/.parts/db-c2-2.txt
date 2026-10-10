@@ -1,0 +1,104 @@
+Les requêtes que vous avez écrites jusqu'ici ont un point commun : elles renvoient des lignes. Vous sélectionnez des colonnes, vous filtrez des enregistrements, vous triez le résultat, mais le volume final reste celui de la table source, réduit certes par WHERE, jamais résumé. Or la majorité des questions posées à une base de données ne demandent pas des lignes mais des chiffres : combien d'emprunts ce mois-ci, quel est le montant moyen d'un panier, quel lecteur a emprunté le plus souvent, combien d'ouvrages restent disponibles dans chaque catégorie. Pour transformer des milliers de lignes en quelques indicateurs significatifs, SQL dispose de fonctions d'agrégat et d'une clause de regroupement. C'est l'objet central de cette partie.
+
+Une fonction d'agrégat prend une colonne en entrée et produit une seule valeur, résumée sur l'ensemble des lignes qui lui sont soumises. COUNT compte, SUM additionne, AVG calcule la moyenne, MIN et MAX extraient les extrêmes. Ces fonctions se distinguent des fonctions scalaires comme upper ou round, qui s'appliquent ligne par ligne et produisent une valeur par ligne. Cette distinction est fondamentale, car elle commande la grammaire de la requête : dès que l'une de ces fonctions d'agrégat apparaît, la requête change de nature et peut être découpée en groupes avec GROUP BY. Le moteur agrège d'abord, filtre ensuite les agrégats avec HAVING, puis présente les résultats avec les alias que vous aurez définis.
+
+Nous étudierons dans l'ordre les cinq fonctions d'agrégat et leurs comportements face aux valeurs manquantes, la clause GROUP BY qui découpe la table en sous-ensembles, la différence décisive entre WHERE et HAVING, et enfin les alias qui rendent les résultats lisibles. Chaque section s'appuie sur les tables de la bibliothèque des Lilas, et vous gagnerez à exécuter les exemples au fil de l'eau. Un conseil avant de commencer : ouvrez une fenêtre de requête à côté de votre éditeur de texte et recopiez le script de création des données du chapitre précédent. L'habitude d'expérimenter en parallèle de la lecture transforme une notion abstraite en réflexe durable.
+
+## Les fonctions d'agrégat : COUNT, SUM, AVG, MIN, MAX
+
+COUNT est de loin la fonction la plus utilisée, et aussi celle qui contient le plus de pièges. Comptez les lignes d'une table avec SELECT COUNT(*) FROM emprunts : le résultat est le nombre total d'enregistrements, qu'ils contiennent ou non des valeurs dans leurs colonnes. Comptez une colonne précise avec COUNT(date_retour) et le comportement change radicalement : le moteur ignore les valeurs nulles et ne compte que les lignes dont date_retour possède une valeur. La différence entre COUNT(*) et COUNT(colonne) n'est donc pas cosmétique, elle est sémantique. Sur la table emprunts, COUNT(*) donne le nombre total de prêts, tandis que COUNT(date_retour) donne le nombre de prêts déjà rendus. La soustraction des deux vous indique les prêts en cours, à condition de ne pas introduire de filtre dans la requête.
+
+Comptez-vous une colonne distincte ? La forme COUNT(DISTINCT ville_id) ne compte pas les lignes mais les valeurs différentes, ce qui répond à une autre question : combien de villes distinctes sont représentées parmi les lecteurs. Cette variante est précieuse dans les rapports, car elle distingue le nombre d'enregistrements du nombre d'entités. Un même lecteur apparaissant plusieurs fois dans une table de commandes sera compté autant de fois par COUNT(*) qu'une seule fois par COUNT(DISTINCT lecteur_id). Ne confondez pas non plus COUNT avec le comptage effectué par une jointure : dès que vous reliez deux tables, les lignes se multiplient, et COUNT(*) peut gonfler sans que la donnée réelle ait changé. Nous reverrons ce point au chapitre des jointures, mais la méfiance envers COUNT après une jointure est déjà une bonne habitude.
+
+SUM additionne les valeurs numériques d'une colonne. SELECT SUM(montant) FROM emprunts renvoie la somme de tous les montants enregistrés. AVG calcule la moyenne arithmétique, c'est-à-dire la somme divisée par le nombre de valeurs prises en compte, et non par le nombre de lignes : les valeurs nulles sont exclues du dénominateur, ce qui peut surprendre. MIN et MAX extraient respectivement la plus petite et la plus grande valeur ; ils fonctionnent sur les nombres comme sur les dates et sur les chaînes, où l'ordre est lexicographique. Un point crucial à retenir : toutes ces fonctions ignorent les valeurs nulles, sauf COUNT(*), qui les compte comme des lignes. Une colonne entièrement vide produit SUM égal à zéro, AVG, MIN et MAX égaux à NULL, et COUNT(colonne) égal à zéro. Ces comportements ne sont pas des anomalies, ils font partie de la définition du langage.
+
+Les fonctions d'agrégat combinent aussi avec une condition : COUNT(*) WHERE ... ne s'écrit pas ainsi, la condition reste portée par WHERE quand elle s'applique avant l'agrégation. Par exemple, SELECT COUNT(*) FROM emprunts WHERE date_retour IS NULL compte les emprunts non rendus, car WHERE écarte d'abord les lignes, puis COUNT opère sur ce qui reste. À l'inverse, une moyenne conditionnelle exige souvent CASE WHEN, que nous étudierons dans la partie suivante. Voici un exemple qui cumule plusieurs agrégats sur la même requête :
+
+```sql
+SELECT
+  COUNT(*)            AS nombre_emprunts,
+  COUNT(date_retour)  AS nombre_rendus,
+  MIN(date_sortie)    AS premier_emprunt,
+  MAX(date_sortie)    AS dernier_emprunt,
+  AVG(EXTRACT(DAY FROM date_retour - date_sortie)) AS duree_moyenne_jours
+FROM emprunts
+WHERE date_sortie >= '2024-01-01';
+```
+
+Chaque colonne du résultat porte une valeur unique, résumée sur toutes les lignes retenues. L'écart entre nombre_emprunts et nombre_rendus vous donne instantanément le nombre de prêts en cours. Le résultat de AVG peut être NULL si aucune ligne ne contient de date de retour, cas typique d'une période où rien n'a encore été restitué. Prenez l'habitude de lire chaque colonne d'un résultat d'agrégat en vous demandant quelle ensemble de lignes elle résume et ce qu'elle ferait avec des valeurs manquantes.
+
+## GROUP BY : une ligne par groupe
+
+Une seule statistique globale répond rarement à toutes les questions. Le directeur de la bibliothèque veut savoir combien d'emprunts chaque lecteur a effectués, le bibliothécaire veut la répartition des ouvrages par catégorie, et l'analyste veut le chiffre d'affaires par mois. Pour produire ces tableaux, la clause GROUP BY découpe la table en groupes et fait tourner les fonctions d'agrégat à l'intérieur de chacun. Écrivez lecteur_id, COUNT(*) FROM emprunts GROUP BY lecteur_id : le moteur regroupe toutes les lignes partageant le même lecteur_id, compte les lignes de chaque groupe, et renvoie une ligne par groupe avec son compteur. Le résultat a autant de lignes que de valeurs distinctes dans la colonne de regroupement.
+
+La règle à mémoriser est la suivante : dans une requête groupée, toute colonne affichée doit figurer dans GROUP BY ou être enfermée dans une fonction d'agrégat. Si vous demandez nom en même temps que COUNT(*) sans que nom soit groupé, la plupart des moteurs refusent la requête au motif qu'ils ne savent pas quelle valeur choisir parmi celles du groupe. D'autres moteurs, plus permissifs, choisissent une valeur au hasard et vous livrent un résultat faux sans le moindre avertissement. Cette tolérance est un piège redoutable en production : la requête semble marcher sur un petit échantillon, puis diverge. Écrivez toujours GROUP BY sur toutes les colonnes non agrégées de votre SELECT, et vérifiez la liste avant d'exécuter.
+
+GROUP BY accepte plusieurs colonnes, et la granularité se lit directement dans la liste : GROUP BY ville_id, categorie produit un groupe par paire ville et catégorie. On peut également grouper sur une expression calculée, par exemple GROUP BY DATE_TRUNC('month', date_sortie) pour obtenir des groupes mensuels, ou sur un alias défini dans SELECT, ce que certains moteurs autorisent et d'autres non. Pour rester portable, préférez répéter l'expression. Une requête de reporting complète combine presque toujours un WHERE pour restreindre le périmètre, un GROUP BY pour définir la granularité, un ORDER BY pour présenter les lignes et un LIMIT pour ne garder que le top. Le WHERE s'exécute avant le regroupement et porte sur les colonnes de la table ; le HAVING, que nous verrons juste après, s'exécute après et porte sur les agrégats.
+
+Voici un exemple de tableau de bord construit en une seule requête :
+
+```sql
+SELECT
+  lecteur_id,
+  COUNT(*)                   AS nombre_emprunts,
+  MIN(date_sortie)           AS premier_passage,
+  MAX(date_sortie)           AS dernier_passage,
+  COUNT(date_retour)         AS retours_effectues
+FROM emprunts
+WHERE date_sortie >= '2024-01-01'
+GROUP BY lecteur_id
+ORDER BY nombre_emprunts DESC, lecteur_id
+LIMIT 20;
+```
+
+La requête filtre d'abord les emprunts de l'année, les regroupe ensuite par lecteur, calcule quatre indicateurs par groupe, trie du lecteur le plus actif au moins actif et n'affiche que les vingt premiers. Notez que COUNT(*) compte toutes les lignes du groupe, tandis que COUNT(date_retour) ne compte que les restitutions, ce qui vous donne gratuitement le taux de restitution. Notez aussi que ORDER BY utilise l'alias nombre_emprunts, lisible et court, plutôt que l'expression complète : nous y venons dans la dernière section.
+
+## HAVING et WHERE : filtrer avant ou après l'agrégation
+
+WHERE et HAVING se ressemblent syntaxiquement mais ne travaillent pas au même moment, ni sur les mêmes données. WHERE s'exécute tout en début de traitement, avant tout regroupement, et porte sur les colonnes brutes de la table : il décide quelles lignes ont le droit d'entrer dans le calcul. HAVING s'exécute après GROUP BY, une fois les agrégats produits, et porte sur les résultats de ces fonctions : il décide quels groupes ont le droit d'apparaître dans le résultat. En d'autres termes, WHERE filtre les lignes, HAVING filtre les groupes. Cette phrase, répétée jusqu'à ce qu'elle devienne un réflexe, vous évitera la majorité des erreurs de requêtes groupées.
+
+La conséquence pratique est immédiate : on ne peut pas mettre une fonction d'agrégat dans WHERE, car à ce stade de l'exécution aucun agrégat n'existe encore. L'écriture SELECT lecteur_id FROM emprunts GROUP BY lecteur_id WHERE COUNT(*) > 5 est donc illégale ; il faut écrire HAVING COUNT(*) > 5. Symétriquement, il est inutile de placer dans HAVING une condition qui ne dépend que de colonnes brutes, comme WHERE sans regroupement : le filtre sera bien appliqué, mais plus tard qu'il n'aurait dû, ce qui fait perdre au moteur l'opportunité d'écarter des lignes tôt. L'ordre d'exécution correct est toujours WHERE, puis GROUP BY, puis HAVING, puis ORDER BY, puis LIMIT. Retenez cette séquence comme une chorégraphie.
+
+Quand faut-il choisir HAVING plutôt que WHERE ? La question se résout par la nature du critère. Si le critère porte sur une valeur de la table, filtrez au plus tôt avec WHERE : moins de lignes entrent dans l'agrégation, le calcul est plus rapide. Si le critère porte sur un résultat calculé, par exemple un nombre minimum d'emprunts ou une moyenne supérieure à un seuil, utilisez HAVING. Un cas courant consiste à ne conserver que les groupes dont l'effectif dépasse un seuil, typiquement pour éliminer les singularités d'un reporting : GROUP BY lecteur_id HAVING COUNT(*) >= 3 ne garde que les lecteurs ayant emprunté au moins trois fois. Combiner les deux est parfaitement normal : WHERE restreint la période, HAVING conditionne l'affichage du groupe.
+
+```sql
+SELECT
+  o.categorie,
+  COUNT(*)        AS nombre_titres,
+  ROUND(AVG(o.prix), 2) AS prix_moyen
+FROM ouvrages o
+WHERE o.annee >= 2000
+GROUP BY o.categorie
+HAVING COUNT(*) >= 5
+ORDER BY prix_moyen DESC;
+```
+
+Cette requête ne considère que les ouvrages parus depuis 2000, les regroupe par catégorie, calcule le nombre de titres et le prix moyen de chaque catégorie, puis ne conserve que les catégories comptant au moins cinq titres. Le WHERE a été appliqué en premier, sur les colonnes brutes, et le HAVING ensuite, sur les agrégats. Si vous déplacez la condition sur l'année dans HAVING, le moteur renverra une erreur du type agrégat non autorisé dans WHERE, ce qui vous indiquera exactement où vous vous êtes trompé dans la chorégraphie.
+
+## Les alias : rendre les résultats lisibles et les requêtes maintenables
+
+Un résultat d'agrégat produit par défaut des en-têtes techniques : count, sum, avg, parfois même des expressions brutes illisibles. L'alias corrige cela en attribuant un nom à chaque colonne du résultat. Il s'écrit avec le mot-clé AS, facultatif mais recommandé pour la lisibilité : COUNT(*) AS nombre_emprunts, ROUND(AVG(prix), 2) AS prix_moyen. Sans alias, l'en-tête reprend l'expression, et un rapport destiné à un non-technicien affiche alors des intitulés que personne ne comprendra. L'alias ne modifie pas la donnée, seulement son nom de colonne dans le jeu de résultats, et il n'est jamais conservé dans la table : il n'existe que le temps de la requête.
+
+Les alias servent bien au-delà de l'esthétique. Ils permettent d'éviter les répétitions dans les requêtes longues, de rendre les formules explicites et, surtout, de faciliter le tri : ORDER BY peut référencer un alias défini dans SELECT, alors qu'il ne peut pas, dans la plupart des moteurs, référencer une colonne qui n'existe pas dans le résultat. Pour une expression complexe réutilisée plusieurs fois, l'alias supprime la duplication et réduit le risque de erreur de recopie. Une bonne pratique consiste à nommer les agrégats avec un nom qui décrit la mesure et l'unité : nombre_emprunts, montant_total_euros, duree_moyenne_jours. Un intitulé comme total ou result1 force toujours celui qui lit à remonter dans la requête pour le comprendre.
+
+Attention à deux portées distinctes. L'alias défini dans SELECT est utilisable dans ORDER BY, et parfois dans GROUP BY et HAVING selon les moteurs ; il n'est en revanche jamais accessible dans WHERE, car WHERE est évalué avant que SELECT ne calcule quoi que ce soit. Si vous devez filtrer sur une expression, répétez l'expression dans WHERE ou, mieux, repoussez le filtre dans une sous-requête ou une vue. Une autre convention, issue de la jointure, consiste à créer un alias de table : FROM ouvrages o permet d'écrire o.prix partout, ce qui devient indispensable dès que plusieurs tables partagent un nom de colonne. Ces alias de table suivent la même logique : un nom court, utilisé à chaque occurrence, pour éviter l'ambiguïté.
+
+Il existe enfin les alias de colonnes implicites, où l'on place directement un nom après l'expression sans le mot-clé AS : SELECT COUNT(*) nombre_emprunts. Cette écriture fonctionne partout, mais elle est plus facile à manquer à la lecture, surtout quand les colonnes s'empilent sur plusieurs lignes. Le standard SQL et la majorité des guides de style recommandent AS, et la discipline qu'il impose rend le SELECT beaucoup plus facile à scanner. Un dernier conseil : vérifiez que vos alias sont uniques au sein d'une requête. Deux colonnes portant le même nom produisent des résultats ambiguïs dans les clients SQL et des erreurs dans les langages de programmation qui consomment la requête, notamment lors de la conversion en objet. Voici un exemple final qui réunit agrégats, regroupement, filtres et alias :
+
+```sql
+SELECT
+  v.nom                              AS ville,
+  COUNT(*)                           AS nombre_lecteurs,
+  COUNT(DISTINCT l.courriel)         AS adresses_uniques,
+  MIN(l.date_inscription)            AS premiere_inscription,
+  MAX(l.date_inscription)            AS derniere_inscription
+FROM lecteurs l
+JOIN villes v ON v.identifiant = l.ville_id
+WHERE l.date_inscription >= '2023-01-01'
+GROUP BY v.nom
+HAVING COUNT(*) >= 2
+ORDER BY nombre_lecteurs DESC, ville
+LIMIT 15;
+```
+
+Vous y retrouvez tout ce que la partie vient d'enseigner : des colonnes groupées citées dans GROUP BY, des agrégats enveloppés dans des fonctions, un WHERE qui restreint la période avant le regroupement, un HAVING qui écarte les petites villes, des alias lisibles réutilisés dans ORDER BY, et un LIMIT qui ne garde que le haut du tableau. Relisez cette requête ligne à ligne en vous demandant, pour chaque clause, ce qu'elle filtre et à quel moment elle s'exécute. Si vous parvenez à le formuler à voix haute, vous maîtrisez l'essentiel du SQL analytique. La partie suivante vous apprendra à traiter les cas que ces fonctions laissent passer : les valeurs manquantes, les catégories calculées avec CASE WHEN, les doublons avec DISTINCT et les requêtes imbriquées.

@@ -1,0 +1,86 @@
+Cette dernière section referme le chapitre et, avec lui, le parcours bases de données. Elle a trois fonctions : rappeler en une page les règles qui vous accompagneront dans tous vos projets, décrire les pièges qui coûtent le plus de temps aux équipes, et ouvrir des portes vers les sujets qui prolongent naturellement ce que vous savez déjà faire. Lisez-la en y confrontant votre propre expérience des sections précédentes : si une ligne vous surprend, revenez au passage correspondant plutôt que de la mémoriser telle quelle.
+
+Le meilleur usage que vous puissiez en faire consiste à la transformer en liste de contrôle. Avant chaque relecture de schéma ou chaque mise en production, parcourez les points un par un et répondez par oui ou par non. Un projet qui coche toutes ces cases n'est pas parfait, mais il est défendable, et la relecture d'un collègue partira alors du fond plutôt que de la forme. C'est exactement la manière dont travaillent les équipes sérieuses : moins de génie, plus de discipline répétée.
+
+## À retenir
+
+Un projet de base de données se conduit en cinq phases qui se répondent : recueil du besoin, modélisation sur papier, implémentation en SQL, peuplement contrôlé, restitution et optimisation. La première phase produit le cahier des charges, texte court validé par les métiers, où chaque phrase se transformera plus tard en colonne ou en contrainte. La seconde produit le diagramme entité-association, seul endroit où l'on discute des cardinalités sans payer le coût d'une refonte. Les trois suivantes font la boucle : écrire, charger, mesurer, corriger, jusqu'à ce que les chiffres soient justes et le temps de réponse acceptable.
+
+Le schéma retenu pour ce projet compte huit tables principales, auxquelles s'ajoutent les entrepôts : clients, adresses, categories, produits, stocks, commandes, lignes_commande et paiements. Trois principes structurent l'ensemble. D'abord, une clé primaire technique simple par table, auto-incrémentée, à laquelle s'ajoutent des contraintes d'unicité sur les attributs métier fiables comme le courriel ou la référence produit. Ensuite, des clés étrangères explicites, nommées, chacune assortie d'une politique de suppression décidée et écrite. Enfin, une normalisation jusqu'à la troisième forme, respectée partout sauf sur deux instantanés assumés : l'adresse livrée figée sur la commande et le prix unitaire figé sur la ligne de commande.
+
+```sql
+-- Contrôle de cohérence à rejouer après chaque chargement :
+-- total des lignes, total des en-têtes, écart attendu nul.
+SELECT
+  c.numero,
+  c.montant_total,
+  COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0) AS total_calcule,
+  c.montant_total - COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0) AS ecart
+FROM commandes AS c
+LEFT JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+GROUP BY c.identifiant, c.numero, c.montant_total
+HAVING ABS(c.montant_total - COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0)) > 0.009;
+```
+
+L'ordre des opérations est la règle la plus concrète de tout le chapitre. On crée les tables indépendantes avant celles qui les référencent, et l'on insère dans le même ordre : catégories, clients, produits, adresses, stocks, commandes, lignes de commande, paiements. Un INSERT qui échoue par clé étrangère ne signifie pas que votre syntaxe est fausse, il signifie que vous avez écrit une fille avant son parent. Cette même logique gouverne les suppressions, qui doivent partir des feuilles de l'arbre de dépendances et non des racines.
+
+Le peuplement se fait dans des transactions, par lots cohérents, avec des dates fournies explicitement plutôt que laissées à la valeur par défaut. Un chargement interrompu sans transaction laisse un état intermédiaire impossible à diagnostiquer ; le même chargement dans une transaction se rejoue proprement après correction de la cause. Les identifiants, eux, se fixent explicitement pour un jeu de test déterministe, ou se récupèrent avec la fonction prévue par le moteur dans un chargement réel. Dans les deux cas, on choisit une méthode et on l'applique partout.
+
+Les rapports s'écrivent tous avec la même grammaire : une mesure agrégée, un axe de groupement, un filtre de période et de statut. Le chiffre d'affaires mensuel groupe les ventes valides par mois ; le classement des produits ordonne les quantités vendues, avec RANK() pour gérer les égalités ; le panier moyen s'obtient en deux niveaux, total par commande puis moyenne de ces totaux ; la fidélité compte les commandes par client et les répartit en segments avec CASE. Chacun se protège contre les doublons par DISTINCT, contre les mois vides par une jointure externe, et contre les erreurs de filtre en distinguant soigneusement la clause ON de la clause WHERE.
+
+L'optimisation suit une discipline en trois temps : mesurer, expliquer, corriger. On commence par chronométrer la requête telle quelle, on affiche ensuite son plan d'exécution pour comprendre où le temps part, et on n'ajoute un index qu'en réponse à un plan identifié. Les colonnes de clés étrangères fréquemment jointes et les dates filtrées par plage sont les premiers candidats ; un index sur chaque colonne, lui, ralentit les écritures sans rien apporter. Les vues regroupent les définitions partagées, et une table de synthèse alimentée périodiquement prend le relais dès que le calcul à la demande dépasse le seuil que l'utilisateur accepte d'attendre.
+
+Enfin, retenez la frontière de responsabilités. La base garantit la structure, l'unicité, le typage, l'intégrité référentielle et, avec les contraintes de domaine, la plausibilité des valeurs. Elle ne garantit pas à elle seule la justesse métier fine : le recalcul d'un montant total, la décrémentation d'un stock, la transition d'un statut, le respect d'une règle de remise relèvent de l'application ou de traitements dédiés. Un schéma sain pose cette frontière explicitement, au lieu de la deviner, et c'est ce qui permet à plusieurs équipes de travailler sur la même base sans se marcher dessus.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus fréquente chez les débutants, est l'oubli d'une clé étrangère. On crée la table lignes_commande avec une colonne produit_id qui ressemble à un identifiant de produit, mais sans REFERENCES, et la base accepte alors une ligne qui désigne un produit inexistant. Le schéma paraît identique dans un aperçu rapide, les inserts passent, et les rapports affichent des articles fantômes dont personne ne connaît la référence. Le symptôme est facile à reconnaître : des jointures qui retournent moins de lignes que prévu, ou des totaux par catégorie inférieurs au total général.
+
+La seconde erreur est l'inverse : ajouter la clé étrangère, mais oublier la table référencée lors du peuplement. Le message du moteur est alors explicite, et pourtant beaucoup de temps y est perdu, parce qu'on relit la syntaxe de l'INSERT au lieu de se demander quel est le parent de cette table. Imprimez près de votre écran l'ordre de dépendance du schéma, sous forme de liste ou de diagramme, et comparez-le à l'ordre de vos commandes. Cette simple habitude élimine la quasi-totalité des échecs de chargement.
+
+L'ordre de peuplement inversé vient généralement avec une autre pratique à proscrire : désactiver les clés étrangères pour tout faire passer d'un coup. Cela semble efficace, jusqu'au moment où l'on doit valider la base, car toutes les incohérences se découvrent alors en une seule fois, mélangées, sans qu'on sache lesquelles sont antérieures au chargement. Préférez des lots cohérents, une transaction par lot, et un contrôle immédiat après chacun. La vitesse apparente gagnée en désactivant les contraintes est toujours rattrapée, avec intérêt, au moment du débogage.
+
+```sql
+-- Repérer les lignes de commande orphelines, si les contraintes
+-- ont été désactivées ou si la base a été importée sans contrôle.
+SELECT l.commande_id, l.produit_id
+FROM lignes_commande AS l
+LEFT JOIN commandes AS c ON c.identifiant = l.commande_id
+LEFT JOIN produits  AS p ON p.identifiant = l.produit_id
+WHERE c.identifiant IS NULL
+   OR p.identifiant IS NULL;
+```
+
+La troisième erreur concerne les totaux faux. Elle a trois variantes : oublier le filtre sur le statut, ce qui intègre les commandes annulées ; joindre deux tables one-to-many dans la même requête, ce qui multiplie les montants ; moyenner des lignes au lieu de moyenne des commandes. Chacune produit un chiffre plausible, légèrement trop élevé ou trop bas, que personne ne conteste parce qu'il a l'air raisonnable. C'est la raison pour laquelle il faut toujours recouper : somme des détails égale total général, et comparaison de deux chemins de calcul indépendants pour la même mesure.
+
+La quatrième erreur porte sur les dates. Les stocker en texte, comparer des chaînes au lieu de vraies valeurs, oublier le fuseau horaire ou laisser CURRENT_TIMESTAMP par défaut lors d'un chargement sont autant de moyens d'obtenir des rapports silencieusement absurdes. Utilisez le type de date ou d'horodatage du moteur, formatez uniquement à l'affichage, et fournissez toujours les dates d'un jeu de test. Une règle simple : si une colonne représente un instant, elle ne doit jamais être de type texte, quelle que soit la simplicité apparente du cas.
+
+La cinquième erreur est le choix du type monétaire. Utiliser un type flottant pour des prix produit des totaux comme 89,899999999999995 et des écarts que la comptabilité refuse. Utiliser un entier exprimé en centimes fonctionne, à condition d'être rigoureux dans toutes les conversions d'affichage. La solution la plus sûre reste le type à précision fixe, avec deux décimales, sur toutes les colonnes monétaires, y compris celles qui semblent secondaires comme les remises. Un arrondi mal placé dans une remise se propage dans tous les totaux.
+
+Viennent ensuite les oublis de contraintes de domaine : un statut acceptant n'importe quelle valeur, une quantité négative, un prix sans borne, un courriel dupliqué parce que la contrainte d'unicité n'a jamais été écrite. Chacun de ces oublis déplace la vérification vers le code applicatif, où elle sera oubliée par un futur développeur et contournée par un import. Règle générale, si une règle ne change jamais et que la base saurait l'exprimer, elle appartient à la base.
+
+Les problèmes de performance ont eux aussi leurs causes classiques. Un index oublié sur une clé étrangère utilisée en jointure, un index sur une colonne filtrée avec un opérateur qui ne l'utilise pas, une fonction appliquée à la colonne indexée dans la clause WHERE, un rapport qui recalcule à chaque appel une valeur pourtant stable. Avant d'accuser le moteur, affichez le plan d'exécution : dans la grande majorité des cas, il désigne lui-même la ligne responsable, et la correction tient en un index ou en une réécriture mineure de la condition.
+
+Enfin, citez les défauts de méthode : modifier un schéma directement dans l'outil graphique d'un environnement partagé, sans script ni version ; laisser des comptes de test avec des mots de passe devinables ; omettre la documentation d'une colonne qui a une raison d'être non évidente, comme le prix figé ; et surtout, sauter le relecture croisée avant mise en production. Un schéma se relit à voix haute avec quelqu'un d'autre, en prononçant chaque clé étrangère sous la forme d'une phrase : chaque phrase invraisemblable est un défaut de modèle en attente.
+
+## Pour aller plus loin
+
+Vous maîtrisez l'essentiel du relationnel, et plusieurs sujets prolongent directement ce travail. Le premier est la gestion des migrations : comment faire évoluer un schéma en production sans interruption, en écrivant des scripts numérotés, en les testant sur une copie, en prévoyant un retour arrière. Le second est la concurrence et les transactions avancées, avec les niveaux d'isolation, les lectures sales, les verrous et la façon dont deux utilisateurs peuvent toucher la même ligne sans se perdre. Ces deux thèmes transforment un exercice fonctionnel en système exploitable.
+
+L'optimisation mérite un approfondissement à part entière : statistiques du moteur, estimations et plans, index couvrants, index partiels, agrégats matérialisés, partitionnement des grandes tables. Vous retrouverez ces notions dans les documentations officielles, qui sont très pédagogiques, et dans les retours d'expérience des équipes qui gèrent de gros volumes. Le réflexe à acquérir avant tout est le même : ne jamais optimiser sans mesure, et ne jamais conclure d'un plan d'exécution relevé sur un échantillon trop petit.
+
+La modélisation aussi offre des prolongements. La troisième forme normalisée n'est pas l'horizon : il existe des formes supérieures, utiles dans certains domaines, et des approches dénormalisantes assumées pour la lecture pure, courantes dans les entrepôts de données. À l'autre bout du spectre, la modélisation dimensionnelle, avec ses tables en étoile, est taillée pour l'analyse de données et change volontairement les règles que vous avez apprises, en favorisant la redondance contrôlée au nom de la simplicité des requêtes. Savoir quand quitter la forme normalisée est une compétence, à condition de savoir pourquoi on le fait.
+
+Les langages et les outils voisins méritent aussi un regard. Le langage de requête structuré est partout, mais les besoins de recherche plein texte, de requêtes récursives sur une arborescence de catégories, ou de calculs analytiques avancés mènent vers des extensions spécifiques à chaque moteur. Prenez le temps de lire la documentation de celui que vous utilisez réellement, car les écarts de syntaxe entre moteurs sont précisément là où se cachent les problèmes de portabilité d'un script à l'autre.
+
+Pour consolider, le meilleur exercice reste de refaire ce projet sur un autre domaine. Concevez la gestion d'une salle de sport avec des adhérents, des cours, des créneaux, des inscriptions et des paiements, ou celle d'une librairie avec des auteurs, des éditions, des exemplaires et des locations. Reprenez la même méthode, du cahier des charges aux rapports, en réutilisant les réflexes acquis : entités d'abord, cardinalités à voix haute, ordre de dépendance, peuplement transactionnel, mesures et dimensions. Si vous arrivez à un schéma propre sans relecture des chapitres précédents, le parcours a fait son travail.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice final vous demande de mener ce projet de bout en bout, sur le domaine que l'énoncé vous donne, sans réutiliser tel quel le schéma de la boutique. Vous partirez d'un cahier des charges rédigé en français, vous en tirerez un diagramme entité-association avec les cardinalités, vous écrirez le script de création complet dans l'ordre des dépendances, avec les clés primaires, les clés étrangères nommées, les contraintes d'unicité et de domaine, puis vous chargerez un jeu de données couvrant au moins dix-huit mois d'historique, inséré dans l'ordre correct et par transactions. Terminez par les quatre rapports attendus, avec leurs contrôles de total, et par une note d'indexation qui justifie chaque index par un plan d'exécution observé.
+
+Traitez les points de la liste de contrôle comme un vrai relecteur le ferait. Aucune colonne non atomique, aucune clé primaire composite sauf justification, aucune dépendance transitive, aucune clé étrangère sans politique de suppression, aucun montant en virgule flottante, aucun statut libre, aucune date en texte, aucun rapport sans filtre de statut, aucun index sans mesure. Si vous cochez tout cela, votre script sera défendable devant n'importe quel relecteur technique, et le reste relèvera du goût et de l'optimisation fine.
+
+Si vous bloquez, revenez d'abord au message d'erreur exact, puis à la section qui traite de l'ordre des opérations et du peuplement : la très grande majorité des blocages en début de projet viennent de là, et non de la syntaxe. Ensuite, comparez votre schéma à celui de la leçon, non pour le copier, mais pour repérer les divergences et formuler la raison de chacune. Une différence assumée et argumentée est un signe de compréhension ; une différence subie et inexpliquée est un défaut latent.
+
+Une fois votre script validé et vos rapports produits, le parcours bases de données est terminé. Vous savez désormais décrire un domaine, construire un schéma cohérent, le peupler sans casser l'intégrité, en extraire des indicateurs et les rendre rapides. Ces compétences se réunissent avec celles des autres tracks du programme pour former le socle d'un développement back-end solide. Poursuivez avec l'exercice pratique, prenez le temps de le faire proprement plutôt que vite, puis explorez les ressources proposées ci-dessus pour approfondir les points qui vous intéressent le plus.

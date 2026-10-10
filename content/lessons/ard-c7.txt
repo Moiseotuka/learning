@@ -1,0 +1,652 @@
+Les six chapitres précédents de ce parcours vous ont appris à faire beaucoup de choses avec un seul fil d'exécution : allumer des broches, lire des capteurs, piloter un afficheur sur un bus, écrire une machine à états avec des interruptions, puis connecter l'ESP32 en Wi-Fi et publier des mesures en MQTT. Tout cela a tenu dans une fonction boucle() relancée indéfiniment, et cela a marché. Ce chapitre part d'un constat désagréable mais libérateur : un unique fil qui fait tout à tour a une date de péremption. Dès que vos exigences se contredisent — mesurer toutes les secondes, rafraîchir l'écran plusieurs fois par seconde, envoyer un paquet qui réclame parfois quatre cents millisecondes — un seul fil ne suffit plus : il n'a qu'un instant à donner, et vous lui en demandez trois.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, déjà écrites dans du code exécuté sur votre carte. Premièrement, vous découperez une application en tâches, c'est-à-dire en flux d'exécution indépendants, en posant trois questions à chaque unité : à quelle fréquence tourner, combien de temps attendre, que faire si elle prend du retard. Deuxièmement, vous les ordonnancerez avec des priorités, en comprenant la préemption, l'état bloqué et la raison pour laquelle une tâche prioritaire qui attend une entrée série peut paralyser tout le reste. Troisièmement, vous les ferez communiquer par files de messages, vous protégerez les ressources partagées avec mutex et sémaphores, et vous éviterez le blocage mutuel. Quatrièmement, vous mesurerez le résultat : hauteur de pile, statistiques d'exécution, watchdog.
+
+Le fil rouge est la station météo assemblée au chapitre six, regardée sous un angle neuf : non plus comme un ensemble de modules, mais comme un ensemble de tâches concurrentes. Une tâche capteur, cadencée à la seconde, interroge le capteur I2C, filtre et horodate la mesure. Une tâche afficheur, plus rapide, rafraîchit l'écran et l'état de la station. Une tâche réseau, lente et imprévisible, maintient la liaison Wi-Fi et publie les mesures en MQTT. Ces trois flux n'ont ni la même fréquence, ni la même tolérance au retard, ni le même rapport au blocage : c'est précisément pourquoi ils deviennent trois tâches. L'exercice final vous demandera de réaliser cette refonte seul.
+
+Deux règles de conduite avant de commencer, parce que le temps réel se travaille comme un métier d'atelier. La première : ici, on ne devine jamais, on mesure ; un délai se constate avec un horodatage, une pile se mesure avec un indicateur, un déblocage se prouve avec un trace. La deuxième : chaque notion a un prix, une pile allouée, un temps de changement de contexte, un risque de course.
+
+## La superloop a ses limites
+
+Reprenez le sketch de la station météo tel que le chapitre six vous l'a laissé : la boucle attend la fin de la fenêtre d'échantillonnage, lit le capteur, valide, filtre, écrit le journal local, rafraîchit l'écran, puis publie si la fenêtre de publication est ouverte. Ce programme repose sur une hypothèse implicite : chaque étape se termine toujours dans un temps raisonnable. Or c'est précisément ce que le réseau ne garantit pas. Tant que le broker répond en dix millisecondes, la boucle paraît souple ; dès que la liaison se réassocie ou que le point d'accès sature, l'envoi monopolise le processeur pendant des centaines de millisecondes, pendant lesquelles ni le capteur, ni l'écran, ni le bouton ne sont servis.
+
+Trois façons typiques de voir une superloop se fissurer, qui se ressemblent toutes au début. La première est le blocage discret : une connexion, une lecture série, un envoi réseau qui occupe le fil principal bien plus longtemps que prévu. La deuxième est la dérive de cadence : la période réelle devient le temps de travail plus le temps d'attente, elle varie donc à chaque tour, et vos séries temporelles s'en aperçoivent avant vous par des intervalles irréguliers. La troisième est la contradiction d'échéances : un rafraîchissement régulier et une publication qui peut absorber une demi-seconde ne cohabitent pas dans un ordre strictement séquentiel. Pour les rendre visibles, chronométrez chaque bloc avec millis() et affichez les durées extrêmes, jamais seulement la moyenne.
+
+Le tableau suivant relie les symptômes de votre banc à leur cause réelle et au remède de ce chapitre. Si deux lignes décrivent votre situation, la refonte en tâches s'impose.
+
+```table
+| Symptôme observé | Cause réelle | Remède apporté ici |
+|---|---|---|
+| L'écran gèle à chaque reconnexion réseau | Une seule boucle exécute les deux | Tâche réseau distincte, communication par file |
+| La période de mesure s'allonge par à-coups | Travail et attente s'additionnent | Tâche capteur cadencée sur l'horloge du système |
+| Le bouton rate des appuis courts | La boucle est occupée au moment du front | Découpage et priorités |
+| Ajouter une fonctionnalité casse une autre | Interactions croisées dans un unique flux | Messages entre tâches, ressources protégées |
+```
+
+
+Le listing ci-dessous est la version superloop de votre station. Cherchez le point où le fil principal se trouve captif : il n'est pas au début, il est dans l'appel d'envoi, et c'est là que tout le reste s'arrête avec lui.
+
+```cpp
+// Version superloop : tout dans un seul fil d'execution
+void loop() {
+  static unsigned long dernierEchantillon = 0;
+  static unsigned long dernierePublication = 0;
+  unsigned long maintenant = millis();
+
+  if (maintenant - dernierEchantillon >= 1000) {
+    dernierEchantillon = maintenant;
+    Mesure m = lireCapteur();          // 5 a 20 ms sur un bus I2C
+    if (m.valide) {
+      mesurerFiltrerEtStocker(m);      // 1 a 3 ms
+      mettreAJourAfficheur(m);         // 10 a 40 ms selon l'ecran
+    }
+  }
+
+  if (maintenant - dernierePublication >= 10000) {
+    dernierePublication = maintenant;
+    publierMQTT(derniereValide);       // 50 ms en temps normal,
+                                       // 400 ms si la liaison se retablit
+  }
+
+  gererLeBouton();                     // execute APRES l'envoi,
+  lireLaConsoleSerie();                // donc avec du retard variable
+}
+```
+
+L'ordonnancement temps réel répond autrement : au lieu d'un fil qui alterne les activités, on crée plusieurs fils indépendants, et l'on confie à un composant système, l'ordonnanceur, le soin de décider lequel tourne à chaque instant. Ce composant existe déjà sous vos doigts : l'ESP32 exécute FreeRTOS dès la mise sous tension, y compris dans vos sketches Arduino. Il est temps de cesser de le subir.
+
+## Une tâche, ce qu'elle est réellement
+
+Une tâche est un flux d'exécution autonome : un point de départ, une suite d'instructions, une pile mémoire propre, un contexte processeur propre, et une place dans la file d'attente de l'ordonnanceur. Le mot important est autonome. Quand une tâche est interrompue dans son exécution, l'ordonnanceur sauvegarde ses registres sur sa pile, charge ceux d'une autre tâche puis rend la main : pour celle qui reprend, le temps s'est écoulé sans qu'elle s'en aperçoive, et elle reprend exactement à l'instruction où elle en était. Ce mécanisme, le changement de contexte, crée l'illusion de plusieurs processeurs sur un seul cœur.
+
+La distinction entre fonction et tâche est la première source d'erreurs chez ceux qui viennent du langage C. Une fonction est appelée par quelqu'un, fait son travail, puis retourne à son appelant : sa pile est empruntée. Une tâche n'est jamais appelée : elle est créée, puis elle tourne. Sa fonction corps contient une boucle infinie et se termine rarement par return ; sa pile lui appartient et n'est libérée qu'à sa destruction. Vous n'écrivez donc pas une fonction que l'on utilise, vous écrivez le programme d'une entité qui vit.
+
+Chaque tâche possède cinq caractéristiques que l'on retrouve dans toutes les API de la suite : sa poignée pour la piloter après création, son nom court visible dans les traces, sa pile mesurée en octets sur l'ESP32, sa priorité, dont la signification exacte vient dans la section suivante, et son état : prête à tourner, en train de tourner, bloquée en attendant quelque chose, ou suspendue volontairement. La majorité du temps, vos tâches ne tournent pas, elles attendent — une file vide, un délai écoulé, une ressource libérée.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/freertos-logo.png
+| Le logo de FreeRTOS, noyau temps réel open source embarqué dans l'ESP32 et exécuté par défaut dans tous vos sketches Arduino pour cette carte.
+```
+
+Le tableau suivant confronte les trois formes d'exécution que vous avez manipulées dans ce parcours. Elles ne se remplacent pas, elles se complètent.
+
+```table
+| Critère | Fonction | Tâche | Routine d'interruption |
+|---|---|---|---|
+| Comment elle démarre | Par un appel | Par sa création | Par un événement matériel |
+| Ce qui l'arrête | Un return | Presque jamais, sinon suppression | Le retour d'interruption |
+| Pile utilisée | Celle de l'appelant | La sienne, allouée à la création | Pile dédiée, très courte |
+| Durée admise | Celle que l'appelant accepte | Doit céder la main régulièrement | Quelques instructions |
+| Exemple | lireCapteur() | Tâche d'affichage | Drapeau posé sur un front |
+```
+
+
+L'écriture d'une tâche suit un patron unique : la fonction prend un paramètre générique, une boucle traite le travail disponible, et chaque itération se termine par une attente qui met la tâche en sommeil plutôt que de faire tourner le processeur à vide. Cette dernière ligne sépare un système réel d'un système qui chauffe : une tâche qui ne dort jamais monopolise son cœur et affame les tâches de priorité égale.
+
+```cpp
+// Patron d'une tache : parametre, boucle, attente
+typedef struct {
+  const char *nom;
+  uint32_t periodeMs;
+} ParametresTache;
+
+void maTache(void *parametre) {
+  ParametresTache *p = (ParametresTache *)parametre;
+  TickType_t prochainReveil = xTaskGetTickCount();
+
+  for (;;) {
+    traiterUneUniteDeTravail();                 // le travail reel
+    xTaskDelayUntil(&prochainReveil,            // puis le sommeil :
+                    pdMS_TO_TICKS(p->periodeMs)); // la main est rendue
+  }
+}
+```
+
+Une découverte rassurante : vous utilisez déjà des tâches sans le savoir. Quand vous compilez un sketch pour l'ESP32, le cœur Arduino crée une tâche nommée loopTask, y exécute votre setup() puis votre boucle() à répétition, avec une pile de 8192 octets, une priorité de 1 et une préférence pour le cœur numéro 1. Votre programme est donc une tâche parmi d'autres, qui coexiste avec les tâches du pilote Wi-Fi, du pilote TCP et du service de surveillance. Découper votre application, c'est créer vous-même les tâches qui manquent.
+
+## Découper une application en tâches
+
+Le découpage est un acte de conception, pas une écriture de code : c'est ici que se joue la qualité du firmware, et c'est ici que la plupart des projets se trompent en créant soit une seule tâche géante, soit une tâche par fonction. La méthode repose sur trois questions, posées à chaque unité candidate. Premièrement, à quelle fréquence doit-elle s'exécuter, et avec quelle régularité. Deuxièmement, quelle est sa pire durée d'exécution, surtout quand tout va mal : c'est elle qui détermine ce que les autres tâches subiront. Troisièmement, que se passe-t-il si elle prend du retard : la donnée se perd-elle, ou peut-elle attendre ? Des réponses nettes aux trois questions font un bon candidat.
+
+Appliquons le tri à la station météo. La mesure doit avoir lieu toutes les secondes, sans exception, car elle donne son sens à la station : elle devient une tâche. L'affichage doit rester lisible, une vingtaine de rafraîchissements par seconde suffisent, et quelques images de retard n'ont aucune conséquence : deuxième tâche. La publication doit avoir lieu toutes les dix secondes, mais son temps d'exécution est le plus incertain de tous, puisqu'il dépend d'un équipement extérieur : troisième tâche, et c'est elle qu'il faut isoler. L'effet est mécanique : si l'envoi rame, seule l'équipe réseau rame, pendant que la mesure tient sa cadence.
+
+Le tableau ci-dessous formalise ce tri. Les priorités indiquées sont des ordres de grandeur pédagogiques, justifiés dans la section suivante : ce qui compte d'abord, c'est que chaque ligne ait une raison d'être.
+
+```table
+| Tâche | Rôle | Cadence | Priorité de départ | Pile indicative | Peut bloquer ? |
+|---|---|---|---|---|---|
+| TacheCapteur | Lire, valider, filtrer, horodater | 1 Hz | 3 | 4096 octets | Oui, dizaines de ms sur le bus |
+| TacheAfficheur | Dessiner l'état et les valeurs | 4 à 10 Hz | 2 | 4096 octets | Oui, dizaines de ms sur l'écran |
+| TacheReseau | Wi-Fi, MQTT, reconnexion | 0,1 Hz | 2 | 6144 octets | Oui, jusqu'à plusieurs secondes |
+| loopTask Arduino | setup, loop, console | libre | 1 | 8192 octets | Oui, si vous y écrivez du bloquant |
+```
+
+
+Quatre règles complètent ce découpage. Une tâche doit avoir une responsabilité nommable en une phrase, sans et ni. Ne créez pas une tâche par bouton ni par afficheur : les périphériques d'un même rythme restent dans la même tâche, sinon vous payez un changement de contexte pour rien. Gardez une tâche de service, celle qui hérite de votre boucle() Arduino, pour la console et les commandes manuelles. Enfin, documentez le contrat de chaque tâche, ce qu'elle produit et ce qu'elle ne doit jamais faire.
+
+L'antipatron à connaître est la tâche unique qui reproduit votre superloop : tout le code de la boucle() déplacé à l'identique dans une fonction à boucle infinie. Cela compile, cela démarre, et aucun des problèmes initiaux n'est réglé, puisqu'un seul fil reste seul à attendre le réseau. Le symptôme se repère vite : une tâche qui contient les mots Wi-Fi, afficheur et capteur dans le même bloc. La correction consiste à extraire ce qui bloque et à relier les deux par une file de messages.
+
+Voici la charpente de la station en trois tâches, volontairement vide de logique métier : les trois fonctions corps, les trois périodes, l'ossature d'attente. La logique écrite au chapitre six se glisse dans le bloc de travail, sans autre modification.
+
+```cpp
+// Charpente : trois taches, trois cadences, aucun travail inutile
+ParametresTache pCapteur  = {"capteur",  1000};
+ParametresTache pEcran    = {"ecran",     250};
+ParametresTache pReseau   = {"reseau",  10000};
+
+void tacheCapteur(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  for (;;) {
+    Mesure m = lireCapteurFiltre();
+    if (m.valide) xQueueOverwrite(fileMesures, &m);
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+
+void tacheAfficheur(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure copie;
+  for (;;) {
+    if (xQueuePeek(fileMesures, &copie, 0) == pdTRUE) dessinerEcran(copie);
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(250));
+  }
+}
+
+void tacheReseau(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure aPublier;
+  for (;;) {
+    maintenirLiaisonWifi();
+    if (xQueueReceive(fileMesures, &aPublier, 0) == pdTRUE) {
+      publierMQTT(aPublier);
+    }
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(10000));
+  }
+}
+```
+
+## Créer une tâche : xTaskCreate et ses pièges
+
+La création passe par une seule fonction, xTaskCreate, ou sa variante à affinité de cœur, xTaskCreatePinnedToCore, que vous utiliserez presque toujours sur l'ESP32. Elle prend six arguments : la fonction corps, le nom d'affichage, la taille de la pile, le pointeur transmis à la tâche, la priorité, et l'adresse d'une variable qui recevra la poignée. Quatre de ces six arguments contiennent un piège classique, classé ci-dessous selon leur fréquence d'apparition sur un banc.
+
+Le premier piège est la pile. Sur l'ESP32, la taille s'exprime en octets, alors que FreeRTOS d'origine, celui des livres et de nombreux exemples en ligne, l'exprime en mots de 32 bits : un code copié tel quel vous donne une pile quatre fois trop grande ou quatre fois trop petite. Les symptômes d'insuffisance sont têtus : redémarrage aléatoire, variable jamais écrite qui se corrompt, crash uniquement sur une branche donnée. Partez large, 4096 à 6144 octets, puis mesurez la consommation réelle avec l'indicateur de pile que nous utiliserons en fin de chapitre.
+
+Le deuxième piège est le paramètre. La fonction corps reçoit un pointeur void, et la donnée désignée doit encore exister quand la tâche s'exécute. Si vous transmettez l'adresse d'une variable locale de setup(), votre tâche lit une pile devenue illisible et son comportement devient aléatoire. Déclarez les paramètres statiques ou globaux, ou rattachez-les à la structure de configuration du système.
+
+```cpp
+// Creation correcte : parametre statique, retour verifie, poignee conservee
+static ParametresTache pCapteur = {"capteur", 1000};
+TaskHandle_t handleCapteur = NULL;
+
+BaseType_t ok = xTaskCreatePinnedToCore(
+    tacheCapteur,      // fonction corps
+    "capteur",         // nom court, visible dans les traces
+    4096,              // pile en OCTETS sur ESP32
+    &pCapteur,         // pointeur stable, pas une variable locale
+    3,                 // priorite
+    &handleCapteur,    // poignee pour piloter la tache
+    1);                // coeur applicatif de l'Arduino
+
+if (ok != pdPASS) {
+  Serial.println("Creation de la tache capteur impossible");
+  while (true) delay(1000);   // on n'execute jamais un firmware incomplet
+}
+```
+
+Le troisième piège est le retour. xTaskCreate renvoie pdPASS en cas de succès ; ignorer ce code revient à démarrer un firmware dont on ne sait pas s'il est complet. Une création ratée vient presque toujours d'une pile insuffisante ou d'une mémoire épuisée, et poursuivre alors produit des comportements impossiles à diagnostiquer.
+
+Le quatrième point est l'affinité de cœur, une spécificité de l'ESP32 absente des microcontrôleurs simples. La puce embarque deux cœurs identiques : le cœur 0, dit processeur de protocole, abrite en priorité les tâches du Wi-Fi et du Bluetooth ; le cœur 1, dit processeur applicatif, porte l'exécution du sketch Arduino. On peut laisser l'ordonnanceur répartir, ou épingler une tâche pour des raisons de performance ou d'accès matériel. La règle sûre pour débuter : tâches applicatives épinglées au cœur 1, cœur 0 réservé à la pile réseau, et jamais de présomption de parallélisme sans vérifier les accès communs.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/esp32.jpg
+| Une carte de développement ESP32 : son processeur dual-cœur impose de choisir lequel des deux cœurs exécute chaque tâche, tandis que sa mémoire vive partagée impose de les protéger.
+```
+
+Un dernier comportement à maîtriser est l'arrêt. Une tâche qui a fini son travail appelle vTaskDelete(NULL) pour se supprimer elle-même, ce qui libère sa pile et son emplacement ; une tâche qui doit s'arrêter temporairement ne se supprime pas, elle se suspend avec vTaskSuspend et se réveille plus tard, par une autre tâche ou par un événement. La suppression est définitive, la suspension ne l'est pas. En pratique, peu de tâches meurent : elles tournent, bloquées la majeure partie du temps, jusqu'à l'extinction.
+
+## Priorités et préemption
+
+L'ordonnanceur FreeRTOS fonctionne selon une règle unique, qu'il applique en permanence : parmi les tâches prêtes à tourner, c'est celle qui a la priorité la plus élevée qui gagne. Si deux tâches ont la même priorité, l'ordonnanceur alterne entre elles à chaque expiration de tick, ce qui donne un partage équitable ; si l'une d'elles se met en état bloqué, elle sort du jeu et les autres récupèrent la totalité du temps. Une tâche de priorité inférieure ne tourne donc que lorsque toutes les tâches supérieures sont endormies. Ce n'est pas un arbitrage, c'est une hiérarchie : retenez-le et toutes les priorités que vous attribuerez par la suite auront un sens.
+
+Les priorités sont des entiers dont la signification dépend d'une seule grandeur, le nombre maximal de priorités configuré dans le noyau : vingt-cinq sur un ESP32, ce qui laisse une échelle largement suffisante pour un objet connecté. Dans votre sketch Arduino, la tâche loopTask qui exécute setup() puis boucle() tourne à la priorité 1 ; la tâche d'identification, invisible, tourne à 0. Il faut donc éviter deux excès symétriques : donner la priorité haute à tout le monde, ce qui revient à n'avoir aucune hiérarchie, et tout laisser à 1, ce qui revient à supprimer l'ordonnanceur. Trois à quatre niveaux suffisent pour la station météo, et chaque niveau doit correspondre à une urgence réelle, pas à une commodité de code.
+
+La préemption est la conséquence mécanique de cette hiérarchie. À chaque tick, l'ordonnanceur compare les priorités des tâches prêtes ; si une tâche de rang supérieur devient prête, celle qui tourne est interrompue au milieu de son travail, son contexte est sauvegardé, et la nouvelle prend le relais. Rien n'est perdu, l'interruption ne dure que quelques microsecondes, mais l'ordre d'exécution change à tout moment. C'est cette propriété qui permet à une tâche de lecture de capteur de s'imposer à une tâche d'affichage, et c'est aussi la source du défaut le plus fréquent que nous détaillerons plus bas.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/freertos-tasks.png
+| Diagramme des états d'une tâche FreeRTOS : prête, en cours d'exécution, bloquée ou suspendue, avec les transitions qui mènent de l'une à l'autre.
+```
+
+Le tableau suivant donne les quatre états et, pour chacun, ce que la tâche fait réellement. Observez la colonne de droite : la quasi-totalité du temps, une tâche saine est bloquée, c'est-à-dire en attente d'un événement précis, et non en train de consommer du processeur.
+
+```table
+| État | Signification | Ce qui la fait sortir de cet état |
+|---|---|---|
+| Prête (Ready) | Son code est éligible, elle attend son tour | L'ordonnanceur la choisit pour tourner |
+| En cours (Running) | Elle exécute ses instructions sur un cœur | Préemption, fin de tour de tick, attente |
+| Bloquée (Blocked) | Elle attend un délai, une file ou un verrou | L'événement arrive ou le délai expire |
+| Suspendue (Suspended) | Elle est retirée du jeu sans attente | Un appel explicite de réveil depuis une autre tâche |
+```
+
+
+Le piège classique des priorités est celui d'une tâche haute qui bloque. Placez une tâche prioritaire qui lit une entrée série avec attente de fin de ligne, ou qui contacte un serveur sans délai, et tout le reste du système s'arrête : la tâche basse, qui affiche et mesure, ne récupère la main que lorsque la tâche haute s'endort, ce qui peut ne jamais arriver. Le symptôme est trompeur sur le banc : l'objet semble simplement lent, l'écran rame, les mesures deviennent rares, alors que le diagnostic correct est qu'une tâche prioritaire monopolise le cœur. La règle à appliquer : aucune tâche de priorité haute ne doit jamais attendre indéfiniment, et toute attente d'une tâche prioritaire doit être bornée par un délai maximal.
+
+La bonne attribution de priorité se fait donc à partir des contraintes de temps, jamais de la structure du code. On commence par lister, pour chaque tâche, son échéance : combien de temps après l'événement la réponse est-elle encore acceptable ? On classe ensuite de l'échéance la plus courte à la plus longue, et l'on attribue les priorités dans cet ordre. Pour la station météo, la mesure à la seconde passe au-dessus de l'affichage, l'affichage passe au-dessus de la publication réseau, et la boucle de service reste en bas de l'échelle. Cette méthode produit une hiérarchie stable : elle ne change pas quand on ajoute une fonctionnalité, alors qu'une priorité attribuée au fil des humeurs casse à chaque évolution.
+
+## Le temps des tâches : tick, vTaskDelay et cadences
+
+Toutes les notions de durée que vous manipulerez reposent sur un même battement, le tick, une interruption périodique qui réveille l'ordonnanceur et déclenche les vérifications de priorité. Sa fréquence est fixée à la compilation : de nombreuses configurations ESP-IDF la laissent à 100 Hz, soit dix millisecondes par tick, tandis que le cœur Arduino de l'ESP32 travaille à 1000 Hz, soit une milliseconde. Vous ne devez jamais supposer cette valeur : la constante portTICK_PERIOD_MS vous dit combien de millisecondes vaut un tick sur votre compilation, et toutes vos durées doivent passer par elle. Une attente d'une demi-milliseconde n'a pas de sens dans un système qui compte des ticks entiers.
+
+La fonction vTaskDelay place la tâche appelante en état bloqué pendant le nombre de ticks indiqué, et lui rend la main à l'expiration du délai. C'est l'équivalent direct de la fonction delay() du monde Arduino, et sur l'ESP32, la correspondance est littérale : la bibliothèque Arduino implémente delay() par vTaskDelay(ms / portTICK_PERIOD_MS). La différence n'est donc pas un écart de nature sur cette carte, mais d'intention et de portabilité. vTaskDelay exprime une durée en ticks du système, rappelle au lecteur que l'on bloque une tâche, et fonctionne à l'identique si le projet migre sous ESP-IDF ou sur un autre port FreeRTOS ; delay() ne porte aucune de ces informations et, sur d'autres cartes Arduino, n'a pas du tout ce comportement.
+
+Le défaut réel de vTaskDelay est ailleurs : il compte à partir du moment de l'appel, pas à partir du début de l'exécution de la tâche. Si votre tâche doit se réveiller toutes les secondes et que son travail dure quatre-vingts millisecondes, chaque cycle fait une seconde plus quatre-vingts millisecondes : la cadence dérive, lentement mais sûrement, et vos horodatages s'en aperçoivent. C'est la raison d'être de xTaskDelayUntil, qui maintient une date de réveil de référence et y ajoute systématiquement la période. Le retard éventuel est rattrapé sur les cycles suivants, la fréquence reste stable, et une tâche qui prend un coup de retard ne décale pas toutes les suivantes.
+
+Le tableau ci-dessous réunit les outils de temporisation que vous utiliserez. Chacun a sa place : l'erreur consiste à employer le mauvais parce qu'il est celui que l'on connaît.
+
+```table
+| Besoin | Outil | Remarque |
+|---|---|---|
+| Attendre une durée une fois | vTaskDelay(pdMS_TO_TICKS(ms)) | Bloque la tâche, cède la main |
+| Maintenir une cadence régulière | xTaskDelayUntil(&reveil, periode) | Rattrape le retard, évite la dérive |
+| Mesurer un intervalle | xTaskGetTickCount() ou millis() | Soustraire les instants, jamais comparer une somme |
+| Créer une temporisation courte | Timer matériel ou interruption | Sous le tick, la résolution ne le permet pas |
+| Attendre une file ou un verrou | Fonction de lecture avec délai maximum | L'attente se termine toujours |
+```
+
+
+Il reste à mesurer ce que vous construisez. Deux horloges coexistent : millis() et micros(), qui donnent le temps écoulé en millisecondes et microsecondes, et le compteur de ticks, qui donne le temps dans l'unité native du noyau. Pour diagnostiquer une tâche, chronométrez son travail au tick près et comparez la durée réelle au budget annoncé : c'est cette comparaison, et non l'impression à l'écran, qui dit si le système est temps réel. Prévoyez aussi une marge : un budget occupé à quatre-vingt-quinze pour cent laisse déjà peu de place à un événement imprévu, et un système réel se dimensionne sur son pire jour, pas sur sa moyenne.
+
+```cpp
+// Deux cadences : la derive d'une part, la stabilite d'autre part
+void tacheDerivante(void *p) {
+  for (;;) {
+    executerLeTravail();            // duree variable, parfois 80 ms
+    vTaskDelay(pdMS_TO_TICKS(1000)); // repart de 1 s APRES le travail
+  }                                 // -> periode reelle : 1080 ms
+}
+
+void tacheStable(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  const TickType_t periode = pdMS_TO_TICKS(1000);
+  for (;;) {
+    executerLeTravail();
+    xTaskDelayUntil(&reveil, periode); // la date de reveil avance
+  }                                    // -> periode reelle : 1000 ms
+}
+```
+
+## Files de messages : la communication par copie
+
+Dès que deux tâches doivent échanger une information, une tentation immédiate apparaît : déclarer une variable globale, l'écrire d'un côté, la lire de l'autre. C'est la pire des solutions, et elle échoue pour trois raisons indépendantes : l'accès concurrent peut lire une valeur à moitié écrite, la notion de moment où la donnée est prête n'existe pas, et le débogage devient impossible puisque rien ne dit qui a écrit quoi. La file de messages règle les trois défauts d'un seul coup. Elle est une boîte dans laquelle un producteur dépose des copies complètes d'un message et qu'un consommateur retire ensuite ; le transfert se fait par valeur, la file gère l'attente et l'ordre, et personne ne touche à la mémoire de l'autre.
+
+L'API tient en cinq appels. xQueueCreate(longueur, tailleElement) crée la file, dont il faut conserver le poignée. xQueueSend ou xQueueSendToBack dépose un message en fin de file, xQueueSendToFront en met un en tête, xQueueReceive retire le plus ancien, et xQueuePeek consulte le premier message sans le retirer. À chaque appel, vous pouvez donner un délai maximum d'attente : zéro pour ne jamais bloquer, portMAX_DELAY pour attendre indéfiniment, une autre valeur pour une attente bornée. Toute fonction renvoie pdTRUE en cas de succès et pdFALSE si le délai est écoulé, ce qu'il faut toujours tester.
+
+Le comportement aux extrêmes se règle au dimensionnement. Une file pleine fait attendre l'émetteur jusqu'à libération de place ; une file vide fait attendre le récepteur jusqu'à arrivée d'un message. Pour des mesures successives où seul le dernier état compte, on crée une file d'une seule case et l'on utilise xQueueOverwrite, qui remplace la valeur au lieu d'attendre : le capteur publie toujours, l'afficheur lit l'état le plus récent. Pour des événements qui ne doivent pas se perdre, on crée une file plus longue et on laisse la production aller son chemin pendant une panne brève de consommation. Ce choix est une décision d'architecture, pas un détail d'implémentation.
+
+```table
+| Situation | File choisie | Appel d'écriture | Résultat |
+|---|---|---|---|
+| Seul le dernier état compte | Une case | xQueueOverwrite | La valeur est toujours fraîche |
+| Chaque événement compte | Plusieurs cases | xQueueSend | FIFO, une file tampon |
+| L'émetteur peut attendre | Profondeur libre | xQueueSend avec délai | Bloqué jusqu'à place libre |
+| Le récepteur interroge sans consommer | Indifférent | xQueuePeek | Le premier message reste en place |
+```
+
+
+Le message lui-même doit être un objet complet et autonome. Définissez une structure, typiquement les valeurs mesurées, l'horodatage, un numéro de séquence et un drapeau de validité, et faites-en des copies dans la file. Ne transmettez jamais un pointeur vers une donnée que l'émetteur continue de modifier : la file copierait l'adresse, pas la donnée, et vous retrouveriez exactement le problème de partage que vous vouliez éviter. Le numéro de séquence mérite une attention particulière : il permet au consommateur de détecter les messages perdus ou réordonnés, ce qui transforme un silence suspect en un diagnostic chiffré.
+
+```cpp
+// File de mesures : production par la tache capteur, consommation ailleurs
+typedef struct {
+  float temperature;
+  float humidite;
+  uint32_t sequence;
+  uint32_t tick;
+  bool valide;
+} Mesure;
+
+QueueHandle_t fileMesures;
+
+void setupStation() {
+  fileMesures = xQueueCreate(1, sizeof(Mesure));  // dernier etat seulement
+  xTaskCreatePinnedToCore(tacheCapteur,  "capteur", 4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(tacheAfficheur, "ecran",  4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(tacheReseau,   "reseau",  6144, NULL, 2, NULL, 1);
+}
+
+void tacheCapteur(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure m;
+  for (;;) {
+    m = lireEtFiltrer();
+    m.tick = xTaskGetTickCount();
+    xQueueOverwrite(fileMesures, &m);   // copie, pas de pointeur
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Cas concret : la station météo en trois tâches
+
+Voici la station assemblée. L'initialisation crée d'abord la file, puis les trois tâches, puis laisse tourner la boucle Arduino, réduite désormais au rôle de service : configuration, console, commandes manuelles. Rien d'autre ne change par rapport au chapitre six : les fonctions de lecture, de filtrage, d'affichage et de publication sont celles que vous avez déjà écrites, simplement appelées depuis des flux différents. C'est tout l'intérêt du découpage, il ne contraint pas la logique métier, il change l'organisation du temps.
+
+Le trajet d'une mesure est maintenant facile à raconter. La tâche capteur se réveille à la seconde, interroge le capteur, valide et filtre, puis dépose une copie dans la file. La tâche afficheur, réveillée quatre fois par seconde, consulte la file sans la vider et dessine ce qu'elle trouve. La tâche réseau, réveillée toutes les dix secondes, retire le message, maintient la liaison puis publie. Chacune connaît sa cadence, chacune travaille sur sa propre copie, et aucune n'a besoin de savoir que les autres existent.
+
+L'intérêt apparaît quand la liaison se dégrade. Supposons que la reconnexion Wi-Fi immobilise la tâche réseau pendant quatre cents millisecondes : avec la superloop, l'écran aurait gelé et la mesure aurait pris du retard ; maintenant, seule la tâche réseau subit le retard, la tâche capteur continue de se réveiller à la seconde et l'écran reste vivant. Si la panne dure dix secondes, la file ne contient que le dernier état, les anciens sont remplacés, et la station reprend d'elle-même dès la liaison rétablie. C'est cette propriété, la continuité d'un service malgré la défaillance d'un autre, qui justifie à elle seule le passage à FreeRTOS.
+
+Le tableau ci-dessous donne les budgets de temps de la station telle qu'elle tourne. Ils ne sont pas des promesses, ce sont des ordres de grandeur de banc : mesurez les vôtres avec la méthode de la section précédente et remplissez la dernière colonne avec vos chiffres.
+
+```table
+| Tâche | Cadence | Durée de travail observée | Pire cas admissible | Conséquence si dépassé |
+|---|---|---|---|---|
+| Capteur | 1000 ms | 5 à 20 ms | 50 ms | Mesure en retard, pas perdue |
+| Afficheur | 250 ms | 10 à 40 ms | 100 ms | Image figée quelques cycles |
+| Réseau | 10000 ms | 50 ms à 2 s | 30 s | Publication suivante rattrapée |
+| Service | libre | 1 à 5 ms | indifférent | Console moins réactive |
+```
+
+
+Il reste trois règles de conduite pour terminer l'assemblage. Premièrement, ne créez jamais une file entre deux tâches qui ne s'échangent qu'un booléen de drapeau : un sémaphore binaire ou une notification de tâche est plus léger et plus clair. Deuxièmement, écrivez le contrat de la file dans le code : qui produit, qui consomme, quelle profondeur, que signifie l'absence de message. Troisièmement, gardez une règle de dégradation : si une tâche ne peut pas faire son travail, elle le signale et poursuit, jamais elle ne s'arrête d'attendre sans limite.
+
+```cpp
+// Assemblage : la boucle Arduino devient un simple service
+void setup() {
+  Serial.begin(115200);
+  configurerCapteurEtEcran();
+  setupStation();          // file puis trois taches, cf. section precedente
+}
+
+void loop() {
+  // Plus aucune mesure ni publication ici : seulement le service.
+  if (Serial.available()) {
+    traiterCommandeConsole();   // lecture non bloquante, une ligne par tour
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
+}
+```
+
+## Protéger les ressources partagées : mutex, sémaphores, événements
+
+Une ressource partagée est tout ce que deux tâches peuvent toucher en même temps : le moniteur série, le bus SPI de l'écran, le fichier de journal sur carte, le capteur I2C, une variable globale, un périphérique matériel qui n'accepte qu'une transaction à la fois. Le partage n'est pas en soi un problème, c'est l'accès simultané qui l'est : deux tâches qui entament chacune une transaction sur le même bus produisent une trame corrompue, et le résultat n'a rien de prévisible, car il dépend de l'ordre réel des instructions, que vous ne connaissez pas. La protection consiste donc à transformer un accès concurrent en accès séquentiel : l'un entre, travaille, sort ; l'autre attend.
+
+Le mutex est l'outil de premier choix quand la ressource appartient à quelqu'un. On l'appelle avec une prise, qui tente d'obtenir la ressource, et on la libère avec un rendu ; seul celui qui a pris le verrou peut le rendre, et entre les deux, toute autre tâche qui tente la même prise reste bloquée ou échoue si son délai maximum est écoulé. Cette propriété de propriété exclusive est ce qui distingue le mutex du sémaphore : elle empêche qu'un verrou soit libéré par erreur par une tâche qui ne le détenait pas, ce qui est une faute classique quand le code se ramifie. Sur FreeRTOS, le mutex possède en plus une caractéristique précieuse, l'héritage de priorité, que nous étudierons dans la section suivante.
+
+Le sémaphore binaire, lui, ne protège rien : il signale. Il passe de l'état vide à l'état plein quand une tâche ou une interruption le donne, et le consommateur l'attend. On s'en sert pour dire une chose simple, par exemple une ligne est disponible sur la console ou une mesure est prête, sans transporter la donnée. Le sémaphore compteur généralise l'idée à un nombre fini de ressources identiques, typiquement des tampons disponibles. Le groupe d'événements permet d'attendre qu'une combinaison de drapeaux soit remplie, ce qui est commode pour un réveil conditionnel. Enfin, les notifications de tâche offrent le mécanisme le plus léger : un compteur par tâche, idéal pour un réveil unique entre deux parties.
+
+```table
+| Mécanisme | Ce qu'il exprime | Qui le libère | Usage typique |
+|---|---|---|---|
+| Mutex | Une ressource est occupée | Celui qui l'a prise | Bus SPI, port série, fichier |
+| Sémaphore binaire | Un événement s'est produit | N'importe qui | Réveil, ligne disponible |
+| Sémaphore compteur | N ressources identiques sont libres | Celui qui rend | Tampons, entrées de pool |
+| Groupe d'événements | Plusieurs conditions sont réunies | Position par position | Démarrage multi-conditions |
+| Notification de tâche | Un signal adressé à une tâche | Celui qui envoie | Producteur unique |
+```
+
+
+Quatre règles rendent l'usage des verrous sûr dans la durée. D'abord, ne conservez jamais un verrou pendant une attente : la tâche qui protège une ressource doit faire le travail le plus court possible, sans lecture série, sans envoi réseau, sans délai. Ensuite, écrivez toujours le rendu du verrou sur toutes les branches de sortie, y compris les erreurs ; une branche d'erreur qui oublie de rendre est la cause la plus fréquente de blocage permanent. Troisièmement, imposez-vous un délai maximum de prise plutôt que d'attendre indéfiniment, et traitez l'échec comme un événement prévu. Quatrièmement, documentez quelle tâche protège quelle ressource : ce tableau vaut mieux que n'importe quel commentaire au fil du code.
+
+```cpp
+// Le port serie partage : un mutex par transmission complete
+SemaphoreHandle_t mutexSerial = NULL;
+
+void ecrireLog(const char *message) {
+  if (xSemaphoreTake(mutexSerial, pdMS_TO_TICKS(50)) == pdTRUE) {
+    Serial.println(message);
+    xSemaphoreGive(mutexSerial);
+  } else {
+    // la trace est perdue, mais le systeme poursuit son travail
+    compteurTracesPerdues++;
+  }
+}
+```
+
+## Bloquages mutuels : comprendre le deadlock
+
+Le blocage mutuel survient quand deux tâches attendent chacune la ressource détenue par l'autre. Concrètement, la tâche capteur détient le verrou du bus I2C et réclame ensuite le verrou de l'afficheur ; au même instant, la tâche afficheur détient le verrou de l'afficheur et réclame celui du bus I2C. Aucune des deux ne peut avancer, aucune ne se termine, et le système est figé pour toujours. Le plus déconcertant, c'est que chaque fonction prise isolément est correcte : c'est l'enchaînement des appels, dans un ordre non contrôlé, qui produit le défaut.
+
+On décrit classiquement le blocage mutuel par quatre conditions qui doivent être simultanément réunies. Il faut un partage exclusif, une détention en attendant, aucune révocation possible de ce qui est détenu, et un ordre de demande circulaire. Supprimez-en une seule et le défaut devient impossible : c'est exactement la stratégie de correction. La plus simple à appliquer en pratique consiste à imposer un ordre total des verrous, lequel est le même pour toutes les tâches, sans exception.
+
+Le tableau ci-dessous rejoue la scène au tick près. Lisez les colonnes de gauche à droite : à aucun instant aucune tâche n'est en faute, et pourtant le système est irrémédiablement arrêté.
+
+```table
+| Instant | Tâche capteur | Tâche afficheur | Verrou I2C | Verrou écran |
+|---|---|---|---|---|
+| T1 | Prend I2C | En sommeil | Capteur | Libre |
+| T2 | Réclame écran | Prend écran | Capteur | Afficheur |
+| T3 | Attend, bloquée | Réclame I2C | Capteur | Afficheur |
+| T4 | Attend, bloquée | Attend, bloquée | Capteur | Afficheur |
+```
+
+
+Un détail de diagnostic mérite d'être retenu : dans un blocage mutuel, aucune tâche ne consomme de processeur. Les deux sont en état bloqué, l'ordonnanceur tourne donc la tâche d'identification, et le watchdog de tâche, qui surveille justement l'inactivité du processeur, ne déclenche rien. Votre objet ne présente donc ni panic, ni redémarrage, ni message d'erreur : il est simplement muet et ne répond plus. Face à un gel sans trace, la première hypothèse à vérifier est la suivante : combien de verrous sont en circulation, et quel ordre imposent-elles ?
+
+Les solutions sont au nombre de trois, souvent combinées. La première, l'ordre total, consiste à numéroter les verrous et à exiger que toute tâche les prenne dans l'ordre croissant, ce qui supprime toute circulaire. La deuxième, la prise à essai avec délai, consiste à tenter l'acquisition du second verrou sans attendre : en cas d'échec, rendre le premier, patienter un peu, puis reprendre depuis le début, ce qui introduit une attente bornée et jamais un blocage définitif. La troisième consiste à éliminer le second verrou en regroupant dans une seule fonction protégée tout le travail qui réclamait les deux ressources, au prix d'un verrou plus long mais d'un ordre unique.
+
+```cpp
+// Ordre impose : verrou 1 avant verrou 2, toujours, dans les deux taches
+SemaphoreHandle_t verrouI2C;
+SemaphoreHandle_t verrouEcran;
+
+void tacheCapteur(void *p) {
+  for (;;) {
+    xSemaphoreTake(verrouI2C, portMAX_DELAY);
+    Mesure m = lireBusI2C();
+
+    if (xSemaphoreTake(verrouEcran, pdMS_TO_TICKS(20)) == pdTRUE) {
+      afficherEtendu(m);
+      xSemaphoreGive(verrouEcran);      // rendu sur la branche de succes
+    }
+    xSemaphoreGive(verrouI2C);          // rendu, branche quoi qu'il arrive
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Inversion de priorité et famine
+
+Deux défauts d'ordre subtil viennent compléter le blocage mutuel, et ils ont la particularité de ne produire aucun message : l'inversion de priorité et la famine. Tous deux naissent de la même source, l'interaction entre les verrous et la hiérarchie des priorités, et tous deux se manifestent par des retards que rien n'explique en apparence. Un développeur qui ne les connaît pas passera des heures à chercher une erreur d'algorithme dans un code dont l'algorithme est parfait.
+
+L'inversion de priorité se produit quand une tâche de basse priorité détient un verrou réclamé par une tâche de haute priorité, pendant qu'une tâche de priorité intermédiaire, elle, tourne librement. La tâche haute attend la basse, mais la basse ne reçoit plus le processeur puisque l'intermédiaire est prioritaire par rapport à elle : la haute est donc retardée par une tâche qui n'a aucun lien avec elle. Le cas est devenu célèbre pour avoir immobilisé une sonde martienne jusqu'à ce que le verrou soit doté d'héritage de priorité. FreeRTOS applique exactement cette correction : quand une tâche haute attend un mutex détenu par une tâche basse, la priorité de cette dernière est temporairement élevée au niveau de celle qui attend, le temps de rendre le verrou.
+
+La famine, ou accaparement, est le phénomène inverse : une tâche de priorité haute qui ne se met jamais en attente empêche toute tâche inférieure de tourner. Si votre tâche réseau, prioritaire, boucle sans jamais appeler de vTaskDelay ni d'attente sur file, la mesure et l'affichage ne se réveilleront jamais, quelles que soient leurs propres priorités. Le remède est structurel : chaque tâche doit céder la main à intervalle régulier, et les tâches de même importance doivent partager une priorité commune pour bénéficier du partage round-robin.
+
+```table
+| Phénomène | Cause | Symptôme | Parade |
+|---|---|---|---|
+| Inversion de priorité | Verrou détenu en bas, réclamé en haut | Tâche haute retardée sans raison | Mutex à héritage de priorité |
+| Famine | Tâche haute qui ne dort jamais | Tâches basses figées en permanence | Attente obligatoire à chaque cycle |
+| Blocage non borné | Attente portMAX_DELAY sur ressource externe | Gel au moindre incident | Délai maximum systématique |
+| Contention excessive | Trop de tâches sur une même ressource | Performances dégradées, pas de panne | Regrouper le travail, élargir la ressource |
+```
+
+
+Le bon réflexe consiste à faire coïncider deux disciplines. D'une part, réserver les priorités élevées aux tâches qui doivent répondre vite et qui attendent peu ; d'autre part, exiger que toute attente soit bornée et que tout verrou soit tenu le moins longtemps possible. Appliqué à notre station, ce principe donne une configuration verrouillable : la tâche capteur, prioritaire, prend le verrou du bus pour la durée d'une transaction de quelques dizaines de microsecondes et le rend immédiatement ; la tâche réseau, la plus lente, ne prend jamais de verrou de capteur, puisqu'elle reçoit ses données par copie dans une file.
+
+Ces deux défauts se cherchent avec des mesures, pas avec des relectures. Pour la famine, imprimez le compteur de cycles de chaque tâche pendant quelques secondes : une tâche qui absorbe cent pour cent du temps disponible pendant que ses voisines n'avancent pas est démasquée immédiatement. Pour l'inversion, relevez les durées maximales de réponse de la tâche prioritaire et comparez-les à leur moyenne : un écart d'un facteur dix, sans changement de charge, signale presque toujours un verrou disputé par une tâche de rang inférieur. Ces deux mesures coûtent quelques lignes de code et vous évitent des journées entières de conjectures sur un objet qui, lui, ne dit rien.
+
+```cpp
+// Prise bornee : un verrou jamais conserve au-dela du delai admis
+bool afficherAvecDelai(const Mesure &m) {
+  if (xSemaphoreTake(verrouEcran, pdMS_TO_TICKS(30)) != pdTRUE) {
+    compteurAffichagesSauts++;     // on saute une image, on ne bloque pas
+    return false;
+  }
+  dessinerEcran(m);
+  xSemaphoreGive(verrouEcran);
+  return true;
+}
+```
+
+## Partager des données sans les corrompre
+
+Avant même d'introduire verrou et file, il faut comprendre ce qui, dans un partage, pose réellement problème. Une écriture sur une variable de 32 bits alignée est atomique sur l'ESP32 : personne ne peut l'interrompre au milieu. Le danger commence avec une donnée composée, un structure de plusieurs champs, un compteur augmenté d'une unité, un entier de 64 bits ou une valeur écrite pendant qu'une autre tâche la lit. Dans ces cas, il est parfaitement possible d'observer un état mixte, une température du nouveau couple associée à l'horodatage de l'ancien, et ces valeurs impossibles traversent alors votre chaîne de traitement sans être jamais détectées.
+
+Le mot-clé volatile ne corrige rien de tout cela. Il empêche uniquement le compilateur de mettre en cache une variable qu'il croit inchangée, ce qui est indispensable pour un drapeau posé par une interruption, mais qui ne crée ni atomicité ni ordre d'accès. Une variable volatile partagée reste parfaitement corruptible ; elle ne fait que garantir que la lecture verra bien la dernière valeur écrite, à un instant que vous ignorez. C'est l'une des confusions les plus répandues, et elle donne un faux sentiment de sécurité au moment précis où il faudrait être le plus strict.
+
+Quand la donnée est effectivement composée et doit être lue de manière cohérente, deux solutions s'offrent à vous. La première consiste à placer la lecture et l'écriture dans une section critique, un court bloc pendant lequel les interruptions et les changements de contexte sont suspendus : l'ensemble est perçu comme indivisible. La seconde, souvent préférable, consiste à éviter le partage en envoyant une copie, exactement ce que fait la file de messages. Le choix se formule ainsi : si vous pouvez copier, copiez ; si vous devez partager, protégez le plus brièvement possible.
+
+```table
+| Type de donnée | Accès concurrent toléré | Protection nécessaire |
+|---|---|---|
+| Octet ou entier 32 bits aligné, un seul écrivain | Oui, pour la lecture seule | Aucune, si personne ne l'agrège |
+| Structure de plusieurs champs | Non | Section critique ou copie par file |
+| Compteur incrémenté par plusieurs tâches | Non | Section critique, opération atomique |
+| Drapeau posé par interruption, lu par tâche | Oui | volatile, plus une sémantique claire |
+| Chaîne ou tableau variable | Non | Verrou ou possession exclusive |
+```
+
+
+Le listing suivant montre d'abord le défaut, puis sa correction. Dans la version fautive, deux tâches incrémentent le même compteur : l'une peut lire la valeur, être interrompue, et se faire devancer par l'autre, perdant une unité. La version corrigée enferme l'opération dans une section critique d'une durée microscopique, ce qui la rend indivisible sans jamais suspendre longtemps le système.
+
+```cpp
+// Faillible : increment non atomique sur deux taches
+uint32_t compteurMesures = 0;
+compteurMesures++;          // lecture, addition, ecriture : trois gestes
+
+// Correct : section courte et indivisible
+portMUX_TYPE verrouCompteur = portMUX_INITIALIZER_UNLOCKED;
+
+void incrementerCompteur() {
+  portENTER_CRITICAL(&verrouCompteur);
+  compteurMesures++;
+  portEXIT_CRITICAL(&verrouCompteur);
+}
+```
+
+Une dernière discipline complète ces mécanismes : la propriété des données. Dans un firmware bien découpé, chaque donnée a un unique propriétaire, la tâche qui la produit, et les autres ne l'obtiennent que par copie. Cette règle élimine une grande partie des verrous avant même qu'ils ne soient nécessaires, elle rend le débogage tracable, puisqu'un seul endroit écrit, et elle s'aligne sur ce que vous avez déjà appris : la file transporte des copies, l'afficheur affiche sa copie, le réseau publie la sienne.
+
+## Fiabilité : watchdog, piles et statistiques
+
+Un système temps réel ne se juge pas à ce qu'il fait quand tout va bien, mais à ce qu'il fait quand quelque chose cloche. Trois instruments suffisent à ouvrir le capot, et aucun n'exige de matériel supplémentaire : l'indicateur de pile, le compteur de cycles par tâche et le watchdog. Ils répondent à trois questions distinctes. La pile vous dit si votre dimensionnement est juste. Les statistiques vous disent qui consomme le processeur. Le watchdog vous dit si une tâche s'est perdue. Un firmware professionnel les consulte avant la mise en service, puis après chaque évolution.
+
+L'indicateur de pile, uxTaskGetStackHighWaterMark, renvoie la quantité minimale de pile restée inutilisée depuis le démarrage de la tâche. Le chiffre se lit à l'envers : plus il est petit, plus la tâche s'est approchée du débordement. Sur ESP-IDF et dans le cœur Arduino de l'ESP32, la valeur est exprimée en octets, alors que la documentation de FreeRTOS d'origine parle en mots ; ne comparez donc jamais deux chiffres sans savoir dans quelle unité ils ont été produits. La méthode consiste à faire passer votre firmware dans toutes ses branches, y compris les cas d'erreur, puis à relever le minimum : sous deux cents octets de réserve, agrandissez la pile, un débordement se paie par une corruption qui ne se signale jamais au bon endroit.
+
+Le watchdog est la seconde ligne de sécurité. Le système embarque un mécanisme qui surveille l'activité des tâches d'identification : si l'un des cœurs cesse d'attribuer du temps à la tâche d'attente, c'est que quelque chose tourne en boucle sans jamais céder la main, et le système redémarre plutôt que de rester figé. Dans un sketch Arduino, la boucle() participe à cette surveillance, ce qui explique des redémarrages en cascade quand une attente s'allonge excessivement. Pour un firmware sérieux, on abonde le compte à rebours explicitement à la fin de chaque cycle de travail, et l'on veille à ce que chaque tâche laisse régulièrement tourner les tâches d'identification.
+
+```table
+| Instrument | Question à laquelle il répond | Bon signal | Signal inquiétant |
+|---|---|---|---|
+| Indicateur de pile | La pile est-elle suffisante ? | Plusieurs centaines d'octets libres | Moins de deux cents octets |
+| Compteurs de cycles | Qui consomme le processeur ? | Chaque tâche dans son budget | Une tâche à cent pour cent |
+| Watchdog de tâche | Une tâche s'est-elle perdue ? | Réinitialisation périodique | Redémarrage intempestif |
+| Raison de redémarrage | Pourquoi a-t-on redémarré ? | Extinction volontaire | Panne logicielle ou débordement |
+```
+
+
+Les statistiques d'exécution ferment la boucle. En activant la génération de statistiques à la compilation, vous obtenez, pour chaque tâche, le pourcentage du temps processeur consommé, ce qui transforme une intuition en chiffre. C'est l'outil qui trahit les tâches qui tournent inutilement : une tâche censée se réveiller une fois par seconde et qui affiche douze pour cent d'occupation tourne visiblement beaucoup plus souvent que prévu, ou bien omet son attente. Procédez par comparaison, chiffre en main, entre le budget annoncé dans le tableau de conception et le chiffre mesuré : tout écart supérieur à quelques pour cent mérite une explication écrite.
+
+Un mot enfin sur la lecture des redémarrages, car elle décide souvent de l'heure perdue ou gagnée en dépannage. Une carte qui repart sans raison apparente laisse une trace : dans le cœur Arduino, un rapport est imprimé au démarrage quand le précédent s'est terminé par une panne logicielle, avec le nom de la tâche et l'adresse de l'instruction fautive. Ce rapport doit être recueilli avant tout redémarrage, en ouvrant le moniteur série immédiatement après la coupure. Un redémarrage dû au watchdog n'a pas la même cause qu'un redémarrage dû à un débordement de pile ni qu'une alimentation insuffisante lors du pic du module radio : trois symptômes identiques au premier regard, trois remèdes entièrement différents.
+
+```cpp
+// Metrologie : pile, cycles et signature de chaque tache
+void afficherDiagnostic(TaskHandle_t tache, const char *nom) {
+  UBaseType_t libre = uxTaskGetStackHighWaterMark(tache);
+  Serial.printf("%s : %u octets de pile libres\n", nom, (unsigned)libre);
+}
+
+void tacheCapteur(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  for (;;) {
+    travailler();
+    afficherDiagnostic(NULL, "capteur");
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Assemblage : la station météo temps réel complète
+
+Réunissons maintenant les pièces. La station compte une file de mesures d'une case, trois tâches épinglées au cœur applicatif, un verrou sur le port série utilisé pour les traces, une attente bornée partout où une ressource extérieure est en jeu, et un compte à rebours de surveillance alimenté en fin de cycle. Le rôle de la boucle() s'est réduit : configuration, console, supervision. Toute la logique métier du chapitre six a survécu au déplacement, seule l'organisation du temps a changé, ce qui était précisément l'objectif.
+
+Le tableau suivant récapitule le fonctionnement en conditions normales. Les chiffres sont ceux d'un banc de mesure : reprenez la colonne du milieu sur votre propre matériel, c'est le premier exercice utile après le téléchargement du firmware.
+
+```table
+| Tâche | Priorité | Réveil | Durée de travail | Part du processeur |
+|---|---|---|---|---|
+| Capteur | 3 | Toutes les secondes | 5 à 20 ms | Environ 1 à 2 pour cent |
+| Afficheur | 2 | Toutes les 250 ms | 10 à 40 ms | Environ 5 à 10 pour cent |
+| Réseau | 2 | Toutes les dix secondes | 50 ms à 2 s | Variable, nulle en panne |
+| Service | 1 | En continu | 1 à 5 ms | Quelques fractions de pour cent |
+```
+
+
+Les règles de dégradation font partie du firmware, pas du commentaire. Un capteur qui ne répond pas produit un message marqué invalide, jamais une valeur plausible. Un afficheur absent n'arrête personne. Une liaison coupée met la tâche réseau en attente bornée et laisse les autres poursuivre, avec reprise automatique. Une file qui ne se remplit plus est comptée et signalée. Dans tous les cas, le système dégrade une fonction, jamais l'ensemble : c'est la même règle que celle du chapitre six, simplement rendue possible par la séparation des tâches.
+
+Le découpage n'a pas rendu le code du chapitre six obsolète, il l'a replacé. Les modules de lecture, de filtrage, de stockage et de publication restent les mêmes, avec les mêmes contrats d'entrée et de sortie ; ce qui change, c'est l'appelant et le moment de l'appel. C'est le critère à retenir pour juger une bonne refactorisation : si déplacer le code dans des tâches vous a obligé à réécrire la logique métier, le découpage était mal posé, et le problème vient d'un couplage antérieur qu'il faut d'abord défaire. À l'inverse, si la logique est entrée telle quelle dans les blocs de travail et si seuls les appels d'attente et d'échange ont été ajoutés, l'architecture est saine.
+
+La recette se fait en provoquant les pannes, pas en espérant qu'elles n'arrivent pas. Débranchez le point d'accès : la station doit continuer à mesurer et à afficher, puis publier le dernier état au retour du réseau. Collez le bus I2C : les autres tâches doivent rester cadencées et l'état d'erreur doit apparaître sur l'écran. Bloquez la console avec une commande interminable : la mesure doit continuer. Enfin, laissez tourner l'objet vingt-quatre heures avec les statistiques affichées : un firmware temps réel se valide par une trace stable, pas par une démonstration de trente secondes.
+
+```cpp
+// Station meteo temps reel : complet, avec file, verrou et surveillance
+QueueHandle_t fileMesures;
+SemaphoreHandle_t mutexSerial;
+
+void setup() {
+  Serial.begin(115200);
+  fileMesures = xQueueCreate(1, sizeof(Mesure));
+  mutexSerial  = xSemaphoreCreateMutex();
+  configurerCapteurEtEcran();
+  demarrerTaches();
+}
+
+void demarrerTaches() {
+  xTaskCreatePinnedToCore(tacheCapteur,   "capteur", 4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(tacheAfficheur, "ecran",   4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(tacheReseau,    "reseau",  6144, NULL, 2, NULL, 1);
+}
+
+void loop() {
+  if (Serial.available()) traiterCommandeConsole();
+  vTaskDelay(pdMS_TO_TICKS(50));
+}
+```
+
+## À retenir
+
+Ce chapitre tient en un principe unique : découpez le temps avant de coder, puis laissez l'ordonnanceur l'attribuer. Tout le reste, priorités, files, verrous, mesures, n'est que la mise en œuvre de cette décision. Voici l'essentiel, formulé pour être relu juste avant d'ouvrir votre projet.
+
+- Une tâche est un flux autonome avec sa pile, sa priorité et son état, pas une fonction appelée.
+- Une tâche saine attend : file vide, délai écoulé, verrou libéré ; elle ne tourne jamais à vide.
+- La priorité la plus haute l'emporte ; à priorité égale, l'ordonnanceur partage le temps.
+- Attribuez les priorités selon l'échéance, jamais selon la structure du code.
+- Aucune tâche prioritaire ne doit attendre sans délai maximum.
+- La pile se compte en octets sur l'ESP32 et se mesure avec uxTaskGetStackHighWaterMark.
+- Une cadence régulière s'écrit avec xTaskDelayUntil, pas avec un délai reparti de zéro.
+- Les tâches communiquent par copies, dans des files dimensionnées pour le scénario de panne.
+- Le verrou protège une ressource ; il se tient le moins longtemps possible et se rend sur toutes les branches.
+- Imposer un ordre total aux verrous rend le blocage mutuel structurellement impossible.
+- Le mutex à héritage de priorité limite l'inversion ; l'attente régulière évite la famine.
+- volatile ne crée ni atomicité ni ordre d'accès ; il ne protège qu'une lecture face au compilateur.
+- Mesurez avant de croire : pile, cycles par tâche, raison de redémarrage.
+
+## Erreurs fréquentes
+
+La première erreur consiste à créer une seule tâche et à y replacer toute la boucle : FreeRTOS est alors présent, mais rien n'a changé. La deuxième est d'oublier l'attente en fin de boucle ; la tâche tourne alors en permanence et affame les autres, sans jamais produire d'erreur. La troisième est d'attribuer la priorité haute à la tâche qui bloque le plus, celle qui contacte le réseau : tout le système s'arrête avec elle. La quatrième est de transmettre à une tâche l'adresse d'une variable locale de la fonction d'initialisation, ce qui donne un comportement aléatoire difficile à relier à sa cause.
+
+Viennent ensuite les verrous oubliés sur une branche d'erreur, qui transforment un incident en gel définitif, et les attentes sans limite sur une ressource externe, qui font la même chose à la première panne du fournisseur. On voit aussi des files dimensionnées à une case là où chaque événement compte, donc des données perdues en silence, et des structures partagées lues sans protection, qui produisent des mesures impossibles. Enfin, le diagnostic est souvent bâclé : on regarde la moyenne au lieu du pire cas, on néglige l'unité de l'indicateur de pile, on interprète un redémarrage sans en lire la raison.
+
+Une dernière famille d'erreurs relève de la conception plutôt que du code : attribuer une priorité parce qu'une tâche paraît importante, sans regarder son échéance, puis s'étonner que l'objet soit lent. Le classement par importance est humain, le classement par urgence est technique, et seul ce dernier produit une hiérarchie stable. De même, multiplier les tâches pour imiter le nombre de fonctions du projet augmente les piles allouées, les changements de contexte et les occasions de contension, sans jamais ajouter de réactivité : le bon nombre de tâches est celui des flux réellement indépendants, ni plus, ni moins.
+
+- Tâche unique reprenant toute la boucle : rien n'a changé.
+- Boucle sans attente : une tâche monopolise un cœur.
+- Priorité haute sur une tâche qui bloque : tout le système s'arrête.
+- Paramètre pointant vers une variable locale : comportement aléatoire.
+- Rendu de verrou oublié sur une branche d'erreur : gel.
+- Attente portMAX_DELAY sur une ressource extérieure : panne garantie.
+- File d'une seule case pour des événements cumulatifs : pertes silencieuses.
+- Structure lue et écrite sans section critique : valeurs impossibles.
+- Unité de pile confondue : dimensionnement faux d'un facteur quatre.
+- Moyenne mesurée au lieu du pire cas : certitude trompeuse.
+
+## Pour aller plus loin
+
+La référence du noyau reste la source la plus sûre pour approfondir chaque appel. La page consacrée à xTaskCreate explique les six arguments, la signification de la pile et le code de retour : https://www.freertos.org/a00125.html . La page dédiée à xQueueCreate décrit la création des files, la taille des éléments et les règles de pleine et de vide : https://www.freertos.org/a00116.html . Du côté d'Espressif, la documentation FreeRTOS détaille les différences du port SMP, l'affinité de cœur, l'unité de la pile et les sections critiques : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos_idf.html . Le guide d'optimisation de la mémoire explique l'indicateur de pile, son unité et la méthode de dimensionnement : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/performance/ram-usage.html . Enfin, la documentation Arduino rappelle le comportement de delay() et sa place dans un sketch : https://docs.arduino.cc/language-reference/en/functions/time/delay/ .
+
+Au-delà des références, deux pratiques feront de vous un meilleur développeur temps réel. La première est l'habitude de mesurer : gardez les statistiques d'exécution activées pendant toute la phase de mise au point, et consignez les chiffres dans le dossier du projet, car c'est en les relisant dans six mois que vous verrez la régression. La deuxième est la revue de conception avant code : sur un papier, listez les tâches, leurs échéances, les ressources qu'elles partagent et l'ordre de leurs verrous. Un tableau d'une page suffit à rendre visible un blocage mutuel qui coûterait une journée de débogage. Pratiquez sur de petits objets, un feu, une alarme, une porte : chaque essai ajoutera un cas à votre répertoire.
+
+## Et maintenant : passez à l'exercice de refonte
+
+Vous avez maintenant les outils qui séparent un prototype d'un firmware : plusieurs flux d'exécution, une hiérarchie de priorités fondée sur les échéances, des échanges par copie, des ressources protégées et des moyens de mesure. Un point reste volontairement hors de ce chapitre : le bilan énergétique et la veille profonde, qui relèvent du projet de fin de parcours plutôt que de l'ordonnancement. L'exercice pratique vous demande d'appliquer exactement cette méthode à la station météo du chapitre six, en la refactorant en trois tâches communicant par file, avec les priorités justifiées, les attentes bornées et le diagnostic de pile fourni.
+
+Avant de commencer, une dernière exigence de méthode. Écrivez d'abord, sur une page, le tableau des tâches : nom, cadence, échéance, priorité, pile, ressources partagées. Ce tableau est le vrai livrable de conception ; le code n'en sera que la transcription. Un firmware temps réel qui commence par un tableau commence bien, et un firmware qui commence par xTaskCreate sans savoir pourquoi se termine presque toujours par un objet silencieux que personne ne saura réparer.

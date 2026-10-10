@@ -1,0 +1,136 @@
+## NumPy : sortir de la boucle par la vectorisation
+
+Vous avez jusqu'ici optimisé du Python avec du Python : meilleures structures, compréhensions, mémoïsation. Un palier supplémentaire existe, et il change d'échelle. À chaque itération d'une boucle, l'interpréteur doit décoder une instruction, compter les références, résoudre un attribut, allouer éventuellement un objet : tout cela coûte plusieurs centaines de nanosecondes, multipliées par des millions d'itérations. Une bibliothèque comme NumPy regroupe les nombres dans un tampon contigu de mémoire géré en C, puis exécute l'opération entière dans une boucle compilée. On ne rend pas le calcul plus malin, on supprime le coût de pilotage, et les gains vont couramment de dix à cent fois sur les traitements numériques.
+
+Le cas type est l'agrégation d'une colonne de mesures : moyenne, écart-type, nombre de valeurs hors bornes, normalisation. Écrit en boucle Python, ce travail ressemble à tout autre code que vous avez écrit dans ce parcours. Écrit en NumPy, il devient une expression unique, plus courte et beaucoup plus rapide.
+
+```python
+import numpy as np
+import timeit
+
+valeurs = np.random.default_rng(0).normal(120, 15, 200_000)
+
+def moyenne_boucle(data):
+    total = 0.0
+    for x in data:
+        total += x
+    return total / len(data)
+
+def hors_bornes_boucle(data, bas, haut):
+    return sum(1 for x in data if x < bas or x > haut)
+
+print("boucle moyenne ", min(timeit.repeat(lambda: moyenne_boucle(valeurs), number=5, repeat=3)))
+print("numpy  moyenne ", min(timeit.repeat(lambda: valeurs.mean(), number=5, repeat=3)))
+print("boucle bornes  ", min(timeit.repeat(lambda: hors_bornes_boucle(valeurs, 90, 150), number=5, repeat=3)))
+print("numpy  bornes  ", min(timeit.repeat(lambda: np.count_nonzero((valeurs < 90) | (valeurs > 150)), number=5, repeat=3)))
+```
+
+Sur deux cent mille valeurs, la moyenne en boucle demande environ cinq millisecondes, celle de NumPy environ deux cent microsecondes, soit un facteur vingt-cinq ; la détection de valeurs hors bornes gagne un facteur cinquante, car le masque booléen évite également le coût de la fonction appelée à chaque élément. Le chiffre exact dépendra de votre machine, l'ordre de grandeur, lui, ne change pas.
+
+Les règles d'usage tiennent en peu de points, mais ils sont impitoyables. Créez vos tableaux une seule fois et réutilisez-les ; convertissez une liste en tableau à l'entrée du traitement, jamais à l'intérieur d'une boucle. Préférez les masques booléens et les fonctions d'ensemble aux accès élément par élément avec un index : `valeurs[i] = valeurs[i] * 1.5` dans une boucle Python annule presque tout l'avantage. Exploitez le report de forme pour appliquer une opération à une matrice sans la dupliquer, et utilisez les fonctions prévues, sum, mean, argmax, unique, plutôt que de réécrire leur logique. Enfin, sortez les résultats vers Python seulement quand c'est nécessaire : chaque aller-retour tableau vers liste a un coût.
+
+Les limites sont elles aussi claires. Sur de petits tableaux, de quelques dizaines d'éléments, le surcoût de construction du tableau peut dépasser le gain ; NumPy s'apprécie sur des volumes, pas sur trois valeurs. Le traitement de chaînes de caractères ou de structures hétérogènes relève rarement de NumPy, et une colonne d'objets Python contenus dans un tableau perd tout avantage. Et l'interchangeabilité avec vos outils du quotidien doit être vérifiée : un tableau ne se sérialise pas comme une liste, il ne s'insère pas tel quel dans un dictionnaire imbriqué, et vos tests devront le traiter en conséquence.
+
+Le lien avec le reste de la leçon est direct. Si cProfile désigne une boucle de calculs numériques comme dominante, la vectorisation est le premier levier, avant toute réécriture native. Si le profilage désigne, au contraire, une boucle sur des chaînes, des dictionnaires ou des appels réseau, NumPy n'apportera rien et vous ferait perdre du temps. L'ordre des instruments reste le même : mesurer, identifier la nature du goulot, choisir l'outil correspondant.
+
+## Cython, Numba et les extensions natives : le dernier recours
+
+Quand les structures sont justes, les mémoïsations posées et la vectorisation appliquée, il reste un cas : une boucle resserrée sur des nombres entiers ou des flottants dont Python ne peut pas s'approcher, faute de pouvoir compiler l'interprétation elle-même. C'est le moment d'envisager de sortir du pur Python. Ce moment doit rester rare, car il introduit une chaîne de construction, une plateforme à cibler et un code que peu de collègues pourront corriger.
+
+Cython est l'option la plus ancienne et la plus documentée. Vous écrivez un fichier .pyx, proche du Python classique, en ajoutant des déclarations de types sur les variables et les paramètres, puis vous le compilez en C, qui devient une extension chargée par l'interpréteur. Les déclarations sont le cœur du dispositif : elles permettent à Cython de générer du code C directement, sans passer par les objets Python ni par le comptage des références.
+
+```python
+# controle.pyx — somme de contrôle sur un tableau d'entiers
+def somme_controle(int[:] valeurs):
+    cdef long total = 0
+    cdef Py_ssize_t i
+    for i in range(valeurs.shape[0]):
+        total = (total + valeurs[i]) % 1000000007
+    return total
+```
+
+La compilation s'intègre dans un fichier de construction standard, et le module s'utilise ensuite comme n'importe quel autre import. Le gain constaté sur ce type de boucle va généralement d'un facteur cinq à un facteur trente, selon la nature du calcul et la qualité des déclarations ; l'erreur classique consiste à déclarer les paramètres mais pas les variables d'itération, ce qui laisse des objets Python au cœur de la boucle et annule une grande partie du bénéfice.
+
+Numba propose une autre voie, sans étape de compilation à intégrer : un décorateur analyse la fonction à la première exécution et la compile pour les types d'arguments rencontrés. Il convient merveilleusement aux boucles numériques écrites en Python standard, y compris celles qui exploitent un index, et il ne demande aucun fichier supplémentaire. Ses contraintes tiennent au fait qu'il ne connaît pas toutes les fonctions de Python : certaines constructions élevées, certains objets et certaines bibliothèques ne sont pas supportés, et le premier appel s'accompagne d'un temps d'analyse à mesurer séparément.
+
+Le choix entre les deux, et parfois l'abandon de l'un comme de l'autre, se décide sur trois critères. La nature du calcul d'abord : du numérique simple, c'est Numba ; des structures typées, des accès mémoire précis ou un mélange avec des bibliothèques C existantes, c'est Cython. L'environnement de déploiement ensuite : Numba évite la compilation à l'installation, Cython s'intègre mieux dans une chaîne de paquets existante. Enfin, l'équipe : une extension native qui ne peut être maintenue que par une seule personne est un risque, pas une optimisation.
+
+Des alternatives existent et complètent le panorama : une extension C écrite à la main et exposée via cffi ou ctypes quand la bibliothèque est déjà là, un port vers un autre interpréteur compatible Python, une implémentation externe appelée depuis votre programme, ou encore, pour les calculs purement numériques de grande ampleur, la délégation complète à une bibliothèque spécialisée. Chacune ajoute sa propre chaîne de construction et sa propre surface de maintenance.
+
+Le cas du collège illustre le dernier palier. Après le passage à l'ensemble, l'écriture itérative et la vectorisation des agrégats, le rapport tombait à 1,6 seconde ; le profilage restant désignait une somme de contrôle parcourant les vingt-sept mille notes, soit 1,1 seconde, en pur Python. La version Cython de cette unique fonction a ramené cette part à 0,15 seconde et le rapport complet à 0,9 seconde. Un facteur dix sur la fonction, un facteur quarante-six sur l'utilisateur final — et surtout, une seule fonction touchée, avec ses tests inchangés.
+
+## Optimiser avec méthode : le diagnostic avant et après
+
+Tous les outils sont entre vos mains ; il reste la discipline qui les rend utiles. Elle tient en un protocole court, que vous appliquerez dans cet ordre, sans jamais l'enchaîner autrement. D'abord, figez un jeu de référence : un fichier de données représentatif, une machine donnée, une version de Python notée. Ensuite, relevez une ligne de base en exécutant la mesure au moins cinq fois et en retenant la médiane. Corrigez un seul point. Remesurez dans les mêmes conditions. Consignez les deux chiffres, puis seulement, passez au point suivant.
+
+L'ordre des leviers n'est pas décoratif, il est hiérarchique. La complexité d'abord : passer d'un coût quadratique à un coût linéaire vaut toujours mieux que tout raffinement de constante, car elle décide du comportement aux grandes tailles. Ensuite la structure et l'algorithme : un index, un générateur, une mémoïsation bien placée. Puis la vectorisation, qui supprime le pilotage de l'interpréteur sur les calculs numériques. Enfin l'extension native, réservée au goulot qui subsiste. Inverser cet ordre, c'est accepter de compliquer le code pour un gain qui, dans la plupart des cas, se trouvait une ligne plus loin.
+
+Le banc de comparaison finale se lit comme une preuve, pas comme une démonstration. Exécutez les deux variantes dans le même script, sur les mêmes données, et affichez les deux nombres côte à côte : c'est ce que vous joindrez au correctif.
+
+```text
+$ python -m timeit -n 2000 -s "import rapport_old" "rapport_old.construire_lignes(NOTES, INSCRITS)"
+2000 loops, best of 5: 1.712 msec per loop
+$ python -m timeit -n 2000 -s "import rapport_new" "rapport_new.construire_lignes(NOTES, INDEX)"
+2000 loops, best of 5: 0.019 msec per loop
+```
+
+À partir de là, la performance doit être protégée comme n'importe quel autre comportement. Un script de référence, ajouté au dépôt et exécuté à l'occasion d'une livraison, suffit : il charge le jeu de données fixe, mesure les fonctions critiques et signale un dépassement de seuil en échouant. Vous n'avez pas besoin d'une plateforme de bancs d'essai pour un projet de cette taille, vous avez besoin d'un fichier qui compare un chiffre à un seuil et qui crie quand la marge est mangée. L'exercice d'architecture du chapitre dix vous a déjà donné les habitudes de test qu'il faut réutiliser ici.
+
+```image
+oscilloscope
+| Deux mesures superposées sur un oscilloscope, comme un avant et un après : c'est ainsi qu'un gain de performance se démontre.
+```
+
+Le bilan du collège se lit d'un coup d'œil dans le tableau suivant. Chaque ligne correspond à un outil de cette leçon, à un diagnostic produit par cet outil et à une correction unique, mesurée avant de passer à la suivante.
+
+| Étape du diagnostic | Outil utilisé | Temps du rapport |
+|---|---|---|
+| Version de départ, recherche d'inscrits dans une liste | cProfile | 41,7 s |
+| Index en ensemble construit avant la boucle | cProfile puis timeit | 2,4 s |
+| Écriture ligne à ligne, mémoire bornée | tracemalloc | 2,2 s |
+| Agrégats et seuils exprimés en vectorisé | timeit | 1,6 s |
+| Somme de contrôle compilée | cProfile puis Cython | 0,9 s |
+
+Le dernier point de la méthode est de savoir s'arrêter. Un gain de trente pourcent sur une opération qui pèse une fraction de pourcent du temps total ne mérite ni son correctif, ni sa revue de code, ni la dette qu'il laisse derrière lui. Appliquez la question de contrôle à chaque candidat à l'optimisation : quelle part du temps total cette opération représente-t-elle, et quel est le gain absolu en secondes pour l'utilisateur ? Si la réponse est inférieure au bruit de mesure, si personne ne se plaint, si le code devient plus difficile à relire, n'intervenez pas. La performance n'est pas un but, c'est une contrainte parmi d'autres, et l'élégance d'un programme tient autant à ce qu'il ne fait pas qu'à ce qu'il fait vite.
+
+## À retenir
+
+- On mesure avant de modifier : un gain non chiffré n'existe pas, et un gain non protégé disparaît au prochain refactor.
+- cProfile répond à la question « où part le temps », en distinguant temps propre et temps cumulé, et se lit d'abord avec -s cumtime.
+- Les colonnes ncalls, tottime et cumtime indiquent respectivement la fréquence, le travail propre et le travail délégué.
+- timeit remplace le chronométrage à la main : beaucoup d'exécutions, série réchauffée, médiane plutôt que minimum.
+- Comparer deux variantes n'est valable que si les deux produisent exactement le même résultat, tests à l'appui.
+- tracemalloc mesure la mémoire tracée et localise les allocations ; c'est le pic qui déclenche les pannes.
+- La complexité prime sur toute micro-optimisation : O(n²) sur une recherche en boucle est la cause la plus fréquente des ralentissements.
+- Une liste sert à ranger et à parcourir, un ensemble à appartenir, un dictionnaire à accès par clé, une deque à une file.
+- Construisez l'index une seule fois, avant la boucle ; une structure reconstruite à chaque itération ne change rien.
+- Les compréhensions gagnent du temps et de la clarté, mais elles allouent la totalité du résultat ; les générateurs bornent la mémoire.
+- lru_cache accélère uniquement les fonctions pures à arguments hachables, et se vérifie par le ratio hits sur misses.
+- La vectorisation NumPy supprime le coût de pilotage de l'interpréteur ; Cython et Numba interviennent en dernier, sur un goulot déjà identifié.
+
+## Erreurs fréquentes
+
+- Optimiser avant de profiler → exécutez cProfile et notez la fonction dominante avant d'ouvrir l'éditeur.
+- Chronométrer avec time.time sur quelques lignes → utilisez timeit, répétez, et retenez la médiane des séries.
+- Comparer deux variantes qui ne calculent pas la même chose → écrivez d'abord le test d'équivalence, puis chronométrez.
+- Chercher dans une liste à l'intérieur d'une boucle → construisez un ensemble avant la boucle, c'est O(n²) sinon.
+- Reconstruire l'ensemble ou le dictionnaire à chaque itération → déplacez la construction hors de la boucle et remesurez.
+- Empiler les résultats dans une liste avant d'écrire le fichier → écrivez au fil de l'eau pour borner la mémoire.
+- Créer un décorateur lru_cache sur une fonction qui lit un fichier ou dépend du temps → vous cacherez un résultat périmé.
+- Utiliser list.pop(0) pour vider une file → passez à deque.popleft(), qui reste en O(1).
+- Réécrire en C une boucle qui représente 3 % du temps → appliquez la loi d'Amdahl et attaquez la part dominante.
+- Déclarer une optimisation sans chiffre d'après → conservez les deux mesures dans le correctif, avec le jeu de données utilisé.
+
+## Pour aller plus loin
+
+La documentation du module profile reste la porte d'entrée de tout ce qui précède : https://docs.python.org/3/library/profile.html. Elle détaille à la fois cProfile, son parent profile, les deux façons de lire un profil, la classe pstats et le tri sur la ligne de commande, ainsi que les différences de surcoût entre eux ; la section consacrée aux restrictions de tri et aux statistiques cumulées correspond exactement aux tableaux que vous avez lus dans cette leçon. Prenez également connaissance des limites d'instrumentation, afin de ne jamais comparer des profils réalisés dans des conditions différentes.
+
+Le module timeit a sa page dédiée, avec la description des options de la ligne de commande, la sémantique de best parmi plusieurs séries et le module time, offrant une horloge à plus haute résolution : https://docs.python.org/3/library/timeit.html. Pour la mémoire, la documentation de tracemalloc explique les domaines d'allocation, la prise d'instantanés et la comparaison de deux instantanés, ce qui vous permettra d'aller plus loin que l'exemple présenté ici : https://docs.python.org/3/library/tracemalloc.html.
+
+Pour la vectorisation, la référence officielle de NumPy rassemble le guide d'introduction, le manuel d'indexation et de report de forme, et le tableau des fonctions d'agrégation : https://numpy.org/doc/stable/. Enfin, pour les deux volets natifs, la documentation de Cython décrit les déclarations de type et le processus de compilation, tandis que celle de Numba décrit les décorateurs et les sous-ensemblles du langage pris en charge. Lisez-les après avoir terminé l'exercice, et non avant : une optimisation native tentée sans diagnostic préalable est la meilleure façon d'ajouter du code lent à maintenir.
+
+## Et maintenant : votre propre diagnostic
+
+La leçon est terminée, mais le raisonnement ne commence qu'au livrable. Votre mission consiste à reprendre le rapport du collège tel qu'il vous est fourni, à établir un diagnostic complet et à livrer un correctif justifié par des chiffres : profilage avant, correction, profilage après, comparaison des deux courbes. Vous ne devrez pas seulement rendre le programme plus rapide, vous devrez expliquer, en quelques lignes, pourquoi il l'était, ce que la mesure a montré et ce que vous avez choisi de ne pas toucher.
+
+Le script de référence attendu à la fin doit pouvoir s'exécuter en une commande, afficher le temps médian de la version d'avant et de la version d'après, et échouer si le gain promis n'est pas atteint. C'est ce fichier que vous ajouterez à votre dépôt, et c'est lui qui vous évitera, dans six mois, de voir la performance revenir sans qu'aucun test ne vous prévienne. Mesurez, corrigez une seule chose, remesurez, consignez : ce rythme, appliqué une première fois sur ce rapport, deviendra votre façon de travailler sur tous les programmes que vous écrirez ensuite.

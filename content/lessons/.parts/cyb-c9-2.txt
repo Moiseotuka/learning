@@ -1,0 +1,127 @@
+## Une image Docker, réellement
+
+Avant de durcir quoi que ce soit, il faut savoir ce qu'on durcit. Une image de conteneur n'est pas un disque virtuel : c'est un empilement de couches en lecture seule, décrit par un manifeste et assorti d'un fichier de configuration qui indique comment lancer le contenu. Chaque instruction exécutée dans le Dockerfile — installation d'un paquet, copie d'un fichier, réglage d'une variable — crée une couche supplémentaire, et ces couches s'additionnent sans jamais être modifiées : le système de fichiers en union superpose les couches et donne l'illusion d'un disque unique. Une conséquence en découle, décisive pour la sécurité : supprimer un fichier dans une couche postérieure ne l'efface pas des couches antérieures, il reste intact et consultable par quiconque disposera de l'image.
+
+Cette architecture explique également la vitesse et la légèreté du modèle. Les couches identiques sont partagées entre images, la mise en cache d'une instruction invalide toutes les suivantes et rien que celle-ci, et le transport d'une image revient à n'envoyer que les couches manquantes. Le prix à payer est une discipline de construction : l'ordre des instructions devient un choix de sécurité autant qu'un choix de performance, une couche inutile reste gravée à jamais, et un cache réutilisé à tort peut reconstruire un binaire depuis une source que l'on croyait abandonnée. Construire une image propre demande donc de penser couches, et non fichiers.
+
+L'image se distingue du conteneur par un point simple : l'image ne fait rien, le conteneur exécute. Au démarrage, le moteur prend l'image, ajoute un système de fichiers éphémère en écriture, applique les paramètres de lancement — utilisateur, variables, commandes, limites de ressources — puis isole le processus avec les espaces de noms et les groupes de contrôle du noyau hôte. Deux conteneurs peuvent partager la même image et avoir des vies radicalement différentes : l'un tourne en lecture seule avec un utilisateur non privilégié, l'autre en root avec des privilèges étendus. La sécurité d'un déploiement se joue donc sur deux tableaux, l'image que l'on a construite et la manière dont on la lance ; ce chapitre passe le premier au crible dans cette section, puis le second dans la suite.
+
+Pourquoi l'image devient-elle l'unité de sécurité de référence ? Parce qu'elle se copie, se partage et se déploie partout sans être relue. La même image passe du poste d'un développeur au registre de l'équipe, puis en production, puis dans un environnement de recette oublié. Si elle contient un compte de service, une bibliothèque vulnérable ou un shell d'administration, cette faiblesse voyage avec elle et se multiplie à chaque déploiement. À l'inverse, une image vérifiée, signée et minimale donne à l'équipe un objet unique à contrôler : on l'analyse une fois, on l'autorise une fois, puis on la déploie en confiance. C'est tout l'intérêt du contrôle de la chaîne d'approvisionnement logicielle, que la section consacrée à ce sujet approfondira.
+
+```image
+docker-container
+| Le conteneur ajoute à l'image une couche éphémère en écriture : durcir l'image, c'est agir sur les couches qui voyagent partout.
+```
+
+Les trois commandes suivantes sont le minimum à maîtriser pour ouvrir une image avant de l'accepter. Elles se lisent sur votre poste comme sur un registre distant, et aucune ne nécessite d'exécuter le contenu. Prenez l'habitude de les lancer avant chaque import : elles vous diront en moins d'une minute qui a construit quoi, avec quels outils, et sous quel identifiant d'utilisateur le processus démarrera.
+
+```bash
+# Couches, taille et date de construction de chaque instruction
+docker history --no-trunc monimage:1.4.0
+
+# Configuration de lancement : utilisateur, points d'entree, variables, commande
+docker image inspect --format '{{json .Config}}' monimage:1.4.0
+
+# Empreinte immuable de l'image, celle qu'il faut verrouiller en production
+docker inspect --format '{{index .RepoDigests 0}}' monimage:1.4.0
+```
+
+Un dernier point de vocabulaire, souvent source de confusion : l'identifiant court que vous voyez, six ou douze caractères hexadécimaux, est celui du manifeste local et il change à chaque reconstruction ; l'empreinte de dépôt, celle qui suit l'arobase, désigne le contenu exact tel que publié. Verrouiller une version par le simple nom du tag revient à dire : prends ce qui est là demain. Verrouiller par empreinte revient à dire : prends exactement ceci, quoi qu'il arrive. En production, la seconde formule est la seule acceptable, et nous la retrouverons dans la construction de l'image durcie.
+
+## Durcir une image : du Dockerfile fourni à l'image livrée
+
+Le durcissement d'une image suit un ordre : choisir la base, construire par étapes, retirer les privilèges, réduire ce qui est installé, puis vérifier. Chaque étape a un effet mesurable et une commande de contrôle associée ; une étape non contrôlée est une étape non faite. L'exemple qui suit est celui de l'image livrée par les bénévoles de la médiathèque, une application web écrite en Python qui sert le catalogue des emprunts, avec un serveur de développement pour lancer l'application en local et des outils de compilation laissés dans l'image pour éviter les surprises en production.
+
+La base est la première décision, et souvent la plus rentable. Une distribution complète apporte des milliers de fichiers, un gestionnaire de paquets, des outils de débogage et des services que l'application n'utilisera jamais : tout cela constitue la surface d'attaque, se met à jour malgré vous et grossit l'image inutilement. Une image minimale, du type image de base sans système d'exploitation complet ou distribution allégée, réduit le périmètre à ce qui exécute réellement votre code. Exigez en revanche une provenance connue : préférez un dépôt officiel, épinglez la version par empreinte, et refusez le tag flottant qui désignera une version différente demain matin. Une base choisie par commodité et jamais revue devient, en six mois, la principale source de correctifs à traiter.
+
+La construction en plusieurs étapes est le levier suivant, et il règle deux problèmes à la fois. Dans la première étape, on installe l'environnement de compilation et les dépendances de développement ; dans la seconde, on ne copie que l'artefact exécutable et les dépendances d'exécution. Le compilateur, les en-têtes de développement et les caches ne franchissent jamais la frontière : ils restent dans une image jetable qui n'est jamais publiée. Le gain est double, en taille et en sécurité, puisque les outils qui permettent de transformer du code en binaire disparaissent de l'environnement de production. Cette technique suffit à elle seule à supprimer la moitié des vulnérabilités remontées par les analyseurs, car beaucoup concernent des composants de compilation qu'aucun code applicatif n'invoque.
+
+Le troisième geste est le plus souvent oublié, et c'est lui que l'on vérifie en premier : exécuter le conteneur sans privilège. Par défaut, l'image ne définit aucun utilisateur, le processus démarre donc avec les droits de l'utilisateur racine du conteneur, et un détournement de la moindre vulnérabilité applicative donne à l'attaquant un accès complet à l'environnement, avec la possibilité de modifier les fichiers de l'application, d'installer un outil et d'essayer d'échapper au conteneur. Définir un utilisateur non privilégié, lui donner la seule propriété des fichiers dont il a besoin et refuser toute élévation transforme cette compromission en échec : l'attaque reste contenue, elle ne peut ni modifier l'image ni persister. L'atelier de fin de chapitre vous demandera justement de corriger ce point sur l'image livrée.
+
+Le quatrième geste consiste à retirer tout ce qui ne sert pas en production : le serveur de développement, les outils de débogage, les clients de connexion à distance, les clés d'accès de compilation, les fichiers de test et les exemples fournis avec les bibliothèques. Cette suppression se fait pendant la construction, jamais après, précisément à cause du mécanisme de couches vu plus haut. S'y ajoutent deux réflexes simples : ne jamais lancer de démon d'arrière-plan dans l'image, préférer un superviseur externe ou l'orchestrateur, et déclarer une commande de santé explicite afin que l'orchestrateur puisse détecter une application bloquée au lieu de la croire vivante.
+
+| Défaut de l'image livrée | Conséquence en production | Durcissement attendu |
+|---|---|---|
+| Base complète et tag flottant | Surface large, reproduction impossible | Base minimale, version épinglée par empreinte |
+| Compilation dans l'image finale | Outils transformant du code présents | Construction en plusieurs étapes |
+| Processus exécuté en root | Compromission totale à la moindre faille | Utilisateur non privilégié dédié |
+| Serveur de développement inclus | Port de mise au point exposé, code de test exploitable | Suppression des outils inutiles à la construction |
+| Commande de santé absente | Défaillance invisible pour l'orchestrateur | Santé déclarée et testée |
+| Secrets copiés puis effacés | Secrets conservés dans les couches antérieures | Aucun secret dans le contexte de construction |
+
+Voici l'image de départ livrée par l'équipe, à dessein imparfaite : construction en une seule étape, image de base complète, exécution en root, outillage de développement conservé. Relisez-la ligne à ligne avant de la comparer à la version durcie : chaque défaut correspond à une ligne, et vous devrez pouvoir nommer le défaut sans hésiter.
+
+```dockerfile
+# Image livree par l'equipe — a corriger dans l'atelier
+FROM python:3.12
+
+WORKDIR /app
+COPY . .
+
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get update && apt-get install -y curl vim net-tools \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV FLASK_ENV=production
+EXPOSE 8000
+
+CMD ["python", "run.py"]
+```
+
+La version durcie applique les quatre gestes dans l'ordre : base minimale et épinglée, étape de compilation séparée, utilisateur dédié créé sans shell, fichiers appartenant à cet utilisateur, dépendances réduites à l'exécution et commande de santé. Notez que rien n'a été supprimé après construction : tout ce qui n'est pas nécessaire a été simplement absent de la couche finale. C'est cette discipline qui rend l'image vérifiable, et la section suivante traite le cas le plus délicat de la construction, celui des secrets.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+# Meme application, reconstruite selon les regles du chapitre
+
+FROM python:3.12-slim@sha256:5f1a9c2d7e4b8a6f3c0d5e2b9a7f4c1d8e6b3a0f5c2d9e7b4a1f8c6d3e0b7a4f AS compilation
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim@sha256:5f1a9c2d7e4b8a6f3c0d5e2b9a7f4c1d8e6b3a0f5c2d9e7b4a1f8c6d3e0b7a4f
+
+RUN groupadd --system app && useradd --system --gid app --home /app app
+
+WORKDIR /app
+COPY --from=compilation /install /usr/local
+COPY --chown=app:app . .
+
+USER app
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD ["python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+
+CMD ["python", "run.py"]
+```
+
+## Secrets et clés : ce qui ne doit jamais entrer dans une image
+
+La construction d'une image rassemble trois acteurs qui n'ont pas le même niveau de confiance : le dépôt de code, la machine de construction et le registre. Un secret peut fuiter dans chacun de ces trois endroits, et les mécanismes diffèrent. Le plus fréquent est aussi le plus bête : une variable d'environnement déclarée dans le Dockerfile avec le mot de passe du service de messagerie, ou un argument de construction passé en clair à la commande d'image. Ces valeurs ne sont pas des commentaires, elles sont gravées dans la configuration de l'image, affichées par la commande d'inspection, listées dans l'historique et copiées dans chaque conteneur dérivé. Un utilisateur sans aucun privilège, capable uniquement de lancer un conteneur depuis le registre, lit ainsi votre clé en une commande.
+
+Le deuxième mécanisme de fuite est subtil : la couche abandonnée. On copie un fichier de configuration contenant un jeton, on s'en aperçoit, on ajoute une instruction qui supprime le fichier, on recommence la construction. Le résultat semble propre, mais la couche intermédiaire contient toujours le fichier d'origine, et un extracteur de couches le restitue en quelques secondes. La règle à appliquer est mécanique : aucun secret ne doit entrer dans le contexte de construction, donc aucun fichier secret ne doit se trouver dans le répertoire envoyé au démon, donc le fichier d'exclusion du contexte doit être écrit et relu avant la première construction, pas après la première alerte.
+
+Le troisième point concerne le dépôt de code. Un jeton commité une fois reste dans l'historique même après suppression du fichier, et l'historique est souvent public ou lu par plus de monde qu'on ne croit. Les outils de détection de secrets dans l'historique, les alertes de forge et la rotation systématique forment un trio indispensable : détecter, révoquer, remplacer. Une clé volée ne se rachète pas par une suppression, elle se rachète par une révocation datée et par la preuve que l'ancienne ne fonctionne plus. Notez que les empreintes d'accès aux registres, les clés d'API du fournisseur cloud et les jetons d'intégration relèvent exactement de la même logique.
+
+Existe-t-il un moyen légitime de fournir un secret à la construction ? Oui, et il est récent : la prise en charge des montages de secrets par le moteur de construction permet de transmettre un fichier depuis le gestionnaire de secrets de la machine de construction, sans jamais l'ajouter au contexte, sans le placer dans une couche et sans l'exposer dans la ligne de commande. La valeur reste limitée à l'instruction qui en a besoin. Employez ce mécanisme pour ce qui doit réellement être présent à la construction, comme un accès à un dépôt privé ; pour tout le reste, préférez une injection à l'exécution, où le conteneur reçoit son secret sous forme de fichier monté, avec une durée de vie courte et une rotation indépendante de l'image.
+
+```dockerfile
+# INTERDIT : la valeur est gravee dans la configuration de l'image
+FROM node:22-slim
+ARG API_TOKEN=sk_live_51Hxxxxxxxxxxxx
+ENV MAIL_PASSWORD=motdepasse123
+COPY .env /app/.env
+
+# CORRECT : le secret est monte uniquement pendant l'instruction qui en a besoin
+FROM node:22-slim AS build
+WORKDIR /src
+COPY package.json .
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    npm ci --omit=dev
+```
+
+Passons aux vérifications concrètes, à exécuter avant d'accepter une image venue de l'extérieur. Cherchez les variables sensibles dans la configuration, les fichiers de configuration courants copiés dans les couches, les empreintes privées, les jetons d'accès au format reconnu et les clés SSH. Balayez également l'historique du dépôt de code, pas seulement l'état courant, car c'est souvent là que le premier commit contient ce que les suivants ont effacé. Enfin, tenez un registre des secrets connus avec leur date de création, leur propriétaire et leur échéance de rotation : un secret sans propriétaire et sans date devient, en pratique, un secret permanent, et un secret permanent finit toujours par être lu par quelqu'un qui n'aurait pas dû le voir.
+
+Un dernier réflexe complète la détection : la rotation. Prévoyez, pour chaque type de secret, la procédure de remplacement et le délai dans lequel il doit être exécuté. Un jeton de registre révélé doit être révoqué en moins d'une heure ; une clé d'accès au fournisseur cloud, en moins de vingt-quatre heures ; un mot de passe de base de données partagé, à l'occasion de la prochaine fenêtre de maintenance. Réécrivez ces délais dans votre document de politique, avec le nom de la personne qui déclenche l'opération : c'est le même exercice de responsabilité nommée que dans le modèle vu au début du chapitre, appliqué à un objet qui, lui, ne pardonne pas l'approximation.

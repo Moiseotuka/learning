@@ -1,0 +1,512 @@
+Les deux premiers chapitres de ce parcours vous ont appris à décrire un domaine, à le traduire en tables et à verrouiller sa cohérence avec des clés primaires et des clés étrangères. Vous savez donc construire le schéma de la bibliothèque municipale : villes, lecteurs, ouvrages, exemplaires, emprunts, emprunt_exemplaires et reservations. Un tel schéma, aussi propre soit-il, reste pour l'instant silencieux. Personne n'a encore posé les questions que le métier se pose chaque jour : quels livres sont sortis cette semaine, qui ne vient plus depuis six mois, combien d'exemplaires d'un roman circulent en ce moment. Toutes ces questions ont un point commun : elles exigent de rapprocher des informations que la normalisation a volontairement séparées dans des tables différentes.
+
+C'est précisément le rôle des jointures, premier sujet de ce chapitre. Une jointure est l'opération qui, à partir de deux ensembles de lignes, produit un nouvel ensemble où chaque ligne conserve les colonnes demandées des deux côtés. Elle est au cœur de SQL : la quasi-totalité des rapports métier, des exports comptables et des écrans d'application repose sur une ou plusieurs jointures. Bien maîtrisée, elle vous permet de reconstituer en une requête le tableau complet que la conception a découpé. Mal maîtrisée, elle produit des doublons invisibles, des totaux faux ou un tableau de sortie dix mille fois trop long, sans que rien dans le code ne crie à l'alarme.
+
+Ce chapitre est découpé en trois temps. Dans la première partie, vous apprendrez à écrire des jointures internes avec la clause ON, à enchaîner plusieurs tables et à reconnaître le redoutable produit cartésien qui naît d'une jointure sans condition. La deuxième partie explorera les jointures externes, qui conservent les lignes sans correspondance, ainsi que l'auto-jointure et les différentes façons d'exprimer une condition de jonction. La troisième partie ouvrira deux boîtes à outils complémentaires : les sous-requêtes, qui permettent de formuler une question à l'intérieur d'une autre, et les vues, qui figent une requête réutilisable sous un nom stable. Ensemble, ces trois blocs constituent l'essentiel du SQL de restauration et de reporting.
+
+Une remarque de méthode avant de commencer. Le meilleur moyen d'apprendre les jointures n'est pas de les lire, mais de les exécuter et de compter les lignes. Gardez sous la main un moteur gratuit, SQLite, PostgreSQL ou MySQL, recopiez le schéma du chapitre précédent, insérez une dizaine de lignes dans chaque table, puis rejouez chaque exemple de cette leçon. Comparez systématiquement le nombre de lignes renvoyées avec celui que vous attendiez. Ce réflexe de vérification, repris quelques dizaines de fois, vaut plus que n'importe quelle explication théorique : il transforme la jointure d'une opération mystérieuse en un mécanisme que vous pouvez prédire.
+
+## INNER JOIN avec ON : assembler deux tables sur une condition
+
+La jointure interne, notée INNER JOIN, est la forme la plus courante. Elle examine chaque ligne de la table de gauche, la compare à chaque ligne de la table de droite selon la condition de la clause ON, et ne conserve que les paires dont la condition est vraie. Les lignes qui ne trouvent pas de correspondance des deux côtés sont écartées, sans erreur ni avertissement. On peut donc dire que INNER JOIN réalise une intersection : seuls survivent les appariements validés. Si un lecteur n'a jamais emprunté, aucune ligne de jointure ne le mentionnera ; si un emprunt référence un lecteur absent, il disparaîtra lui aussi. Cette discrétion est une caractéristique, non un défaut, mais elle justifie à elle seule l'existence des jointures externes que la partie suivante présentera.
+
+La syntaxe de base tient en peu de mots. La première table est placée après FROM, on l'associe à la seconde avec INNER JOIN, et la clause ON décrit la condition d'appariement. La forme la plus fréquente compare la clé primaire d'un côté à la clé étrangère de l'autre, ce qui n'est pas un hasard : c'est exactement le lien que la contrainte référentielle garantit dans votre schéma. On écrit donc la jointure entre lecteurs et emprunts en associant lecteurs.identifiant à emprunts.lecteur_id. La clause ON est l'endroit où l'on décrit la relation ; la clause WHERE, plus loin dans la requête, sert ensuite à filtrer le résultat. Tenir ces deux rôles séparés est la première bonne habitude à acquérir.
+
+```sql
+SELECT l.nom,
+       l.prenom,
+       e.identifiant   AS emprunt,
+       e.date_sortie
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+ORDER BY e.date_sortie DESC;
+```
+
+Examinons ce bloc ligne à ligne. Le mot-clé SELECT désigne les colonnes du résultat ; chaque nom est préfixé du nom de sa table, abrégé ici par un alias l ou e. Le préfixe n'est pas obligatoire quand les noms sont uniques, mais il devient indispensable dès que deux tables portent une colonne identifiant, ce qui arrive très vite. FROM indique la table de départ. INNER JOIN nomme la table à associer, et ON énonce la règle d'appariement. Enfin, ORDER BY trie le résultat, ce qui n'affecte ni le contenu ni le nombre de lignes : c'est une opération de présentation. Le résultat contient uniquement les paires lecteur-emprunt réellement reliées par la clé étrangère.
+
+Un détail souvent négligé : la clause ON peut porter n'importe quelle condition vraie, pas seulement une égalité. On peut joindre deux tables sur une inégalité, par exemple pour associer à chaque emprunt la tranche d'âge du lecteur, ou combiner plusieurs critères avec AND et OR. On peut joindre une table à elle-même en associant deux colonnes de nature différente. La seule exigence du moteur est que la condition ait un sens et qu'elle soit indexée lorsque les volumes grandissent. Dans la pratique quotidienne, l'égalité entre clé reste majoritaire, mais savoir que d'autres conditions sont possibles élargit votre palette : les jointures de rapprochement temporel, très utiles en contrôle de gestion, reposent précisément sur des comparaisons de dates.
+
+Comptons les lignes pour ancrer le raisonnement. Supposons que la bibliothèque compte deux cents lecteurs et mille emprunts. La requête ci-dessus renverra mille lignes, pas deux cents : chaque emprunt trouve exactement son lecteur, et un lecteur ayant cinq emprunts apparaît cinq fois, une ligne par emprunt. Ce comportement est normal et constitue le second piège classique. Une jointure multiplie les lignes de la table côté plusieurs, et le résultat dépend de la granularité demandée. Si vous cherchiez le nombre de lecteurs distincts ayant emprunté, vous devriez écrire COUNT(DISTINCT l.identifiant) et non COUNT(l.identifiant), sous peine de gonfler le chiffre. Toujours se demander quelle est la granularité attendue : une ligne par emprunt, une ligne par lecteur, une ligne par ouvrage.
+
+## Joindre plusieurs tables : le schéma en étoile
+
+Les questions réelles dépassent rarement deux tables. Afficher le nom du lecteur, le titre de l'ouvrage et la cote de l'exemplaire pour chaque sortie exige d'enchaîner quatre tables : lecteurs, emprunts, emprunt_exemplaires, exemplaires et ouvrages. La syntaxe est simplement répétée : chaque INNER JOIN s'accompagne de sa propre clause ON, et chaque ligne du résultat final combine les colonnes de toutes les tables impliquées. L'ordre dans lequel vous écrivez les jointures n'affecte pas le contenu du résultat, seulement la façon dont le moteur peut l'exécuter ; l'optimiseur se charge de réorganiser les étapes pour gagner du temps. Écrivez donc la version qui se lit le mieux, en enchaînant les tables dans l'ordre logique du domaine.
+
+```sql
+SELECT l.nom          AS lecteur,
+       o.titre        AS ouvrage,
+       x.cote,
+       e.date_sortie
+FROM lecteurs AS l
+INNER JOIN emprunts AS e
+        ON e.lecteur_id = l.identifiant
+INNER JOIN emprunt_exemplaires AS ee
+        ON ee.emprunt_id = e.identifiant
+INNER JOIN exemplaires AS x
+        ON x.identifiant = ee.exemplaire_id
+INNER JOIN ouvrages AS o
+        ON o.identifiant = x.ouvrage_id
+WHERE e.date_retour IS NULL
+ORDER BY e.date_sortie;
+```
+
+Ce type de requête suit une structure très courante que l'on appelle schéma en étoile. Au centre se trouve une table de faits, celle qui enregistre les événements métier : ici les emprunts, avec leurs dates. Autour rayonnent des tables de dimensions, qui décrivent le contexte : le lecteur, l'ouvrage, l'exemplaire, la ville. On parle de faits et de dimensions parce que ce vocabulaire vient de l'entrepôt de données, mais le principe se retrouve dans tous les rapports, y compris les plus simples. Une table de faits est généralement longue et croissante, tandis qu'une dimension est courte et se met à jour lentement. Reconnaître cette géométrie vous aide à poser les jointures : on part du fait, on remonte vers chaque dimension par une clé étrangère.
+
+Le schéma en étoile offre plusieurs avantages concrets. D'abord, la lisibilité : un rapport se décrit en une phrase, les emprunts associés à leur lecteur, à leur exemplaire et à leur ouvrage. Ensuite, la réutilisation : la même chaîne de jointures sert à de nombreux indicateurs, il suffit de changer le SELECT et le WHERE. Enfin, la performance : les moteurs optimisent très bien les séries d'égalités sur des clés indexées, et les plans d'exécution restent stables quand le schéma est régulier. À l'inverse, un enchaînement de jointures où chaque table est reliée à la précédente par un critère différent, sans logique centrale, se lit difficilement et se corrige mal. Cherchez toujours la table de faits, puis accrochez les dimensions une à une.
+
+Un conseil de structuration : préférez les jointures explicites, INNER JOIN suivi de ON, aux jointures implicites par virgule, FROM a, b, avec la condition placée dans WHERE. Les deux formes produisent le même résultat quand tout va bien, mais la forme explicite sépare la jonction du filtrage, ce qui réduit fortement le risque d'oublier une condition. L'écriture explicite vous laisse aussi choisir INNER ou LEFT à chaque étape sans reformater la requête. Beaucoup d'équipes l'imposent d'ailleurs dans leurs conventions de code : une condition de jointure appartient à ON, un critère d'analyse appartient à WHERE.
+
+Vérifiez toujours votre chaîne en comptant. Exécutez la requête sans le WHERE, puis avec, et comparez avec les totaux attendus : si mille emprunts existent et que la jointure en renvoie deux mille, c'est qu'une table se trouve côté plusieurs et qu'elle duplique chaque ligne. Ce n'est pas forcément une erreur, cela dépend de la granularité visée, mais il faut le savoir avant d'agréger. Un contrôle rapide consiste également à supprimer une jointure intermédiaire et à constater que le résultat change : si rien ne bouge, vous aviez écrit une jointure inutile, que l'optimiseur éliminait peut-être déjà, mais dont la présence induit en erreur le lecteur suivant.
+
+## Le piège du JOIN sans ON : produit cartésien et doublons
+
+Le piège le plus célèbre des jointures naît d'une condition manquante. Examinons la requête suivante, telle qu'on pourrait l'écrire à la hâte : FROM lecteurs INNER JOIN emprunts, sans clause ON. Certains moteurs, MySQL en tête, acceptent cette écriture et interprètent l'absence de condition comme un appariement de toutes les paires possibles ; d'autres, PostgreSQL par exemple, refusent la syntaxe et vous rendent une erreur de mots-clés, ce qui est en réalité une bonne nouvelle. On obtient le même résultat en écrivant la jointure implicite avec une virgule et en oubliant de filtrer dans WHERE : FROM lecteurs, emprunts. Dans les deux cas, la liaison entre les tables a disparu.
+
+```sql
+-- Mauvaise écriture : aucune condition d'appariement
+SELECT l.nom, e.date_sortie
+FROM lecteurs AS l
+CROSS JOIN emprunts AS e;   -- 200 lecteurs x 1000 emprunts = 200 000 lignes
+
+-- Écriture correcte
+SELECT l.nom, e.date_sortie
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant;
+```
+
+Le résultat s'appelle un produit cartésien, ou jointure croisée : chaque ligne de la première table est combinée à chaque ligne de la seconde. Avec deux cents lecteurs et mille emprunts, la requête produit deux cent mille lignes, dont la quasi-totalité est absurde : elle affirme que chaque lecteur a emprunté chaque livre à chaque date. Le symptôme est facile à repérer si vous comptez les lignes, mais il devient sournois dans un rapport agrégé. Une moyenne calculée sur un produit cartésien n'échoue pas, elle donne un chiffre faux, souvent plausible. Les anomalies de reporting les plus coûteuses proviennent de cette source : la requête répond, le tableau s'affiche, et personne ne s'aperçoit que les totaux ont été multipliés.
+
+Précisons toutefois que la jointure croisée n'est pas toujours un accident. Elle est parfois souhaitée, par exemple pour produire toutes les combinaisons possibles : les paires mois-produit d'un tableau de bord, ou les créneaux horaires à remplir. Dans ce cas, on l'écrit volontairement avec le mot-clé CROSS JOIN, qui affiche l'intention et interdit toute ambiguïté. La règle n'est donc pas d'interdire la jointure croisée, mais d'exiger qu'elle soit voulue. Toute jointure dont la condition a disparu par distraction doit sauter aux yeux, et l'écriture explicite est le meilleur garde-fou : une jointure sans ON ne ressemble plus du tout à une jointure interne.
+
+Le second piège, plus insidieux, est celui des doublons dû à l'effet d'entaille. Joindre une table de faits à une table côté plusieurs multiplie mécaniquement les lignes. Reprenons la bibliothèque : un emprunt concerne plusieurs exemplaires grâce à la table emprunt_exemplaires. Si vous joignez emprunts à cette table, puis que vous calculez la somme des exemplaires et le nombre de lecteurs, chaque emprunt est compté autant de fois qu'il porte d'exemplaires. Le total des volumes circulants reste juste, mais le décompte des lecteurs explose. Il n'y a aucune erreur de syntaxe : seule la granularité a changé en cours de route.
+
+Trois remèdes existent. Le premier consiste à agréger au bon niveau avant de joindre : compter les exemplaires par emprunt dans une sous-requête, puis rattacher ce résultat à la table d'emprunts. Le deuxième utilise DISTINCT, COUNT(DISTINCT ...) ou GROUP BY pour neutraliser les répétitions, au prix d'un calcul parfois plus lourd. Le troisième, le plus robuste, consiste à reformuler la question pour préciser la granularité finale : une ligne par lecteur, une ligne par emprunt, une ligne par jour. Dès que vous pouvez écrire cette phrase avant d'écrire la requête, vous savez quelle table détermine le nombre de lignes du résultat et quelles jointures risquent de le gonfler.
+
+Voici un réflexe de contrôle simple, à appliquer dès que la requête dépasse deux jointures. Exécutez d'abord le FROM avec les jointures et un SELECT comptant les lignes, sans colonnes métier ni agrégat. Comparez ce chiffre avec les totaux de chaque table. Ensuite, ajoutez les colonnes, puis les filtres, puis les agrégations, en recomptant à chaque étape. Si le nombre de lignes double entre deux étapes, c'est qu'une jointure côté plusieurs vient d'être ajoutée : notez-le et décidez si c'est voulu. Cette discipline, qui prend trente secondes, vous épargne les revues de tableau de bord où l'on découvre, la veille de la mise en production, que le chiffre d'affaires a été doublé depuis trois mois.
+
+## Exemples guidés sur la bibliothèque
+
+Prenons maintenant une série d'exemples concrets, à exécuter tels quels après avoir chargé quelques lignes de test. Le premier affiche, pour chaque emprunt en cours, l'identité du lecteur et la date de sortie. C'est la jointure interne la plus simple, celle qui sert de gabarit à la plupart des rapports : une clé primaire d'un côté, une clé étrangère de l'autre, un ORDER BY pour présenter le résultat.
+
+```sql
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       e.date_sortie,
+       EXTRACT(DAY FROM CURRENT_DATE - e.date_sortie) AS jours_ecoules
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+WHERE e.date_retour IS NULL
+ORDER BY jours_ecoules DESC;
+```
+
+Le deuxième exemple enchaîne les tables pour produire l'inventaire des ouvrages sortis. Il montre comment une même clause WHERE filtre à la fois sur une table de faits, la date de retour nulle, et sur une dimension, le titre de l'ouvrage. Filtre et jointure se répondent : la jointure assemble, le filtre sélectionne. Un oubli de filtre ne provoque pas d'erreur, il enrichit simplement le résultat de lignes que vous ne vouliez pas, ce qui rappelle l'importance de formuler l'intention avant de coder.
+
+```sql
+SELECT o.titre,
+       o.auteur,
+       x.cote,
+       l.nom          AS lecteur,
+       e.date_sortie
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant
+INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+INNER JOIN emprunts AS e ON e.identifiant = ee.emprunt_id
+INNER JOIN lecteurs AS l ON l.identifiant = e.lecteur_id
+WHERE e.date_retour IS NULL
+ORDER BY o.titre, x.cote;
+```
+
+Le troisième exemple introduit un agrégat, toujours sur une requête que vous contrôlez. Compter le nombre d'emprunts par lecteur suppose de grouper les lignes par identifiant de lecteur, puis d'agréger. Rappelez-vous le point crucial : le GROUP BY porte sur la colonne qui définit la granularité du résultat, ici l'identifiant du lecteur. Toute colonne citée dans SELECT doit apparaître dans GROUP BY, sauf si elle est englobée par une fonction d'agrégation. Ce contrat, vérifié par le moteur, empêche d'afficher une valeur arbitraire parmi celles d'un groupe.
+
+```sql
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       COUNT(e.identifiant) AS nombre_emprunts
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+GROUP BY l.identifiant, l.nom, l.prenom
+HAVING COUNT(e.identifiant) >= 3
+ORDER BY nombre_emprunts DESC;
+```
+
+Notez l'emploi de HAVING plutôt que WHERE. WHERE écarte des lignes individuelles avant le groupement, tandis que HAVING filtre des groupes déjà formés, ici les lecteurs ayant emprunté au moins trois fois. Confondre les deux produit une erreur de syntaxe ou, pire, un résultat silencieusement incomplet. Voici enfin une quatrième requête, qui joint quatre tables et filtre sur une dimension pour répondre à une question métier précise : quels romans policiers sont actuellement en circulation ?
+
+```sql
+SELECT DISTINCT o.titre, o.auteur
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant
+INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+INNER JOIN emprunts AS e ON e.identifiant = ee.emprunt_id
+WHERE e.date_retour IS NULL
+  AND o.auteur = 'Léo Malet';
+```
+
+Le mot-clé DISTINCT mérite une explication. Sans lui, un roman ayant trois exemplaires sortis apparaîtrait trois fois, car la jointure produit une ligne par exemplaire emprunté. Or la question posée porte sur les titres, pas sur les exemplaires : la granularité attendue est celle des ouvrages, et DISTINCT la rétablit. C'est exactement le raisonnement de granularité évoqué plus haut, appliqué cette fois à l'affichage. Arrêtez-vous quelques minutes sur cet exemple : distinguer ce que la jointure produit de ce que la question exige, c'est la compétence centrale de cette première partie.
+
+La leçon précédente a montré ce que fait une jointure interne : elle ne conserve que les paires de lignes qui s'apparent. C'est le comportement attendu quand on veut uniquement les emprunts rattachés à un lecteur existant, ou les exemplaires d'un ouvrage connu. Mais une question essentielle se heurte immédiatement à cette logique : comment lister les lecteurs qui n'ont jamais emprunté ? La jointure interne les écarte, précisément parce qu'ils n'ont aucune correspondance dans la table des emprunts. La donnée existe pourtant, et le métier s'en soucie : c'est même l'une des requêtes les plus demandées, celles qui nourrissent les campagnes de relance et les bilans d'activité.
+
+Les jointures externes répondent à ce besoin. Elles conservent toutes les lignes d'une table, dite table maîtresse, et y accrochent les lignes correspondantes de l'autre table quand elles existent ; à défaut, elles complètent les colonnes manquantes par des valeurs nulles. La même mécanique s'applique ensuite dans les deux sens, et même des deux à la fois. Vous découvrirez aussi deux outils voisins : l'auto-jointure, qui consiste à comparer une table à elle-même, et la famille des écritures alternatives USING, NATURAL JOIN et CROSS JOIN, qui modifient la façon d'exprimer la condition de jonction. Ces notions forment le second bloc du chapitre.
+
+Comme précédemment, la meilleure façon de les ancrer est de les exécuter sur la base de la bibliothèque. Préparez quelques données asymétriques, c'est-à-dire des lecteurs sans emprunt, des emprunts orphelins volontaires si vous désactivez temporairement la contrainte référentielle, et un ouvrage sans exemplaire. Sans cette asymétrie, une jointure interne et une jointure externe renvoient exactement le même résultat, et la démonstration ne prouve rien. Un bon jeu de test contient toujours des cas où rien ne correspond : c'est là que se révèlent les vraies différences entre les types de jointure.
+
+## LEFT JOIN : conserver les lignes sans correspondance
+
+La jointure LEFT JOIN conserve toutes les lignes de la table placée à gauche de INNER JOIN, c'est-à-dire celle qui suit FROM. Pour chaque ligne de gauche, le moteur cherche les lignes de droite qui satisfont la clause ON ; s'il en trouve, il les associe, et s'il n'en trouve aucune, il produit tout de même une ligne dont les colonnes de droite valent NULL. Ce mécanisme s'appelle l'enrichissement par complément : on parte d'un ensemble complet, on le complète quand c'est possible. Il en résulte immédiatement une propriété importante : le nombre de lignes du résultat n'est jamais inférieur à celui de la table de gauche.
+
+```sql
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       e.identifiant   AS emprunt,
+       e.date_sortie
+FROM lecteurs AS l
+LEFT JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+ORDER BY l.nom, e.date_sortie;
+```
+
+Reprenez l'exemple avec deux cents lecteurs et mille emprunts. La requête renvoie au moins deux cents lignes, et davantage si certains lecteurs ont contracté plusieurs emprunts. Les lecteurs sans emprunt figurent, avec un identifiant d'emprunt vide et une date de sortie vide. Ces valeurs vides ne sont pas des zéros ni des chaînes vides : ce sont des NULL, signifiant qu'aucune correspondance n'a été trouvée. Cette distinction a des conséquences pratiques immédiates. Une colonne NULL échappe à la plupart des comparaisons ordinaires, et surtout, e.date_sortie IS NULL devient le marqueur universel de l'absence de correspondance. C'est ainsi qu'on isole les lecteurs jamais empruntés.
+
+```sql
+SELECT l.identifiant, l.nom, l.prenom, l.date_inscription
+FROM lecteurs AS l
+LEFT JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+WHERE e.identifiant IS NULL;
+```
+
+## RIGHT JOIN et FULL OUTER JOIN : joindre dans les deux directions
+
+Le RIGHT JOIN est le miroir exact du LEFT JOIN : il conserve toutes les lignes de la table placée à droite et complète celles de gauche. Écrire la requête des lecteurs sans emprunt avec un RIGHT JOIN revient à placer les emprunts à gauche et les lecteurs à droite. Puisque le résultat est identique à un LEFT JOIN dont on inverse les tables, beaucoup de praticiens n'utilisent jamais le RIGHT JOIN : ils inversent simplement l'ordre des tables et gardent une seule habitude de lecture. Une seule et même convention, toujours lire la table maîtresse en premier avec LEFT JOIN, supprime une source d'hésitation dans les revues de code.
+
+Le FULL OUTER JOIN va plus loin en conservant toutes les lignes des deux côtés. Les lignes qui trouvent une correspondance sont appariées ; celles qui n'en trouvent pas apparaissent avec NULL du côté manquant. On obtient ainsi l'union complète des deux tables, ce qui convient aux rapprochements entre deux systèmes, par exemple une table de comptes tenue par le service commercial et une table de facturation tenue par la comptabilité : chaque compte figure, qu'il soit présent d'un seul côté ou des deux. Attention cependant : MySQL ne propose pas le FULL OUTER JOIN, et il faut alors simuler l'opération en combinant un LEFT JOIN et un RIGHT JOIN avec UNION, ce qui rallonge la requête mais produit exactement le même résultat.
+
+Une erreur classique mérite d'être signalée ici, tant elle annule le bénéfice du LEFT JOIN. On écrit une jointure externe pour conserver tous les lecteurs, puis on place dans WHERE une condition portant sur la table de droite, par exemple WHERE e.date_retour IS NULL. Cette condition s'applique après la jointure et écarte les lignes dont la colonne vaut NULL, c'est-à-dire exactement les lignes que l'on cherchait à conserver. Le résultat se transforme en jointure interne déguisée, sans que la syntaxe signale quoi que ce soit. La correction consiste à déplacer la condition du côté droit dans la clause ON, ou à vérifier que la colonne filtrée appartient bien à la table maîtresse. Chaque fois que vous filtrez une table de droite dans une jointure externe, posez-vous la question de savoir si le filtre doit précéder ou suivre l'appariement.
+
+Il existe un troisième cas fréquent, la recherche de correspondances manquantes, qui se traite avec la même mécanique que les lecteurs sans emprunt mais sur des tables où la contrainte référentielle devrait tout interdire. On cherche par exemple les exemplaires dont l'ouvrage référencé a été supprimé, ou les emprunts dont le lecteur a disparu. La jointure externe suivi d'un IS NULL sur la clé primaire de la table de droite détecte ces orphelins. En pratique, l'opérateur NOT EXISTS, que la partie suivante sur les sous-requêtes approfondira, produit le même résultat et se lit souvent mieux. Les deux approches sont valables ; l'essentiel est de comprendre qu'il s'agit d'une anti-jointure, c'est-à-dire d'une jointure dont on retient précisément les lignes sans correspondance.
+
+## L'auto-jointure : comparer une table à elle-même
+
+L'auto-jointure est une jointure ordinaire dont les deux opérandes sont la même table. Elle paraît étrange au premier abord : comment joindre une table à elle-même sans obtenir un catalogue de correspondances absurdes ? La réponse tient dans les alias. On donne à la table deux noms différents, un pour sa première apparition et un pour sa seconde, et l'on énonce une clause ON qui distingue les deux rôles. Le moteur traite alors ces deux alias comme deux tables distinctes, sans se préoccuper de leur origine commune. L'auto-jointure devient ainsi l'outil naturel dès qu'une table contient en elle-même une référence vers une autre ligne d'elle-même.
+
+Le cas le plus courant est la structure hiérarchique. Reprenons la bibliothèque : chaque ouvrage peut recommander un autre ouvrage, ou chaque lecteur peut être parrainé par un lecteur plus ancien. On ajoute une colonne marraine_id à la table lecteurs, qui référence une autre ligne de lecteurs. Pour afficher chaque lecteur avec le nom de sa marraine, il faut lire la table deux fois : une fois comme fille, une fois comme marraine. Sans alias, la requête serait illisible ou invalide ; avec eux, elle devient limpide.
+
+```sql
+SELECT fille.identifiant,
+       fille.nom          AS lecteur,
+       marraine.nom       AS marraine
+FROM lecteurs AS fille
+LEFT JOIN lecteurs AS marraine
+       ON marraine.identifiant = fille.marraine_id
+ORDER BY marraine.nom, fille.nom;
+```
+
+Remarquez deux détails dans cet extrait. D'abord, le LEFT JOIN et non INNER JOIN : une lectrice qui n'a pas de marraine doit rester dans le résultat, avec une valeur nulle côté marraine. Ensuite, la clause ON compare deux colonnes de la même table d'origine, l'identifiant d'une ligne à la référence portée par une autre ligne. C'est exactement la mécanique d'une clé étrangère, sauf que la table référencée est elle-même. Rien de nouveau sous le soleil : l'auto-jointure réutilise toutes les notions déjà acquises, et sa seule originalité est dative.
+
+L'auto-jointure sert à bien d'autres usages. On l'emploie pour comparer chaque valeur d'une série à la valeur précédente, par exemple la date d'emprunt par rapport à la précédente du même lecteur, ce qui permet de calculer des écarts entre emprunts successifs. On l'utilise pour détecter les doublons potentiels, en joignant la table à elle-même sur le courriel avec une condition d'inégalité sur l'identifiant : chaque paire de lignes trouvée signale deux comptes identiques. On s'en sert pour les plages de dates qui se chevauchent, un exercice classique de réservation ou de planification, où l'on compare la date de début d'une ligne à la date de fin d'une autre. Dans tous les cas, la structure est identique : un alias pour l'entité étudiée, un alias pour l'entité de comparaison, et une condition qui exprime le lien.
+
+Un piège d'ordre mérite d'être signalé. Quand on joint une table à elle-même avec une relation de hiérarchie, une requête INNER JOIN n'affiche que les lignes qui possèdent un parent ; elle oublie donc la racine de l'arbre. Pour restituer une hiérarchie complète, on utilise LEFT JOIN, comme dans l'exemple. Si la hiérarchie possède plusieurs niveaux et que vous voulez remonter jusqu'à la racine, une jointure supplémentaire s'impose, ou mieux, une sous-requête récursive, que la prochaine partie sur les CTE vous fera découvrir. L'auto-jointure reste parfaite pour un seul niveau, et sa lisibilité décroît rapidement au-delà.
+
+Enfin, un conseil de nommage : choisissez des alias qui décrivent le rôle, et non la table. Écrire t1 et t2 fonctionne, mais impose de relire la clause ON pour comprendre le rôle de chaque alias. Des alias comme fille et marraine, ou commande et commande_precedente, rendent la requête lisible à la première lecture, y compris trois mois plus tard. C'est d'autant plus important que l'auto-jointure est la forme de jointure la plus déroutante visuellement : une phrase métier claire, traduite en alias parlants, suffit à rendre le code évident.
+
+## USING, NATURAL JOIN et ON : choisir sa condition de jonction
+
+SQL propose plusieurs façons d'exprimer la condition de jonction, et les débutants hésitent souvent entre elles. La forme ON, que vous maîtrisez déjà, est la plus générale : elle accepte n'importe quelle condition, égalité ou non, entre n'importe quelles colonnes, y compris des colonnes de noms différents. ON est la seule à pouvoir joindre exemplaires.ouvrage_id à ouvrages.identifiant, ou à exprimer une inégalité comme un chevauchement de dates. Elle reste donc la référence, celle que l'on retrouve dans la majorité des bases de code.
+
+```sql
+-- ON : noms de colonnes différents, condition explicite
+SELECT o.titre, x.cote
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant;
+
+-- USING : même nom des deux côtés, écriture plus courte
+SELECT o.titre, x.cote
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x USING (ouvrage_id);
+```
+
+La clause USING, suivie d'une liste de noms entre parenthèses, est une abréviation pour les cas d'égalité sur des colonnes de même nom. Le moteur comprend que l'on souhaite apparier la colonne ouvrage_id de la table de gauche avec celle de la table de droite. USING présente deux avantages. Il est plus court, et il fusionne les deux colonnes en une seule dans le résultat : écrire SELECT ouvrage_id est possible sans préfixe, et un SELECT étoile n'affiche qu'une colonne au lieu de deux. Ce comportement peut être pratique dans un explorateur de données, mais il surprend ceux qui s'attendaient à voir deux colonnes côte à côte.
+
+USING impose en revanche une contrainte forte : les colonnes doivent porter exactement le même nom des deux côtés. Si votre schéma utilise lecteur_id d'un côté et identifiant de l'autre, USING échoue. De plus, USING ne peut exprimer qu'une égalité simple ; toute condition supplémentaire, une inégalité ou un critère de date, doit partir en ON. Une écriture hybride, USING pour l'égalité puis ON pour le reste, n'existe pas : dès que vous avez besoin de deux critères différents, revenez à ON. En somme, USING est un raccourci confortable sur des schémas rigoureusement nommés, et un obstacle dès que la réalité s'écarte de cette rigueur.
+
+La clause NATURAL JOIN va encore plus loin en supprimant toute condition : le moteur repère lui-même les colonnes de même nom dans les deux tables et les apparie. L'intention est séduisante, une jointure sans écrire une ligne de plus, mais le résultat est dangereux. Si le schéma évolue, si l'on ajoute par erreur une colonne code_postal commune aux deux tables, la condition de jonction change silencieusement et le rapport avec elle. De plus, en l'absence de colonne commune, NATURAL JOIN se comporte comme un produit cartésien, ce qui ramène au piège vu précédemment. Très peu d'équipes l'autorisent en production, et la plupart des guides de style le proscrivent explicitement.
+
+Voici un tableau de décision pratique. Utilisez ON par défaut, toujours : il est explicite, portable et sans surprise. Privilégiez USING quand vos clés portent rigoureusement le même nom, que vous écrivez du code jetable dans un explorateur et que vous souhaitez éviter les préfixes. Réservez CROSS JOIN aux produits cartésiens voulus, et écrivez INNER JOIN avec ON ailleurs. Évitez NATURAL JOIN dans tout code destiné à durer. Cette grille vous épargne les discussions de style improductives : la règle est la lisibilité explicite, et ON est la seule écriture qui montre la condition au lieu de la faire deviner.
+
+Un dernier point sur la portabilité entre moteurs. La syntaxe des jointures est standard, mais les détails varient : MySQL accepte INNER JOIN et LEFT JOIN sans le mot INNER, Oracle exige FROM dual pour certaines sous-requêtes sans table, SQL Server préfère APPLY pour joindre une table à une fonction, et le FULL OUTER JOIN manque à MySQL. Écrire du SQL portable revient donc à choisir les formes les plus courantes, INNER JOIN et LEFT JOIN avec ON, à éviter les raccourcis comme NATURAL JOIN, et à tester ses requêtes sur le moteur cible avant de les figer dans une vue ou dans une procédure. Une requête validée sur SQLite peut échouer ailleurs sur un détail d'agrégation ou de date ; la vérification précoce reste la plus sûre des économies de temps.
+
+Jusqu'ici, chaque requête posait une seule question, et les jointures permettaient d'étendre la question à plusieurs tables. La réalité métier est plus exigeante : certaines réponses conditionnent d'autres réponses. Quels sont les lecteurs ayant emprunté plus que la moyenne ? Quels ouvrages n'ont jamais été sortis depuis leur acquisition ? Pour répondre, il faut calculer une valeur, puis s'en servir comme critère dans la même interrogation. Les sous-requêtes résolvent exactement ce problème : elles placent une requête à l'intérieur d'une autre, de sorte que le résultat de la requête interne devienne une donnée pour la requête externe.
+
+Ce mécanisme s'exprime partout en SQL. On place une sous-requête après un opérateur de comparaison dans WHERE, après FROM pour traiter un intermédiaire calculé, ou même dans la liste SELECT pour afficher une valeur agrégée à côté de chaque ligne. Chaque emplacement possède ses règles, ses limites et ses conséquences sur la performance. Une fois ces formes maîtrisées, une troisième écriture encore plus lisible s'offre à vous : la CTE, ou expression de table commune, introduite par le mot-clé WITH. Elle organise les étapes d'une requête complexe comme des briques nommées, et prépare le terrain aux vues, qui figent une requête sous un nom permanent.
+
+La dernière partie de ce chapitre rassemble le tout dans des exemples complets. Vous y verrez comment une même question se résout de trois manières différentes, à l'aide d'une sous-requête, d'une CTE ou d'une vue, et comment choisir entre ces approches selon le contexte. Avant d'aller plus loin, une recommandation pratique : conservez un jeu de test modeste mais couvrant, une dizaine de lecteurs, deux ouvrages sans exemplaire, quelques emprunts en cours et d'autres close. Les sous-requêtes et les vues se testent difficilement sur des données uniformes, puisque leur intérêt apparaît précisément dans les cas limites.
+
+## Sous-requêtes dans WHERE, dans FROM et sous-requêtes scalaires
+
+La forme la plus courante place une sous-requête après le mot-clé IN ou après un opérateur de comparaison dans la clause WHERE. Par exemple, pour lister les ouvrages qui n'ont jamais été empruntés, on demande d'abord à la sous-requête de fournir la liste des ouvrages déjà sortis, puis on retient ceux qui n'appartiennent pas à cette liste. La sous-requête s'exécute, son résultat est mis en mémoire, et la requête externe le compare à chaque ligne candidate. L'opérateur NOT IN exprime l'exclusion, IN exprime l'appartenance, et les deux se lisent presque comme une phrase française.
+
+```sql
+SELECT o.titre, o.auteur
+FROM ouvrages AS o
+WHERE o.identifiant NOT IN (
+  SELECT x.ouvrage_id
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+);
+```
+
+L'opérateur EXISTS offre une variante dont le comportement diffère sur un point crucial. Placé devant une sous-requête, EXISTS ne calcule pas une liste de valeurs : il vérifie simplement qu'au moins une ligne est renvoyée, et s'arrête dès la première trouvée. La sous-requête peut alors citer les colonnes de la requête externe : on parle de sous-requête corrélée, car elle dépend de la ligne en cours d'exécution. Le moteur répète alors la recherche pour chaque ligne candidate, ce qui peut sembler coûteux, mais qui reste très efficace quand un index couvre la condition. En pratique, EXISTS et IN produisent le même résultat lorsque les données sont propres ; EXISTS reste préférable quand la colonne de gauche peut contenir des valeurs nulles, car NOT IN cesse alors de fonctionner de façon intuitive.
+
+La sous-requête scalaire occupe une place à part : elle doit renvoyer exactement une ligne et une colonne, car son rôle est de fournir une valeur. On la place dans la liste SELECT, à côté des colonnes ordinaires, ou dans WHERE avec un opérateur de comparaison. Par exemple, afficher chaque lecteur avec le nombre total d'emprunts de la bibliothèque revient à calculer une fois un compteur, puis à l'afficher sur chaque ligne. Attention : si la sous-requête renvoie deux lignes, le moteur refuse l'exécution avec une erreur explicite ; si elle ne renvoie aucune ligne, la valeur devient NULL, sans avertissement. Le contrat une ligne une colonne est strict, et c'est ce qui rend la lecture du résultat fiable.
+
+```sql
+SELECT l.nom,
+       l.prenom,
+       (SELECT COUNT(*) FROM emprunts AS e WHERE e.lecteur_id = l.identifiant) AS emprunts
+FROM lecteurs AS l
+ORDER BY emprunts DESC;
+```
+
+La sous-requête dans FROM, appelée table dérivée, sert à fabriquer un intermédiaire sur lequel la requête externe peut à son tour jointer, filtrer ou agréger. On l'écrit entre parenthèses après FROM et on lui attribue obligatoirement un alias, sans quoi la plupart des moteurs refusent la syntaxe. Son intérêt apparaît dès que l'agrégation doit précéder la jointure : compter les exemplaires empruntés par ouvrage, puis rattacher ce total aux informations de l'ouvrage. Tenter l'inverse, joindre d'abord puis agréger, produit des totaux faux, car la jointure a déjà multiplié les lignes.
+
+```sql
+SELECT o.titre,
+       o.auteur,
+       COALESCE(t.total, 0) AS exemplaires_emprunts
+FROM ouvrages AS o
+LEFT JOIN (
+  SELECT x.ouvrage_id, COUNT(*) AS total
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+  GROUP BY x.ouvrage_id
+) AS t ON t.ouvrage_id = o.identifiant
+ORDER BY exemplaires_emprunts DESC;
+```
+
+Trois règles de bon usage complètent ce panorama. Premièrement, une sous-requête dans SELECT doit rester simple : si elle dépend de la ligne externe, elle s'exécute autant de fois que la requête produit de lignes, ce qui coûte cher sur une table large. Deuxièmement, préférez IN ou EXISTS pour un test d'appartenance, et réservez la forme scalaire à l'affichage d'un indicateur. Troisièmement, lisez toujours votre requête de l'intérieur vers l'extérieur : identifiez d'abord ce que la sous-requête renvoie, une liste, un tableau ou une valeur, puis comprenez ce que la requête externe en fait. Cette lecture du dedans au dehors suffit à dénouer la plupart des requêtes épineuses.
+
+## Les CTE avec WITH : des sous-requêtes lisibles et réutilisables
+
+L'expression de table commune, ou CTE pour common table expression, se déclare avant la requête principale avec le mot-clé WITH. Elle donne un nom à un résultat intermédiaire, comme on nommerait une variable dans un programme, puis la requête principale l'utilise comme s'il s'agissait d'une table ordinaire. Dès que deux sous-requêtes s'enchaînent, ou que la même sous-requête doit être citée deux fois, la CTE transforme une formule difficile à relire en une suite d'étapes nommées, chacune répondant à une question précise.
+
+```sql
+WITH emprunts_en_cours AS (
+  SELECT e.identifiant, e.lecteur_id, e.date_sortie
+  FROM emprunts AS e
+  WHERE e.date_retour IS NULL
+),
+volumetrie AS (
+  SELECT ee.emprunt_id, COUNT(*) AS nb_exemplaires
+  FROM emprunt_exemplaires AS ee
+  GROUP BY ee.emprunt_id
+)
+SELECT l.nom,
+       l.prenom,
+       e.date_sortie,
+       v.nb_exemplaires
+FROM lecteurs AS l
+INNER JOIN emprunts_en_cours AS e ON e.lecteur_id = l.identifiant
+INNER JOIN volumetrie AS v ON v.emprunt_id = e.identifiant
+ORDER BY e.date_sortie;
+```
+
+Observez la structure de cet exemple. Deux CTE sont séparées par une virgule, chacune possède son SELECT, et la requête principale commence par le FROM qui les consomme. Chaque étape possède un nom parlant, emprunts_en_cours et volumetrie, qui remplace un bloc de parenthèses imbriquées. Le résultat est identique à la version avec sous-requêtes, mais l'intention se lit ligne à ligne : d'abord filtrer les emprunts ouverts, puis compter leurs exemplaires, puis rapprocher le tout des lecteurs. Cette lisibilité n'est pas un luxe : elle réduit les erreurs de parenthèses et facilite la relecture entre collègues.
+
+Les CTE se distinguent des sous-requêtes par deux capacités supplémentaires. Elles peuvent être référencées plusieurs fois dans la requête principale, là où une sous-requête serait recopiée. Et elles peuvent être récursives, avec la mention RECURSIVE après le mot-clé WITH. Une CTE récursive s'appelle elle-même pour descendre une hiérarchie : la table des ouvrages qui recommandent d'autres ouvrages, ou celle des lecteurs parrainés, se parcourt ainsi jusqu'à la racine sans écrire dix jointures successives. La syntaxe comporte une partie non récursive qui initialise le parcours et une partie récursive qui l'étend, séparées par une union.
+
+Il existe un débat technique sur le statut des CTE : certains moteurs les matérialisent, c'est-à-dire exécutent et stockent temporairement leur résultat, tandis que d'autres les incorporent simplement dans la requête principale, comme une sous-requête en ligne. PostgreSQL propose une clause MATERIALIZED pour forcer la première interprétation, MySQL et SQL Server gèrent ces choix différemment. Pour un débutant, la conséquence pratique tient en une phrase : une CTE réutilisée plusieurs fois peut être calculée une fois ou plusieurs, et sur une table volumineuse la différence se mesure. Mesurez, ne supposez pas, et comparez les temps d'exécution avant d'optimiser.
+
+Un conseil d'écriture : composez vos CTE dans l'ordre des questions métier, pas dans l'ordre où le moteur les exécutera probablement. L'optimiseur reste libre de réorganiser les étapes, donc votre ordre n'a aucune influence sur la performance ; il influence en revanche entièrement la compréhension humaine. Une CTE par idée, un nom qui décrit le résultat, et une requête principale courte : c'est la recette des requêtes que l'on ose laisser commentaires dans un projet professionnel.
+
+## CREATE VIEW : donner un nom stable à une requête
+
+Une vue est une requête enregistrée sous un nom. Le mot-clé CREATE VIEW la déclare, et dès lors on peut l'utiliser comme une table dans un FROM, un JOIN ou une sous-requête. Contrairement à une table physique, la vue ne stocke aucune donnée : elle ne fait que mémoriser le texte de la requête et le réexécuter à chaque utilisation. On gagne ainsi en abstraction, puisque les utilisateurs manipulent un objet simple sans connaître la mécanique de jointures qui se cache derrière.
+
+```sql
+CREATE VIEW v_emprunts_detail AS
+SELECT e.identifiant   AS emprunt_id,
+       l.nom           AS lecteur_nom,
+       l.prenom        AS lecteur_prenom,
+       o.titre         AS ouvrage_titre,
+       x.cote          AS exemplaire_cote,
+       e.date_sortie,
+       e.date_retour
+FROM emprunts AS e
+INNER JOIN lecteurs AS l ON l.identifiant = e.lecteur_id
+INNER JOIN emprunt_exemplaires AS ee ON ee.emprunt_id = e.identifiant
+INNER JOIN exemplaires AS x ON x.identifiant = ee.exemplaire_id
+INNER JOIN ouvrages AS o ON o.identifiant = x.ouvrage_id;
+
+SELECT lecteur_nom, ouvrage_titre, date_sortie
+FROM v_emprunts_detail
+WHERE date_retour IS NULL
+ORDER BY date_sortie;
+```
+
+Les vues répondent à trois besoins distincts. Le premier est la simplification : la requête précédente réunit cinq tables, et la remplacer par le nom v_emprunts_detail raccourcit tous les rapports qui l'utilisent. Le deuxième est la sécurité : on peut restreindre les colonnes visibles par un utilisateur, lui montrer une vue ne contenant ni courriel ni téléphone, tout en lui permettant d'interroger les emprunts. Le troisième est la stabilité : si la structure interne change, par exemple si la table intermédiaire est renommée, seule la définition de la vue est modifiée, et les requêtes des applications continuent de fonctionner.
+
+Le comportement des vues varie selon leur nature. Une vue simple, qui ne fait que filtrer et projeter une seule table, est souvent modifiable par un INSERT ou un UPDATE : le moteur traduit l'opération sur la table sous-jacente. Une vue complexe, qui combine plusieurs tables, joint et agrège, est en général lecture seule, et toute tentative d'écriture échoue. Plutôt que d'apprendre par cœur les règles de mise à jour de chaque moteur, adoptez la discipline courante : les vues servent à lire, et les écritures passent par les tables. Cela évite les surprises liées aux déclencheurs et aux colonnes calculées.
+
+Les commandes d'entretien sont simples. CREATE OR REPLACE VIEW permet de mettre à jour la définition sans la supprimer d'abord, ce qui préserve les autorisations accordées. DROP VIEW supprime la vue, sans toucher aux données. SHOW CREATE VIEW, ou la consultation du catalogue système, affiche la requête stockée, ce qui est précieux quand on redécouvre une vue ancienne. Une bonne pratique de projet consiste à versionner les définitions des vues dans les migrations, à côté des tables : une vue fait partie du schéma, elle se conçoit, se relit et se teste comme le reste.
+
+Enfin, gardez à l'esprit ce qu'une vue n'est pas : elle n'accélère pas forcément la requête, car elle ne pré-calcule rien, et elle ne fige aucun instantané des données. Interroger une vue deux fois peut produire deux résultats différents si les données ont changé entre-temps. Si vous avez besoin d'un instant figé, c'est une table physique ou une table de travail qu'il faut créer ; si vous avez besoin d'un nom stable pour une requête évolutive, la vue est l'outil idéal. La confusion entre ces deux notions explique la plupart des malentendus au début de l'apprentissage.
+
+## Exemples SQL complets : assemblage sur la bibliothèque
+
+Réunissons maintenant les outils du chapitre dans des requêtes intégrées, telles qu'on les rencontre dans un vrai projet. Le premier exemple calcule, pour chaque ouvrage, le nombre d'exemplaires sortis et le nombre d'exemplaires disponibles, puis n'affiche que les ouvrages entièrement sortis. Il combine une jointure externe, une agrégation et une sous-requête, et il illustre la question de granularité : le résultat doit comporter une ligne par ouvrage, donc l'agrégation intervient avant l'affichage final.
+
+```sql
+WITH sortis AS (
+  SELECT x.ouvrage_id, COUNT(*) AS nb_sortis
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+  INNER JOIN emprunts AS e ON e.identifiant = ee.emprunt_id
+  WHERE e.date_retour IS NULL
+  GROUP BY x.ouvrage_id
+)
+SELECT o.titre,
+       COUNT(x.identifiant)            AS total_exemplaires,
+       COALESCE(s.nb_sortis, 0)        AS sortis
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant
+LEFT JOIN sortis AS s ON s.ouvrage_id = o.identifiant
+GROUP BY o.identifiant, o.titre, s.nb_sortis
+HAVING COUNT(x.identifiant) = COALESCE(s.nb_sortis, 0)
+ORDER BY o.titre;
+```
+
+Le second exemple crée une vue consolidée, puis l'interroge. Il montre que la vue n'est qu'une requête nommée, et que tout ce qui précède s'applique à son intérieur comme à son extérieur. Notez le choix du préfixe v_ pour signaler visuellement qu'il s'agit d'une vue, convention répandue et utile dans les bases partagées.
+
+```sql
+CREATE OR REPLACE VIEW v_activite_lecteurs AS
+WITH par_lecteur AS (
+  SELECT e.lecteur_id,
+         COUNT(*)                 AS nb_emprunts,
+         MAX(e.date_sortie)       AS dernier_emprunt
+  FROM emprunts AS e
+  GROUP BY e.lecteur_id
+)
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       l.date_inscription,
+       COALESCE(p.nb_emprunts, 0) AS nb_emprunts,
+       p.dernier_emprunt
+FROM lecteurs AS l
+LEFT JOIN par_lecteur AS p ON p.lecteur_id = l.identifiant;
+
+SELECT nom, prenom, nb_emprunts, dernier_emprunt
+FROM v_activite_lecteurs
+WHERE nb_emprunts = 0
+   OR dernier_emprunt < CURRENT_DATE - INTERVAL '12 months'
+ORDER BY nb_emprunts, nom;
+```
+
+Le troisième exemple traite une question qui revient sans cesse : la comparaison à une moyenne. Il combine une sous-requête scalaire dans WHERE, qui fournit la moyenne des emprunts par lecteur, et un tri sur l'écart. C'est le cas d'usage typique de la sous-requête dans un opérateur de comparaison : la valeur calculée n'a pas besoin d'être affichée, elle sert uniquement de seuil.
+
+```sql
+SELECT l.nom,
+       l.prenom,
+       COUNT(e.identifiant) AS nb_emprunts
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+GROUP BY l.identifiant, l.nom, l.prenom
+HAVING COUNT(e.identifiant) > (
+  SELECT AVG(cnt) FROM (
+    SELECT COUNT(*) AS cnt
+    FROM emprunts
+    GROUP BY lecteur_id
+  ) AS moyenne
+)
+ORDER BY nb_emprunts DESC;
+```
+
+Relisez cette dernière requête du dehors vers l'intérieur : on compte les emprunts par lecteur, on filtre les groupes dont le total dépasse la moyenne des totaux, et on trie. La sous-requête la plus profonde produit une moyenne, une valeur scalaire, qui sert de seuil dans HAVING. Chaque niveau répond à une question indépendante, et c'est précisément cette indépendance qui rend la formulation possible. C'est aussi le signe que vous maîtrisez le chapitre : pouvoir décomposer une question complexe en étapes nommées, puis les réassembler dans une seule requête, est la compétence que les jointures, les sous-requêtes et les vues, réunies, sont censées vous apporter.
+
+Vous voici au terme de la partie consacrée aux jointures, aux sous-requêtes et aux vues. Trois outils, une même ambition : répondre à des questions métier complexes sans dénaturer le schéma normalisé que vous avez construit avec soin. La jointure relie ce que la conception a séparé, la sous-requête pose une question à l'intérieur d'une autre, la vue donne un nom durable à une requête réutilisable. Ensemble, elles forment le quotidien du développeur back-end et de l'analyste, bien avant toute considération de performance ou d'optimisation avancée.
+
+Cette dernière page rassemble l'essentiel du chapitre, puis elle dresse la liste des pièges les plus fréquents, ceux qui coûtent des heures de diagnostic parce qu'ils ne provoquent aucune erreur de syntaxe. Vous trouverez ensuite des pistes d'approfondissement, et enfin l'orientation vers l'exercice pratique qui conclut le chapitre. Prenez le temps de relire les points de synthèse à voix haute, en les reformulant avec vos propres mots : la consolidation active vaut incomparablement mieux qu'une relecture passive de code déjà écrit.
+
+Le script ci-dessous résume le terrain sur lequel vous allez désormais travailler. Il s'agit du schéma de la bibliothèque, enrichi d'une colonne de parrainage destinée à illustrer l'auto-jointure, et suivi d'une vue consolidée qui combine jointures, agrégation et sous-requête. Recopiez-le dans votre moteur, chargez quelques lignes de test, puis rejouez les requêtes des sections précédentes. Si chacune renvoie le nombre de lignes que vous aviez prévu, les objectifs de ce chapitre sont atteints.
+
+```sql
+CREATE TABLE lecteurs (
+  identifiant      INTEGER PRIMARY KEY,
+  nom              TEXT NOT NULL,
+  prenom           TEXT NOT NULL,
+  courriel         TEXT NOT NULL UNIQUE,
+  date_inscription DATE NOT NULL,
+  marraine_id      INTEGER REFERENCES lecteurs (identifiant)
+);
+
+CREATE VIEW v_emprunts_detail AS
+SELECT e.identifiant AS emprunt_id,
+       l.nom         AS lecteur_nom,
+       o.titre       AS ouvrage_titre,
+       x.cote,
+       e.date_sortie,
+       e.date_retour
+FROM emprunts AS e
+INNER JOIN lecteurs AS l ON l.identifiant = e.lecteur_id
+INNER JOIN emprunt_exemplaires AS ee ON ee.emprunt_id = e.identifiant
+INNER JOIN exemplaires AS x ON x.identifiant = ee.exemplaire_id
+INNER JOIN ouvrages AS o ON o.identifiant = x.ouvrage_id;
+
+SELECT lecteur_nom, ouvrage_titre, date_sortie
+FROM v_emprunts_detail
+WHERE date_retour IS NULL
+ORDER BY date_sortie;
+```
+
+Avant d'entrer dans la synthèse, rappelons la ligne directrice du chapitre. On a commencé par la jointure interne, condition sine qua non de toute lecture multi-tables, en insistant sur la clause ON comme contrat d'appariement. On a enchaîné sur les jointures externes, seules capables de conserver les lignes orphelines, puis sur l'auto-jointure, qui traite une table comme deux. On a exploré les sous-requêtes dans leurs quatre emplacements, les CTE qui les rendent lisibles, et les vues qui les pérennisent. Cette progression, du plus simple au plus structuré, est celle que vous réutiliserez chaque fois qu'une question métier dépassera le cadre d'une seule table.
+
+## À retenir
+
+- INNER JOIN ne conserve que les paires de lignes dont la condition de la clause ON est vraie ; les lignes sans correspondance des deux côtés sont écartées sans avertissement.
+- La clause ON décrit le lien entre tables, la clause WHERE filtre le résultat : confondre les deux est la première source de requêtes faussement correctes.
+- Une jointure côté plusieurs multiplie les lignes : comptez toujours le résultat avant d'agréger, et choisissez COUNT DISTINCT ou GROUP BY quand la granularité le demande.
+- Une jointure sans condition, qu'elle soit implicite par virgule ou explicite sans ON, produit un produit cartésien, souvent silencieux et toujours trompeur.
+- LEFT JOIN conserve toutes les lignes de la table maîtresse et complète par NULL celles qui n'ont pas de correspondance ; IS NULL détecte alors les cas sans correspondance.
+- RIGHT JOIN n'est qu'un LEFT JOIN dont on inverse les tables ; FULL OUTER JOIN conserve les deux côtés, mais il est absent de MySQL.
+- Filtrer une colonne de la table de droite dans WHERE annule le LEFT JOIN : déplacez la condition dans ON, ou filtrez la table maîtresse.
+- L'auto-jointure utilise deux alias d'une même table pour comparer des lignes d'une table à elle-même, par exemple pour une hiérarchie ou la détection de doublons.
+- ON est la forme de jonction la plus générale ; USING impose le même nom de colonne ; NATURAL JOIN fait deviner la condition et reste à proscrire.
+- Une sous-requête dans WHERE renvoie une liste ou une valeur, celle dans FROM devient une table dérivée qui doit porter un alias, et une sous-requête scalaire doit tenir en une ligne une colonne.
+- EXISTS s'arrête dès la première ligne trouvée et résiste mieux que NOT IN aux valeurs nulles ; les deux restent interchangeables sur des données propres.
+- WITH nomme des résultats intermédiaires, s'enchaîne par virgules et se réfère plusieurs fois ; RECURSIVE permet de parcourir une hiérarchie.
+- Une vue est une requête enregistrée, sans stockage propre : elle simplifie, sécurise et stabilise l'accès aux données, mais elle ne fige aucun instantané.
+- Les vues complexes sont en lecture seule dans la plupart des moteurs : les écritures passent par les tables, et la définition des vues se versionne dans les migrations.
+
+## Erreurs fréquentes
+
+L'erreur la plus répandue reste la jointure oubliée. On écrit FROM lecteurs INNER JOIN emprunts sans clause ON, ou bien on remplit la clause WHERE d'un critère d'analyse et l'on oublie le critère d'appariement. Certains moteurs rejettent la syntaxe, d'autres produisent un produit cartésien dont le volume explose silencieusement. Le symptôme classique est un tableau qui déborde, une moyenne étrangement ronde ou un temps de réponse qui se dégrade d'un facteur cent. Le réflexe à acquérir est mécanique : dès qu'une requête comporte plus d'une table, exiger une clause ON par INNER JOIN et LEFT JOIN, puis compter les lignes avant de conclure. CROSS JOIN doit rester une décision, jamais un accident.
+
+La deuxième erreur consiste à perdre le bénéfice du LEFT JOIN en filtrant la table de droite dans WHERE. On veut lister tous les lecteurs et la date de leur dernier emprunt, puis l'on écrit WHERE e.date_retour IS NULL, ce qui supprime les lecteurs sans emprunt, précisément ceux que l'on cherchait. La requête fonctionne, elle renvoie un résultat plausible, et personne ne s'aperçoit que la moitié du public a disparu. La vérification tient en une question : la colonne que je filtre appartient-elle à la table maîtresse ? Si elle appartient à la table jointe, elle doit aller dans ON, ou la condition doit être reformulée pour tester une colonne de la gauche.
+
+La troisième erreur est le doublon d'agrégation. On joint emprunts à emprunt_exemplaires, puis l'on compte les lecteurs : chaque lecteur multiplié par le nombre d'exemplaires de ses emprunts gonfle le décompte. Aucune erreur n'est signalée, puisque le résultat reste syntactiquement valide. Repérez-la en comparant le nombre de lignes avant et après l'ajout d'une jointure, et en décidant explicitement quelle est la granularité finale. Si elle est celle des lecteurs, agrégez d'abord les exemplaires dans une CTE, puis joignez. Si elle est celle des emprunts, comptez avec DISTINCT. La granularité se décrit en une phrase avant d'écrire la requête, jamais après avoir vu le résultat.
+
+La quatrième concerne les sous-requêtes corrélées et leur coût. Une sous-requête placée dans SELECT et dépendant de la ligne externe s'exécute pour chaque ligne du résultat : sur cent mille lignes, c'est cent mille exécutions, souvent sans index exploitable. Le symptôme est une requête lente dès que la table grossit, alors qu'elle allait vite sur le jeu de test. La parade consiste à déplacer l'agrégation dans une CTE ou une table dérivée, à joindre ensuite, et à vérifier le plan d'exécution quand les volumes deviennent sérieux. Apprendre à lire un plan, même sommairement, fait partie des sujets de la section suivante.
+
+La cinquième erreur porte sur les vues. On crée une vue, on l'interroge, puis l'on modifie une table sous-jacente en oubliant que la vue repose sur une jointure, ou que son définition a changé entre-temps. On croit disposer d'un instantané alors qu'on ne dispose que d'un alias. D'autres poussent le raisonnement inversé en créant des vues imbriquées, une vue fondée sur une vue fondée sur une vue, jusqu'à ce qu'un changement de colonne casse toute la chaîne sans message clair. Limitez la profondeur, documentez chaque définition, et conservez toujours la requête d'origine à côté, dans vos migrations, pour pouvoir la rejouer indépendamment.
+
+Enfin, une erreur d'ordre méthodologique : coder la requête avant d'avoir formulé la question. « Je veux un tableau avec les emprunts » n'est pas une spécification. « Une ligne par lecteur, avec le nombre d'emprunts de l'année en cours et le titre du dernier livre sorti » en est une. La première formulation mène à une jointure fatalement ambiguë, la seconde impose d'emblée la granularité, les filtres et le niveau d'agrégation. Prenez l'habitude de rédiger la phrase métier, de la faire valider si besoin, puis de traduire chaque nom commun en table et chaque verbe en opérateur. Beaucoup de corrections en revue disparaissent dès que l'énoncé est écrit.
+
+## Pour aller plus loin
+
+Pour consolider ces acquis par la pratique, rien ne remplace l'exécution répétée dans un environnement de travail. Installez SQLite pour la simplicité, ou PostgreSQL pour la fidélité aux exemples, recopiez le schéma du chapitre et chargez au minimum trente lecteurs, une dizaine d'ouvrages, quelques exemplaires et une centaine d'emprunts, en veillant à laisser des lecteurs sans emprunt et des ouvrages sans exemplaire. Ces trous dans les données sont indispensables : sans eux, vous ne verrez jamais la différence entre INNER JOIN et LEFT JOIN. Écrivez ensuite un rapport par jour, en comptant systématiquement les lignes à chaque étape.
+
+Travaillez les requêtes sous plusieurs formes. Résolvez la même question avec une sous-requête, puis avec une CTE, puis avec une vue, et comparez la lisibilité plutôt que la performance. Refaites l'exercice en renommant les colonnes pour vérifier que USING cesse de fonctionner et que ON, lui, s'adapte. Transformez une jointure interne en jointure externe et observez ce qui apparaît. Remplacez un NOT IN par un EXISTS sur des données contenant des NULL, et constatez la différence. Ces va-et-vient, plus que les exercices linéaires, installent le réflexe de choisir délibérément un opérateur plutôt qu'un autre.
+
+Les documentations officielles des moteurs contiennent des chapitres de tutoriaux d'excellente qualité sur les jointures, les vues et les plans d'exécution, et les plateformes d'apprentissage interactif proposent des environnements SQL prêts à l'emploi. Cherchez en priorité des ressources qui vous font écrire dans le navigateur : le geste de formuler, d'échouer, de lire le message d'erreur et de corriger est le seul véritable moteur d'apprentissage. Complétez par des lectures sur la conception des entrepôts de données, où le schéma en étoile est traité en profondeur, car c'est là que la logique faits-dimensions prend tout son sens.
+
+Au-delà du SQL lui-même, deux sujets voisins méritent votre attention une fois ce chapitre digéré. Le premier est la performance : index sur les colonnes de jointure, statistiques du moteur, analyse des plans, et la question éternelle de savoir quand dénormaliser. Le second est la sécurité applicative : les vues comme mécanisme de cloisonnement, les droits de lecture et d'écriture par profil, et la protection contre les injections de requêtes, qui naissent précisément quand la frontière entre requête fixe et donnée variable est mal tracée. Ces thèmes prolongent naturellement le chapitre et font l'objet des suites du parcours.
+
+Les outils d'exploration de schéma, les générateurs de documentation à partir de vos définitions de vues et les clients SQL modernes, qui affichent l'historique et le plan d'exécution, vous serviront dès le premier projet professionnel. Prenez l'habitude de versionner les vues et les migrations à côté du code applicatif, de les faire relire, et de tester chaque modification sur un jeu de données représentatif. Enfin, lorsque vous vous sentirez à l'aise avec les jointures multiples et les CTE récurses, abordez les fonctions de fenêtre, qui résolvent une large part des problèmes d'agrégation sans sous-requête, et les procédures stockées, qui encapsulent des traitements récurrents. Ces sujets ouvrent la suite logique du parcours.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice de fin de chapitre vous demande de bâtir, sur le schéma de la bibliothèque, un petit ensemble de rapports qui combine tout ce que vous venez d'apprendre. Vous y écrirez une vue consolidée des emprunts, une requête de lecteurs inactifs fondée sur un LEFT JOIN et un test IS NULL, un indicateur d'ouvrages entièrement sortis, et une recherche de doublons potentiels de comptes. Chaque livrable devra être accompagné du nombre de lignes attendu, que vous aurez vérifié de vos propres yeux : un rapport sans comptage vérifié n'est pas un rapport validé.
+
+Traitez l'exercice comme une mission réelle. Commencez par écrire la phrase métier de chaque rapport, en précisant la granularité attendue, une ligne par quoi. Choisissez ensuite le type de jointure qui correspond à cette granularité, puis l'emplacement de chaque filtre, dans ON ou dans WHERE. Formez vos CTE dans l'ordre des questions, nommez-les sans ambiguïté, et terminez par une vue qui rassemble le tout. Enfin, testez les cas limites : un lecteur sans emprunt, un ouvrage sans exemplaire, un emprunt ouvert depuis des mois. C'est sur ces cas que vos requêtes se distingueront d'un code écrit à la hâte.
+
+Si vous bloquez, revenez aux sections de synthèse, puis reprenez les exemples guidés de la première partie du chapitre, qui construisaient les mêmes jointures pas à pas. L'important n'est pas de produire la requête la plus élégante, mais de ressentir la mécanique : appariement, conservation ou écartement des lignes, granularité, agrégation, abstraction. Une fois vos rapports validés, poursuivez avec le chapitre suivant du parcours, qui vous mènera vers les agrégations avancées, les fonctions de fenêtre et l'optimisation des requêtes. Le terrain de jeu est en place, les outils sont dans vos mains ; il ne reste plus qu'à jouer, c'est-à-dire à lire chaque message d'erreur, à corriger chaque hypothèse, et à repartir avec des réflexes que vous appliquerez sans y penser dès votre prochain projet.

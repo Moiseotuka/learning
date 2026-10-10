@@ -1,0 +1,124 @@
+## Le framework de cache de Django
+
+Le framework de cache de Django vous permet de stocker des données en mémoire pour éviter de les recalculer ou de les récupérer depuis la base de données à chaque requête. Django propose plusieurs niveaux de cache : le cache par vue, le cache de template, le cache de fragment et le cache bas niveau. Chaque niveau offre un contrôle différent sur ce qui est mis en cache et pendant combien de temps.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Python-logo-notext.svg/960px-Python-logo-notext.svg.png
+| Logo de Python, langage utilisé pour configurer le framework de cache de Django.
+```
+
+## Le cache bas niveau
+
+Le cache bas niveau est l'API la plus flexible de Django. Il vous permet de stocker n'importe quelle valeur Python (chaîne, dictionnaire, liste, objet sérialisable) sous une clé, et de la récupérer ultérieurement. Vous pouvez définir une durée de vie pour chaque entrée, et supprimer des entrées manuellement lorsqu'elles deviennent obsolètes.
+
+```python
+from django.core.cache import cache
+
+# Stocker une valeur pendant 5 minutes (300 secondes)
+cache.set('derniere_synchronisation', datetime.now(), 300)
+
+# Récupérer la valeur
+derniere = cache.get('derniere_synchronisation')
+
+# Supprimer une entrée
+cache.delete('derniere_synchronisation')
+
+# Récupérer avec une valeur par défaut
+config = cache.get('configuration', {})
+```
+
+Le cache bas niveau est idéal pour les données coûteuses à calculer et qui ne changent pas fréquemment : statistiques agrégées, résultats d'API externes, configurations complexes. Vous pouvez également l'utiliser pour stocker des sessions ou des jetons d'authentification.
+
+## Le cache par vue
+
+Le cache par vue est la forme la plus simple de cache dans Django. Il met en cache la réponse complète d'une vue pendant une durée déterminée. Tant que la réponse est valide, Django la sert directement depuis le cache sans exécuter votre vue.
+
+```python
+from django.views.decorators.cache import cache_page
+
+@cache_page(60 * 15)  # Cache pendant 15 minutes
+def liste_articles(request):
+    articles = Article.objects.all()
+    return render(request, 'articles/liste.html', {'articles': articles})
+```
+
+Attention : le cache par vue ne distingue pas les utilisateurs. Si votre vue affiche des données personnalisées (panier, profil), le cache par vue servira la même réponse à tous les utilisateurs. Pour personnaliser le cache, utilisez la décorateur vary_on_headers ou vary_on_cookie, ou préférez le cache de fragment.
+
+## Le cache de fragment de template
+
+Le cache de fragment permet de mettre en cache une partie spécifique d'un template. C'est utile pour les pages qui contiennent à la fois du contenu statique et du contenu dynamique. Vous pouvez envelopper les parties coûteuses dans des balises de cache.
+
+```django
+{% load cache %}
+
+{% cache 900 article_complet article.id %}
+    <article>
+        <h1>{{ article.titre }}</h1>
+        <p>{{ article.contenu }}</p>
+        {% for commentaire in article.commentaires.all %}
+            <p>{{ commentaire.texte }}</p>
+        {% endfor %}
+    </article>
+{% endcache %}
+```
+
+La clé de cache est basée sur le nom du fragment et les arguments. Si article.id change, le fragment est recalculé. Vous pouvez également utiliser des clés de cache personnalisées pour invalider manuellement le fragment lorsque les données changent.
+
+## Configurer le backend de cache
+
+Django supporte plusieurs backends de cache. En développement, le backend LocMemCache stocke les données en mémoire dans le processus. En production, vous voudrez utiliser un backend partagé comme Redis ou Memcached.
+
+```python
+# settings.py avec Redis
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': 'redis://127.0.0.1:6379/1',
+    }
+}
+```
+
+Redis est un stockage de données en mémoire qui supporte les structures de données complexes et la persistance. Memcached est un système de cache distribué plus simple, très rapide mais sans persistance. Les deux sont largement utilisés en production. Choisissez Redis si vous avez besoin de structures de données avancées ou de persistance, Memcached si vous voulez un cache pur et simple.
+
+## Invalider le cache
+
+L'invalidation du cache est souvent plus difficile que sa mise en place. Vous devez vous assurer que les entrées obsolètes sont supprimées lorsque les données changent. Utilisez des signaux Django pour supprimer les entrées de cache lorsqu'un objet est modifié ou supprimé.
+
+```python
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+from django.core.cache import cache
+
+@receiver([post_save, post_delete], sender=Article)
+def invalider_cache_article(sender, instance, **kwargs):
+    cache.delete(f'article_{instance.id}')
+    cache.delete('liste_articles')
+```
+
+Pour les clés complexes, vous pouvez utiliser des versions de cache. Stockez un numéro de version global et incluez-le dans vos clés. Pour invalider toutes les entrées liées à un modèle, il suffit d'incrémenter la version.
+
+## À retenir
+
+Le framework de cache de Django propose plusieurs niveaux : bas niveau, par vue, de fragment et de template. Le cache bas niveau offre le plus de flexibilité, le cache par vue est le plus simple, et le cache de fragment permet de cibler des parties spécifiques de vos templates. Configurez un backend Redis ou Memcached en production. Prévoyez une stratégie d'invalidation dès la conception de votre application.
+
+## À retenir
+
+Le framework de cache de Django propose plusieurs niveaux : bas niveau, par vue, de fragment et de template. Le cache bas niveau offre le plus de flexibilité, le cache par vue est le plus simple, et le cache de fragment permet de cibler des parties spécifiques de vos templates. Configurez un backend Redis ou Memcached en production. Prévoyez une stratégie d'invalidation dès la conception de votre application.
+
+## Erreurs fréquentes
+
+La première erreur est de mettre en cache des données personnalisées avec le cache par vue. Le cache par vue ne distingue pas les utilisateurs et peut servir la même réponse à tout le monde. Utilisez le cache de fragment ou le cache bas niveau pour les données personnalisées.
+
+La deuxième erreur est d'oublier d'invalider le cache. Si vous mettez en cache des données sans prévoir comment les supprimer lorsqu'elles changent, vous servirez des données obsolètes indéfiniment. Utilisez des signaux ou des versions de cache pour gérer l'invalidation.
+
+La troisième erreur est de mettre en cache des données qui changent trop fréquemment. Le cache est utile pour les données stables ou qui peuvent être légèrement obsolètes. Pour les données en temps réel, le cache n'apportera qu'une complexité supplémentaire sans bénéfice.
+
+Enfin, beaucoup de développeurs utilisent le backend LocMemCache en production. Ce backend stocke les données en mémoire dans le processus, ce qui signifie que chaque worker a son propre cache et que les données sont perdues lors du redémarrage. Utilisez toujours un backend partagé en production.
+
+## Pour aller plus loin
+
+Pour approfondir votre maîtrise du cache Django, consultez la documentation officielle sur le framework de cache, qui détaille les backends disponibles et les options de configuration. Le livre « High Performance Django » de Peter Baumgartner et Yann Malet contient un chapitre sur les stratégies de cache avancées. Enfin, explorez la bibliothèque django-cacheops pour un cache automatique basé sur les signaux Django.
+
+## Et maintenant
+
+Vous avez maintenant une vision complète du framework de cache de Django. Dans la partie suivante, nous aborderons les signaux Django, le profiling avec la debug toolbar, le throttling avec DRF, et une checklist de mise en production.

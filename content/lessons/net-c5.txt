@@ -1,0 +1,638 @@
+Bienvenue dans le cinquième chapitre du parcours Réseaux, consacré au routage avancé : listes de contrôle d'accès (ACL), traduction d'adresses (NAT et PAT) et redondance de passerelle (HSRP, VRRP, GLBP). Les chapitres précédents vous ont appris à acheminer les paquets (routage statique, OSPF) et à comprendre les couches basses (Ethernet, VLAN, ARP, TCP, UDP, DNS, DHCP) ; celui-ci ajoute les trois fonctions qui transforment un réseau laboratoire en réseau exploitable en production. Filtrer, c'est n'autoriser que le trafic attendu. Traduire, c'est faire coexister les adresses privées internes avec l'espace public d'Internet. Basculer, c'est supprimer le point de défaillance unique que constitue une passerelle par défaut isolée. Chacune de ces fonctions possède ses pièges : une ACL mal écrite bloque les utilisateurs légitimes ou laisse passer l'attaque ; un NAT mal configuré casse les connexions entrantes ou épuise ses ports ; une passerelle unique arrête tout le site quand un routeur s'éteint.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, toutes directement réutilisables en poste. Vous rédigerez une ACL étendue nommée qui autorise exactement le trafic nécessaire (HTTP et HTTPS vers le serveur web, DNS vers le résolveur, NTP pour l'horodatage, SSH pour l'administration, ICMP limité pour le diagnostic) et refuse tout le reste par le deny implicite final, en plaçant toujours les règles spécifiques avant les règles génériques. Vous configurerez un PAT avec surcharge vers Internet, un NAT statique pour publier le serveur web interne, et vous saurez vérifier les traductions avec les commandes de contrôle du plan de données. Vous déploierez HSRP ou VRRP avec adresse IP virtuelle, priorités, préemption, authentification et suivi d'interface, de sorte que la coupure d'une liaison WAN déclenche une bascule automatique vers le routeur secondaire. Vous comparerez HSRP, VRRP et GLBP pour choisir selon l'environnement, et vous assemblerez le tout dans un mini-projet : la configuration complète du périmètre et de la redondance du site Lilas.
+
+Le fil rouge de ce chapitre reste le même que dans les précédents : un site réel, nommé Lilas, avec un pare-feu de bordure FW (routeur ISR équipé du pare-feu à zones), un cœur composé de deux routeurs R1 et R2, six VLAN utilisateurs (10, 20, 30, 40, 50, 60) et une liaison Internet unique. FW possède l'adresse publique 203.0.113.10 en interface WAN et rejoint le cœur par un lien point à point. Le serveur web interne se trouve en 10.10.0.20 et doit rester accessible de l'extérieur en HTTPS, tandis que le PAT assure la sortie de tous les postes. R1 et R2 partagent une adresse virtuelle par VLAN pour que les postes aient toujours une passerelle vivante. Toutes les configurations de la leçon sont écrites dans ce décor : vous pourrez les recopier telles quelles dans un laboratoire Packet Tracer ou GNS3, les adapter à vos adresses, et observer les bascules et les traductions en direct.
+
+## Pourquoi filtrer, traduire et basculer
+
+Sans filtrage, un routeur fait ce pour quoi il a été conçu : acheminer. Si un paquet arrive sur une interface et correspond à une route, il repart par une autre interface, sans autre question. Cette honnêteté est une faiblesse dès que l'une des interfaces est reliée à Internet. Un serveur compromis du réseau interne peut alors scanner vos machines, un attaquant peut joindre directement les postes des utilisateurs, et rien n'empêche un hôte externe d'ouvrir une session sur votre serveur de bases de données. La liste de contrôle d'accès est l'outil qui inverse la logique : au lieu de se demander ce qu'on refuse, on déclare ce qu'on autorise, et tout le reste tombe dans le panier du deny implicite. Le filtrage ne remplace ni l'antivirus ni la surveillance, mais il réduit la surface d'attaque exposée et il documente, ligne à ligne, le contrat de trafic de votre réseau.
+
+Sans traduction d'adresses, votre réseau interne serait coincé entre deux choix également mauvais. Utiliser des adresses publiques pour chaque poste est impossible depuis l'épuisement de l'espace IPv4, et de toute façon inadapté : vos adresses internes changent à chaque migration, chaque rachat d'entreprise, chaque nouveau site. Rester en adresses privées sans traduction interdit toute communication avec Internet, car les réseaux privés ne sont pas routés sur le plan mondial. Le NAT résout le dilemme en réécrivant les paquets à la frontière : les postes gardent des adresses privées stables, et le routeur de bordure substitue sa propre adresse publique lors de la sortie, en mémorisant la correspondance pour que la réponse puisse revenir. Le PAT pousse l'idée plus loin en faisant partager une seule adresse publique par des centaines de machines, grâce à la numérotation des ports.
+
+Sans redondance de passerelle, la moindre de ces belles configurations reste fragile. Chaque poste possède une passerelle par défaut, une seule adresse, écrite une fois pour toutes dans sa configuration. Si cette adresse appartient à un routeur unique et que ce routeur s'éteint, plus rien ne sort du VLAN, même si un second routeur parfaitement configuré est physiquement présent à côté. Le point de défaillance unique est ici : une adresse unique, un seul élément actif. Les protocoles de redondance de premier saut résolvent ce problème en partageant une adresse virtuelle entre plusieurs routeurs. Un routeur répond pour la VIP, les autres écoutent en veille ; si l'actif cesse d'envoyer ses messages, l'élection se déclenche en quelques secondes et l'un des pairs prend le relais. Les postes, eux, ne voient rien : leur passerelle n'a jamais changé.
+
+Le schéma suivant résume le décor du chapitre et l'emplacement des trois mécanismes : le filtrage vit à la frontière et sur le cœur, la traduction vit exclusivement sur l'interface de bordure, la redondance vit sur les routeurs qui servent de passerelle aux VLAN.
+
+```text
+                    Internet
+                       |
+                 [ 203.0.113.10 ]
+                       |  WAN (outside)
+                    +--+--+  FW : NAT/PAT + ACL + pare-feu a zones
+                    |     |
+                    +--+--+  LAN (inside)
+                       |
+        +--------------+--------------+
+        |                             |
+   +----+----+                   +----+----+
+   |   R1    |   HSRP/VRRP       |   R2    |
+   | actif   |<----------------->| standby |
+   +----+----+   VIP .254        +----+----+
+        |                             |
+   VLAN 10,20,30,40,50,60       VLAN 10,20,30,40,50,60
+   postes + serveurs            postes + serveurs
+```
+
+Les trois mécanismes n'interviennent ni au même endroit ni au même moment, et c'est ce qui les rend complémentaires plutôt que concurrents. Le tableau ci-dessous les replace dans le cycle de vie d'un paquet : l'ACL décide s'il a le droit d'exister, le NAT décide sous quelle identité il voyage, la redondance garantit qu'une passerelle existe toujours pour l'y envoyer.
+
+```table
+| Mécanisme | Question à laquelle il répond | Où il se configure | Commande de contrôle |
+| --- | --- | --- | --- |
+| ACL | Ce paquet a-t-il le droit de passer ? | Interface ou zone, en entrée ou en sortie | show access-lists |
+| NAT et PAT | Sous quelle adresse ce paquet voyage-t-il ? | Interfaces inside et outside de la bordure | show ip nat translations |
+| HSRP, VRRP, GLBP | Quelle passerelle répond aux postes du VLAN ? | Interface VLAN des routeurs du cœur | show standby brief |
+```
+
+
+La méthode de travail que nous suivrons est volontairement la même pour les trois. On commence par écrire la matrice des flux : qui doit parler à qui, sur quel port, dans quel sens. On traduit cette matrice en règles, dans l'ordre où elles seront évaluées. On configure, on vérifie avec la commande de contrôle dédiée, puis on teste activement en coupant ce qui doit être coupé : une liaison, un service, un routeur. Un filtrage qui n'a jamais été testé en échec est un filtrage dont on ignore s'il fonctionne. Chaque section de cette leçon suit donc ce rythme : principe, configuration complète, commande de vérification, scénario de panne.
+
+- Filtrer : autoriser le trafic attendu, refuser tout le reste par défaut.
+- Traduire : partager l'espace public d'Internet tout en gardant des adresses internes stables.
+- Basculer : partager une passerelle virtuelle entre routeurs pour supprimer le point de défaillance unique.
+- Vérifier systématiquement avec la commande de contrôle du mécanisme, puis provoquer la panne.
+- Tester chaque règle en environment de laboratoire avant tout déploiement en production.
+
+## ACL : le principe d'évaluation d'une liste
+
+Une liste de contrôle d'accès est une suite ordonnée de règles, chacune écrite avec l'un des deux verbes autorisés : permit ou deny. Le routeur l'évalue règle par règle, de la première à la dernière, dans l'ordre exact où vous les avez écrites, et s'arrête dès qu'une règle correspond au paquet traité. Si la règle correspondante dit permit, le paquet poursuit son chemin ; si elle dit deny, le paquet est jeté silencieusement ; si aucune règle ne correspond, une règle invisible, toujours présente en fin de liste, jette le paquet. Cette dernière règle est le deny implicite : elle n'est pas écrite dans votre configuration, elle existe néanmoins, et elle explique pourquoi une ACL posée sans réflexion peut couper net une connectivité qui fonctionnait. L'ordre n'est donc pas un détail de style, il fait partie de la sémantique.
+
+Prenons l'exemple le plus simple qui soit, une ACL standard numérotée. Ce type de liste ne regarde qu'une seule chose : l'adresse IP d'origine. Elle ne sait ni quel protocole est utilisé, ni quel port est concerné, ni dans quel sens le paquet circule. Elle suffit pour interdire un réseau précis, ou pour l'autoriser dans un contexte très maîtrisé, mais elle est trop grossière pour protéger une frontière.
+
+```text
+! ACL standard numérotée : refuser le réseau de test, autoriser le reste
+access-list 10 deny   192.0.2.0 0.0.0.255
+access-list 10 permit any
+
+interface GigabitEthernet0/1
+ ip access-group 10 in
+!
+! Lecture dans l'ordre :
+!  paquet source 192.0.2.55  -> regle 1 match -> deny  -> jete
+!  paquet source 10.10.0.7   -> regle 1 non   -> regle 2 match -> permit -> suite
+!  paquet source 8.8.8.8     -> regle 1 non   -> regle 2 match -> permit -> suite
+```
+
+L'ACL étendue élargit le champ de l'analyse. Elle examine l'adresse source, l'adresse de destination, le protocole (TCP, UDP, ICMP, IP brut ou un autre), le port ou le type de message, et pour TCP même les drapeaux de connexion. C'est cette finesse qui permet d'écrire des règles du type : depuis le VLAN administration, destination n'importe où, protocole TCP, port destination 22, autorisé. Les plages numérotées codent cette différence de capacité : de 1 à 99 et de 1300 à 1999 pour les ACL standard, de 100 à 199 et de 2000 à 2699 pour les ACL étendues. Au-delà de ces numéros, il existe les ACL nommées, qui portent un nom au lieu d'un nombre et que l'on préfère aujourd'hui dans toutes les configurations neuves.
+
+```table
+| Type de ACL | Numéros | Ce qu'elle examine | Usage typique |
+| --- | --- | --- | --- |
+| Standard | 1 à 99 et 1300 à 1999 | Adresse IP source seule | Exclusion rapide d'un réseau |
+| Étendue | 100 à 199 et 2000 à 2699 | Source, destination, protocole, ports, flags | Filtrage de frontière |
+| Nommée | nom textuel | Identique à l'étendue, avec séquences | Toute configuration moderne |
+| Control-plane | sur le plan de contrôle | Trafic destiné au routeur lui-même | Protection du routeur |
+```
+
+
+Les ACL nommées apportent trois avantages mécaniques que l'on ressent dès la première maintenance. Leur nom décrit leur intention (LAN_TO_INTERNET se comprend au bout de six mois, 101 ne se comprend plus). Elles acceptent des numéros de séquence internes, 10, 20, 30, qui laissent des trous pour insérer une règle entre deux existantes sans tout réécrire. Et elles acceptent les commentaires remark, seules lignes qui ne produisent aucun effet sur le trafic mais qui sauvent l'administrateur suivant. Un ACL de production sans remark est un livre sans chapitres : tout y est, rien ne se retrouve.
+
+```text
+ip access-list extended SERVEUR_WEB_IN
+ remark --- HTTPS public vers le serveur interne ---
+ 10 permit tcp any host 10.10.0.20 eq 443
+ remark --- HTTP uniquement pour la redirection ---
+ 20 permit tcp any host 10.10.0.20 eq 80
+ remark --- Le reste est rejete par le deny implicite ---
+```
+
+La commande show access-lists est votre œil sur la vie réelle de la liste. Elle affiche les règles dans leur ordre d'évaluation, précédées de leur numéro de séquence, et surtout elle ajoute entre parenthèses le compteur de correspondances de chaque règle. Ce compteur répond à la question que tout administrateur finit par poser : est-ce que cette règle sert encore ? Une règle deny dont le compteur grimpe continûment est le symptôme d'un trafic anormal ou d'une règle mal placée ; une règle permit à zéro pendant trois semaines est candidate au retrait. Les compteurs ne se remettent à zéro qu'après un clear, et leur lecture avant/après un test est la preuve que votre modification a bien eu l'effet attendu.
+
+```text
+R1# show access-lists LAN_TO_INTERNET
+Extended IP access list LAN_TO_INTERNET
+ 10 permit tcp host 10.10.0.146 any eq 443 (245 matches)
+ 20 permit tcp host 10.10.0.146 any eq 80 (12 matches)
+ 30 permit udp host 10.10.0.146 any eq 53 (1873 matches)
+ 70 permit udp any any eq 53 (98214 matches)
+ 90 permit icmp any any echo-request (415 matches)
+```
+
+Le placement de l'ACL est la seconde décision structurante. Une ACL sortante s'applique au moment où le paquet quitte une interface : on la pose donc près de la source, ce qui économise le travail des interfaces suivantes et du plan de données, puisque le trafic refusé n'est jamais transmis. Une ACL entrante s'applique à l'entrée : on la pose près de la destination, ce qui protège la cible au plus près. Pour une bordure, la règle est presque mécanique : filtrage entrant sur l'interface qui regarde Internet, filtrage sortant sur l'interface qui rejoint le cœur. Une troisième catégorie existe pour la protection du routeur lui-même, appelée control-plane policing, qui filtre le trafic destiné à l'équipement (SSH, SNMP, protocoles de routage) plutôt que le trafic transite ; elle complète l'ACL d'interface sans la remplacer.
+
+Deux mécanismes de l'ACL étendue méritent d'être connus avant d'écrire une frontière, parce qu'ils font gagner des lignes et qu'ils sont parfois la source de confusions. Le mot-clé established reconnaît les paquets TCP porteurs des drapeaux ACK ou RST, c'est-à-dire les réponses à une connexion déjà ouverte depuis l'intérieur : avec une seule règle, on autorise tout le retour sans lister les ports. Il ne convient qu'à ce rôle, car il ne distingue pas une vraie réponse d'un paquet frauduleux qui arbore ces mêmes drapeaux. Le mot-clé fragment concerne les paquets fragmentés, qui portent un en-tête allégé et ne contiennent pas les ports : sans lui, une ACL expélicitant un port risque de ne pas voir les fragments comme on l'attendait. Aucun des deux n'existe dans les ACL standard, qui restent aveugles à tout ce qui n'est pas une adresse.
+
+```text
+Evaluation pas a pas d'un paquet entrant sur la bordure
+Paquet : TCP 198.51.100.7:51234 -> 10.10.0.20:443, flags ACK
+Regle  10 permit tcp any host 10.10.0.20 eq 443  -> MATCH, permit, arret
+Paquet : TCP 198.51.100.7:51234 -> 10.10.0.33:3306, flags SYN
+Regle  10 permit tcp any host 10.10.0.20 eq 443  -> non
+Regle  20 permit tcp any host 10.10.0.20 eq 80   -> non
+Fin de liste -> deny implicite -> paquet jete, non logue
+```
+
+- Les règles sont évaluées dans l'ordre, la première correspondance gagne.
+- Le deny implicite final jette tout paquet que vous n'avez pas explicitement autorisé.
+- Standard : source seule. Étendue : source, destination, protocole, ports, flags, ICMP.
+- Nommées avec séquences et remark : à préférer pour toute configuration appelée à évoluer.
+- show access-lists affiche l'ordre réel et les compteurs de correspondances.
+- Sortant près de la source (économie), entrant près de la destination (protection).
+- Placement et ordre se conçoivent ensemble : on décide le chemin, puis on écrit la liste.
+
+## ACL étendues et nommées : les rédiger
+
+La rédaction d'une ACL ne commence pas par la configuration, elle commence par le papier. Avant d'ouvrir la console, dressez la matrice des flux : une ligne par flux légitime, avec la source, la destination, le protocole, le port et le sens. Pour un site d'entreprise typique, la matrice tient en dix lignes : les postes sortent vers Internet en HTTP et HTTPS, tout le monde résout les noms en DNS, tous les postes synchronisent l'heure en NTP, l'administration atteint les équipements en SSH, le serveur web reçoit le HTTPS depuis l'extérieur, et le ICMP est autorisé uniquement pour le diagnostic. Tout ce qui n'apparaît pas dans cette liste n'a pas à traverser l'ACL, et c'est précisément l'objet du exercice. Cette étape prend dix minutes et vous évite les trois heures de dépannage qui suivent toujours une ACL écrite directement à la va-vite sur un routeur de production.
+
+La syntaxe d'une règle étendue se lit comme une phrase, de gauche à droite. On commence par le verbe (permit ou deny), puis le protocole (tcp, udp, icmp ou ip pour tout le reste), puis la source, puis la destination, et enfin l'information de port ou de type quand le protocole le permet. La source et la destination prennent trois formes : le mot any (n'importe quelle adresse), le mot-clé host suivi d'une adresse (cette adresse seule), ou une adresse suivie de son masque en forme inversée (la fameuse wildcard, où un bit à 1 signifie « ce bit ne m'intéresse pas »). Le port se note avec eq pour une égalité, gt et lt pour les comparaisons, range pour une plage, et any pour tous les ports. Cette régularité de lecture est ce qui rend une ACL vérifiable d'un coup d'œil, à condition de toujours l'écrire avec la même mise en forme.
+
+```text
+ip access-list extended LAN_TO_INTERNET
+ remark === SERVEURS DU VLAN 40 (10.10.0.144/29) ===
+ 10 permit tcp host 10.10.0.146 any eq 443
+ 20 permit tcp host 10.10.0.146 any eq 80
+ 30 permit udp host 10.10.0.146 any eq 53
+ 40 permit udp host 10.10.0.146 any eq 123
+ remark === ADMINISTRATION DEPUIS LE VLAN 50 ===
+ 50 permit tcp 10.10.8.0 0.0.0.255 any eq 22
+ 60 permit tcp 10.10.8.0 0.0.0.255 any eq 443
+ remark === TOUS LES VLAN UTILISATEURS ===
+ 70 permit udp any any eq 53
+ 80 permit udp any any eq 123
+ 90 permit icmp any any echo-request
+100 permit icmp any any echo-reply
+110 permit icmp any any time-exceeded
+120 permit icmp any any packet-too-big
+ remark === LE RESTE TOMBE SUR LE DENY IMPLICITE ===
+interface GigabitEthernet0/1
+ ip access-group LAN_TO_INTERNET out
+```
+
+Lis cette liste comme le ferait un paquet. Le serveur 10.10.0.146 est traité en premier par les règles 10 à 40, qui le nomment individuellement : il peut joindre les services web et se synchroniser, mais rien d'autre. Un poste quelconque du VLAN 50 est pris par les règles 50 et 60 pour l'administration, puis retombe, comme tout le monde, sur les règles 70 à 120 qui ouvrent le DNS, l'heure, le ping et les messages indispensables au traceroute et à la découverte de MTU. Un poste du VLAN 10 qui tente une connexion SSH vers l'extérieur n'est couvert par aucune règle : il est jeté par le deny implicite. Notez que les règles 10 à 40 sont surlignées par des remark : elles ne filtrent rien de plus, mais elles transforment un bloc de chiffres en document lisible, et c'est ce qui permet de faire relire une ACL à un pair avant déploiement.
+
+Les opérateurs de port offrent une précision qu'il faut savoir doser. La forme eq 443 est la plus stricte : un seul port. La forme gt 1023 ou range 1024 65535 sert aux services qui négocient un port négocié, comme le mode passif du FTP. Le mot any en position de port ouvre tout, et dans une ACL de frontière il doit rester exceptionnel : une règle du type permit tcp any any any signifie « tout TCP est ouvert », ce qui annule en une ligne le travail de toutes les lignes précédentes. Pour ICMP, ce n'est pas un port que l'on précise mais un type : echo-request pour le ping sortant, echo-reply pour la réponse, time-exceeded pour le retour du traceroute, packet-too-big pour la découverte de MTU en IPv6 et pour la PMTUD en IPv4. Un ICMP totalement ouvert n'est généralement pas nécessaire, mais un ICMP totalement bloqué casse le diagnostic et casse certaines négociations de taille de paquet.
+
+```text
+! Port source et port destination se distinguent par la position
+permit tcp any any eq 443            ! destination 443 uniquement
+permit tcp any gt 1023 any            ! source > 1023, destination quelconque
+permit tcp any any range 8000 8080    ! destination dans la plage
+permit udp any any neq 53             ! destination differente de 53
+
+! Wildcard : 0 = bit significatif, 1 = bit ignore
+permit ip 10.10.0.0 0.0.3.255 any     ! 10.10.0.0 a 10.10.3.255
+permit ip 192.168.1.0 0.0.0.255 any   ! 192.168.1.0/24 en forme inversée
+```
+
+La face entrante de la bordure obéit à la même méthode, avec un objectif inversé : on ne protège plus la sortie des postes, on protège l'intérieur contre l'extérieur. Pour le site Lilas, l'ACL entrante n'ouvre que ce qui doit l'être : HTTPS et HTTP vers le serveur web, un ICMP limité pour que les opérateurs puissent vérifier la joignabilité, et rien d'autre. Le serveur de base de données en 10.10.0.33, le partage de fichiers en 10.10.0.44 et les postes des utilisateurs ne doivent recevoir aucune connexion directe depuis Internet, et le fait de ne pas écrire de règle pour eux produit exactement ce résultat. C'est la vertu du deny implicite : l'oubli devient un refus, à condition de vérifier cet oubli par les compteurs et par un test négatif.
+
+```text
+ip access-list extended INTERNET_VERS_DMZ
+ remark --- Seule destination publiquement exposee ---
+ 10 permit tcp any host 10.10.0.20 eq 443
+ 20 permit tcp any host 10.10.0.20 eq 80
+ remark --- Diagnostic ICMP limite ---
+ 30 permit icmp any host 10.10.0.20 echo-request
+ 40 permit icmp any host 10.10.0.20 echo-reply
+ remark --- Refus explicite et journalise du reste ---
+ 50 deny   ip any any log
+```
+
+L'ordre des règles est là où se joue la qualité du travail. La règle d'or tient en une phrase : toujours la règle spécifique avant la règle générique. Si vous placez permit ip any any en premier, aucune règle suivante ne sera jamais examinée, puisque la première correspondance arrête l'évaluation ; la liste devient décorative. À l'inverse, une règle deny explicite suivie d'un mot-clé log, placée avant une règle permit large, sert de garde-fou documenté : tout ce que vous refusez nommément est tracé dans les journaux, le reste suit. Il faut cependant mesurer le coût : journaliser une règle qui correspond à des milliers de paquets par seconde sature le plan de contrôle et peut ralentir le routeur. On log donc les refus inattendus, ciblés, à volume maîtrisé, et jamais le torrent.
+
+```text
+! A FAIRE : l'ordre rend la deuxieme regle inutile
+permit ip any any
+deny   tcp any any eq 23
+
+! BON : la regle stricte est examinee en premier
+deny   tcp any any eq 23 log
+permit ip any any
+```
+
+- Commencez par la matrice des flux, jamais par la console.
+- Écrivez chaque règle comme une phrase : verbe, protocole, source, destination, port.
+- Privilégiez host et any explicites, gardez la wildcard pour les réseaux entiers.
+- Specific avant générique, et surtout jamais permit large en tête de liste.
+- Utilisez remark abondamment : une ACL relue est une ACL maintenable.
+- Limitez le log aux refus à faible volume, sous peine de saturer le CPU.
+- Validez avec show access-lists et un test négatif : tentez le trafic interdit.
+
+## Tactiques de filtrage : placement, ordre et périmètres
+
+L'anti-spoofing est le filtrage que l'on oublie parce qu'il ne protège pas un service, il protège l'adresse elle-même. Depuis Internet, aucun paquet ne devrait porter une adresse d'origine privée (10, 172.16 à 172.31, 192.168), une adresse de bouclage, une adresse de diffusion ou une adresse multicast de routage : ces adresses n'ont pas de sens à l'entrée du réseau public, et un paquet qui en porte une est soit une erreur de configuration, soit une tentative d'usurpation visant à se faire passer pour une machine de l'intérieur. Le document de bonnes pratiques RFC 2827, aussi appelé BCP 38, demande de les refuser dès l'entrée. Appliquée sur l'interface WAN de la bordure, cette règle coûte deux lignes et écarte une famille entière d'attaques par usurpation d'adresse.
+
+```text
+ip access-list extended WAN_INGRESS
+ remark --- Anti-spoofing RFC 2827 : pas d'adresse privee en entree ---
+ 10 deny   ip 10.0.0.0 0.255.255.255 any log
+ 20 deny   ip 172.16.0.0 0.15.255.255 any log
+ 30 deny   ip 192.168.0.0 0.0.255.255 any log
+ 40 deny   ip 127.0.0.0 0.255.255.255 any log
+ 50 permit ip any any
+```
+
+Une ACL reste un outil sans état : elle examine chaque paquet isolément, sans se souvenir qu'une connexion a été ouverte de l'intérieur. C'est pourquoi les listes sortantes doivent à la fois autoriser la requête et autoriser la réponse, avec des règles par port pour chaque sens, ou avec le mot-clé established qui reconnaît les accusés de réception. C'est aussi la limite fondamentale du mécanisme : il ne comprend pas le contenu des échanges, il ne sait pas qu'une requête DNS appartient à une session, il ne voit qu'une adresse, un protocole et un nombre. Le pare-feu à zones que nous étudierons plus loin ajoute exactement cette mémoire d'état, et c'est pour cela qu'il complète les ACL plutôt qu'il ne les concurrence. En attendant, une ACL bien écrite reste le premier rempart et le plus simple à auditer.
+
+Le journal (log) et son cousin plus précis (log-input) sont des instruments de diagnostic, pas des fonctionnalités de routine. Le premier inscrit dans les journaux système la ligne d'ACL correspondante et le compteur, le second ajoute l'adresse MAC et l'interface d'entrée, ce qui est précieux pour retrouver la machine responsable sur un réseau local. Tous deux ont un coût CPU réel, proportionnel au nombre de correspondances, et les journaux ont une capacité limitée : surchargez-les et vous perdrez les événements importants, y compris ceux des autres mécanismes du routeur. La pratique consiste à activer le log sur les règles deny d'une ACL de test, à observer quelques minutes, puis à le retirer avant la mise en production, en ne le conservant que sur les refus rares que l'on souhaite documenter.
+
+Certaines ACL savent aussi travailler dans le temps. Un time-range définit une plage horaire, récurrente ou ponctuelle, et une règle peut y être attachée pour n'être active que pendant cette plage. On l'utilise pour ouvrir l'accès SSH à un prestenaire de 22 heures à 2 heures les vendredis, pour autoriser un flux de sauvegarde seulement la nuit, ou pour interdire une application pendant les heures de travail. Le time-range ajoute une dimension temporelle à une décision jusque-là purement spatiale, et il se vérifie avec les mêmes commandes que l'ACL, à condition de penser à contrôler l'heure du routeur, car une horloge déréglée rend la règle aveugle.
+
+```text
+time-range MAINTENANCE
+ periodic weekdays 22:00 to 23:59
+ absolute start 20:00 5 June end 06:00 6 June
+
+ip access-list extended ADMIN_HORAIRE
+ 10 permit tcp 10.10.8.0 0.0.0.255 any eq 22 time-range MAINTENANCE
+ 20 deny tcp 10.10.8.0 0.0.0.255 any eq 22
+```
+
+La méthode de validation d'un filtrage tient en quatre gestes, et aucun n'est facultatif. D'abord, compter : relevez les compteurs de l'ACL avant le test, exécutez le trafic autorisé, relevez-les encore, et vérifiez que la règle attendue a bien bougé. Ensuite, tester l'interdit : tentez expressément le flux que l'ACL doit refuser, de l'intérieur comme de l'extérieur selon le cas, et confirmez son échec. Puis tester le retour : une session ouverte de l'intérieur doit pouvoir recevoir sa réponse, sinon votre ACL casse la communication même en autorisant la sortie. Enfin, journaliser le résultat dans un tableau de recette que vous pourrez rejouer à chaque modification ; c'est ce tableau, et non votre mémoire, qui fait la preuve que le filtrage est en place.
+
+```text
+Recette ACL de bordure (a rejouer a chaque changement)
+1. show access-lists          -> releve des compteurs
+2. postes -> HTTPS Internet   -> autorise, compteurs augmentent
+3. postes -> SSH Internet      -> refuse, regle SSH hors plage
+4. Internet -> 10.10.0.20:443 -> autorise depuis l'exterieur
+5. Internet -> 10.10.0.33:3306-> refuse, deny log si active
+6. traceroute interne externe  -> ICMP time-exceeded fonctionne
+7. show access-lists           -> second releve archive
+```
+
+La maintenance vaut configuration. Une ACL est un organisme vivant : les serveurs changent d'adresse, les prestataires partent, les projets ajoutent des plages puis les retirent. Tous les six mois, parcourez les règles dont le compteur est resté à zéro, celles dont les remark ne décrivent plus rien, et celles qui font référence à des hôtes qui n'existent plus. Cette élagage n'est pas de l'esthétique : chaque règle en trop est une règle que l'auditeur devra comprendre, que le dépanneur devra interroger, et que l'attaquant potentiel pourra utiliser si elle est devenue trop large par fatigue. Une ACL courte, commentée et testée vaut mieux qu'une ACL exhaustive et périmée.
+
+- L'anti-spoofing RFC 2827 refuse les adresses privées en entrée : deux lignes, un gain réel.
+- Une ACL est sans état : elle doit autoriser séparément la requête et la réponse.
+- Le log coûte du CPU et des journaux : réservé aux refus rares et ciblés.
+- Le time-range rend une règle active selon l'heure, sous réserve d'une horloge juste.
+- Recette systématique : compteurs, test autorisé, test refus, test de retour.
+- Élagage périodique des règles mortes : moins de règles, plus de lisibilité.
+
+## NAT et PAT : les principes
+
+L'espace d'adressage IPv4 a été conçu comme une ressource abondante, puis il s'est avéré épuisé bien avant la fin de l'adoption d'Internet. La réponse de court terme, publiée au début des années 1990, a été de réserver des plages d'adresses à usage privé, documentées par RFC 1918 : 10.0.0.0 à 10.255.255.255, 172.16.0.0 à 172.31.255.255 et 192.168.0.0 à 192.168.255.255. Ces adresses sont utilisables librement à l'intérieur de toute organisation, à la condition expresse de ne jamais être routées sur Internet. Elles donnent à chaque entreprise autant d'adresses qu'elle veut, gratuites et stables, mais elles créent un problème nouveau : comment un poste en 10.10.0.55 peut-il dialoguer avec un serveur public dont l'adresse n'existe qu'une seule fois dans le monde ?
+
+La traduction d'adresses répond en modifiant les paquets à la frontière. Quand un poste privé émet vers Internet, le routeur de bordure remplace l'adresse d'origine privée par sa propre adresse publique, inscrit la correspondance dans une table de traduction, puis laisse le paquet partir. La réponse arrive chez le routeur, qui consulte la table, restaure l'adresse privée d'origine dans le champ de destination, et réachemine le paquet vers le poste. À aucun moment les machines d'Internet ne connaissent l'adresse réelle du poste, et celui-ci ignore même que sa carte réseau a changé d'identité en traversant la frontière. Le routeur ne se contente pas de réécrire les adresses : il recalcule les sommes de contrôle de l'en-tête IP, et pour TCP et UDP il intervient aussi sur les en-têtes de transport, car le couple adresse et port est ce qui permet de retrouver la session.
+
+```text
+Sortie : poste prive -> serveur public
+Avant : IP src 10.10.0.55:51000  -> IP dst 93.184.216.34:443
+Apres : IP src 203.0.113.10:51000 -> IP dst 93.184.216.34:443
+Table : (inside local 10.10.0.55:51000) <-> (inside global 203.0.113.10:51000)
+
+Retour : serveur public -> poste prive
+Avant : IP src 93.184.216.34:443  -> IP dst 203.0.113.10:51000
+Apres : IP src 93.184.216.34:443  -> IP dst 10.10.0.55:51000
+```
+
+Quatre termes décrivent toute situation de traduction, et les confondre est la première cause d'incompréhension. L'expression inside désigne toujours le réseau que l'on considère comme interne, généralement le LAN ; outside désigne le reste du monde. Local décrit l'adresse telle que la voit le réseau interne, global telle que la voit le réseau externe. Un même paquet porte donc deux adresses d'origine selon l'endroit où on le regarde, et la table de traduction est le dictionnaire qui relie les deux lectures. Ces termes ne sont pas de la terminologie d'examen : ce sont les mots que vous employerez pour expliquer un incident à un collègue, par exemple quand vous direz que l'entrée inside local du serveur a disparu de la table.
+
+```table
+| Terme | Réseau concerné | Vue | Exemple du site Lilas |
+| --- | --- | --- | --- |
+| Inside local | Interne | Adresse réelle de la machine | 10.10.0.20 |
+| Inside global | Interne vue de l'extérieur | Adresse publique après traduction | 203.0.113.10 |
+| Outside global | Externe | Adresse réelle de la destination | 93.184.216.34 |
+| Outside local | Interne | Destination réécrite pour le LAN | rare, usage spécial |
+```
+
+
+Le NAT possède trois régimes de fonctionnement, qui se distinguent par la durée et l'unicité de la correspondance. Le NAT statique maintient une règle permanente, établie une fois pour toutes : telle adresse privée, tel port, toujours publiés sous telle adresse publique, telle adresse publique. C'est le régime du serveur, celui qui doit être joignable à tout moment depuis l'extérieur, indépendamment de toute activité interne. Le NAT dynamique tire au sort une adresse d'un pool prédéfini pour chaque session, puis la restitue : il est économique en ports, mais il impose que le pool soit dimensionné au nombre maximal de sessions simultanées. Le PAT, appelé aussi overload, est le régime par défaut de toute entreprise : une seule adresse publique sert des centaines de postes, la discrimination se faisant par numéro de port source, le routeur maintenant une table pouvant compter des dizaines de milliers d'entrées simultanées.
+
+La sélection de la traduction suit un chemin déterministe qu'il faut connaître pour dépanner. Le routeur identifie d'abord les interfaces : celles qui portent ip nat inside, celles qui portent ip nat outside. Il examine ensuite les paquets qui entrent par une interface inside et sortent par une interface outside, et pour chacun il consulte la liste de contrôle d'accès de mise en correspondance, celle que cite la commande ip nat inside source list. Si le paquet correspond, il est traduit selon le régime choisi (interface, pool ou overload) ; s'il ne correspond pas, il traverse sans changement. Cette logique explique deux observations courantes : un paquet qui ne passe pas par une interface marquée inside n'est jamais traduit, et une adresse absente de la ACL de mise en correspondance sort avec son adresse privée, ce qui échoue silencieusement sur Internet.
+
+- Le NAT réécrit les adresses à la frontière et restaure la réponse via sa table.
+- RFC 1918 fournit les adresses privées, jamais routées sur Internet.
+- Statique : correspondance permanente et exclusive, pour les serveurs.
+- Dynamique : attribution depuis un pool pour la durée des sessions.
+- PAT : une adresse publique pour tous, différenciation par port source.
+- Inside local, inside global, outside global, outside local : les quatre lectures d'un paquet.
+- Seuls les paquets entrant par une interface inside et sortant par outside sont traduits.
+
+## NAT en pratique : configuration, vérification, dépannage
+
+La configuration Cisco se déploie en trois gestes : marquer les interfaces, déclarer ce qui doit être traduit, choisir le régime. Les interfaces se marquent avec ip nat inside sur le LAN et ip nat outside sur la WAN ; l'ordre n'a pas d'importance, mais l'oubli d'une des deux marqueurs empêche toute traduction. Le périmètre se déclare avec une ACL, nommée de préférence, qui liste les réseaux autorisés à sortir ; c'est cette ACL qui joue le rôle de filtre de sélection. Le régime s'exprime en une seule commande qui se lit de gauche à droite : la liste des adresses intérieures, puis la façon dont elles sont réécrites, soit une interface (PAT), soit un pool (dynamique). La même commande, avec ou sans le mot-clé overload, fait basculer le fonctionnement du tout-puissant PAT vers le simple dynamique.
+
+```text
+! --- Interfaces de la bordure FW ---
+interface GigabitEthernet0/0
+ description WAN - Internet
+ ip address 203.0.113.10 255.255.255.252
+ ip nat outside
+!
+interface GigabitEthernet0/1
+ description LAN - Vers le coeur R1/R2
+ ip address 10.10.1.138 255.255.255.252
+ ip nat inside
+!
+! --- Perimetre traduisible ---
+ip access-list extended NAT_LAN
+ permit ip 10.10.0.0 0.0.3.255 any
+ permit ip 10.10.4.0 0.0.3.255 any
+ permit ip 10.10.8.0 0.0.3.255 any
+ permit ip 10.10.1.128 0.0.0.3 any
+!
+! --- PAT : une seule adresse publique pour tout le site ---
+ip nat inside source list NAT_LAN interface GigabitEthernet0/0 overload
+```
+
+La publication d'un service interne obéit à la logique inverse : au lieu de traduire l'adresse d'origine à la sortie, on traduit l'adresse de destination à l'entrée. Un paquet destiné à 203.0.113.10, port 443, arrive sur l'interface outside ; la règle statique réécrit la destination en 10.10.0.20, port 443 ; le paquet rejoint le serveur comme s'il avait été adressé directement à lui. Cette règle est permanente et ne dépend d'aucune activité : elle est là même quand le serveur est éteint, et c'est normal, car elle décrit une topologie, pas une session. Les deux commandes statiques les plus utiles sont donc celles qui ouvrent HTTPS et HTTP vers le serveur web du site Lilas, et l'ajout de extendable permet de publier plusieurs ports ou plusieurs adresses pour une même règle sans conflit de duplication.
+
+```text
+! --- Port forwarding : Internet -> serveur web ---
+ip nat inside source static tcp 10.10.0.20 443 203.0.113.10 443 extendable
+ip nat inside source static tcp 10.10.0.20 80  203.0.113.10 80  extendable
+!
+! --- Variante : publier un service sur une autre adresse publique ---
+ip nat inside source static tcp 10.10.0.33 5432 203.0.113.11 5432 extendable
+!
+! --- Version compacte, un pool dynamique sans surcharge ---
+ip nat pool BUREAU 203.0.113.17 203.0.113.30 netmask 255.255.255.240
+ip nat inside source list NAT_LAN pool BUREAU
+```
+
+La vérification se fait avec deux commandes et un réflexe : regarder la table avant le test, effectuer l'action, regarder la table après. La commande show ip nat translations affiche les entrées statiques (toujours présentes, sous la forme protocole, adresse privée, adresse publique) et les entrées dynamiques (avec leur temps de vie restant). La commande show ip nat statistics résume la configuration et les compteurs : interfaces inside et outside vues par le routeur, ACL de sélection, pool et son taux d'utilisation, et surtout les totaux de traductions créées, échouées et supprimées. Un compteur d'échecs qui augmente signale une adresse de destination inatteignable ou un pool épuisé ; un total de traductions qui n'augmente plus pendant une activité normale signale que la sélection ne correspond plus au trafic réel.
+
+```text
+FW# show ip nat translations
+Pro  Inside global     Inside local      Outside local     Outside global
+tcp  203.0.113.10:443  10.10.0.20:443    ---               ---
+tcp  203.0.113.10:51000 10.10.0.55:51000 93.184.216.34:443 93.184.216.34:443
+udp  203.0.113.10:53001 10.10.0.62:53001 8.8.8.8:53        8.8.8.8:53
+
+FW# show ip nat statistics
+Total active translations: 142 (1 static, 141 dynamic, 0 extended)
+Outside interface: GigabitEthernet0/0
+Inside interfaces: GigabitEthernet0/1
+Hits: 918274  Misses: 412
+```
+
+Les pannes du NAT ont cinq causes dominantes, et chacune possède un symptôme reconnaissable. L'overlap survient quand un réseau privé choisi entre en conflit avec un réseau réellement utilisé à l'autre bout : la machine distante reçoit des paquets dont la source appartient à son propre réseau et les traite localement au lieu de les répondre ; la solution consiste à changer de plage privée ou à traduire aussi la source. L'épuisement des ports du PAT se manifeste par des sessions qui ne s'ouvrent plus alors que la bande passante est libre : chaque adresse publique offre environ 64 000 ports, déduits de chaque connexion, et une application qui ouvre des milliers de connexions simultanées peut suffire à saturer ; l'ajout d'adresses dans le pool étend la capacité. La fragmentation pose un problème de logique : un paquet fragmenté ne contient plus les ports, donc le routeur ne peut pas le faire correspondre à une session ; la commande ip virtual-reassembly lui permet de réassembler temporairement avant traduction. Les passerelles de couche applicative, les ALG, réécrivent les flux qui embarquent des adresses comme FTP ou SIP, et peuvent perturber les flux chiffrés : elles se désactivent quand le comportement devient incompréhensible. Enfin les durées de vie, fixes par défaut (trois jours pour TCP, cinq minutes pour UDP), peuvent être raccourcies pour libérer la table ou rallongées pour des applications longues.
+
+```text
+! --- Diagnostic et réglages cibles ---
+show ip nat translations verbose
+show ip nat statistics
+clear ip nat translation *            ! vider les entrees dynamiques (attention)
+ip virtual-reassembly                 ! fragments avant traduction
+ip nat translation tcp-timeout 86400  ! duree d'une session TCP
+ip nat translation udp-timeout 300    ! duree d'un flux UDP
+ip nat translation max-entries 20000  ! plafond de la table
+no ip nat service ftp                 ! desactiver l'ALG FTP si besoin
+```
+
+Deux situations restent classiques et méritent d'être anticipées. La première est le NAT loopback, ou hairpin : un poste interne qui tente d'atteindre le serveur par l'adresse publique reçoit son propre paquet traduit, et sans règle dédiée la connexion échoue, faute de chemin de retour. On le résout soit en interdisant ce chemin et en imposant les noms internes, soit en ajoutant une traduction explicite interne vers l'adresse publique. La seconde est l'interaction avec le nom de domaine : la partie publique du serveur doit être enregistrée en DNS vers l'adresse publique, sa partie privée vers l'adresse privée, et un enregistrement unique écrasé par l'autre provoque l'erreur classique où le serveur est joignable de l'extérieur mais plus de l'intérieur, ou l'inverse. Ces deux cas ne sont pas des bugs du NAT, ce sont les conséquences directes du fait qu'une même machine porte deux identités.
+
+- Marquez les interfaces ip nat inside et ip nat outside, l'oubli de l'une bloque tout.
+- L'ACL list est le filtre de sélection : hors de la liste, pas de traduction.
+- overload bascule le régime en PAT, sans lui vous obtenez un pool dynamique.
+- Publiez les serveurs avec une règle statique, vérifiez avec show ip nat translations.
+- Symptômes : overlap (réponse jamais reçue), épuisement de ports, fragments perdus.
+- Ajustez les timeouts et désactivez les ALG qui gênent vos applications.
+- Anticipez le hairpin et l'écart entre enregistrements DNS publics et internes.
+
+## Redondance de passerelle : HSRP, VRRP, GLBP
+
+Une passerelle par défaut est une adresse, et une adresse est un lien fragile : elle ne dit rien de la machine qui répond derrière. Dans le site Lilas, chaque poste du VLAN 10 possède 10.10.0.254 comme passerelle, mais 10.10.0.254 n'appartient physiquement ni à R1 ni à R2 : c'est une adresse virtuelle, qui n'est configurée nulle part en tant qu'adresse d'interface, et pourtant c'est elle que les postes utilisent. Les protocoles de redondance de premier saut consistent à faire concourir plusieurs routeurs autour de cette même adresse virtuelle. Un d'entre eux l'assume réellement, répond aux requêtes ARP qui la réclament et forward le trafic ; les autres écoutent en silence et attendent. Le poste, lui, ne voit qu'une adresse et un cache ARP : tant qu'un routeur répond, la panne est invisible.
+
+L'élection repose sur des messages périodiques, appelés hello, échangés entre les routeurs du groupe. Tant que l'actif envoie ses hellos dans les délais, il conserve son rôle ; dès que les hellos cessent pendant le temps de maintien (hold time), les autres déclarent l'actif défaillant et s'électent entre eux selon la priorité la plus élevée. Ce mécanisme est passif : aucun message n'est échangé avec les postes, qui continuent d'adresser leurs paquets vers la MAC virtuelle. Lors de la première émission, le routeur actif répond à la requête ARP en donnant une adresse MAC virtuelle particulière, attribuée par le protocole, de sorte que la table ARP de tous les postes pointe vers une adresse qui bascule d'un routeur à l'autre sans jamais être réécrite. C'est là toute l'élégance de la solution : le changement se produit sous la couche 2, invisiblement.
+
+```text
+Chronologie d'une panne de passerelle
+t=0s    R1 actif envoie des hello toutes les 3 s, R2 standby ecoute
+t=0s    postes ARP : qui a 10.10.0.254 ? -> R1 repond MAC virtuelle
+t=9s    R1 s'eteint, plus de hello
+t=10s   R2 n'a plus rien recu depuis le hold time (10 s) -> R1 declare down
+t=10s   R2 passe en etat actif, envoie gratuit ARP -> postes mettent a jour
+t=10s   le trafic reprend, aucun poste n'a change sa configuration
+```
+
+HSRP, le protocole propriétaire de Cisco, offre le jeu de réglages le plus riche. Il organise les routeurs en groupes numérotés, de 0 à 4095 en version 2, chaque groupe ayant sa propre adresse virtuelle et sa propre MAC virtuelle de la forme 0000.0c9f.fxxx, où xxx désigne le groupe en hexadécimal. La priorité va de 1 à 255, avec 100 par défaut : l'actif est celui qui a la priorité la plus élevée, et à priorité égale c'est l'adresse IP du routeur qui tranche. Les temporisations se règlent à la seconde ou à la milliseconde, ce qui permet des bascules très rapides dans les environnements exigeants. L'authentification MD5 ou SHA empêche qu'un routeur étranger ou un poste malveillant ne rejoigne le groupe en annonçant une priorité supérieure. Enfin la préemption, optionnelle mais recommandée, rend le rôle à un routeur de priorité supérieure dès que celui-ci redevient opérationnel.
+
+VRRP est la réponse de la communauté au même besoin, publiée sous forme de standard (RFC 5798) et implémentée par de nombreux constructeurs. Les groupes s'appellent des VRID et vont de 1 à 255. Le routeur qui détient l'adresse réelle du groupe (celle configurée sur son interface) devient maître avec la priorité maximale 255, qu'on appelle propriétaire ; les autres sont des sauvegardes. L'authentification et la préemption existent aussi, mais la préemption est activée par défaut, contrairement à HSRP. Les temporisations s'expriment en centièmes de seconde. VRRPv3 étend le protocole à l'IPv6, ce qui en fait le choix naturel dès que le réseau dual-stack ; il conserve le même état d'esprit que HSRP, un actif et un ou plusieurs en attente, si bien que la rédaction d'une configuration VRRP après une configuration HSRP ne demande qu'un changement de vocabulaire.
+
+GLBP, également propriété de Cisco, répond à une objection que l'on peut faire à HSRP et VRRP : si un seul routeur forward, le second ne sert que de secours et sa bande passante reste idle. GLBP fait voter les routeurs pour élire un passerel virtuel actif, qui distribue les adresses MAC virtuelles ; chaque routeur devient alors forwarder actif et reçoit une part des postes du VLAN. L'équilibrage se règle par des poids : un routeur de poids 100 et un de poids 50 recevront approximativement deux tiers et un tiers du trafic. Si un forwarder tombe, son poids est retiré et ses postes sont repris par les autres, de la même façon invisible que dans HSRP. Le nombre de forwarders est limité à quatre, et la charge n'est jamais parfaitement égale, puisqu'elle dépend du nombre de machines ayant déjà résolu la MAC virtuelle correspondante.
+
+```table
+| Protocole | Nature | Rôles | Particularité | IPv6 |
+| --- | --- | --- | --- | --- |
+| HSRPv2 | Propriétaire Cisco | Un actif, un ou plusieurs en attente | Timers à la milliseconde, priorité 1-255 | Non |
+| VRRPv3 | Standard RFC 5798 | Un maître, des sauvegardes | Propriétaire à priorité 255, préemption par défaut | Oui |
+| GLBP | Propriétaire Cisco | Un passerel actif, jusqu'à quatre forwarders | Équilibrage de charge pondéré | Non |
+```
+
+
+Le choix entre les trois suit une logique simple. Sur un cœur entièrement composé d'équipements Cisco, HSRPv2 donne l'accès aux réglages les plus fins et reste le choix par défaut documenté par le constructeur. Dès que deux marques coexistent, ou que l'IPv6 fait partie du périmètre, VRRPv3 s'impose, car il est implémenté par à peu près tous les fabricants et couvre les deux familles d'adresses. GLBP ne se choisit que pour une raison précise : le besoin d'utiliser réellement les deux routeurs en permanence sur un VLAN à fort trafic. Dans les trois cas, on retient la même discipline : une priorité claire qui désigne l'actif souhaité, une préemption activée, une authentification obligatoire en production, et un suivi de lien pour que la décision tienne compte de l'état réel du réseau, pas seulement de l'état du routeur.
+
+- Un protocole de premier saut partage une adresse virtuelle et une MAC virtuelle.
+- L'élection se joue sur les hello et le hold time, sans intervention des postes.
+- HSRP : propriétaire Cisco, groupes 0-4095, priorité jusqu'à 255, timers au millième.
+- VRRP : standard RFC 5798, VRID 1-255, propriétaire à priorité 255, IPv6 avec v3.
+- GLBP : actif-actif, un passerel élu qui répartit les MAC entre jusqu'à quatre forwarders.
+- Choix : Cisco seul vers HSRPv2, multi-vendeur ou IPv6 vers VRRPv3, charge vers GLBP.
+
+## Suivi de lien, préemption et équilibrage
+
+La préemption est la règle qui rend à un routeur son rôle. Sans elle, si l'actif tombe, le second prend la place et la conserve indéfiniment, même quand l'actif d'origine revient : le réseau fonctionne, mais l'organisation prioritaire choisie est oubliée, et un an plus tard personne ne sait plus pourquoi R2 forward le trafic du VLAN 10. Avec la préemption activée, le routeur de priorité supérieure reprend l'actif dès que ses conditions sont réunies, généralement après un délai de stabilisation qui évite les bascules en rafale lorsque la liaison revient de justesse. Ce délai est utile : il laisse le temps aux protocoles de routage de converger, de sorte que le routeur ne redevienne actif qu'au moment où il peut réellement forwarder.
+
+Le suivi de lien, ou track, apporte la pièce manquante de la décision. Un routeur peut être en parfaite santé alors que sa liaison opérateur est coupée : il répond aux hello, il est élu, et pourtant tout le trafic qu'il forward part dans le vide. L'objet de suivi observe une condition externe, l'état d'une interface, d'une route ou d'un script, et agit sur la priorité du groupe quand cette condition échoue. La configuration tient en deux lignes : on déclare l'objet, puis on demande à la règle de le prendre en compte avec un décrément. Ici R1, priorité 110, perd 20 unités quand sa liaison WAN tombe : il descend à 90, sous les 100 de R2, et R2 devient actif. Quand la liaison revient, la priorité remonte, et la préemption rend à R1 son rôle initial.
+
+```text
+! --- R1 : actif desire du site Lilas, VLAN 10 ---
+interface Vlan10
+ ip address 10.10.0.1 255.255.252.0
+ standby version 2
+ standby 10 ip 10.10.0.254
+ standby 10 priority 110
+ standby 10 preempt delay minimum 30
+ standby 10 authentication md5 key-string SITE_LILAS_VLAN10
+ standby 10 track 10 decrement 20
+!
+! --- R2 : secours, memes regles, priorite inferieure ---
+interface Vlan10
+ ip address 10.10.0.2 255.255.252.0
+ standby version 2
+ standby 10 ip 10.10.0.254
+ standby 10 priority 100
+ standby 10 preempt delay minimum 30
+ standby 10 authentication md5 key-string SITE_LILAS_VLAN10
+ standby 10 track 11 decrement 20
+!
+! --- Les objets de suivi pointent vers la sortie reelle ---
+track 10 interface GigabitEthernet0/0 line-protocol
+track 11 interface GigabitEthernet0/0 line-protocol
+```
+
+La vérification commence par la commande show standby brief, qui résume en une ligne par groupe le routeur concerné, son groupe, sa priorité, son état (actif, en attente, initial), l'adresse virtuelle et le routeur voisin connu. Elle se lit avant et après chaque test : l'état de R1 doit être actif et celui de R2 en attente sur tous les VLAN, puis l'inverse au moment de la panne. Deux autres commandes complètent le tableau : show standby pour le détail d'un groupe, y compris les temps restants et les compteurs de hello, et show track pour connaître l'état exact des objets de suivi, souvent la clé d'une bascule qui ne se produit pas. Si la bascule n'a pas lieu, l'ordre de dépannage est presque toujours le suivant : l'objet de suivi est-il bien en échec, la préemption est-elle activée, les deux routeurs partagent-ils bien la même adresse virtuelle et la même version ?
+
+```text
+R1# show standby brief
+  Interface   Grp  Pri  State        Addr Virtual      Active router
+  Vlan10      10   110  Active       10.10.0.254       local
+  Vlan20      20   110  Active       10.10.4.254       local
+  Vlan50      50   110  Active       10.10.8.254       local
+R2# show standby brief
+  Interface   Grp  Pri  State        Addr Virtual      Active router
+  Vlan10      10   100  Standby      10.10.0.254       10.10.0.1
+  Vlan20      20   100  Standby      10.10.4.254       10.10.4.1
+  Vlan50      50   100  Standby      10.10.8.254       10.10.8.1
+```
+
+Le scénario de test, lui, se déroule en quatre temps et se raconte en une phrase : on coupe, on observe, on rétablit, on observe encore. Coupez la liaison WAN de R1 : l'objet track bascule en échec, la priorité de R1 passe à 90, R2 remporte l'élection et devient actif, un gratuit ARP republie la MAC virtuelle, et les postes continuent sans interruption perceptible. Rétablissez la liaison : la priorité de R1 remonte à 110, la préemption, après son délai, lui rend le rôle d'actif, et R2 redevient en attente. Ce second temps est aussi important que le premier : une redondance qui bascule mais ne revient jamais est une redondance incomplète, et c'est l'état dans lequel on découvre souvent les configurations oubliées un an après leur installation.
+
+VRRP s'écrit avec le même principe et un autre vocabulaire. La configuration se déclare sous forme de famille d'adresses, ce qui permet de gérer l'IPv4 et l'IPv6 dans le même groupe, et la priorité se règle avec le même souci d'expliciter l'actif souhaité. On retiendra deux différences pratiques : la préemption est active par défaut, ce qui supprime une ligne mais impose de la désactiver volontairement si l'on veut le contraire, et le routeur qui détient l'adresse réelle du groupe prend automatiquement la priorité 255. Le suivi de lien existe aussi, avec la même syntaxe de décrément, si bien qu'une migration de HSRP vers VRRP sur un site existant est avant tout un travail de remplacement de mots-clés, à condition de revérifier les états affichés après la bascule.
+
+```text
+! --- Equivalence VRRPv3 pour le meme VLAN 10 ---
+interface Vlan10
+ ip address 10.10.0.1 255.255.252.0
+ vrrp 10 address-family ipv4
+  address 10.10.0.254
+  priority 110
+  preempt delay minimum 30
+  authentication md5 key-string SITE_LILAS_VLAN10
+  track 10 decrement 20
+```
+
+GLBP se configure presque comme HSRP, avec en plus le réglage des poids et l'élection du passerel virtuel actif. Chaque routeur déclare le même numéro de groupe, la même adresse virtuelle, et une priorité qui détermine qui sera l'élu. Les routeurs non élus restent disponibles comme forwarders et reçoivent une part du trafic, réglable par le poids. Le contrôle se fait avec show glbp summary, qui montre l'élu, les forwarders actifs et leurs poids respectifs. Attention à un point de vigilance : l'équilibrage GLBP concerne les adresses MAC annoncées aux postes, pas le trafic qui transite par le lien montant ; un VLAN qui se plaint de congestion ne sera pas soulagé par GLBP si le goulot se trouve ailleurs, par exemple sur le lien vers la bordure.
+
+```text
+! --- GLBP : equilibrage actif-actif sur le VLAN 20 ---
+interface Vlan20
+ ip address 10.10.4.1 255.255.252.0
+ glbp 20 ip 10.10.4.254
+ glbp 20 priority 110
+ glbp 20 preempt delay minimum 30
+ glbp 20 weighting 110
+ glbp 20 track 10 decrement 30
+```
+
+Les pièges de la redondance se comptent sur les doigts et reviennent tous les uns des autres. Deux routeurs qui s'affirment actifs en même temps (scénario de partition) viennent presque toujours d'une authentification différente ou d'un réseau de hello qui n'est pas partagé : vérifiez la clé et le VLAN. Une bascule qui ne se produit jamais vient d'un objet de suivi qui ne tombe jamais en échec, ou d'une préemption désactivée. Une bascule en boucle vient de timers incohérents entre les pairs, ou d'un délai de préemption nul alors que la liaison oscille. Une adresse virtuelle mal positionnée, par exemple en dehors du sous-réseau du VLAN, empêche les postes de joindre leur passerelle. Enfin, l'oubli le plus fréquent consiste à configurer soigneusement le premier VLAN puis à copier-coller les autres sans changer les numéros de groupe : deux groupes identiques sur deux VLAN différents produisent une table de routage incohérente qu'il faut du temps à diagnostiquer.
+
+- Activez toujours la préemption avec un délai raisonnable de stabilisation.
+- Associez un objet track à la liaison qui sort réellement du site.
+- R1 priorité 110, track moins 20 : il descend à 90 et cède le rôle à R2.
+- Vérifiez avec show standby brief, show track et show glbp summary.
+- Testez les deux sens : la panne, puis le rétablissement avec retour de l'actif.
+- Une clé d'authentification identique et un numéro de groupe unique par VLAN.
+- Sur multi-vendeur ou IPv6, écrivez directement en VRRPv3.
+
+## Zone-Based Firewall : filtrage d'état par zones
+
+Les ACL d'interface restent parfaites pour le filtrage simple, mais elles traitent chaque paquet comme un événement isolé. Le pare-feu à zones, disponible sur les routeurs Cisco IOS-XE, organise le filtrage en quatre étapes qui rétablissent la mémoire du flux. On déclare d'abord des zones (interne, externe, démilitarisée, gestion), on rattache chaque interface à une zone, on regroupe les protocoles autorisés dans des classes de correspondance, puis on décrit des politiques par paire de zones : ce que la zone A a le droit d'envoyer à la zone B. L'avantage décisif est l'état : quand une connexion légitime est ouverte de l'intérieur vers l'extérieur, le retour est autorisé automatiquement, sans écrire de règle inverse, et le pare-feu suit la session jusqu'à sa fermeture.
+
+Les actions de politique se limitent à trois. Inspect ouvre la session et la suit, c'est l'action normale pour un flux autorisé. Pass autorise sans suivre, utile pour un trafic qui ne supporte pas d'être tenu ou qui circule entre zones de confiance équivalente. Drop rejette, avec ou sans journalisation selon qu'on souhaite tracer les tentatives. À la différence d'une ACL, la politique par défaut d'une paire de zones non déclarée est le refus : tant que vous n'avez pas écrit de paire de zones, rien ne circule, ce qui fournit un point de départ sûr pour une mise en place progressive, une zone à la fois.
+
+```text
+zone security INSIDE
+zone security OUTSIDE
+zone security DMZ
+!
+class-map type inspect match-any FLUX_SORTANTS
+ match protocol http
+ match protocol https
+ match protocol dns
+ match protocol ntp
+ match protocol icmp
+!
+policy-map type inspect INSIDE_VERS_OUTSIDE
+ class FLUX_SORTANTS
+  inspect
+ class class-default
+  drop log
+!
+zone-pair security INSIDE_OUTSIDE source INSIDE destination OUTSIDE
+ service-policy type inspect INSIDE_VERS_OUTSIDE
+!
+interface GigabitEthernet0/1
+ zone-member security INSIDE
+interface GigabitEthernet0/0
+ zone-member security OUTSIDE
+```
+
+La migration vers un pare-feu à zones se fait en trois temps, sans interruption. On commence par écrire les paires de zones avec l'action pass et la journalisation, ce qui laisse le trafic passer tout en prouvant, journaux à l'appui, que l'on a bien identifié les flux réels. On remplace ensuite pass par inspect pour les flux qui doivent être suivis, et on laisse class-default assurer le drop. Enfin on supprime les journaisons devenues inutiles et on conserve un déni explicite et tracé sur les paires sensibles. Les commandes de contrôle, show zone-pair security, show policy-map type inspect zone-pair et show policy-firewall sessions, montrent les paires configurées, les compteurs de politique et les sessions réellement ouvertes : c'est votre preuve, à chaque audit, que la politique correspond au trafic observé.
+
+- Déclarez des zones, rattachez-y les interfaces, puis écrivez des paires de zones.
+- La politique par défaut entre zones non appariées est le refus.
+- inspect suit l'état du flux, pass autorise sans état, drop rejette.
+- Migrez par étapes : pass avec log, puis inspect, puis nettoyage.
+- Contrôlez avec show zone-pair security et show policy-firewall sessions.
+- Gardez des ACL simples pour l'anti-spoofing et le filtrage de sous-réseau.
+
+## Mini-projet : configuration complète du site Lilas
+
+Vous voici au terme du chapitre, avec toutes les pièces sur la table. Le rendu attendu est composé de trois fichiers : la configuration de FW (bordure), celle de R1 et celle de R2 (cœur). FW porte le PAT vers Internet, la publication du serveur web, l'anti-spoofing en entrée et le pare-feu à zones entre INSIDE, OUTSIDE et DMZ. R1 et R2 portent les interfaces VLAN, HSRPv2 avec priorités 110 et 100, préemption, authentification par VLAN et objet de suivi sur la liaison qui rejoint la bordure. Chaque bloc doit être commenté, chaque adresse justifiée, et la recette finale doit être écrite dans le fichier de livraison, pas seulement exécutée de mémoire.
+
+```text
+! --- FW : le coeur du filtrage et de la traduction ---
+ip access-list extended WAN_INGRESS
+ deny   ip 10.0.0.0 0.255.255.255 any log
+ deny   ip 172.16.0.0 0.15.255.255 any log
+ deny   ip 192.168.0.0 0.0.255.255 any log
+ permit ip any any
+!
+ip access-list extended NAT_LAN
+ permit ip 10.10.0.0 0.0.3.255 any
+ permit ip 10.10.4.0 0.0.3.255 any
+ permit ip 10.10.8.0 0.0.3.255 any
+!
+ip nat inside source list NAT_LAN interface GigabitEthernet0/0 overload
+ip nat inside source static tcp 10.10.0.20 443 203.0.113.10 443 extendable
+ip nat inside source static tcp 10.10.0.20 80 203.0.113.10 80 extendable
+!
+zone security INSIDE
+zone security OUTSIDE
+zone security DMZ
+class-map type inspect match-any SORTANTS
+ match protocol http
+ match protocol https
+ match protocol dns
+ match protocol ntp
+ match protocol icmp
+class-map type inspect match-any VERS_DMZ
+ match protocol https
+ match protocol http
+policy-map type inspect POL_SORTANTS
+ class SORTANTS
+  inspect
+ class class-default
+  drop log
+policy-map type inspect POL_DMZ
+ class VERS_DMZ
+  inspect
+ class class-default
+  drop log
+zone-pair security INSIDE_OUTSIDE source INSIDE destination OUTSIDE
+ service-policy type inspect POL_SORTANTS
+zone-pair security OUTSIDE_DMZ source OUTSIDE destination DMZ
+ service-policy type inspect POL_DMZ
+```
+
+La recette se joue en six points, dont deux portent sur la redondance et trois sur la sécurité. Vérifiez la table de traduction avant et après une sortie HTTPS : l'entrée PAT doit apparaître avec l'adresse 203.0.113.10 et un port élevé. Tentez depuis Internet une connexion au port 3306 du serveur : elle doit échouer, tandis que le 443 doit aboutir. Confirmez l'anti-spoofing en injectant, depuis le labo, un paquet source 192.168.1.1 sur l'interface WAN : il doit être journalisé puis jeté. Sur le cœur, contrôlez que R1 est actif sur tous les VLAN avec show standby brief, coupez la liaison WAN de R1 et revoyez R2 passer en actif, puis rétablissez et vérifiez le retour de R1 grâce à la préemption. Enfin, relevez les compteurs des politiques de zones pour confirmer que les flux attendus sont comptés et que la classe par défaut ne remonte que les refus voulus.
+
+## À retenir
+
+- Une ACL s'évalue dans l'ordre, la première correspondance gagne, le deny implicite ferme la liste.
+- Étendue et nommée, avec séquences et remark : source, destination, protocole, ports, flags.
+- Specific avant générique, sortant près de la source, entrant près de la destination.
+- Anti-spoofing RFC 2827 : les adresses privées n'ont pas à arriver du côté WAN.
+- Le NAT réécrit les adresses ; le PAT fait partager une adresse publique grâce aux ports.
+- Statique pour publier, overload pour sortir, ACL de sélection pour choisir ce qui se traduit.
+- show ip nat translations et show ip nat statistics sont les deux commandes de référence.
+- HSRP, VRRP et GLBP partagent une VIP et une MAC virtuelle pour supprimer le SPOF.
+- Priorité, préemption et objet de suivi forment le trio qui décide qui est actif.
+- VRRPv3 est le standard RFC 5798 et le seul des trois à couvrir l'IPv6.
+- Le pare-feu à zones ajoute l'état et la politique par paire de zones, avec refus par défaut.
+
+## Erreurs fréquentes
+
+- Oublier le deny implicite et écrire une première règle permit ip any any qui neutralise tout.
+- Inverser l'ordre des règles, si bien que la règle spécifique n'est jamais atteinte.
+- Poser l'ACL sur la mauvaise interface ou dans le mauvais sens, in et out se confondant vite.
+- Oublier une marque ip nat inside ou ip nat outside, ce qui supprime silencieusement toute traduction.
+- Écrire une ACL de sélection qui oublie un réseau du site, dont les postes ne sortent plus.
+- Publier un serveur en NAT statique mais oublier la règle de pare-feu qui autorise le port.
+- Laisser la préemption désactivée : la redondance bascule mais ne revient jamais.
+- Oublier le suivi de liaison, ce qui laisse un routeur sans Internet continuer d'être actif.
+- Réutiliser le même numéro de groupe HSRP sur deux VLAN par copier-coller.
+- Configurer des clés d'authentification différentes entre les pairs, qui ne se voient alors plus.
+
+## Pour aller plus loin
+
+La documentation Cisco reste la référence pour les trois mécanismes, et se lit utilement en ciblant d'abord la page de commande qui vous intéresse. Les guides suivants couvrent l'essentiel de ce chapitre : https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/xe-16/sec-data-acl-xe-16-book.html pour les ACL, https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-16/nat-xe-16-book.html pour le NAT et le PAT, et https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipapp_fhrp/configuration/xe-16/fhp-xe-16-book.html pour HSRP, VRRP et GLBP. Du côté des normes, RFC 1918 décrit les adresses privées, RFC 3021 traite de l'adressage point à point en 31 bits, RFC 2827 impose l'anti-spoofing en entrée, et RFC 5798 définit VRRP en version 3. Pour approfondir, montez un laboratoire de trois routeurs dans GNS3 ou Packet Tracer, rejouez la recette du site Lilas, puis retirez une règle à la fois pour observer précisément ce qui casse : c'est la meilleure façon de graver l'ordre d'évaluation dans la mémoire.
+
+## Et maintenant : passez au chapitre supervision et dépannage, où ces ACL, ces NAT et ces bascules seront mesurés, tracés et diagnostiqués en conditions réelles
+
+ACL, NAT et redondance forment le trio qui transforme un réseau correct en réseau exploitable. Dans l'exercice pratique, suivez l'ordre des étapes : écrivez d'abord les règles filtrantes et testez-les avec un paquet à la fois, traduisez ensuite une plage d'adresses complète, enfin bascoulez la passerelle sans coupure. Passez ensuite au chapitre supervision et dépannage, où ces ACL, ces NAT et ces bascules seront mesurées, tracées et diagnostiquées en conditions réelles.

@@ -1,0 +1,610 @@
+## Chapitre 1: Introduction aux bases de données Django
+
+### 1.1. Le module ORM de Django
+
+Dans ce chapitre, nous explorons le module ORM de Django, qui permet de manipuler les données de manière déclarative. L'ORM (Object-Relational Mapping) est le cœur de la persistance dans Django, permettant de mapper nos modèles Python aux tables relationnelles de notre base de données.
+
+Une requête Django pour sélectionner tous les articles d'une catégorie peut s'écrire en une seule ligne : `Article.objects.filter(categorie="technologie")`. Cette syntaxe élégante masque la complexité des requêtes SQL sous-jacentes, tout en offrant une puissance considérable.
+
+### 1.2. Les modèles Django
+
+Les modèles Django sont des classes Python qui définissent la structure de nos données. Chaque modèle correspond à une table dans notre base de données, et les relations entre modèles sont gérées nativement par Django. Par exemple, un modèle `Article` peut avoir une relation `ForeignKey` vers un modèle `Auteur` pour lier chaque article à son auteur.
+
+### 1.3. Le système de migrations
+
+Le système de migrations de Django garantit que nos modifications du schéma sont trackées et appliquées de manière reproductible. Chaque changement de modèle génère un fichier de migration qui décrit la modification à appliquer à la base de données. Ces migrations sont stockées dans le dossier `migrations` de chaque application et peuvent être appliquées avec `python manage.py migrate`.
+
+#### Types de champs de modèle
+
+Django propose de nombreux types de champs prêts à l'emploi :
+
+- `CharField` : pour du texte de longueur limitée
+- `TextField` : pour du texte de longueur illimitée
+- `IntegerField` : pour des entiers
+- `BooleanField` : pour des valeurs vrai/faux
+- `DateTimeField` : pour les dates et heures
+- `ForeignKey` : pour les relations many-to-one
+- `ManyToManyField` : pour les relations many-to-many
+- `OneToOneField` : pour les relations one-to-one
+
+Chaque champ peut accepter des paramètres supplémentaires comme `null`, `blank`, `default`, et `verbose_name` pour améliorer la lisibilité et la validation.
+
+### Chapitre 2: Requêtes avancées ORM
+
+#### 2.1. Filtres et exclusion
+
+Les méthodes `filter()` et `exclude()` sont les plus utilisées pour sélectionner des objets :
+
+```python
+# Sélectionner les articles publiés récemment
+articles_recents = Article.objects.filter(
+    date_publication__gte=timezone.now() - timedelta(days=30)
+)
+
+# Exclure les articles d'une catégorie spécifique
+articles_sans techno = Article.objects.exclude(categorie="technologie")
+```
+
+#### 2.2. Recherches avec Q objects
+
+Pour des requêtes complexes avec des combinaisons AND/OR, on utilise `Q objects` :
+
+```python
+from django.db.models import Q
+
+# Articles soit de la catégorie techno, soit écrits par un auteur spécifique
+articles_ou = Article.objects.filter(
+    Q(categorie="technologie") | Q(auteur__nom="John Doe")
+)
+
+# Articles de la catégorie techno ET avec un titre contenant "Django"
+articles_et = Article.objects.filter(
+    categorie="technologie",
+    titre__contains="Django"
+)
+```
+
+#### 2.3. Agrégations et annotations
+
+Django's ORM propose des fonctions d'agrégation puissantes via `django.db.models` :
+
+```python
+from django.db.models import Count, Avg, Sum
+
+# Nombre total d'articles par auteur
+nombre_articles_par_auteur = Auteur.objects.annotate(
+    nb_articles=Count('article')
+).order_by('-nb_articles')
+
+# Moyenne du prix des produits
+prix_moyen = Produit.objects.aggregate(moyenne=Avg('prix'))
+```
+
+#### 2.4. Jointures select_related et prefetch_related
+
+Pour optimiser les performances et éviter le problème N+1, utilisez :
+
+- `select_related()` pour les relations ForeignKey et OneToOneField (jointure SQL)
+- `prefetch_related()` pour les relations ManyToMany et les relations inverses (requêtes séparées puis mise en mémoire cache)
+
+```python
+# Optimisé : récupère les auteurs en même temps que les articles
+articles_avec_auteurs = Article.objects.select_related('auteur').all()
+
+# Optimisé : récupère les tags en même temps que les articles
+articles_avec_tags = Article.objects.prefetch_related('tags').all()
+```
+
+### Chapitre 3: Formulaires et validation
+
+#### 3.1. Création de formulaires de modèle
+
+Django simplifie la création de formulaires à partir de modèles via `ModelForm` :
+
+```python
+from django import forms
+from .models import Article
+
+class ArticleForm(forms.ModelForm):
+    class Meta:
+        model = Article
+        fields = ['titre', 'contenu', 'categorie', 'auteur']
+        widgets = {
+            'contenu': forms.Textarea(attrs={'rows': 10, 'cols': 60}),
+            'date_publication': forms.DateInput(attrs={'type': 'date'}),
+        }
+        labels = {
+            'titre': 'Titre de l\'article',
+            'contenu': 'Contenu de l\'article',
+        }
+        help_texts = {
+            'titre': 'Max 200 caractères',
+            'contenu': 'Rédigez votre article ici',
+        }
+        error_messages = {
+            'titre': {
+                'max_length': 'Le titre est trop long (maximum 200 caractères)',
+            }
+        }
+```
+
+#### 3.2. Personnalisation du nettoyage des données
+
+Vous pouvez ajouter des méthodes de nettoyage personnalisées :
+
+```python
+def clean_titre(self):
+    titre = self.cleaned_data['titre']
+    if len(titre) < 5:
+        raise forms.ValidationError("Le titre doit contenir au moins 5 caractères")
+    return titre
+
+def clean(self):
+    cleaned_data = super().clean()
+    # Validation croisée des champs
+    if not cleaned_data.get('titre') and cleaned_data.get('contenu'):
+        raise forms.ValidationError("Si le contenu est présent, le titre l'est aussi")
+    return cleaned_data
+```
+
+#### 3.3. Vue de création d'objet
+
+Dans la vue, on utilise le formulaire ainsi :
+
+```python
+from django.shortcuts import render, redirect
+from .forms import ArticleForm
+
+def article_create(request):
+    if request.method == 'POST':
+        form = ArticleForm(request.POST, request.FILES)
+        if form.is_valid():
+            form.save()
+            return redirect('article_list')
+    else:
+        form = ArticleForm()
+    return render(request, 'articles/create.html', {'form': form})
+```
+
+### Chapitre 4: Vues et templates
+
+#### 4.1. Vues basées sur des classes (CBV)
+
+Django propose des vues basées sur des classes qui réduisent considérablement le code boilerplate :
+
+```python
+from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
+from .models import Article
+from .forms import ArticleForm
+
+class ArticleListView(ListView):
+    model = Article
+    template_name = 'articles/list.html'
+    context_object_name = 'articles'
+    paginate_by = 10
+    ordering = ['-date_publication']
+
+class ArticleDetailView(DetailView):
+    model = Article
+    template_name = 'articles/detail.html'
+
+class ArticleCreateView(CreateView):
+    form_class = ArticleForm
+    template_name = 'articles/form.html'
+    success_url = '/articles/'
+
+class ArticleUpdateView(UpdateView):
+    form_class = ArticleForm
+    model = Article
+    template_name = 'articles/form.html'
+    success_url = '/articles/'
+
+class ArticleDeleteView(DeleteView):
+    model = Article
+    template_name = 'articles/confirm_delete.html'
+    success_url = '/articles/'
+```
+
+#### 4.2. Templates Django
+
+Les templates Django utilisent le langage de template pour afficher les données :
+
+```html
+<!-- articles/list.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Liste des articles</h1>
+
+{% if articles %}
+    <ul>
+    {% for article in articles %}
+        <li>
+            <h2>{{ article.titre }}</h2>
+            <p>Par {{ article.auteur.nom }} - {{ article.date_publication|date:"F d, Y" }}</p>
+            <p>{{ article.contenu|truncatewords:30 }}</p>
+            <a href="{% url 'article_detail' article.pk %}">Lire la suite</a>
+        </li>
+    {% empty %}
+        <p>Aucun article trouvé.</p>
+    {% endfor %}
+    </ul>
+
+    {% if is_paginated %}
+        <div class="pagination">
+            {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}">Précédent</a>
+            {% endif %}
+            {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}">Suivant</a>
+            {% endif %}
+        </div>
+    {% endif %}
+{% else %}
+    <p>Aucun article n'est disponible.</p>
+{% endif %}
+{% endblock %}
+```
+
+#### 4.3. Filtres de template
+
+Django propose de nombreux filtres utiles dans les templates :
+
+- `{{ value|lower }}` : met en minuscule
+- `{{ value|upper }}` : met en majuscule
+- `{{ value|truncatewords:30 }}` : tronque après 30 mots
+- `{{ value|date:"F j, Y" }}` : formatage de date
+- `{{ value|add:"10" }}` : addition mathématique
+- `{{ article|yesno:"Oui,Non" }}` : conversion booléenne
+
+### Chapitre 5: Fichiers statiques et media
+
+#### 5.1. Configuration des fichiers statiques
+
+Dans `settings.py` :
+
+```python
+# Répertoire des fichiers statiques
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+    BASE_DIR / 'assets',
+]
+
+# Configuration pour les médias (uploads utilisateurs)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+```
+
+#### 5.2. Fichiers statiques dans les templates
+
+```html
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/style.css' %}">
+<script src="{% static 'js/script.js' %}"></script>
+```
+
+#### 5.3. Gestion des uploads de fichiers
+
+Dans le modèle :
+
+```python
+class Article(models.Model):
+    titre = models.CharField(max_length=200)
+    contenu = models.TextField()
+    image = models.ImageField(upload_to='articles/', blank=True, null=True)
+    date_publication = models.DateTimeField(auto_now_add=True)
+    
+    def __str__(self):
+        return self.titre
+```
+
+Dans le formulaire :
+
+```python
+class ArticleForm(forms.ModelForm):
+    class Meta:
+        model = Article
+        fields = ['titre', 'contenu', 'image']
+```
+
+Dans la vue, il faut gérer `request.FILES` :
+
+```python
+def article_create(request):
+    if request.method == 'POST':
+        form = ArticleForm(request.POST, request.FILES)
+        if form.is_valid():
+            article = form.save(commit=False)
+            article.auteur = request.user
+            article.save()
+            messages.success(request, 'Article créé avec succès!')
+            return redirect('article_detail', pk=article.pk)
+    else:
+        form = ArticleForm()
+    return render(request, 'articles/create.html', {'form': form})
+```
+
+Dans le template, n'oubliez `enctype="multipart/form-data"` :
+
+```html
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Publier</button>
+</form>
+```
+
+### Chapitre 6: Sécurité et bonnes pratiques
+
+#### 6.1. Protection contre les injections SQL
+
+Django utilise automatiquement le paramétrage des requêtes, ce qui protège contre les injections SQL. Cependant, il est toujours recommandé de ne jamais concaténer manuellement des chaînes SQL.
+
+#### 6.2. Validation des entrées
+
+Utilisez toujours des validateurs de formulaire pour valider les données avant de les enregistrer dans la base de données. Les validateurs intégrés de Django (comme `MaxLength`, `Email`, `Regex`) offrent une protection efficace.
+
+#### 6.3. Gestion des erreurs
+
+Configurez des messages d'erreur appropriés pour les erreurs de base de données. Ne révélez jamais d'information sensible aux utilisateurs finaux.
+
+#### 6.4. Headers de sécurité
+
+Ajoutez ces headers dans vos paramètres de production :
+
+```python
+# settings.py
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_SSL_REDIRECT = True
+X_FRAME_OPTIONS = 'DENY'
+```
+
+#### 6.5. Mise à jour des dépendances
+
+Maintenez vos dépendances à jour :
+
+```bash
+pip install --upgrade Django
+pip list --outdated
+```
+
+### Chapitre 7: Déploiement et maintenance
+
+#### 7.1. Configuration de production
+
+Pour le déploiement en production :
+
+1. Utilisez Gunicorn ou uWSGI comme serveur WSGI
+2. Configurez NGINX ou Apache comme proxy inverse
+3. Utilisez des variables d'environnement pour les paramètres sensibles
+4. Activez le mode debug uniquement en développement
+
+```bash
+# Exemple de configuration Gunicorn
+gunicorn mon_projet.wsgi:application --bind 0.0.0.0:8000
+```
+
+#### 7.2. Sauvegardes et récupération
+
+Planifiez des sauvegardes régulières de votre base de données :
+
+```bash
+# Sauvegarde PostgreSQL
+pg_dump ma_base_de_donnees > backup_$(date +%Y%m%d).sql
+
+# Sauvegarde MySQL
+mysqldump -u utilisateur -p ma_base_de_donnees > backup_$(date +%Y%m%d).sql
+```
+
+#### 7.3. Points de contrôle
+
+- Vérifiez régulièrement `python manage.py check`
+- Exécutez `python manage.py migrate` après les changements de modèle
+- Utilisez `python manage.py shell` pour des tests interactifs
+- Configurez `python manage.py loaddata` pour charger des fixtures
+
+### Chapitre 8: Personnalisation avancée
+
+#### 8.1. Gestionnaires de modèles personnalisés
+
+Créez des gestionnaires personnalisés pour encapsuler la logique métier :
+
+```python
+from django.db import models
+
+class PublishedManager(models.Manager):
+    """Retourne uniquement les articles publiés"""
+    
+    def get_queryset(self):
+        return super().get_queryset().filter(status='published')
+    
+    def recents(self, days=7):
+        """Retourne les articles des N derniers jours"""
+        from django.utils import timezone
+        from datetime import timedelta
+        return self.get_queryset().filter(
+            date_publication__gte=timezone.now() - timedelta(days=days)
+        )
+
+class Article(models.Model):
+    titre = models.CharField(max_length=200)
+    contenu = models.TextField()
+    statut = models.CharField(max_length=10, default='draft')
+    date_publication = models.DateTimeField()
+    
+    objects = models.Manager()  # Le gestionnaire par défaut
+    published = PublishedManager()  # Le gestionnaire personnalisé
+    
+    def published_articles():
+        return Article.published.all()
+    
+    def recents_articles(days=7):
+        return Article.published.recents(days)
+```
+
+#### 8.2. Signaux Django
+
+Utilisez les signaux pour exécuter du code en réponse à des événements du modèle :
+
+```python
+from django.db.models.signals import post_save, post_delete
+from django.dispatch import receiver
+from .models import Article
+
+@receiver(post_save, sender=Article)
+def article_saved(sender, instance, created, **kwargs):
+    if created:
+        # Envoyer une notification ou mettre à jour des statistiques
+        pass
+
+@receiver(post_delete, sender=Article)
+def article_deleted(sender, instance, **kwargs):
+    # Nettoyer les ressources associées
+    pass
+```
+
+### Chapitre 9: Tests unitaires
+
+#### 9.1. Structure des tests
+
+Django inclut un framework de tests intégré qui s'appuie sur `unittest` :
+
+```python
+from django.test import TestCase, Client
+from .models import Article, Auteur
+
+class ArticleModelTest(TestCase):
+    def setUp(self):
+        self.auteur = Auteur.objects.create(nom="Jean Dupont", email="jean@example.com")
+        self.article = Article.objects.create(
+            titre="Test Article",
+            contenu="Contenu de test",
+            auteur=self.auteur
+        )
+    
+    def test_creation_article(self):
+        """Vérifier qu'un article peut être créé"""
+        self.assertEqual(self.article.titre, "Test Article")
+        self.assertEqual(self.article.auteur, self.auteur)
+    
+    def test_str_representation(self):
+        """Vérifier la représentation en chaîne de caractères"""
+        self.assert str__(self.article) == "Test Article"
+    
+    def test_article_avec_auteur(self):
+        """Vérifier la relation avec l'auteur"""
+        articles = Article.objects.filter(auteur=self.auteur)
+        self.assertEqual(articles.count(), 1)
+```
+
+#### 9.2. Tests de vue
+
+```python
+class ArticleViewTest(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.auteur = Auteur.objects.create(nom="Test Auteur")
+        self.article = Article.objects.create(
+            titre="Article de test",
+            contenu="Contenu de test",
+            auteur=self.auteur
+        )
+    
+    def test_liste_articles_get(self):
+        """Tester l'accès à la liste des articles"""
+        response = self.client.get('/articles/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Article de test")
+    
+    def test_article_detail_get(self):
+        """Tester l'accès au détail d'un article"""
+        response = self.client.get(f'/articles/{self.article.pk}/')
+        self.assertEqual(response.status_code, 200)
+```
+
+#### 9.3. Exécution des tests
+
+```bash
+# Exécuter tous les tests
+python manage.py test
+
+# Exécuter des tests spécifiques
+python manage.py test articles.tests
+
+# Avec couverture de code
+coverage run manage.py test
+coverage report
+```
+
+### Chapitre 10: Déploiement continu
+
+#### 10.1. Intégration continue
+
+Configurez des pipelines CI/CD pour automatiser les tests et le déploiement :
+
+```yaml
+# Exemple de fichier .github/workflows/python.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v3
+            - name: Set up Python
+              uses: actions/setup-python@v4
+              with:
+                  python-version: '3.10'
+            - name: Install dependencies
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements.txt
+            - name: Run tests
+              run: |
+                  python -m pytest
+```
+
+#### 10.2. Déploiement vers différents environnements
+
+Utilisez des variables d'environnement pour distinguer les environnements :
+
+```python
+# settings.py
+import os
+
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+SECRET_KEY = os.getenv('SECRET_KEY', 'clé-par-défaut')
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
+```
+
+### Conclusion
+
+Ce cours a couvert l'ensemble des aspects essentiels du développement Django, de la modélisation de base de données au déploiement en production. Vous avez appris :
+
+1. À créer et gérer des modèles Django avec des relations complexes
+2. À utiliser l'ORM pour des requêtes efficaces et avancées
+3. À construire des vues, des templates et des formulaires
+4. À gérer les fichiers statiques et les médias
+5. À implémenter sécurité, tests et bonnes pratiques de déploiement
+6. À personnaliser Django avec des gestionnaires, des signaux et des méthodes avancées
+
+Avec ces connaissances, vous êtes maintenant capable de construire des applications web robustes, évolutives et maintenables utilisant le framework Django.
+
+## Exercices pratiques
+
+1. Créer un modèle `Produit` avec des champs `nom`, `prix`, `stock`, et une relation `ForeignKey` vers une catégorie
+2. Implémenter un formulaire `ModelForm` pour le modèle `Produit` avec validation personnalisée
+3. Créer une vue `ListView` paginée affichant 10 produits par page, triés par prix décroissant
+4. Concevoir un template qui affiche les produits avec leur image, prix et nom
+5. Configurer les URLs pour mapper `/produits/` vers la liste des produits et `/produits/<id>/` vers le détail
+6. Ajouter un champ `date_creation` avec `auto_now_add=True` et l'afficher dans le template
+7. Implémenter une vue de recherche qui filtre les produits par nom ou catégorie
+8. Créer un gestionnaire personnalisé qui retourne uniquement les produits en stock
+9. Écrire des tests unitaires couvrant la création, la modification et la suppression de produits
+10. Configurer un déploiement de base avec Gunicorn et noter les étapes de configuration

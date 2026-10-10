@@ -1,0 +1,137 @@
+## L'ordre de collecte : du volatile au persistant
+
+La première question que se pose tout enquêteur, une fois l'autorisation obtenue et le périmètre fixé, n'est pas « par où commencer », mais « qu'est-ce qui va mourir pendant que je réfléchis ». Toute investigation est une course contre la disparition des preuves, et cette course impose un ordre strict, dicté par la durée de vie des traces. Le principe tient en une phrase : on collecte d'abord ce qui disparaît au premier incident, ensuite ce qui tient quelques jours, et seulement en dernier ce qui repose sur le disque. Un enquêteur qui commence par l'image disque, parce qu'elle est agréable à manipuler, perd les seuls éléments qui n'existent qu'une fois : mémoire vive, connexions en cours, processus chargés.
+
+L'ordre de préemption que vous appliquerez tient donc en sept étapes. Premièrement, identifier et dater l'affaire : numéro, heure, personne, lieu, puis photographier l'état du système, écran allumé, câbles branchés, voyants, et transcrire à la main ce qui s'affiche, parce qu'une capture d'écran suppose déjà un système en fonctionnement. Deuxièmement, relever l'état volatile : processus, connexions ouvertes, utilisateurs connectés, horloge du système et dérive par rapport à votre montre. Troisièmement, saisir les journaux volatils et les caches utiles : résolution des noms, routage, historique de partage, tampons de la messagerie locale. Quatrièmement, copier les journaux destinés à être purgés. Cinquièmement, acquérir l'image complète du disque. Sixièmement, saisir les supports amovibles présents, en les traitant comme des pièces à conviction. Septièmement, récupérer les journaux distants, messagerie, stockage en réseau, pare-feu, authentification centralisée, avant que leur politique de conservation ne les efface.
+
+Cette hiérarchie n'est pas cosmétique : elle reflète une réalité matérielle. La mémoire vive n'est qu'une suite de cellules électriques, elle ne survit pas à la coupure. Les fichiers ouverts ne sont parfois écrits sur disque qu'en fin de session, si bien qu'une application peut détenir en mémoire une version d'un document bien plus récente que la version enregistrée. Les connexions TCP d'un exfiltrant en cours disparaissent avec le processus. À l'inverse, le tableau des métadonnées d'un volume, le journal des modifications du système de fichiers et les entrées du registre sont relativement stables : ils attendront, à condition que personne ne reparte en écriture sur le support. Cette différence justifie à elle seule que vous ne découpiez jamais une acquisition en deux journées.
+
+Le cas des Ateliers du Faubourg illustre exactement ce point. Le chargé de développement a quitté l'association le 25 septembre, mais son poste, un portable, est resté sous tension dans son ancien bureau, personne n'ayant osé l'éteindre. Le lundi 28, au moment où la direction soupuche une exfiltration, la machine tourne encore depuis trois jours. C'est une chance énorme : les journaux de session du week-end, l'historique des partages montés et la liste des processus existent toujours. L'erreur aurait été de redémarrer le portable pour le mettre à jour, de l'ouvrir pour vérifier au clavier, ou simplement de l'éteindre en fin de journée par économie. Le premier geste correct consiste à photographier l'écran, à relever l'heure système, à noter ce qui tourne, puis à saisir la mémoire vive et les journaux volatils avant toute autre chose.
+
+```text
+ORDRE DE PREEMPTION — fiche de terrain, une ligne par etape
+-----------------------------------------------------------
+N   A FAIRE                         POURQUOI EN PREMIER
+1   Affaire, heure, photos, etat    constater avant d'agir
+2   Memoire vive, processus,        disparit au premier arret
+    connexions, utilisateurs
+3.  Journaux volatils, caches,      purge ou regeneration permanente
+    table de resolution
+4.  Journaux destined a etre        fenetre de conservation debutee
+    purges (messagerie, NAS)
+5.  Image bit a bit du disque       source unique de toute analyse
+6.  Supports amovibles presents     peut etre emporte a tout moment
+7.  Journaux distants               regles de purge du fournisseur
+
+Contre-sens a eviter : commencer par l'etude de l'image, par confort
+d'outil, et decouvrir ensuite que la memoire avait disparu.
+```
+
+Il arrive évidemment que l'on ne puisse pas suivre ce schéma : la machine est déjà à l'arrêt, le disque est HS, le poste est chiffré et verrouillé, ou l'on ne dispose que d'un accès distant. Dans ces cas, on documente l'écart au lieu de le masquer : on écrit dans le dossier que la mémoire vive n'a pas pu être saisie, pour quelle raison, et quelles conclusions seront donc limitées. Un rapport honnête sur ce qui manque vaut mieux qu'un rapport complet qui fait semblant de tout avoir. C'est aussi la manière la plus rapide de convaincre un tiers de la solidité du reste : celui qui avoue ses trous crédibilise ce qu'il affirme.
+
+## Acquérir une image disque : le bit à bit et sa vérification
+
+L'image disque est le geste central de toute investigation matérielle, et il ne souffre aucune approximation. Elle consiste à lire le support secteur par secteur, y compris les secteurs marqués libres, les espaces non alloués, la table de partition et les zones défectueuses, puis à écrire cette lecture dans un fichier unique qui en est la réplique exacte. Pourquoi cette exhaustivité, alors que vos fichiers d'intérêt tiennent dans un dossier ? Parce que la valeur d'une image se mesure à ce qu'un tiers pourra chercher demain : un fragment résiduel, un fichier supprimé dont le nom subsiste, une partition cachée. Une copie partielle est une hypothèse ; une image complète est un constat.
+
+Les étapes d'une acquisition propre sont toujours les mêmes et tiennent en un paragraphe. Vérifiez que la destination dispose d'au moins la taille du support, avec de la marge. Nommez le fichier de façon unique, avec le numéro d'affaire, l'identifiant du support et la date, de sorte qu'aucun autre élément du dossier ne puisse porter le même nom. Effectuez la lecture avec un outil qui signale les erreurs au lieu de les masquer, et qui poursuit au-delà d'un secteur défectueux. Calculez immédiatement l'empreinte du fichier produit et enregistrez-la dans un fichier annexe. Notez dans votre journal d'enquête la commande exacte, son heure de début et de fin, l'opérateur, et la taille obtenue. Rangez enfin l'image sous scelle et n'y revenez plus : toute analyse se fera sur une copie de travail.
+
+```bash
+# 1. Verification de l'espace de destination (1 To attendu)
+df -h /evidence
+
+# 2. Acquisition bit a bit, erreurs de lecture signalees et sautees
+sudo dd if=/dev/sda of=/evidence/2026-09-28_PORTABLE-KERBRAT.img \
+       bs=4M status=progress conv=noerror,sync 2>&1 | tee /evidence/dd.log
+
+# 3. Empreinte de l'image, enregistree tout de suite
+sha256sum /evidence/2026-09-28_PORTABLE-KERBRAT.img \
+       > /evidence/2026-09-28_PORTABLE-KERBRAT.sha256
+
+# 4. Controle : taille lue = taille du support source ?
+cmp <(stat -c %s /evidence/2026-09-28_PORTABLE-KERBRAT.img) <(blockdev --getsize64 /dev/sda)
+```
+
+Deux détails de la commande méritent qu'on s'y arrête, car ils distinguent une acquisition professionnelle d'une copie improvisée. L'option conv=noerror empêche l'opération de s'arrêter sur un secteur illisible, et sync force la lecture d'un bloc complet avant de passer au suivant : sans ces deux options, un disque abîmé produit silencieusement une image tronquée dont vous ne découvrirez la faille qu'à l'analyse. L'option status=progress, elle, écrit dans le journal de commande le volume réellement lu et le temps qu'il a fallu, deux informations que vous recopierez dans le constat. Un disque de deux téraoctets demande couramment une heure : prévoyez le créneau et n'interrompez jamais l'opération pour gagner du temps.
+
+L'imagerie sur le terrain, elle, se fait souvent avec un boîtier externe et une station d'accueil qui joue le rôle de bloqueur matériel : l'image ci-dessous montre cette situation classique, un support ouvert sur un établi, un boîtier d'acquisition interposé et l'ordinateur d'enquête qui écrit le fichier. Le principe reste identique à celui de la commande précédente : lecture seule de la source, écriture sur une destination distincte, empreinte calculée dans la foulée.
+
+```image
+forensics-traces
+| Acquisition forensique sur le terrain : le disque lit par un boîtier d'interface, l'image écrite sur la station d'enquête, à l'écart de la machine d'origine.
+```
+
+Un mot sur les cas qui compliquent la vie : les supports chiffrés et les machines dont le disque est soudé à la carte mère. Dans le premier cas, l'image est valide, mais son contenu reste chiffré tant que la clé n'est pas connue ; vous documentez la situation et cherchez la clé ailleurs, mémoire vive, gestionnaire de mots de passe, sauvegarde de configuration. Dans le second, on passe à l'imagerie logicielle, en minimisant les écritures, ou on fait appel à un atelier. Dans tous les cas, l'erreur à ne jamais commettre est de tenter deux fois l'opération en changeant de méthode sans conserver la première tentative : deux images contradictoires d'un même support font perdre le dossier.
+
+## L'empreinte numérique : prouver que rien n'a changé
+
+L'empreinte cryptographique est l'instrument qui transforme une copie en preuve. Son principe tient en une ligne : une fonction calcule, à partir de n'importe quel contenu, une valeur de longueur fixe, de sorte que la moindre modification du contenu, un octet changé, une ligne ajoutée, un caractère supprimé, produit une valeur entièrement différente. Vous pouvez donc comparer l'empreinte de l'original et celle de la copie : identiques, la copie est fidèle ; différentes, quelque chose s'est produit entre les deux et l'enquête s'arrête. La fonction est irréversible en pratique et résiste aux retours trouvés, ce qui signifie qu'on ne peut pas fabriquer deux contenus différents partageant la même empreinte dans un délai raisonnable.
+
+L'habitude à prendre est un double calcul, toujours le même : une empreinte avant l'opération et une empreinte après. Pour un disque, cela signifie hacher la source quand elle est montée en lecture, hacher l'image une fois terminée, puis comparer. Pour un fichier unique extrait d'une image, vous hachez le fichier d'origine dans l'image de travail, vous le copiez, vous hachez la copie. Pour un lot de fichiers, vous générez un manifeste, un fichier qui liste chaque chemin avec son empreinte, et vous enregistrez ce manifeste horodaté avec le dossier. La règle est d'autant plus utile qu'elle se pratique en deux minutes et qu'elle se révèle décisive à la première contestation.
+
+```bash
+# Empreinte d'un fichier avant extraction, puis apres extraction
+sha256sum "/mnt/image/Users/kerbrat/Documents/adherents_2026.xlsx"
+
+# Meme chose apres copie dans l'espace de travail de l'enquete
+sha256sum /enquete/preuves/P007_adherents_2026.xlsx
+
+# Manifeste complet d'un dossier de preuves, signe et date
+find /enquete/preuves -type f -print0 | sort -z | xargs -0 sha256sum \
+     > /enquete/manifeste_2026-09-28.sha256
+
+# Verification ulterieure du manifeste, par un autre operateur si possible
+sha256sum -c /enquete/manifeste_2026-09-28.sha256
+```
+
+Attention à une confusion fréquente : l'empreinte d'un fichier ne dit rien de son honnêteté, elle dit seulement que le contenu est resté identique à lui-même. Deux conclusions en découlent. Calculer l'empreinte seulement après avoir modifié ou réenregistré un document ne sert à rien, puisqu'il ne reste plus de valeur de départ ; c'est pourquoi on hache au moment de la saisie, pas au moment de l'analyse. Ensuite, un fichier dont on a changé l'encodage, la date ou le nom possède une empreinte différente, même si le texte est le même : la comparaison se fait octet par octet.
+
+Le choix de l'algorithme fait l'objet de consensus depuis longtemps. Le tableau suivant résume ce qu'il faut en retenir pour un travail de terrain, sans débat académique : on utilise l'algorithme moderne recommandé, on documente lequel, on avance.
+
+| Algorithme | Taille de l'empreinte | Statut | Usage recommandé |
+|---|---|---|---|
+| MD5 | 128 bits | Cassé depuis longtemps | Jamais seul ; éventuel contrôle rapide interne |
+| SHA-1 | 160 bits | Cassé en théorie | À éviter dans un dossier destiné à être contesté |
+| SHA-256 | 256 bits | Standard actuel | Empreinte de référence pour images et preuves |
+| SHA-512 | 512 bits | Standard actuel | Utile sur grands volumes, plus lent sur petits |
+| Empreinte + date certaine | variable | Renforce la preuve | Fichier d'empreintes déposé ou notarié si enjeu |
+
+Cette dernière ligne mérite d'être développée : une empreinte ne vaut que si son horodatage est crédible. Si vous écrivez votre fichier d'empreintes sur le même serveur que celui qui fait l'objet du litige, un adversaire pourra soutenir qu'il a été produit après coup. Trois parades simples existent : déposer le manifeste auprès d'un tiers, le transmettre par voie datée à la direction avant toute manipulation, ou faire constater l'opération par un huissier si l'enjeu le justifie.
+
+## Supports amovibles, messagerie et stockage : les autres voies de sortie
+
+Une enquête centrée sur le poste de travail sous-estime toujours la même chose : les données ne sortent presque jamais par le chemin que l'on surveille. Dans les petites structures, trois voies de sortie font le travail, et chacune laisse une trace propre, souvent plus parlante que le disque lui-même. La clé USB, parce qu'elle matérialise le transfert physique. La messagerie, parce qu'elle produit un horodatage chez un tiers indépendant. Le stockage en réseau, parce qu'il enregistre les accès aux dossiers partagés. Les collecter suppose d'agir vite, car leurs durées de conservation sont nettement plus courtes que celle d'un disque rangé dans un tiroir.
+
+La clé USB se lit dans le registre du poste, sous une famille de clés qui enregistre chaque périphérique de stockage de masse jamais branché : fabricant, modèle, numéro de série unique, lettres de lecteur attribuées, dates de première et dernière connexion. Deux questions se posent aussitôt : que prouve-t-on, et que ne prouve-t-on pas ? On prouve qu'un support au numéro de série donné a été connecté à ce poste, à ces dates, et que des opérations d'écriture y ont été réalisées. On ne prouve pas qui a branché la clé ni ce qu'elle contenait. C'est un faisceau, pas un verdict, et il faudra le confronter aux journaux de session et aux témoignages.
+
+```powershell
+# Poste suspect — supports de stockage de masse jamais branches
+Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR" |
+  ForEach-Object {
+    $p = Get-ItemProperty $_.PSPath
+    [pscustomobject]@{
+      Cle        = $_.PSChildName
+      Fabricant  = ($_.PSChildName -split '&')[1]
+      Type       = ($_.PSChildName -split '&')[3]
+      Serial     = ($_.PSChildName -split '&')[4]
+      Propriete  = $p.DeviceDesc
+    }
+  } | Format-List
+
+# Dates de premiere et derniere connexion du support recherche
+Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR\*\*&0*" |
+  Select-Object -Property *First*, *Last*
+```
+
+La messagerie offre un avantage décisif : l'horodatage est produit par le fournisseur, pas par la machine suspecte. Un journal d'envoi indique l'expéditeur, le destinataire, l'heure, la taille, le nombre de pièces jointes et parfois leur empreinte, le tout chez un tiers dont la politique de conservation est connue et contractualisée. Deux précautions s'imposent. Premièrement, l'heure est presque toujours en temps universel coordonné : en septembre, en Europe continentale, il faut ajouter deux heures pour obtenir l'heure locale, et il faut l'écrire dans la chronologie plutôt que de laisser le lecteur deviner. Deuxièmement, la fenêtre de conservation est courte : trente jours sont courants sur les journaux d'activité, et une recherche lancée quinze jours trop tard ne renverra rien. C'est le seul domaine où l'on peut perdre une preuve décisive en discutant de son opportunité.
+
+Le stockage en réseau, lui, enregistre qui a ouvert quoi, quand, depuis quel poste et avec quel compte. Ces journaux sont précieux parce qu'ils sont indépendants du poste de l'utilisateur : même si le portable a été réinstallé, le NAS continue de raconter que le compte kerbrat a lu le dossier des adhérents. Mais leur rétention est souvent très courte, parfois sept à trente jours par défaut, faute de place ou de réglage. La leçon pratique est brutale : au premier soupçon, exportez les journaux du NAS immédiatement, sous forme de fichier, avec leur empreinte, avant même d'ouvrir une analyse.
+
+| Voie de sortie | Trace principale | Ce qu'elle établit | Ce qu'elle n'établit pas | Conservation typique |
+|---|---|---|---|---|
+| Clé USB | Registre des périphériques, journal d'accès | Un support donné a servi sur ce poste | Qui l'a branchée, ce qu'elle contenait | Plusieurs mois sur le poste |
+| Messagerie | Journal d'envoi du fournisseur | Un envoi daté vers un destinataire | Ce que pensait l'expéditeur | Trente jours souvent |
+| Stockage en réseau | Journal d'accès aux dossiers | Un compte a lu ou écrit ces fichiers | L'intention de l'auteur | Sept à trente jours |
+| Envoi vers un nuage | Journal de connexion du fournisseur | Un compte a téléversé depuis une adresse | La nature exacte des fichiers | Variable, souvent court |
+| Sauvegarde locale | Empreintes et journaux de tâche | Ce qui existait à une date donnée | Rien sur les ajouts postérieurs | Durée de rétention réglée |
+
+Ces quatre familles de traces, le registre des supports, le journal de messagerie, le journal du partage et le journal du nuage, forment ce que l'on appelle parfois les voies latérales de l'exfiltration. Aucune ne suffit seule, toutes se resserrent les unes autour des autres : la même séquence de faits se lit simultanément sur le poste, chez le fournisseur de messagerie et sur le serveur de fichiers, et c'est cette triple convergence qui donnera à votre chronologie sa force. La section suivante traite précisément de la manipulation de ces éléments : comment les conserver sans entamer leur valeur, et comment rendre compte de chaque geste.

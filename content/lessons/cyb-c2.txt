@@ -1,0 +1,480 @@
+Bienvenue dans le deuxième chapitre du parcours Cybersécurité fondamentaux, un chapitre entièrement consacré aux identités et aux accès : mots de passe, phrases de passe, double authentification et répartition des droits. Le chapitre précédent vous a appris à reconnaître les attaquants et leurs vecteurs ; celui-ci s'attaque à la porte d'entrée la plus sollicitée de tous les systèmes que vous utiliserez, des messageries personnelles jusqu'aux serveurs d'une association. Dans la très grande majorité des compromissions signalées chaque année, ce n'est pas une faille géniale qui donne l'accès à un système : c'est un identifiant volé, deviné ou réutilisé, et un mot de passe qui n'a jamais eu beaucoup de résistance. Apprendre à construire des secrets solides, à doubler l'authentification et à répartir les droits n'est donc pas un raffinement pour spécialistes, c'est le socle même de la défense, la partie du métier qui produit le plus d'effet pour le moins d'effort.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, et vous les aurez déjà manipulées sur un cas réel. Vous appliquerez les règles d'un mot de passe robuste en distinguant ce qui compte vraiment, la longueur et l'imprévisibilité, de ce qui compte moins, les rappels de complexité imposés pendant des années. Vous expliquerez ce qu'est une entropie de mot de passe et vous estimerez en quelques secondes combien de temps il faut pour épuiser un espace de candidats. Vous configurerez une double authentification de bout en bout, en choisissant le bon facteur selon le niveau de risque, en comprenant ce qu'un code à usage unique fait réellement et ce qu'une clé physique protège de mieux. Vous mettrez en pratique le moindre privilège en dessinant la matrice de droits de quatre comptes d'un établissement, et vous saurez répondre en vingt minutes à la découverte d'un compte compromis. Le tout sera assemblé dans un mini-projet guidé : la politique d'identité et d'accès de la Médiathèque des Lilas, un document d'une page que vous pourrez réécrire seul juste après la leçon.
+
+Le fil rouge du chapitre est le parc informatique de la Médiathèque des Lilas : une dizaine de postes publics en libre accès, un réseau Wi-Fi ouvert aux usagers, un petit serveur d'association qui héberge la gestion des adhérents, et un site web qui publie le programme des ateliers. Ce décor est volontairement banal, parce qu'il concentre tous les cas d'usage de ce chapitre : un compte partagé que tout le monde utilise, des employés qui ont besoin d'aller plus loin que les visiteurs, un responsable technique qui détient les droits d'administration, et des services automatiques comme l'impression ou l'envoi de courriels qui se connectent sans être des personnes. Nous reprendrons ce décor section après section. Une recommandation avant de commencer : ce chapitre s'apprend comme on apprend à nager, en entrant dans l'eau. Recopiez les exemples, modifiez-les, testez vos propres phrases de passe dans l'estimateur d'entropie, activez la double authentification sur vos comptes pendant que vous lisez. Les notions y sont simples, et elles ne deviennent utiles qu'une fois appliquées à vos propres identifiants.
+
+## Ce qu'est (et n'est pas) une authentification
+
+L'authentification est l'opération par laquelle un système vérifie que celui qui se présente est bien la personne ou l'entité qu'il prétend être. Il faut distinguer deux étapes que le langage courant confond sans cesse. L'identification consiste à annoncer un nom : vous tapez votre adresse de courrier électronique, vous badgez votre carte, vous donnez le nom de votre association. L'authentification consiste à prouver ce nom : vous donnez le mot de passe lié à cette adresse, vous présentez la carte dont la puce répond à un défi, vous signez un document dont la signature est enregistrée. Un système peut parfaitement recueillir une identification sans jamais l'authentifier, par exemple un formulaire de contact qui affiche « bonjour Madame Martin » parce que vous avez tapé ce nom. L'authentification est donc une preuve, et comme toute preuve, elle repose sur un moyen de vérification que l'imposteur ne peut pas fabriquer.
+
+L'analogie la plus parlante est celle du comptoir d'un hôtel. Vous vous présentez en donnant votre nom, c'est l'identification. Le réceptionniste vous demande une pièce d'identité, vous la fournissez, il compare la photo et le nom : c'est l'authentification. On vous remet ensuite la clé de la chambre que vous avez réservée, c'est l'autorisation. Enfin, l'hôtel note dans son registre l'heure d'arrivée et de départ, c'est la journalisation. Ces quatre opérations forment la chaîne complète que tout système doit pouvoir dérouler, et la sécurité de l'ensemble repose sur la plus faible des quatre mailles : un hôtel qui remet une clé sans regarder la pièce d'identité a une porte d'entrée décorative, de même qu'un système qui journalise parfaitement des accès accordés trop facilement produit de belles traces d'incident inutiles.
+
+Les moyens de preuve se répartissent traditionnellement en trois familles, qu'on appelle facteurs. Le premier facteur est ce que vous savez : un mot de passe, un code PIN, une réponse à une question personnelle, une phrase de passe. Le deuxième est ce que vous avez : un téléphone qui reçoit un code, une carte à puce, une clé physique branchée au port, une imprimante de jet d'encre qui sort un ticket. Le troisième est ce que vous êtes : une empreinte digitale, un visage, une voix, une rétine. L'authentification multifacteur, souvent appelée double authentification quand elle en combine deux, consiste à exiger des preuves appartenant à des familles différentes. La règle est simple à retenir et souvent mal appliquée : cumuler deux secrets, par exemple un mot de passe puis une question secrète dont la réponse est aussi un secret, ne donne pas deux facteurs, cela donne un seul facteur doublé, et les deux preuves tombent ensemble si le secret principal fuit.
+
+```table
+| Facteur | Ce que cela représente | Exemples concrets | Forces | Faiblesses |
+| --- | --- | --- | --- | --- |
+| Savoir | Une information mémorisée | Mot de passe, phrase de passe, code PIN | Gratuit, universel, fonctionne hors ligne | Peut être deviné, réutilisé, enregistré par un faux site |
+| Avoir | Un objet en sa possession | Téléphone, clé physique, carte à puce | Résiste au vol de bases de données | Perte, vol, usurpation de carte SIM, obsolescence |
+| Être | Une caractéristique biométrique | Empreinte, visage, voix | Aucun à retenir, difficile à transmettre | Variable selon les conditions, données sensibles, jamais révocables |
+| Faire | Un comportement mesuré | Frappe sur un clavier, geste, style de navigation | Discret, complémentaire | Seul, trop faible pour authentifier |
+```
+
+Il est tout aussi important de savoir ce qu'une authentification n'est pas. Elle ne chiffre rien : chiffrer, c'est transformer un contenu pour qu'il soit illisible sans clé, et un mot de passe envoyé en clair sur un réseau reste volable même s'il est parfaitement résistant. Elle n'autorise rien : être authentifié ne dit pas ce que l'on a le droit de faire, c'est le sujet de la section sur le moindre privilège. Elle ne garantit pas l'anonymat : un identifiant authentifié est par définition traçable, et c'est précisément ce qui rend la journalisation utile. Enfin, même une authentification multifacteur solide ne protège pas contre tout : ni d'un poste empoisonné qui vole la session après votre connexion, ni d'un collègue qui abuse de droits trop larges, ni d'un phishing soigné qui vous ferait saisir le code à la minute où vous le recevez. La défense reste un empilement de mesures, jamais une seule.
+
+- L'identification annonce un nom, l'authentification prouve ce nom, l'autorisation décide des droits.
+- Un facteur appartient à une famille : savoir, avoir, être, faire ; deux secrets de la même famille ne font pas un MFA.
+- L'authentification multifacteur exige des preuves de familles différentes et complémentaires.
+- Un mot de passe fort ne chiffre rien et n'autorise rien : ce sont trois fonctions distinctes.
+- L'authentification ne protège ni des sessions volées après coup, ni des abus de droits internes.
+- Toute connexion authentifiée doit être journalisée pour rester auditable.
+- La chaîne n'est jamais plus solide que son maillon le plus faible : identifiant partagé égale authentification inutile.
+
+## Pourquoi les mots de passe faibles tombent
+
+Considérons le cas de la Médiathèque des Lilas depuis le point de vue d'un attaquant : personne n'a besoin de forcer la porte du bâtiment, il suffit d'obtenir une base de mots de passe. Les bases circulent par centaines de millions, issues de fuites de services commerciaux, de forums oubliés, d'applications abandonnées. Un attaquant n'essaie même pas de deviner votre mot de passe : il le cherche dans une liste et, s'il n'y est pas, il fabrique des variantes de ce qu'il sait déjà des humains. La majorité des mots de passe n'est pas cassée par la puissance de calcul mais par la psychologie appliquée : tous appliquent les mêmes règles de mémorisation, connues depuis des décennies.
+
+L'attaque par dictionnaire consiste à tester un mot de passe après l'autre contre une liste de candidats. Le dictionnaire de base contient les mots du langage, les noms de famille, les prénoms, les villes, les équipes de sport, les dates de naissance, les mots de passe les plus couramment observés dans les fuites. À lui seul, un dictionnaire de quelques milliers d'entrées suffit à éliminer une fraction importante des comptes. Mais le dictionnaire ne s'arrête pas aux mots : il est augmenté par des règles de transformation systématiques que tout outil applique automatiquement. Mettre une majuscule à la première lettre, ajouter un chiffre à la fin, remplacer un a par un 4, doubler une voyelle, ajouter deux chiffres d'année, suffixer un symbole : chacune de ces transformations ne multiplie l'espace de recherche que par quelques dizaines, ce qui se compose en quelques secondes de plus.
+
+Les règles de composition imposées pendant vingt ans ont produit exactement le résultat que la théorie prévoyait. Quand un système exige huit caractères, une majuscule, un chiffre et un symbole, tout le monde finit par obéir de la même manière : un mot courant, une majuscule en tête, un chiffre et un symbole en queue. Le prédicteur n'a même plus besoin de chercher : il applique le gabarit de l'utilisateur moyen. C'est pourquoi les listes de mots de passe les plus couramment observées ressemblent toutes à des variantes d'un même patron, avec une année à la fin qui donne le sentiment du renouvellement sans en avoir le fond. Une politique qui annonce ses règles publiquement et qui ne sanctionne pas les faiblesses revient à publier le gabarit que tous les comptes vont suivre.
+
+```text
+EXEMPLE FICTIF : règles appliquées automatiquement par un outil de test
+Longueur minimale non atteinte ......................... éliminé
+Mot du dictionnaire seul .............................. écarté en quelques secondes
+Première lettre en majuscule + chiffre final .......... testé en priorité
+Année en suffixe (4 chiffres) .......................... testé pour chaque année courante
+Nom du site inséré dans le mot de passe ............... testé en priorité
+Faute de frappe courante du clavier ................... testé après le dictionnaire
+Mot de passe exactement réutilisé sur un autre service .. tentatives ciblées immédiates
+```
+
+D'autres familles de faiblesses reviennent sans exception dans les audits. Les motifs de clavier, comme la suite de touches qwertyuiop ou azertyuiop, sont dans tous les dictionnaires depuis longtemps. Les informations personnelles sont tout aussi exposées : le nom du club de foot, le nom d'un animal de compagnie, une date d'anniversaire, le nom d'une commune comme Lilas. Une attaque dirigée contre une personne connue n'a d'ailleurs même pas besoin de dictionnaire pour ce genre d'information : le nom, la date de naissance et la ville d'un employé sont souvent publics sur les réseaux sociaux et sur le site de l'organisation elle-même. Le mot de passe devient alors un simple assemblage de faits déjà connus de tous.
+
+La longueur reste le premier levier, mais elle ne suffit pas si elle est mal utilisée. Un mot de passe de douze caractères pris dans un mot du dictionnaire suivi de chiffres est toujours devinable en un instant, alors qu'une phrase de passe de quatre mots ordinaires, qui paraît pourtant plus longue et plus banale, exige des milliards d'années de recherche. La différence ne tient pas à la présence d'un chiffre ou d'un symbole, elle tient à l'espace de candidats réellement couvert par le secret, et à savoir si ce secret a déjà été observé quelque part. C'est la notion d'entropie, expliquée plus loin dans ce chapitre, qui permet de quantifier ce que vos yeux ne voient pas quand vous lisez un mot de passe.
+
+- Une base de mots de passe volée se travaille hors ligne : le système attaqué n'est plus en jeu, seulement son fichier d'empreintes.
+- Les règles de composition classiques produisent des gabarits prévisibles que les outils testent en priorité.
+- Majuscule en tête, chiffre et symbole en queue ajoutent beaucoup de frictions et très peu d'entropie.
+- Les motifs de clavier, les dates et les informations personnelles figurent dans tous les dictionnaires.
+- Une attaque ciblée part des informations publiques de la victime avant d'essayer quoi que ce soit d'exotique.
+- Un mot de passe déjà utilisé sur un autre service est immédiatement tenté sur votre compte.
+- La longueur compte davantage que la diversité obligatoire, à condition que les caractères soient réellement imprévisibles.
+
+## Passphrases et gestionnaire de mots de passe
+
+Face à ce constat, la première solution est un changement de format plutôt qu'un changement de discipline : la phrase de passe, ou passphrase. Plutôt que d'inventer un mot illisible mêlant lettres, chiffres et symboles, vous choisissez plusieurs mots ordinaires, séparés par des tirets ou des espaces, et vous les mémorisez comme une phrase. Quatre mots de six lettres pris au hasard dans une liste de milliers d'entrées produisent un secret plus long, plus résistant et surtout beaucoup plus agréable à taper. Le gain ne vient pas du mot de passe lui-même mais du fait que vous cessez de le modifier chaque mois : un secret que l'on peut retenir est un secret que l'on n'a pas besoin d'écrire sur un post-it, et c'est la réutilisation, plus que la faiblesse ponctuelle, qui fait basculer les comptes.
+
+La manière de construire une phrase de passe détermine tout son intérêt. Les méthodes sérieuses demandent de tirer les mots au hasard, un par un, dans une liste de quelques milliers de mots usuels, sans les relier par une histoire que vous inventeriez. Une phrase qui raconte une anecdote réelle, comme le nom de votre rue suivi de l'année de votre mariage, revient à replacer dans le secret des informations que tout le monde peut trouver. De même, une citation connue, un vers de poème ou les paroles d'une chanson populaire forment un candidat immédiatement présent dans les dictionnaires modernes, qui contiennent désormais des corpus littéraires entiers. Le bon compromis tient en trois gestes : tirez des mots au hasard, gardez-les dans l'ordre tiré, ajoutez si vous le souhaitez un séparateur et un chiffre que vous seul associez à ce secret.
+
+```text
+EXEMPLE FICTIF : méthode de construction d'une phrase de passe
+Tirage au hasard de quatre mots d'une liste de 7 776 entrées
+  mot 1 : couteau
+  mot 2 : lampe
+  mot 3 : hirondelle
+  mot 4 : genou
+Assemblage : couteau-lampe-hirondelle-genou
+Longueur : 31 caractères, espace de candidats théorique : 7776 puissance 4
+Ne jamais utiliser les exemples de ce document : ils sont publics.
+```
+
+Un secret neuf par service reste pourtant la seule règle vraiment efficace, et personne ne peut raisonnablement en retenir une dizaine. C'est là qu'intervient le gestionnaire de mots de passe, l'outil qui porte toutes vos identités chiffrées localement sous une seule phrase de passe maîtresse. Le fonctionnement se résume ainsi : vous ne retenez plus qu'une seule phrase, longue et unique ; le gestionnaire génère et stocke un secret différent pour chaque site ; il remplit le formulaire au bon endroit ; il vous prévient quand un mot de passe a été détecté dans une fuite. La base de données chiffrée peut être synchronisée entre vos appareils, mais elle n'est lisible qu'avec votre phrase maîtresse, et le fournisseur du service ne la détient pas en clair. Le modèle économique de la plupart de ces outils repose d'ailleurs sur cette promesse : si le gestionnaire devient public, la cryptographie rend le contenu inexploitable sans la phrase maîtresse.
+
+Choisir un gestionnaire, c'est aussi choisir ses habitudes. Trois pratiques font toute la différence. D'abord, la phrase maîtresse est la seule que vous retenez : elle doit être longue, tirée au hasard, et jamais réutilisée ailleurs, sous peine de transformer votre coffre en boîte à clés oubliée sous le paillasson. Ensuite, vérifiez la saisie automatique à la main au début : un gestionnaire qui remplit le formulaire sur un faux site reste un risque, et le réflexe à installer consiste à regarder l'adresse affichée avant qu'elle n'agisse. Enfin, prévoyez la sortie de secours : exportez votre coffre régulièrement dans un fichier chiffré et gardez une copie de secours pour les comptes critiques. Un gestionnaire sans plan de secours est un coffre-fort dont vous auriez perdu la combinaison.
+
+Pour une structure comme la Médiathèque des Lilas, l'usage collectif s'organise autrement que l'usage personnel. Le gestionnaire individuel convient aux comptes nominatifs, employés et responsable technique. Les comptes partagés, eux, exigent un dépôt commun contrôlé, avec historique des consultations et rotation planifiée, plutôt qu'une liste de mots de passe collée sous le clavier. Les mots de passe d'application, ceux que les logiciels utilisent sans intervention humaine, ne vivent pas dans le gestionnaire mais dans la configuration du service, avec une durée de vie limitée. Cette séparation évite l'erreur la plus répandue dans les petites structures : un seul secret qui circule par messagerie, sert à tout le monde et ne peut plus être révoqué sans faire tomber l'activité.
+
+- Une phrase de passe combine plusieurs mots tirés au hasard, plus longue et plus facile à retenir qu'un mot de passe illisible de huit caractères.
+- Une anecdote personnelle ou une citation connue annule l'avantage de la longueur : ces candidats sont déjà dans les dictionnaires.
+- Un secret différent par service : c'est la règle qui limite le plus la casse, et elle n'est tenable qu'avec un gestionnaire.
+- La phrase maîtresse du gestionnaire est le seul secret à retenir, et elle ne sert jamais ailleurs.
+- Vérifiez l'adresse du site avant chaque saisie automatique : le gestionnaire ne devine pas vos intentions.
+- Prévoyez un export chiffré et une copie de secours pour éviter de perdre l'accès à tout.
+- Séparez les comptes nominatifs, les comptes partagés et les mots de passe d'application : ils n'ont pas le même cycle de vie.
+
+## Cours de mots de passe : l'entropie expliquée simplement
+
+Dire d'un mot de passe qu'il est fort ou faible ne suffit pas à convaincre, parce que ces mots recouvrent des réalités très différentes selon les interlocuteurs. L'entropie est la mesure qui remplace l'adjectif par un nombre. Elle répond à une question précise : combien de bits d'information faut-il pour désigner un candidat parmi tous ceux que l'attaquant va tester ? Un secret entièrement imprévisible possède beaucoup d'entropie, un secret choisi selon une règle connue en possède très peu, même s'il est long et s'il contient un symbole. L'unité est le bit, et chaque bit double le nombre de combinaisons à essayer : ajouter un bit, c'est rendre le travail deux fois plus long pour l'attaquant.
+
+Le calcul de référence est d'une simplicité déconcertante : on prend la taille de l'alphabet de caractères effectivement utilisés, on l'élève à la puissance de la longueur du secret, puis on calcule le logarithme base deux du résultat. Ce logarithme traduit une taille d'espace en nombre de bits : un alphabet de 26 lettres minuscules offre environ 4,7 bits par caractère, 10 chiffres en offrent 3,3, un mélange de lettres, chiffres et symboles imprimables environ 6,5. Multipliez ensuite par la longueur. Si vous tirez les caractères au hasard, l'estimation est exacte ; si vous les choisissez sous l'influence d'une règle ou d'une habitude, elle ne mesure que la taille théorique de l'espace, pas ce que l'attaquant sait déjà de vous.
+
+```text
+EXEMPLE FICTIF : estimation d'entropie en trois lignes
+Formule : bits = longueur x log2(taille de l'alphabet)
+
+8 caracteres pris au hasard dans 94 symboles ....... 8 x 6,55 = 52 bits
+12 caracteres pris au hasard dans 94 symboles ...... 12 x 6,55 = 79 bits
+8 caracteres pris dans 36 (lettres et chiffres) .... 8 x 5,17 = 41 bits
+4 mots pris au hasard dans une liste de 7 776 mots . 4 x 12,92 = 52 bits
+5 mots pris au hasard dans une liste de 7 776 mots . 5 x 12,92 = 65 bits
+Mot courant + majuscule + chiffre + symbole ........ souvent moins de 20 bits
+```
+
+Traduire ces bits en durée de vie rend l'exercice parlant. L'attaquant hors ligne teste des milliards de candidats par seconde sur des cartes graphiques et s'arrête en général à mi-chemin, la moitié de l'espace suffisant. Avec dix milliards d'essais par seconde, un espace de 41 bits tombe en un peu plus de deux minutes, un espace de 52 bits demande plusieurs jours, un espace de 65 bits dépasse un siècle. Ces chiffres ne changent pas la nature du risque, ils en donnent l'échelle : ce qui distingue deux mots de passe n'est pas la présence d'un astérisque, c'est le nombre d'années de calcul qu'ils imposent.
+
+```python
+# Estimation rapide d'entropie (exemple de raisonnement, pas un outil de production)
+import math
+
+def bits(longueur, alphabet):
+    return longueur * math.log2(alphabet)
+
+print(bits(8, 94))    # mot de passe aléatoire court
+print(bits(12, 94))   # mot de passe aléatoire confortable
+print(bits(4, 7776))  # phrase de passe de quatre mots
+print(bits(5, 7776))  # phrase de passe de cinq mots
+
+# Un mot connu du dictionnaire ne vaut pas ses bits : il est testé en premier.
+```
+
+L'estimation a des limites qu'il faut connaître pour ne pas la surévaluer. Un secret déjà présent dans les dictionnaires d'attaquants a une entropie pratique quasi nulle, quelle que soit sa longueur apparente : il est testé au début de la recherche, pas réparti uniformément dans l'espace. De même, une date, un nom de commune ou le nom du club sportif ajoute des bits sur le papier alors qu'ils sont les premiers candidats essayés. C'est pourquoi les outils de vérification modernes croisent la longueur, qui donne l'entropie théorique, et la présence du secret dans des listes de fuites connues, qui donne son entropie réelle. Un site comme https://haveibeenpwned.com/ permet de vérifier si une adresse ou un mot de passe a déjà été observé dans une fuite publique, et ce test prend quelques secondes.
+
+La conséquence pratique tient en quelques règles. Pour un compte personnel qui n'ouvre rien de sensible, quatre mots tirés au hasard suffisent amplement. Pour une messagerie, un compte bancaire ou un serveur d'association, visez cinq ou six mots, ou un mot de passe de douze caractères réellement aléatoires. Pour un compte d'administration qui protège d'autres comptes, ajoutez la double authentification plutôt que de chercher encore des caractères : au-delà d'un certain seuil, la complexité supplémentaire n'apporte presque rien, alors qu'un second facteur change radicalement l'équation. Enfin, changez un secret dès qu'il a pu être observé, et non par habitude tous les trois mois : un renouvellement subi produit des variantes prévisibles, ce que la section précédente a déjà montré.
+
+- L'entropie mesure le nombre de bits qui distinguent un secret de tous les autres candidats.
+- Chaque bit double le travail de l'attaquant, chaque caractère additif multiplie l'espace.
+- Le calcul rapide est longueur multipliée par le logarithme base deux de l'alphabet utilisé.
+- Un secret déjà présent dans les fuites a une entropie pratique proche de zéro.
+- Une phrase de passe de quatre mots tirés au hasard égale un mot de passe de huit symboles aléatoires.
+- Au-delà d'un seuil confortable, préférez ajouter un facteur plutôt que des caractères.
+- Vérifiez vos secrets et vos adresses dans les fuites publiques avant de compter sur leur longueur.
+
+## Attaques par force brute, credential stuffing, réutilisation
+
+Les attaques qui visent les identifiants se distinguent par le lieu où elles se déroulent, et cette distinction décide de ce qui les arrête. Une attaque en ligne frappe le service lui-même : l'attaquant envoie des tentatives de connexion, le système les examine et peut les compter, les ralentir ou les bloquer. Une attaque hors ligne, elle, travaille sur une copie volée du fichier des empreintes : plus aucune limite de débit ne s'applique, les cartes graphiques tournent à plein régime et le service attaqué n'est même pas au courant. La défense n'est donc pas la même : côté en ligne, on protège par des limites de tentatives ; côté hors ligne, on ne protège que par la qualité des secrets et par la difficulté à obtenir le fichier.
+
+La force brute pure consiste à essayer toutes les combinaisons dans l'ordre, et elle n'a de sens que pour des espaces très petits, comme un code à quatre chiffres. Dans la pratique, on parle de force brute hybride : on part d'un dictionnaire, on applique des règles de transformation, on teste d'abord les combinaisons probables. Côté en ligne, les contre-mesures sont connues : limitation des tentatives par compte et par adresse source, temporisation croissante, captcha après quelques échecs, et surtout journalisation des échecs pour détecter l'attaque en cours. Une bonne politique ne verrouille pas immédiatement, car le verrouillage devient alors une arme : un attaquant peut verrouiller volontairement les comptes d'un service pour paralyser l'activité, c'est ce qu'on appelle un déni de service par verrouillage.
+
+```text
+EXEMPLE FICTIF : cycle de vie d'une attaque hors ligne
+1. Obtention du fichier volé (fuite, sauvegarde oubliée, copie locale)
+2. Identification du procédé de stockage (sel ou pas de sel, algorithme, itérations)
+3. Déploiement d'un dictionnaire de base augmenté de règles de transformation
+4. Essai des variantes personnelles de la victime (noms, dates, ville, équipe)
+5. Fuite éventuelle réutilisée : paires identifiant et mot de passe testées ailleurs
+6. Accès au compte, puis escalade vers les autres comptes de la même personne
+```
+
+Le rôle du sel mérite d'être précisé, car il est souvent mal compris. Un sel est une valeur aléatoire stockée à côté de chaque empreinte, calculée une fois pour chaque utilisateur, afin que deux personnes qui choisissent le même mot de passe n'aient pas la même empreinte. Son effet est immédiat : les tables précalculées, ces gigantesques dictionnaires d'empreintes déjà calculées, deviennent inutiles, et chaque mot de passe doit être recherché séparément. Ce que le sel ne fait pas, c'est rendre un mot de passe faible résistant : il ralentit la préparation de l'attaque, pas l'attaque elle-même contre un candidat précis. Seule la résistance du secret, combinée à un nombre d'itérations important du procédé de hachage, allonge réellement la durée de la recherche.
+
+Le credential stuffing, littéralement bourrage d'identifiants, est l'attaque qui profite le plus directement de la réutilisation. L'attaquant dispose de paires identifiant et mot de passe issues d'une fuite d'un tout autre service, et il les teste automatiquement contre des milliers de sites : boutiques, réseaux sociaux, messageries, portails d'associations. Rien n'est deviné, rien n'est forcé : on se contente de rejouer des combinaisons connues. Les outils automatisent des dizaines de milliers de tentatives par heure depuis des réseaux de machines compromises, ce qui leur permet de contourner les limites simples par adresse. Le taux de succès reste faible en proportion, mais il suffit : sur un échantillon de plusieurs millions de paires, quelques milliers de comptes réellement vulnérables représentent des milliers d'intrusions exploitables.
+
+Une variante complémentaire, le bourrage de mots de passe, inverse la stratégie : au lieu d'un identifiant et de nombreux mots de passe, on teste quelques mots de passe très communs contre un très grand nombre d'identifiants. Le motif évite les mécanismes de verrouillage par compte, puisque chaque compte ne subit qu'une seule tentative, et il obtient des résultats sur les comptes négligés : comptes techniques abandonnés, comptes de démonstration, comptes d'anciens employés jamais désactivés. La parade à ces deux familles d'attaques est la même : interdire la réutilisation avec un gestionnaire, exiger un second facteur, et détecter les volumétries inhabituelles dans les journaux de connexion.
+
+Pour agir concrètement, deux vérifications suffisent. Premièrement, recherchez vos adresses de courrier électronique sur https://haveibeenpwned.com/ et traitez chaque fuite signalée comme un mot de passe à changer immédiatement, même si le service concerné vous semble secondaire. Deuxièmement, éliminez la réutilisation en premier : un gestionnaire vous permet d'obtenir un secret unique par service en quelques minutes, ce qui neutralise intégralement le credential stuffing pour vos comptes. Toute autre optimisation vient après. La meilleure politique de mot de passe du monde ne sert à rien si la même combinaison ouvre cinquante portes différentes.
+
+- Une attaque en ligne se heurte aux limites de tentatives ; une attaque hors ligne ne se heurte à rien.
+- La force brute réelle est rare : on teste d'abord les candidats probables, avec des règles de transformation.
+- Le sel casse les tables précalculées mais ne rend pas un mot de passe faible plus résistant.
+- Le credential stuffing rejoue des paires volées sur d'autres services, sans rien deviner.
+- Le bourrage de mots de passe teste quelques mots communs contre beaucoup d'identifiants pour éviter les verrouillages.
+- Les comptes techniques abandonnés sont la cible préférée : désactivez ce qui ne sert plus.
+- Vérifiez vos adresses dans les fuites publiques, puis supprimez toute réutilisation avec un gestionnaire.
+
+## La double authentification : TOTP, clé physique, SMS
+
+La double authentification change l'équation parce qu'elle retire au vol de mot de passe son effet décisif. Un attaquant qui dispose d'un identifiant et d'un mot de passe n'obtient plus l'accès : il lui manque une preuve d'une autre famille, un objet ou un appareil qui ne voyage pas avec le fichier volé. Le bénéfice est considérable face aux deux menaces dominantes, le credential stuffing et le vol de base de données, puisque l'une et l'autre ne fournissent que le premier facteur. En revanche, la double authentification n'est pas un talisman : elle déplace le risque vers la récupération du second facteur, vers les canaux de récupération, et vers l'utilisateur lui-même, que l'attaquant peut tenter de convaincre d'appuyer sur accepter.
+
+Les codes reçus par message sont le moyen le plus répandu parce qu'ils fonctionnent partout : n'importe quel téléphone, même sans application, reçoit un message. Le principe est simple : le service envoie un code court, à usage unique, que vous saisissez pour compléter la connexion. Les limites sont bien documentées. L'usurpation de carte SIM permet à un attaquant de faire basculer votre numéro sur sa propre carte, la récupération passant souvent par ce même canal. Les protocoles de messagerie texte anciens peuvent être détournés, les codes arrivent en retard quand le réseau est saturé, et rien ne fonctionne sans couverture. Enfin, un code intercepté reste lisible, ce qui en fait le facteur le plus faible des trois, encore utile mais jamais idéal.
+
+```text
+EXEMPLE FICTIF : fonctionnement d'un code TOTP commenté
+Etape 1 : le service et l'application partagent un secret aléatoire a l'enregistrement
+Etape 2 : l'application découpe le temps en fenetres de 30 secondes
+Etape 3 : elle calcule une empreinte du couple secret et numero de fenetre
+Etape 4 : les six premiers chiffres de l'empreinte deviennent le code affiche
+Etape 5 : le service refait le meme calcul avec la fenetre courante et les voisines
+Etape 6 : si les chiffres correspondent, la connexion est acceptee
+Etape 7 : le code ne sert qu'une fois : apres usage, la fenetre est refermee
+Le secret du partage doit être regenere si quelqu'un le photographie.
+```
+
+Le code à usage unique basé sur le temps, souvent abrégé TOTP, fonctionne sans réseau : l'application et le service partagent un secret lors de l'enregistrement, puis calculent chacun de leur côté le même code à partir de l'heure. C'est ce qui explique son indépendance vis-à-vis de l'opérateur téléphonique et son adoption massive dans les applications d'authentification. Ses faiblesses sont d'un autre ordre. Un logiciel malveillant qui observe l'écran ou qui enregistre les frappes peut voler le code en même temps que vous le lisez, et un site frauduleux suffisamment convaincant peut vous demander votre code en direct, à la seconde où vous le recevez : le code n'a alors plus de valeur de preuve, puisque c'est vous qui le portez à l'attaquant. La fenêtre de validité, d'ordre d'une minute, limite la réutilisation mais pas la captation en temps réel.
+
+Les clés physiques, fondées sur le standard FIDO2 et son volet WebAuthn, traitent ce défaut de fond en supprimant le secret partagé. Chaque site reçoit une paire de clés générée dans l'appareil : la clé privée ne quitte jamais l'objet, et l'objet ne répond qu'à une question posée par le domaine exact qui l'a enregistrée. Cette liaison au nom de domaine est ce qui rend l'approche résistante au phishing : une fausse adresse, même visuellement identique, ne déclenche aucune réponse de la clé, parce que le défi vient d'un domaine non reconnu. Le déroulement est physique en plus de cryptographique : la clé doit être présente, souvent activée par un toucher. Les inconvénients sont pratiques plutôt que techniques : un coût d'achat, la nécessité d'en posséder deux, dont une en réserve, et une couverture encore inégale sur les services anciens.
+
+Les notifications d'application, celles où l'on valide une connexion sur son téléphone, occupent une position intermédiaire : agréables et résistantes au vol de mot de passe, elles exposent à la fatigue de demandes. Un attaquant qui tente des connexions répétées peut finir par déclencher chez l'utilisateur l'habitude de refuser, puis un jour l'acceptation par inadvertance. Les mécanismes modernes limitent ce risque en affichant un numéro à comparer, que l'attaquant ignore, et en refusant de répéter les demandes. Le réflexe à installer reste simple : une demande que vous n'avez pas déclenchée est toujours refusée, et si elle se répète, elle impose de changer le mot de passe.
+
+```table
+| Facteur | Usage courant | Résistance au phishing | Résistance au vol de base | Coût et contraintes | Recommandation |
+| --- | --- | --- | --- | --- | --- |
+| SMS | Partout, sans application | Faible | Bonne | Gratuit, dépend du réseau | Mieux que rien, à éviter comme unique facteur |
+| TOTP | Application d'authentification | Faible en cas de faux site | Très bonne | Gratuit, hors ligne | Excellent choix par défaut |
+| Notification | Application mobile du service | Moyenne, exposée à la fatigue | Bonne | Gratuit | À accompagner d'un numéro à comparer |
+| Clé FIDO2 | Objet branché ou intégré | Très bonne grâce à la liaison au domaine | Excellente | Achat, deux objets minimum | Recommandé pour les comptes d'administration |
+| Empreinte | Téléphone ou ordinateur | Variable selon l'implémentation | Bonne | Matériel récent | Pratique en complément d'un second facteur |
+```
+
+Choisir un facteur revient à répondre à deux questions : qui attaque, et que protège-t-on. Pour un compte personnel ordinaire, une application de codes à usage unique offre le meilleur rapport protection et effort, à condition d'enregistrer un second moyen de secours. Pour un compte d'administration qui ouvre l'accès au serveur ou au site de la médiathèque, une clé physique devient le choix de raison : ce sont précisément les comptes visés par les attaques ciblées. Pour un usager qui refuse toute installation, un code par message reste préférable à rien : on ne retarde jamais l'activation d'un facteur imparfait au motif qu'il n'est pas parfait.
+
+- La double authentification retire au vol de mot de passe son effet immédiat en exigeant une preuve d'une autre famille.
+- Un code par message est universel mais vulnérable à l'usurpation de carte SIM et aux délais de réseau.
+- Un code TOTP fonctionne hors ligne, change toutes les trente secondes et se vole sur un faux site.
+- Une clé FIDO2 ne répond qu'au domaine exact qui l'a enregistrée : c'est ce qui bloque le phishing.
+- Une demande de validation non déclenchée est refusée, et sa répétition impose de changer le mot de passe.
+- La sécurité d'un second facteur dépend aussi de ses canaux de récupération, souvent le maillon faible.
+- Deux facteurs de secours valent mieux qu'un facteur unique, même excellent.
+
+## Configurer la MFA pas à pas
+
+L'activation d'un second facteur est une opération de quinze minutes qui suit toujours le même squelette, quel que soit le service. Nous prenons ici des comptes grand public comme exemples généraux, ceux d'un fournisseur de messagerie ou de bureaux en ligne, parce que la logique est identique partout : ouvrir la page de sécurité du compte, choisir un facteur, l'enregistrer, conserver les moyens de secours, tester, puis vérifier les sessions existantes. L'enregistrement se fait une fois, l'usage se fait à chaque connexion, et c'est le service qui décide quand il redemande un facteur, selon la sensibilité de l'action.
+
+La première étape consiste à rejoindre les paramètres de sécurité du compte et à activer la double authentification, souvent désactivée par défaut. Le service vous propose alors une liste de facteurs : application d'authentification, code par message, notification, clé physique, adresse de secours. Choisissez d'abord l'application de codes à usage unique : elle ne dépend pas de la couverture réseau et n'entraîne aucun coût. Le service affiche alors un code à deux dimensions à scanner ainsi qu'une clé de configuration, et il vous demande de saisir le premier code produit par l'application pour prouver que le partage est correct. Cette vérification n'est pas une formalité : elle garantit que votre application et le service calculent bien la même chose avant que vous ne refermiez la fenêtre.
+
+La deuxième étape est celle que tout le monde bâcle : la génération des codes de secours. Ces codes, émis en une seule fois, servent à récupérer l'accès si vous perdez le téléphone. Le service les affiche sous forme de liste à télécharger ou à imprimer, et il ne les montrera jamais à nouveau. Conservez-les hors ligne, dans un endroit connu de vous seul, par exemple dans un pli de portefeuille. Ne les photographiez pas pour les envoyer à vous-même par messagerie : la copie se retrouverait dans votre boîte, exactement là où un attaquant compromis irait la chercher. Régénérez-les après chaque usage, ou au minimum une fois par an.
+
+La troisième étape consiste à enregistrer un second moyen, distinct du premier. Si l'application est votre facteur principal, ajoutez une adresse de secours ou, mieux, une clé physique pour les comptes sensibles. L'erreur classique consiste à enregistrer un seul facteur et à se retrouver enfermé au premier changement de téléphone. Un facteur principal et un facteur de secours de nature différente couvrent les deux scénarios courants : la perte de l'appareil et le compromission du compte de récupération. Pour un compte partagé ou un compte de service, la logique change : il faut prévoir deux objets déposés physiquement dans un coffre, plutôt qu'un téléphone personnel qui partirait avec l'employé.
+
+La quatrième étape est le test réel. Déconnectez-vous, reconnectez-vous, et constatez que le service réclame bien votre code. Vérifiez également que la saisie automatique de mot de passe ne comble pas le champ de code à votre place : l'application de codes reste à saisir manuellement, et c'est voulu. Terminez par l'examen des sessions ouvertes et des appareils reconnus, que la plupart des services listent sur la même page : révoquez ceux que vous ne reconnaissez pas, et profitez-en pour retirer l'accès aux applications tierces que vous n'utilisez plus, car ces autorisations prolongées constituent une porte latérale très prisée.
+
+```text
+Flux d'authentification avec double authentification
+
+Utilisateur          Navigateur             Service              Facteur externe
+    |                    |                      |                      |
+    |-- identifiant ---->|                      |                      |
+    |                    |-- verification ----->|                      |
+    |<--- mot de passe --|<-- accepte le 1er ---|                      |
+    |                    |     facteur          |                      |
+    |-- code a usage unique (2e facteur) ------>|                      |
+    |                    |                      |-- derive et verifie ->|
+    |                    |                      |<-- resultat ---------|
+    |<--- session ouverte et duree limitee ----|                      |
+    |                    |                      |                      |
+    |  en cas d'echec : tentative comptee, delai croissant, alerte    |
+
+Ce schéma montre deux points de vigilance : le code voyage apres le mot de
+passe, et la session ouverte reste valide meme si le mot de passe est change
+plus tard, d'ou la necessite de revoquer les sessions.
+```
+
+```text
+PLAN D'ACTIVATION MFA (modele a adapter)
+1. Recenser les comptes du perimetre : personnels, partages, techniques, du site web
+2. Classer chaque compte par sensibilite : public, courant, administrateur
+3. Activer l'application de codes sur les comptes courants et personnels
+4. Generer les codes de secours et les deposer hors ligne
+5. Enregistrer une cle physique sur chaque compte administrateur
+6. Tester une deconnexion puis une reconnexion sur chaque profil
+7. Revoquer les sessions anciennes et les applications tierces inutiles
+8. Programmer une revue trimestrielle des comptes et des droits
+9. Former les utilisateurs au refus des demandes de validation non provoquees
+```
+
+Trois écueils reviennent après l'activation : la perte du téléphone sans code de secours, qui laisse le compte inaccessible ; le déni de la seconde étape par les logiciels anciens, qui réclament alors un mot de passe d'application, objet de la section suivante ; enfin l'activation incomplète : cocher la case sans vérifier que la seconde étape se déclenche vraiment et que les codes de secours existent.
+
+- Ouvrez les paramètres de sécurité, activez la double authentification, choisissez d'abord l'application de codes.
+- Vérifiez le partage en saisissant un premier code avant de fermer la page d'enregistrement.
+- Téléchargez les codes de secours une seule fois et rangez-les hors de la messagerie.
+- Enregistrez toujours un second moyen de nature différente, afin de couvrir perte et compromission.
+- Testez une reconnexion complète et examinez la liste des sessions et des appareils reconnus.
+- Révoquez les autorisations d'applications tierces qui ne servent plus.
+- Un logiciel ancien exige un mot de passe d'application, jamais votre mot de passe principal.
+
+## Le moindre privilège : comptes, droits, administration séparée
+
+Le moindre privilège est le principe le plus simple à énoncer et le plus souvent bafoué dans les petites structures : chaque compte ne dispose que des droits strictement nécessaires à sa tâche, ni plus, ni moins, et ces droits sont réexaminés dès que la tâche change. Là où un mot de passe fort protège la porte, le moindre privilège décide de ce que la porte ouvre. Un comptable qui dispose des droits d'administration sur tout le poste n'a pas besoin d'être lui-même victime d'une attaque : un simple logiciel malveillant lancé par inadvertance exécutera ses actions avec ses droits, et ils seront largement suffisants. La question à poser à chaque compte n'est donc pas seulement de savoir ce qu'il peut faire, mais de mesurer le préjudice maximal si ses droits tombaient entre de mauvaises mains.
+
+Pour la Médiathèque des Lilas, l'inventaire tient en quatre comptes types qui se retrouvent dans presque toute organisation. Le compte public sert aux visiteurs en libre accès et ne doit rien pouvoir installer ni consulter. Le compte d'employé permet de gérer les adhérents et le catalogue, mais rien de plus. Le compte d'administration détient les droits élevés et sert uniquement à maintenir la machine. Le compte de service d'impression, enfin, n'est pas une personne : c'est une identité technique utilisée par le serveur d'impression pour accéder aux files d'attente. Décrire ces quatre comptes dans un tableau, puis remplir une case par ressource, produit instantanément une photographie des droits qui surprend presque toujours les responsables.
+
+```table
+| Ressource | Compte public | Employé | Administrateur | Service d'impression |
+| --- | --- | --- | --- | --- |
+| Poste en libre accès | Utilisation seule, aucune installation | Session nominative standard | Droits élevés, usage ponctuel | Aucun |
+| Wi-Fi visiteurs | Accès internet filtré | Accès personnel | Accès gestion et technique | Accès réseau local vers le serveur |
+| Serveur d'association | Aucun accès | Lecture et écriture sur ses dossiers | Accès complet, administration | Accès aux seules files d'impression |
+| Site web de l'association | Consultation | Publication des contenus validés | Déploiement et comptes techniques | Aucun |
+| Base des adhérents | Aucun accès | Consultation et mise à jour | Administration et sauvegarde | Aucun |
+| Mots de passe d'autres comptes | Aucun | Jamais visibles | Chiffre et transmet par canal sûr | Jamais |
+```
+
+La conséquence la plus importante du tableau est la nécessité d'une administration séparée. Un compte d'administration n'est pas un compte ordinaire avec quelques cases cochées en plus : c'est une identité distincte, avec son propre nom, son propre secret et sa propre raison d'être. On ne navigue pas sur le web avec le compte d'administration, on n'ouvre pas sa messagerie avec ce compte, on n'y range pas ses fichiers personnels. Chaque utilisation au quotidien d'un compte administratif expose un privilège immense à la moindre erreur de clic. La bonne pratique consiste à conserver deux identités par personne habilitée : une identité de travail normale pour tout l'usage courant, et une identité d'administration utilisée uniquement pendant les opérations qui l'exigent, idéalement avec une élévation de droits au cas par cas plutôt qu'un compte toujours élevé.
+
+La gestion par groupes achève le tableau. Plutôt que d'attribuer des droits un à un à chaque nouvel arrivant, on décrit des rôles, employé, responsable, administrateur, service, puis on place chaque compte dans les groupes correspondants. Lorsqu'un employé change de service, on déplace le compte d'un groupe, ce qui retire automatiquement les anciens droits et en accorde les nouveaux. Sans groupe, les droits s'accumulent, jamais personne ne retire, et au bout de trois ans personne ne sait plus qui peut quoi. La revue trimestrielle consiste à refaire le tableau de droite : un compte qui n'apparaît plus dans aucune tâche est désactivé, puis supprimé après un délai de sécurité, et un compte dont la liste des groupes a grossi sans justification est remis à niveau.
+
+- Le moindre privilège limite chaque compte au strict nécessaire à sa tâche actuelle.
+- Décrivez vos comptes dans une matrice de droits : la réalité apparaît en quelques minutes.
+- Compte d'usage et compte d'administration sont deux identités distinctes, jamais la même.
+- On n'ouvre pas de courriel ni de navigateur avec un compte administratif.
+- Gérez les droits par groupes et par rôles, pas par accumulation d'exceptions manuelles.
+- Un compte de service n'est pas une personne : il n'a pas de session interactive.
+- Désactivez ce qui ne sert plus avant de le supprimer, et revenez au tableau chaque trimestre.
+
+## Comptes de service et mots de passe d'application
+
+Tous les identifiants d'un système ne correspondent pas à des personnes, et c'est précisément ce qui les rend délicats. Un compte de service est une identité technique utilisée par un programme : le script de sauvegarde qui monte le dossier partagé, le serveur d'impression qui interroge la file d'attente, l'application web qui lit la base des adhérents, l'automatisme qui publie le programme des ateliers sur le site. Ces comptes ne se connectent jamais au clavier, ne reçoivent aucun courriel de bienvenue et n'ont aucun propriétaire physique. Leur risque est double : ils sont souvent dotés de droits élevés parce que c'est plus simple, et leur secret est souvent figé pour toujours parce que le programme qui l'utilise serait difficile à réparer.
+
+Trois règles suffisent à dompter cette famille de comptes. La première est l'interdiction de la connexion interactive : un compte de service doit être refusé par l'écran de connexion, car il n'a aucune raison d'être utilisé par un humain, et cette restriction seule transforme un vol de secret en incident moins grave. La seconde est le moindre privilège strictement appliqué aux ressources que le programme touche réellement, vérifiable ligne par ligne dans le tableau précédent. La troisième est la rotation : le secret doit changer à échéance fixe, ce qui suppose une configuration unique et centralisée, plutôt que copiée dans trois scripts et une base de données.
+
+```text
+EXEMPLE FICTIF : configuration d'un compte de service
+Nom du compte .......... impression-mediatheque
+Usage .................. connexion automatique du serveur d'impression
+Connexion interactive ... refusee
+Droits .................. lecture et ecriture sur la file Locale-Ateliers uniquement
+Secret .................. genere par le gestionnaire, 32 caracteres aleatoires
+Rotation ................ trimestrielle, date inscrite au registre
+Stockage ................ variable d'environnement du service, jamais dans le script
+Responsable ............. le responsable technique, nomme dans le registre
+Journalisation .......... tentatives refusees et succes enregistres
+```
+
+Le stockage du secret mérite une attention particulière parce qu'il est la faiblesse la plus fréquente. Un mot de passe écrit en clair dans un script de sauvegarde est découvert par quiconque peut lire le fichier, et ces fichiers ont souvent une longue vie. La bonne pratique consiste à placer le secret dans une variable d'environnement ou dans un fichier de configuration dont les droits de lecture sont restreints au compte du service, puis à ne jamais l'inclure dans un dépôt de code. Une rotation qui exige de modifier le code source à chaque changement ne se fera jamais : placez la valeur à un endroit unique et modifiable, et la rotation devient une opération de deux minutes.
+
+Les mots de passe d'application relèvent d'un besoin voisin : celui des logiciels qui ne savent pas présenter un second facteur. Une messagerie sur un téléphone ancien, un client de courrier installé sur un poste de l'association, un script qui envoie des notifications, un périphérique réseau qui doit s'authentifier : aucun de ces outils ne peut saisir un code à usage unique à chaque connexion. La réponse universelle est de générer pour chacun un secret dédié, émis une seule fois par le service, limité à cet usage précis et révocable individuellement. L'avantage est considérable : si le secret d'un script fuit, vous le retirez sans toucher au mot de passe principal et sans déconnecter personne d'autre. L'inconvénient est que ces secrets s'accumulent, ce qui impose de les recenser avec les comptes de service dans le même registre.
+
+Un registre d'identités techniques est donc le livret de ce chapitre. Il réunit, pour chaque compte de service et chaque mot de passe d'application, le nom, le propriétaire, la ressource touchée, la dernière rotation, la prochaine échéance et l'emplacement du secret. Tenu dans un tableur simple, il change la qualité des réponses en cas d'incident : savoir en deux minutes quel script utilise quel secret permet de le révoquer sans faire tomber le service, au lieu de couper tout le monde par sécurité. Il constitue aussi le point de départ du mini-projet de fin de chapitre.
+
+- Un compte de service n'a pas de personne derrière : refusez-lui toute connexion interactive.
+- Atteignez ses droits au plus juste sur les ressources qu'il touche réellement.
+- Placez le secret dans une variable d'environnement ou un fichier restreint, jamais dans le code.
+- Une rotation ne se fera jamais si elle impose de modifier le code source.
+- Un mot de passe d'application est dédié, révocable individuellement et différent du mot de passe principal.
+- Recensez comptes de service et mots de passe d'application dans un registre daté.
+- Nommez un responsable humain pour chaque identité technique, sinon personne ne la révoquera.
+
+## Le compte public de la médiathèque : verrouillage, kiosque, profils
+
+Le poste en libre accès pose un problème que le moindre privilège rend visible : qui est responsable de ce qui s'y passe ? Sur un compte unique partagé, la réponse est personne. Aucune journalisation n'est exploitable, aucun fichier ne sait à qui il appartient, et la dernière personne ayant utilisé le poste laisse derrière elle ses sauvegardes, ses mots de passe de session, ses historiques de navigation et parfois ses fichiers personnels. Ce n'est pas un détail d'organisation : l'absence de nominativité prive l'établissement de toute possibilité de comprendre un incident, et transforme chaque session en opportunité pour un visiteur mal intentionné d'installer quelque chose pour le suivant.
+
+La réponse commence par la séparation des profils. Le visiteur dispose d'un compte local limité, créé pour l'usage public, sans droits d'installation ni accès aux dossiers des employés. Les employés disposent de leur propre compte nominatif, avec leurs droits sur le catalogue et les adhérents. Le responsable technique conserve son compte d'administration, utilisé à la demande et jamais laissé ouvert. Ce partage a un coût organisationnel minime et un bénéfice immédiat : les journaux deviennent lisibles, les fichiers deviennent attribuables, et la session publique peut être remise à zéro entre deux usagers sans risque de porter atteinte au travail des employés.
+
+```text
+EXEMPLE FICTIF : parametrage d'un poste public
+Compte ................. utilisateur-public (local, droits limites)
+Fermeture automatique .. apres 10 minutes d'inactivite
+Verrouillage ........... touche dediee + ecran de veille protege par code
+Profil .................. reinitialise a chaque deconnexion
+Dossier personnel ...... chiffre et efface a la fin de session
+Navigation ............. mode kiosque, page d'accueil verrouillee
+Extensions .............. aucune installation possible
+Installation de logiciel refusee (registre protege)
+Copie sur cle USB ....... refusee pour les comptes publics
+Journal ................ conservation 30 jours, consultable par l'administrateur
+```
+
+Le mode kiosque mérite d'être expliqué parce qu'il est souvent confondu avec un simple verrouillage d'écran. Dans un vrai mode kiosque, le navigateur démarre sur une adresse définie, s'ouvre en plein écran, ne propose ni installation d'extension ni téléchargement libre, et se ferme en effaçant toute la session lorsque l'usager se déconnecte ou que le délai expire. L'objectif n'est pas d'empêcher quelqu'un de consulter le catalogue, c'est de garantir que la prochaine personne trouve un poste vierge. Le verrouillage, lui, protège l'instant : il empêche quiconque de reprendre la session laissée ouverte pendant que l'employé va chercher un carton en réserve. Les deux mesures sont complémentaires, et l'une ne remplace pas l'autre.
+
+L'habitude du verrouillage se déclenche en une seconde et se perd en une journée de tranquillité : la combinaison de touches dédiée s'enseigne dès la prise de poste, comme le code du local. Sur un poste public, le verrouillage automatique fait le travail à la place de l'humain, assez tôt pour être utile et assez tard pour ne pas gêner : dix minutes en libre accès, deux minutes pour un poste qui traite des données personnelles. Le même raisonnement vaut pour les écrans visibles depuis l'accueil, où une session laissée ouverte expose les informations des adhérents à quiconque passe.
+
+Un dernier point concerne la fin de journée. Fermer la session ne suffit pas si le profil conserve des traces : téléchargements, historique, cookies de session, fichiers temporaires. Un script de remise à zéro qui efface le profil public et relance le poste en mode kiosque évite les oublis, en particulier ceux des soirs de fermeture pressée. Ajoutez-y la remise mécanique des périphériques : clés USB oubliées dans le port, documents imprimés laissés à la sortie. La sécurité des postes publics relève autant de la routine de fermeture que de la configuration, et cette routine mérite d'être écrite dans la même politique que les mots de passe.
+
+- Un compte public partagé supprime toute responsabilité : séparez public, employé et administrateur.
+- Le verrouillage protège l'instant présent, la réinitialisation de profil prépare la session suivante.
+- Le mode kiosque verrouille la navigation, interdit les installations et repart d'une page imposée.
+- Réglez la fermeture automatique assez tôt pour être utile, assez tard pour ne pas gêner.
+- Les écrans visibles depuis l'accueil relèvent de la protection des données personnelles.
+- Écrivez une routine de fin de jour : profil remis à zéro, périphériques retirés, session fermée.
+- Conservez les journaux trente jours au minimum : ils sont inutiles le jour où on en a besoin.
+
+## Réponse à la compromission
+
+Un compte se compromet rarement au moment où l'on s'y attend, et la qualité de la réponse se mesure en minutes plutôt qu'en jours. Les signes qui déclenchent l'action immédiate sont faciles à repérer : un courrier envoyé que vous n'avez pas écrit, une adresse de récupération que vous ne reconnaissez pas, une demande de code à usage unique que vous n'avez pas sollicitée, une connexion depuis une ville improbable, un fichier modifié sur le serveur. Le premier réflexe n'est pas de comprendre, c'est de couper l'accès de l'attaquant, puis de comprendre à loisir. Une compromission contenue en dix minutes est un incident mineur ; la même compromission découverte trois semaines plus tard est une crise.
+
+L'ordre des opérations compte autant que les opérations elles-mêmes. Commencez par un appareil dont vous êtes certain, c'est-à-dire un poste sain ou un téléphone personnel, jamais le poste où le doute est né, puisque ce poste peut enregistrer ce que vous tapez. Changez le mot de passe du compte avec un secret généré et unique, ce qui ferme la porte principale. Révoquez ensuite toutes les sessions ouvertes, car un mot de passe modifié ne déconnecte pas toujours les sessions déjà établies, et c'est précisément ce que recherche un attaquant installé : rester connecté après que vous avez changé le secret. Si le service propose l'option, la révocation des sessions après changement de mot de passe fait les deux gestes en une opération.
+
+```text
+CHRONOLOGIE DE REPONSE (exemple adapte a la mediatheque)
+T+0 min .... signalement ou constat, notation de l'heure et du compte concerne
+T+2 min .... ouverture depuis un poste propre, changement du mot de passe
+T+4 min .... revocation de toutes les sessions et des appareils reconnus
+T+6 min .... examen des facteurs MFA : suppression de tout facteur inconnu
+T+8 min .... suppression des regles de messagerie et des adresses de recuperation
+T+10 min ... revocation des applications tierces et des mots de passe d'application
+T+15 min ... verification des autres comptes reutilisant le meme ancien secret
+T+20 min ... information du responsable, conservation des journaux, observation
+T+1 j ...... revue des acces du serveur et du site, compte rendu ecrit
+```
+
+La vérification des annexes est l'étape que tout le monde oublie, alors qu'elle décide de la durée du trouble. Un attaquant qui a accédé à une messagerie laisse rarement la porte ouverte une fois le mot de passe modifié : il ajoute une règle qui copie discrètement les courriers, il enregistre un second facteur sur son propre téléphone, il mémorise les contacts importants. Parcourez méthodiquement les facteurs enregistrés, les adresses de récupération, les règles de tri, les applications tierces et les mots de passe d'application, puis retirez tout ce que vous ne reconnaissez pas. Prenez enfin la liste des services où l'ancien secret était réutilisé, que votre gestionnaire vous fournit en une seconde : c'est là que se joue la différence entre un incident isolé et une cascade.
+
+La dernière étape est administrative et humaine. Consignez par écrit l'heure, les comptes concernés, les actions entreprises et les éléments observés dans les journaux : cette chronologie devient précieuse si l'incident doit être qualifié ou partagé avec le responsable. Signalez la compromission aux personnes concernées lorsqu'elle a touché des données d'adhérents, vérifiez ensuite si l'adresse apparaît dans une fuite publique, puis tirez-en une leçon datée : activez le second facteur manquant, supprimez la réutilisation, réglez les délais de session. Un incident traité sans correction est un incident qui reviendra.
+
+- Réagissez depuis un appareil sûr, puis changez le secret avant de chercher à comprendre.
+- Révoquez les sessions : changer le mot de passe ne déconnecte pas toujours les connexions établies.
+- Examinez facteurs MFA, adresses de récupération et règles de messagerie, un par un.
+- Retirez les applications tierces et les mots de passe d'application inconnus.
+- Identifiez tous les services où l'ancien secret était réutilisé, avec votre gestionnaire.
+- Conservez une chronologie écrite et notez les leçons retenues avec une date.
+
+## Mini-projet guidé : politique d'identité de la médiathèque
+
+Il est temps d'assembler toutes les pièces du chapitre dans un document unique : la politique d'identité et d'accès de la Médiathèque des Lilas. Ce livrable n'est pas un texte de théorie, c'est une page que le responsable technique peut faire valider par la direction, remettre à un nouvel arrivant et reprendre lors d'un audit. Il mobilise toutes les notions abordées : inventaire des comptes, règles sur les secrets, double authentification, matrice des droits, comptes de service, routine des postes publics et procédure de réponse. Écrivez-le dans votre éditeur, gardez-le court, et remplissez-le avec vos propres valeurs : une politique générique que personne n'a adaptée à son parc est un document que personne n'appliquera.
+
+Le document se compose de six rubriques qui suivent le chemin de ce chapitre. La première décrit le périmètre et inventorie les comptes, quatre types pour la médiathèque. La deuxième énonce les règles de secret : quatre mots minimum, un secret par service, gestionnaire obligatoire, réutilisation interdite. La troisième fixe le plan de double authentification : application de codes sur tous les comptes nominatifs, clé physique sur les comptes d'administration, codes de secours hors ligne, revue trimestrielle. Les trois autres rappellent la matrice des droits, la routine des postes publics et la procédure d'incident, exprimée en minutes et non en intentions.
+
+```text
+GABARIT DE POLITIQUE D'IDENTITE (exemple fictif, a completer)
+1. Perimetre ......... postes publics, Wi-Fi, serveur d'association, site web
+   Comptes ........... public (12 postes), employes (4), administration (2),
+                       service d'impression (1), publication du site (1)
+2. Secrets ........... phrase de passe de 4 mots minimum, unique par service
+                       gestionnaire obligatoire pour les comptes nominatifs
+                       aucun secret note en clair, aucun partage par messagerie
+3. Double authentif ... application de codes pour tous les comptes nominatifs
+                       cle physique pour les comptes d'administration
+                       codes de secours imprimes et ranges hors ligne
+                       revue des facteurs chaque trimestre
+4. Droits ............ matrice par compte et par ressource, geree par groupes
+                       compte d'administration distinct, jamais utilise au quotidien
+                       comptes desactives des qu'une tache disparait
+5. Postes publics .... compte local limite, profil reinitialise, mode kiosque
+                       verrouillage apres 10 minutes, routine de fin de jour
+6. Incident .......... chronometre de reponse en 20 minutes (section Incident)
+                       responsable nomme, journalisation conservee 30 jours
+   Revision .......... date de prochaine relecture et nom du responsable
+```
+
+Trois conditions séparent une politique appliquée d'une politique oubliée : tenir sur une page, nommer un responsable et une date de révision, et résister à une simulation chronométrée. Faites lire la procédure d'incident à l'employé qui ferme la médiathèque, puis chronométrez ensemble une révocation de session sur un compte de test. Ce qui échoue pendant la simulation révèle le point à corriger avant que la situation ne devienne urgente.
+
+- Rassemblez le chapitre dans une page unique, écrite avec vos propres valeurs.
+- Décrivez le périmètre, les secrets, la double authentification, les droits, les postes publics et l'incident.
+- Nommez un responsable et une date de révision pour chaque rubrique.
+- Validez la procédure par une simulation chronométrée plutôt que par une lecture.
+- Diffusez la politique à l'ensemble des personnes habilitées, pas seulement à la direction.
+- Réunissez dans la même page le registre des comptes de service et la matrice des droits.
+
+## À retenir
+
+- L'identification annonce un nom, l'authentification le prouve, l'autorisation décide des droits, la journalisation conserve la trace.
+- Un facteur appartient à une famille : savoir, avoir, être, faire ; deux secrets de la même famille ne font pas de double authentification.
+- Les règles de composition classiques produisent des gabarits prévisibles que les outils testent en priorité.
+- La longueur et l'imprévisibilité comptent davantage que la présence d'un symbole imposé.
+- Une phrase de passe de quatre mots tirés au hasard égale un mot de passe aléatoire de huit symboles.
+- Un gestionnaire permet un secret différent par service, seule parade réelle au credential stuffing.
+- L'entropie se calcule en bits : longueur multipliée par le logarithme base deux de l'alphabet.
+- Un secret déjà présent dans les fuites a une entropie pratique proche de zéro, quelle que soit sa longueur.
+- Une attaque hors ligne ne rencontre aucune limite de débit : seul le secret résiste, pas le système.
+- Un code par message est vulnérable à l'usurpation de carte SIM, un code TOTP à un faux site, une clé FIDO2 résiste au phishing grâce à la liaison au domaine.
+- Une demande de validation que vous n'avez pas déclenchée est toujours refusée.
+- Le moindre privilège limite chaque compte au strict nécessaire, et l'administration se fait avec un compte distinct.
+- Comptes de service et mots de passe d'application ne sont pas des personnes : interdiction de connexion interactive, rotation planifiée, registre daté.
+- Un poste public se protège par un compte limité, un mode kiosque, un verrouillage automatique et une routine de fin de jour.
+- Une réponse efficace se déroule en vingt minutes : secret changé, sessions révoquées, annexes nettoyées, chronologie écrite.
+
+## Erreurs fréquentes
+
+- Piège : croire qu'un mot de passe long est forcément résistant parce qu'il contient un symbole → Correction : estimez son entropie et vérifiez s'il apparaît déjà dans les listes de fuites.
+- Piège : obéir aux règles de composition de la même manière que tout le monde → Correction : choisissez des mots tirés au hasard, l'imprévisibilité remplace la complexité subie.
+- Piège : faire varier un seul mot de passe d'un site à l'autre → Correction : un secret entièrement différent par service, généré et stocké par le gestionnaire.
+- Piège : noter la phrase maîtresse du gestionnaire dans un fichier en clair sur le bureau → Correction : mémorisez-la ou rangez une copie papier hors de l'ordinateur et hors de la messagerie.
+- Piège : activer un seul facteur de double authentification sans moyen de secours → Correction : enregistrez un second facteur de nature différente et imprimez les codes de secours.
+- Piège : continuer à naviguer et à lire ses courriels avec le compte d'administration → Correction : gardez un compte de travail quotidien et une identité d'administration utilisée à la demande.
+- Piège : laisser un mot de passe d'application en clair dans un script sauvegardé → Correction : placez-le dans une variable d'environnement ou un fichier restreint, et recensez-le au registre.
+- Piège : compter sur la fermeture de session manuelle sur les postes en libre accès → Correction : verrouillage automatique, profil réinitialisé, routine de fin de jour écrite.
+- Piège : changer le mot de passe et considérer l'incident comme clos → Correction : révoquez les sessions, examinez les règles de messagerie et les facteurs enregistrés, consignez la chronologie.
+- Piège : écrire une politique de vingt pages que personne ne relira → Correction : une page, un responsable, une date de révision et une simulation chronométrée.
+
+## Pour aller plus loin
+
+La référence fondatrice reste l'organisme de normalisation américain, dont les directives sur l'authentification ont redéfini les bonnes pratiques en insistant sur la longueur, la vérification des secrets dans les fuites et la modération des renouvellements forcés. Le site https://www.nist.gov/ publie ces documents, dont la série 800-63 consacrée à l'identité numérique : même si le texte est technique, la lecture de ses recommandations sur les mots de passe vaut les explications de ce chapitre et vous donne le vocabulaire officiel utilisé par les professionnels.
+
+Deux ressources complémentaires servent ensuite à l'approfondissement. Le site https://haveibeenpwned.com/ vérifie en quelques secondes si une adresse de courrier électronique apparaît dans les fuites publiques et si un mot de passe a déjà été observé : servez-en lors du nettoyage des comptes de votre établissement, en n'entrant que des adresses dont vous êtes responsable. Le site https://owasp.org/ rassemble les ressources de la communauté qui publie le Top 10 des risques applicatifs, ainsi que ses fiches de recettes sur l'authentification, la gestion des sessions et la vérification des identifiants, exactement les sujets du chapitre sur la sécurité applicative. Conservez ces trois adresses en favori : normalisation, connaissance des fuites et bonnes pratiques de développement.
+
+## Et maintenant : passez à l'exercice et à la pratique
+
+Vous avez les fondations : des secrets que l'on peut réellement défendre, un second facteur choisi plutôt que subi, des droits répartis avec méthode et une procédure qui tient en minutes. La suite logique est l'exercice pratique qui suit cette leçon : vous y auditez la politique de mots de passe de la médiathèque, vous réécrivez cinq mots de passe existants en phrases de passe robustes, vous dessinez la matrice de droits des quatre comptes et vous planifiez l'activation de la double authentification, sans regarder la solution. C'est à ce moment que vous mesurerez ce que vous avez réellement retenu de l'entropie, du moindre privilège et de l'ordre des opérations en cas d'incident. Le quiz de quatre questions qui accompagne le chapitre vous permet de vérifier en quelques minutes les notions essentielles.
+
+Profitez-en aussi pour un geste concret immédiat : activez un second facteur sur votre propre messagerie et vérifiez vos adresses dans les fuites publiques pendant que les explications sont encore fraîches. Passé cet exercice, le parcours aborde le réseau défensif, avec pare-feu, chiffrement et VPN. Vous y retrouverez la même logique que dans ce chapitre : fermer ce qui n'est pas utile, n'autoriser que ce qui est nécessaire, et journaliser ce que l'on ne peut pas empêcher, de sorte que la défense reste cohérente d'un chapitre à l'autre.

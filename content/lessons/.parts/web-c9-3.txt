@@ -1,0 +1,162 @@
+## Découper le contexte pour ne pas tout redessiner
+
+Le premier réflexe face à la prop drilling consiste à créer un contexte unique qui regroupe tout ce qui doit être partagé : session, langue, thème, filtres de la liste, dernière page consultée. L'application démarre, tout fonctionne, et au bout d'une journée l'organisateur constate que la liste des inscrits clignote dès qu'il déplace la souris sur la navigation. La cause est mécanique : le fournisseur recrée sa valeur à chaque rendu, la valeur change, et comme elle change, tous les lecteurs du contexte se redessinent — y compris ceux qui ne s'intéressent qu'à la session. Un contexte unique et volatile transforme un changement local en travail global.
+
+La parade consiste à découper. Chaque préoccupation reçoit son contexte, son fournisseur et son hook de lecture, et les préoccupations à rythmes différents ne vivent plus dans le même objet. La session change deux fois par jour : elle peut porter la langue et rien d'autre. Le thème change à la préférence de l'utilisateur. Les filtres de la liste changent à chaque frappe : ils n'ont rien à faire dans un contexte partagé, et la section suivante y reviendra. Ce découpage n'est pas une coquetterie d'architecture, c'est la condition pour qu'un changement de frappe reste local.
+
+```jsx
+// contexte/session.jsx
+import { createContext, useContext } from "react";
+
+const SessionContext = createContext(null);
+
+export function FournisseurSession({ session, enfants }) {
+  return <SessionContext.Provider value={session}>{enfants}</SessionContext.Provider>;
+}
+
+export function useSession() {
+  const session = useContext(SessionContext);
+  if (session === null) throw new Error("useSession hors fournisseur");
+  return session;
+}
+
+// contexte/theme.jsx
+const ThemeContext = createContext("clair");
+
+export function FournisseurTheme({ theme, changerTheme, enfants }) {
+  const valeur = { theme, changerTheme };
+  return <ThemeContext.Provider value={valeur}>{enfants}</ThemeContext.Provider>;
+}
+
+export function useTheme() {
+  return useContext(ThemeContext);
+}
+```
+
+L'assemblage au sommet reste lisible : les fournisseurs s'imbriquent une fois, dans un composant dédié, et les écrans n'en connaissent rien. Un composant imbriqué de composition — qui accepte un tableau de fournisseurs et les applique dans l'ordre — évite la cascade d'accolades gauche et droite qui rend l'arborescence illisible à mesure que les contextes s'accumulent. L'ordre des fournisseurs compte aussi : celui qui fournit la session doit être au-dessus de celui qui en dépend, et un rendu de repli doit pouvoir lire la session sans que le thème soit encore prêt.
+
+```jsx
+function Application() {
+  const [session, setSession] = useState(null);
+  const [theme, setTheme] = useState("clair");
+
+  return (
+    <FournisseurSession session={session}>
+      <FournisseurTheme theme={theme} changerTheme={setTheme}>
+        <Bandeau />
+        <MonEcran />
+      </FournisseurTheme>
+    </FournisseurSession>
+  );
+}
+```
+
+La granularité a ses limites dans les deux sens. Trop gros, le contexte impose ses changements à tous ses lecteurs ; trop fin, vous multipliez les fournisseurs jusqu'à ce que l'enveloppe du rendu tienne en un écran entier et que la moindre nouvelle préoccupation impose trois fichiers. Deux critères permettent de trancher. Regroupez ce qui change ensemble : la session et l'identité de l'utilisateur ont la même durée de vie. Séparez ce qui change à des rythmes différents : une valeur modifiée à chaque frappe n'appartient jamais à un contexte partagé. Un troisième réflexe complète la règle : si un seul écran lit une valeur, elle reste dans cet écran, même si elle paraît importante.
+
+La vérification ne demande aucun outil particulier. Ajoutez temporairement un log au rendu de chaque composant lecteur, déplacez la souris, modifiez un filtre, déconnectez-vous, et regardez la console. Un changement de session qui redessine quatre composants est normal ; un changement de frappe dans la barre de recherche qui redessine le bandeau est un défaut. Retirez les logs une fois le constat fait : ils servent à observer, pas à voyager en production. Ce réflexe d'observation prépare directement la mesure plus fine du profiler, qui vous dira le même résultat en chiffres.
+
+## Valeurs mémorisées et sélecteurs de contexte
+
+Même avec des contextes découpés, un fournisseur qui se redessine souvent peut coûter cher, parce qu'il recrée sa valeur à chaque rendu. L'expression value={ { session, langue } } construit un objet neuf même si ses contenus n'ont pas bougé ; l'égalité de référence échoue alors, React considère que la valeur du contexte a changé, et il redessine tous les lecteurs. La mémoïsation du tableau des valeurs, au contraire, conserve la même référence tant que rien ne change réellement, et les lecteurs ne sont pas dérangés.
+
+```jsx
+function FournisseurSession({ session, langue, deconnexion, enfants }) {
+  const valeur = useMemo(
+    () => ({ session, langue, deconnexion }),
+    [session, langue, deconnexion],
+  );
+  return <SessionContext.Provider value={valeur}>{enfants}</SessionContext.Provider>;
+}
+```
+
+La naïveté à éviter consiste à mémoïser une valeur puis à l'exposer dans un objet littéral englobant, construit à chaque rendu du fournisseur : l'objet neuf redonne aussitôt une nouvelle référence et annule la mémoïsation. La correction tient à un objet unique, propriétés comprises, construit une seule fois. Cette subtilité a une morale plus large : la mémoïsation du contexte ne fonctionne que si toutes les routes d'accès à la valeur conservent la même référence, y compris les fonctions que vous transmettez.
+
+La question du coût se pose ensuite. Un tableau mémoïsé n'est pas gratuit : il impose une comparaison de dépendances à chaque rendu du fournisseur et retient en mémoire une valeur jusqu'à ce que ses dépendances changent. Le gain n'apparaît que si le fournisseur se redessine souvent et si les lecteurs sont nombreux ou coûteux. Sur un site à quatre écrans, la différence est imperceptible ; sur une liste de mille lignes dont chaque ligne lit le contexte, elle se voit immédiatement. Comme toujours, la mémoïsation est une réponse à une mesure, pas une habitude de départ.
+
+Quand le découpage ne suffit plus, la seconde technique consiste à donner à chaque lecteur seulement la part qui le concerne. On parle de sélecteur : une fonction qui extrait une tranche de la valeur du contexte, et l'on ne redessine le lecteur que si cette tranche change. La bibliothèque standard ne fournit pas de sélecteur intégré ; plusieurs bibliothèques de l'écosystème l'ajoutent en exposant une fonction de lecture paramétrée. Avant d'en ajouter une, essayez la solution gratuite : si personne ne lit la tranche concernée à part un écran, sortez cette donnée du contexte.
+
+| Symptôme observé | Cause probable | Remède |
+|---|---|---|
+| Le bandeau se redessine à chaque frappe d'un filtre | Filtre et session dans le même contexte | Sortir le filtre, le garder local ou dans son contexte |
+| Tout redessine dès que le fournisseur se redessine | Objet recréé à chaque rendu | Construire un seul objet mémoïsé, fonctions comprises |
+| Un composant ignore pourtant le champ modifié | Lecture entière du contexte | Découper ou introduire un sélecteur |
+| La valeur partagée change vingt fois par seconde | État volatile rangé trop haut | Rapprocher l'état du composant qui l'utilise |
+| Le contexte ne contient que des constantes | Aucun partage réel nécessaire | Supprimer le contexte et passer par des modules |
+
+La troisième solution reste souvent la meilleure : rapprocher l'état. Si un filtre ne sert qu'à un écran, il n'a aucune raison de vivre au sommet de l'application ; s'il doit survivre à la navigation entre deux écrans voisins, il peut être porté par leur composant de disposition commun plutôt que par un contexte global. Le contexte apparaît alors comme la dernière étape d'une hiérarchie — état local d'abord, état partagé par composition ensuite, contexte enfin — et non comme l'entrée par défaut de toute donnée commune. C'est cette hiérarchie qui vous évitera de construire une architecture de contextes destinée à ne jamais servir.
+
+## React.memo, useMemo et useCallback : mesurer avant d'optimiser
+
+Les trois outils de mémoïsation de React se ressemblent dans la syntaxe et se distinguent dans leur office. React.memo enveloppe un composant et annule son rendu si ses propriétés sont superficiellement identiques d'un rendu à l'autre. useMemo conserve la valeur calculée entre deux rendus d'un même composant. useCallback conserve l'identité d'une fonction. Aucun des trois ne rend le travail plus rapide : ils suppriment ou évitent un travail, et ce faisant, ils ajoutent une comparaison, une consommation mémoire et un risque d'oubli dans les dépendances.
+
+React.memo est l'outil le plus visible et le plus souvent mal employé. Il compare les props par valeur : primitives égales, références d'objets et de tableaux égales, fonctions de même identité. Si une seule prop change d'identité — un objet littéral ou une fonction créés dans le rendu du parent — la comparaison échoue et le composant se redessine malgré tout. Le résultat est doublement négatif : le coût de la comparaison a été payé, le gain n'a pas été obtenu. D'où la première règle d'usage : React.memo ne vaut que si le parent transmet des props stables, ce qui suppose souvent d'avoir d'abord stabilisé le parent.
+
+```jsx
+const LigneInscrit = React.memo(function LigneInscrit({ inscrit, onSupprimer }) {
+  return (
+    <li>
+      {inscrit.nom} — {inscrit.courriel}
+      <button onClick={() => onSupprimer(inscrit.id)}>Retirer</button>
+    </li>
+  );
+});
+
+function ListeInscrits({ inscrits }) {
+  const supprimer = useCallback((id) => {
+    setInscrits((liste) => liste.filter((i) => i.id !== id));
+  }, []);
+  return <ul>{inscrits.map((i) => <LigneInscrit key={i.id} inscrit={i} onSupprimer={supprimer} />)}</ul>;
+}
+```
+
+Dans ce bloc, mémoïser la ligne n'a de sens que parce que la fonction de suppression est stable. Si elle était déclarée dans le corps du composant parent, chaque rendu du parent lui donnerait une nouvelle identité, React.memo comparerait, concluerait à une différence et redessinerait mille lignes pour rien. C'est le cas le plus fréquent en pratique : on enveloppe un enfant, on oublie de stabiliser les props, on constate aucun changement, puis on retire l'enveloppe en concluant que la mémoïsation ne sert à rien. Mesurez avant et après, et non avant ou après.
+
+useMemo répond à un autre besoin : éviter un calcul coûteux dont les résultats dépendent d'un ensemble réduit de valeurs. Trier mille inscrits, filtrer une longue liste, agréger des statistiques à chaque rendu sont de bons candidats ; formater une date ou concaténer deux chaînes n'en sont pas. La comparaison des dépendances a un coût, et l'oubli d'une dépendance produit un résultat périmé qui passe inaperçu jusqu'à la mise en production. Utilisez useMemo quand vous avez identifié un calcul dans un profil, pas parce qu'il pourrait un jour être lent.
+
+useCallback protège l'identité d'une fonction, et il ne sert que là où l'identité est lue : en dépendance d'un effet, en prop d'un enfant mémoïsé, en valeur de contexte. Une fonction transmise à un simple gestionnaire d'événement n'a aucun besoin d'être mémoïsée, personne ne la compare. Là encore, la tentation est d'encastrer des useCallback partout au nom de la performance ; le résultat est un code plus verbeux, plus difficile à relire, et souvent plus lent, parce que chaque hook ajoute son évaluation. La règle tient en une phrase : on mémoïse ce qu'un autre code compare.
+
+| Outil | Ce qu'il fait réellement | Quand l'utiliser | Quand il ne sert à rien |
+|---|---|---|---|
+| React.memo | Compare les props et saute le rendu | Enfant coûteux, parent fréquent, props stables | Props recréées à chaque rendu, enfant très léger |
+| useMemo | Conserve une valeur calculée | Calcul mesuré comme coûteux, dépendances étroites | Opération bon marché, dépendances nombreuses |
+| AsyncCallback | Conserve l'identité d'une fonction | Prop d'un mémoïsé, dépendance d'effet, valeur de contexte | Gestionnaire simple, fonction jamais comparée |
+
+Le dernier mot revient à la mesure. Avant d'envelopper quoi que ce soit, ouvrez le profiler, reproduisez l'interaction lente et relevez le composant dominant, sa durée réelle et la raison de son rendu. Enveloppez, recalculez, comparez les deux captures. Si le gain est inférieur à la marge de mesure, retirez la mémoïsation : elle ne vous a rien fait gagner et elle a ajouté un endroit où le code peut mentir. L'outil de la section suivante est fait pour rendre cette démarche routinière.
+
+## Diagnostiquer un rendu avec le profiler React
+
+Le profiler React est un outil d'observation, pas d'opinion. Il s'installe comme extension de navigateur, s'ouvre sur un onglet dédié, enregistre une interaction réelle de l'application et restitue ce qui s'est passé composant par composant. Deux modes d'emploi coexistent : l'extension, pratique pour explorer une application de développement, et le composant de profilage intégré, qui écrit des chiffres directement dans votre code — à condition de livrer une construction de production où le profilage a été activé, puisqu'il est désactivé par défaut dans les constructions ordinaires. Commencez toujours par l'extension : elle demande aucune modification et suffit à localiser un problème.
+
+```image
+npm-logo
+| Le logo npm : un paquet rouge portant les lettres blanches npm, le gestionnaire de paquets qui installe React, ses outils de test et les bibliothèques de l'écosystème.
+```
+
+Le déroulement d'une séance tient en cinq gestes. Ouvrez le profiler, activez le repérage des mises à jour pour voir surlignés les composants qui se redessinent, puis appuyez sur l'enregistrement. Reproduisez l'interaction suspecte — un frappe dans le filtre, un clic sur une date, l'ouverture d'un menu — et arrêtez l'enregistrement. Triez les commits par durée, repérez la barre dominante, puis demandez pourquoi ce composant s'est rendu. Corrigez, relancez un enregistrement et comparez : sans cette dernière mesure, vous ne saurez jamais si la correction a servi à quelque chose.
+
+La lecture du graphe en flamme obéit à une convention simple. L'axe horizontal représente le temps, la largeur d'une barre la part du commit qu'elle occupe, et sa profondeur l'arborescence des composants. Une barre large en haut et ses enfants étroits signifient un parent qui travaille beaucoup et des enfants peu chargés : le gain se trouve dans le parent. Des barres égales alignées signifient un parent qui redessine toute sa descendance. En mode couleur, la teinte indique la part du temps consacrée au rendu ; les teintes froides sont rapides, les teintes chaudes méritent une inspection.
+
+```jsx
+import { Profiler } from "react";
+
+function mesurerRendu(id, phase, tempsReel) {
+  console.log(id, phase, tempsReel);
+}
+
+export function EcranInscrits() {
+  return (
+    <Profiler id="Inscrits" onRender={mesurerRendu}>
+      <Filtre />
+      <ListeInscrits />
+    </Profiler>
+  );
+}
+```
+
+Le composant de profilage livré avec React enveloppe un sous-arbre et reçoit à chaque rendu un rappel portant l'identifiant de la section, la phase — mise en place ou mise à jour — et la durée réelle du rendu. Branchez-le sur un tableau de bord, une console ou un envoi vers votre service de suivi, et vous disposez d'une mesure permanente des écrans sensibles. Attention à la destination : dans un projet de production, ces chiffres ne doivent jamais être journalisés publiquement, et un envoi de télémétrie suppose l'accord des personnes concernées.
+
+La question la plus utile du profiler reste la raison d'un rendu, et elle en comporte quatre. Le composant s'est rendu parce qu'une prop a changé, parce qu'un état interne a changé, parce qu'un contexte qu'il lit a changé, ou parce que son parent s'est rendu et qu'il n'était pas protégé par mémoïsation. Dans le dernier cas, la correction appartient au parent ou à la mémoïsation de l'enfant ; dans le troisième, elle appartient à la stabilité de la valeur du contexte ; dans les deux premiers, elle est normale. Un rendu n'est pas un défaut : un rendu inutile, mesuré comme tel, l'est.
+
+Deux pièges d'interprétation restent courants. Le premier concerne le mode de développement : React y ajoute des vérifications supplémentaires, un double appel des effets et des messages détaillés, si bien que les durées affichées sont très supérieures à celles de l'application réelle. Servez-vous du développement pour localiser, et d'une construction de production prévue pour le profilage pour quantifier. Le second concerne la confusion entre durée réelle et durée de base : la première inclut le travail de rendu proprement dit, la seconde estime ce que le rendu coûterait sans mémoïsation ; comparer l'une à l'autre permet de savoir si un composant mémoïsé est réellement protégé ou s'il se redessine malgré tout.
+
+La méthode complète se résume ainsi : enregistrer une interaction, lire la barre dominante, demander la raison du rendu, corriger la cause unique identifiée, réenregistrer, comparer. Cette boucle, répétée trois ou quatre fois sur un écran, produit toujours la même amélioration, parce qu'elle remplace la devinette par un chiffre. Elle vous rend aussi un service indirect : vous découvrez que tel composant, que vous croyez coûteux, se redessine deux fois par seconde sans gêne personne, pendant que tel autre, discret, absorbe l'essentiel du budget.

@@ -1,0 +1,77 @@
+## Renseignement actif : quand vous frappez à la porte
+
+Le renseignement actif commence au premier paquet que vous adressez à l'infrastructure, et il change de nature à ce moment-là. Vous n'êtes plus un lecteur, vous devenez un interlocuteur : quelqu'un reçoit vos requêtes, les journalise, les compte, les agrège avec celles des autres. Avant d'enclencher la moindre sonde, trois questions doivent avoir une réponse écrite : l'autorisation couvre-t-elle cette adresse précise, cette action est-elle listée dans les techniques autorisées, et ai-je un moyen de joindre la personne responsable si quelque chose se dérègle ? Si l'une des trois reste sans réponse, vous ne lancez pas la commande, vous la notez pour la réunion de cadrage.
+
+La première distinction concerne les protocoles de sondage. Un simple ping, qui vérifie qu'une machine répond, est rarement concluant : de nombreux pare-feux ignorent les requêtes ICMP, et un silence ne prouve pas une absence. Une sonde de ports TCP, elle, ouvre de véritables connexions et obtient des réponses exploitables même lorsque l'ICMP est bloqué. Le mode de connexion intégrale est le plus simple et le plus honnête : il réalise la poignée de main complète, donc il est visible et propre dans les journaux. Le mode de connexion à poignée de main incomplète, lui, interrompt la connexion avant son achèvement pour rester discret ; il est utile sur des réseaux sensibles, mais il s'apparente davantage à une technique d'évitement de détection qu'à une simple lecture, et son usage doit figurer dans l'autorisation.
+
+Pour une première mission, restez sur des valeurs d'exécution conservatrices. Limitez la liste des ports testés, choisissez un profil de temporisation modéré, et préférez la précision à la vitesse : un scan sur les mille ports les plus courants répond à la grande majorité des questions de reconnaissance, tandis qu'un balayage exhaustif de soixante-cinq mille ports sur un réseau protégé ressemble à une attaque et déclenche à coup sûr une alerte. Faites toujours vos essais sur une machine de laboratoire que vous contrôlez, afin de voir ce que produit votre propre outil du point de vue du défenseur, avant de l'orienter vers la cible.
+
+```bash
+nmap -Pn -T3 --top-ports 1000 -sV -oA example_reco www.example.com
+nmap -Pn -T2 -sT -p 80,443,8080,8443 www.example.com
+```
+
+L'option d'identification de version transforme un simple état ouvert ou fermé en une hypothèse sur le logiciel qui répond. Elle est précieuse, car c'est elle qui relie votre inventaire à une mise à jour connue, mais elle multiplie aussi le nombre d'échanges envoyés au service et allonge nettement la durée de l'opération. Un bon réflexe consiste à séparer les étapes : relever d'abord les ports ouverts rapidement, puis interroger uniquement ceux-ci pour leur version. Vous réduisez d'autant le volume de trafic et le temps passé.
+
+Le volet applicatif vient ensuite. Un service web se laisse examiner avec bien plus de finesse qu'un simple port : l'en-tête HTTP, la page d'accueil, les erreurs provoquées par une URL inexistante, le certificat présenté, les redirections suivies. Ces requêtes ciblées, envoyées vers un nombre restreint d'adresses, produisent la quasi-totalité du renseignement utile et restent faciles à justifier dans un journal. C'est généralement à ce stade que vous découvrirez un outil de supervision accessible sans authentification, un espace d'administration exposé ou un service de sauvegarde relié au domaine principal.
+
+```bash
+curl -sI -m 10 https://www.example.com/admin/ | head -n 5
+curl -s -m 10 -o /dev/null -w "%{http_code} %{redirect_url}\n" https://www.example.com/recette/
+```
+
+Les erreurs classiques du premier actif sont presque toujours les mêmes. Un balayage lancé sans limite de débit sature un petit serveur partagé et provoque une coupure de service : vous venez alors de créer l'incident que vous étiez mandaté pour prévenir. Un scan lancé depuis une adresse sortie qui héberge d'autres missions attire des suspensions d'accès. Une sonde laissée tourner pendant la nuit oublie son périmètre et atteint une adresse voisine. Préparez vos cibles dans un fichier, refusez de lancer une commande dont vous ne pouvez pas nommer chaque destination, et arrêtez systématiquement vos processus en fin de séance. Enfin, conservez les sorties brutes : un fichier par cible, horodaté, avec la version exacte de l'outil utilisé.
+
+Il est utile, une fois, de regarder l'autre côté. Installez sur une machine de test un outil d'alerte ou un pare-feu avec journalisation, lancez votre sonde dessus, puis lisez ce qui a été écrit : vous verrez apparaître en quelques secondes une ligne par connexion, une alerte sur un volume anormal de requêtes, et éventuellement un blocage automatique. Cette expérience change votre manière de travailler. Vous comprenez alors que la discrétion n'est pas un luxe, mais la condition pour que votre mission puisse aller au bout sans interruption, et vous savez quels journaux votre rapport devra mentionner lorsque vous présenterez vos constats à l'équipe en place. Dans certaines missions accompagnées, vous êtes d'ailleurs annoncé à l'avance aux équipes de surveillance : profitez-en, vos essais en deviennent plus sûrs et leurs lectures plus justes.
+
+## Cartographier le périmètre : du relevé au schéma
+
+Une reconnaissance n'a de valeur que si elle aboutit à une carte, c'est-à-dire à une représentation structurée de ce qui existe, de la manière dont c'est relié et du degré de certitude que vous accordez à chaque affirmation. Entre la sortie brute d'un outil et le livrable remis au client, il y a tout le travail d'analyse : dédoublonner, rapprocher, dater, hiérarchiser et formater. Un auditeur qui produit trois cents lignes de journaux sans les relier n'a pas cartographié, il a amassé. La cartographie consiste précisément à transformer ces lignes en relations.
+
+Commencez par un inventaire plat, un actif par ligne, avec un ensemble de colonnes que vous ne changerez plus en cours de mission : nom, adresse, nature du service, technologies observées, port ouvert, date du relevé, source de l'information et niveau de confiance. Cette dernière colonne est indispensable. Une technologie devinée depuis un favicon a un statut très différent d'un en-tête de serveur retourné par la machine elle-même ; une adresse découverte dans un certificat émis il y a trois ans n'a pas le même poids qu'une réponse DNS obtenue ce matin. Sans niveau de confiance, votre client ne pourra pas arbitrer entre un fait et une supposition.
+
+```table
+Colonne | Ce qu'on y écrit | Piège à éviter
+Nom | Domaine ou hôte complet, sans doublon | Mélanger www et le domaine apex dans deux lignes
+Adresse | IPv4 ou IPv6 effectivement résolue | Conserver une adresse périmée sans le noter
+Service | Port, protocole et rôle présumé | Confondre le rôle affiché et le rôle vérifié
+Technologies | Logiciel et version, avec la source | Présenter une déduction comme un fait
+Date | Jour et heure du relevé | Oublier la date et rendre la carte périmée aussitôt
+Confiance | Élevée, moyenne, faible, avec la raison | Attribuer la même valeur à toutes les lignes
+```
+
+Passez ensuite aux relations. Un domaine renvoie une adresse ; cette adresse héberge plusieurs hôtes virtuels ; l'un d'eux expose une application ; cette application communique avec un service interne non joignable depuis l'extérieur, mais dont le nom apparaît dans une redirection ou un message d'erreur. Ces liens, matérialisés par des flèches ou par une simple colonne « dépend de », sont ce qui permettra au lecteur de comprendre le périmètre en trente secondes. Choisissez ensuite une représentation visuelle cohérente : la topologie en bus, en étoile ou en maillon convient à des réseaux très différents, et votre schéma doit rester lisible sans légende compliquée.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/NetworkTopologies.svg/960px-NetworkTopologies.svg.png
+| Les principales topologies de réseau : le choix de la représentation dépend de la manière dont les actifs sont réellement reliés entre eux.
+```
+
+La carte vit ensuite. Une reconnaissance datée devient fausse dès qu'une migration a lieu, et un audit de six mois contient presque toujours au moins un actif qui a changé de main. Indiquez la date de dernière mise à jour en tête de document, prévoyez une procédure de rafraîchissement, et notez explicitement ce que vous n'avez pas pu vérifier. Les angles morts assumés valent mieux que des zones laissées en blanc que le lecteur interprétera comme maîtrisées. Un périmètre cartographié avec ses trous est un outil de travail ; un périmètre qui se prétend complet est un danger.
+
+Pensez également au format de stockage. Un tableau plat, exportable depuis un tableur, reste la forme la plus universelle : tout le monde sait l'ouvrir, trier et filtrer. Gardez à côté un fichier texte par observation brute, organisé par date et par cible, afin de pouvoir reprendre le fil exact d'un relevé six mois plus tard. Si vous gérez plusieurs missions, adoptez une convention de nommage fixe dès le départ : identifiant de mission, date, type de source, numéro de séquence. Cette rigueur vous paraîtra excessive au début, puis deviendra un réflexe le jour où l'on vous demandera de justifier une affirmation précise du rapport en moins de deux minutes. La traçabilité n'est jamais acquise, elle se construit pendant qu'on travaille.
+
+Le livrable final se décline en général en trois artefacts : un tableau d'inventaire exploitable, un schéma synthétique sur une page, et un journal détaillé qui justifie chaque ligne. Ces trois documents se répondent, et chacun sert un public différent : l'inventaire pour l'équipe technique, le schéma pour la direction, le journal pour la reprise de mission l'an prochain. Tenez-les à jour ensemble, sous contrôle de version, et vous garderez la mémoire de ce que vous avez observé bien après la fin de la mission.
+
+## Cadre légal et périmètre d'autorisation
+
+La technique de reconnaissance est volontairement simple ; la responsabilité qui l'accompagne ne l'est pas. Dans la plupart des pays européens, et en France notamment, accéder à un système d'information en contournant ses mesures de protection, ou y persister de manière non autorisée, est un délit, même sans dommage, même sans prélèvement de données, et même si votre intention était de rendre service. La bonne foi n'est pas une excuse recevable : c'est l'écrit qui protège. Une convention signée, datée, précisant les parties et les limites, constitue votre unique filet, et vous devez en disposer avant la première commande, pas après.
+
+Un document d'autorisation digne de ce nom contient un ensemble de mentions que vous allez désormais reconnaître d'un coup d'œil. Les parties et leurs coordonnées, la période de validité avec les dates de début et de fin, le périmètre exact : noms de domaine, adresses et sous-réseaux autorisés, et parfois la mention explicite de ce qui est exclu. Les techniques autorisées, souvent exprimées sous forme de liste : renseignement passif, énumération de sous-domaines, sondage de ports, test d'authentification, selon les cas. Les moyens de contact de jour, une personne nommée et joignable en continu, puis un contact de recours en cas d'incident. Les règles de confidentialité, la durée de conservation des données collectées, les conditions de notification en cas de découverte critique, et la date de restitution du rapport.
+
+```text
+Périmètre autorisé : example.com, *.example.com, 203.0.113.0/24
+Période : du 2026-10-05 09:00 au 2026-10-09 18:00 (UTC+2)
+Techniques autorisées : passif, énumération DNS, sondage TCP sur ports 80, 443, 22
+Techniques interdites : ingénierie sociale, déni de service, accès aux comptes réels
+Contact de jour : Nadia Chevalier, 06 XX XX XX XX
+Contact d'astreinte : SOC, alerte@example.com
+```
+
+Le périmètre technique mérite une mise en garde spécifique : il ne s'arrête pas aux noms de domaine. Derrière un site se cachent des services mutualisés, un CDN, un hébergeur cloud, une plateforme de messagerie, un outil de ticketing hébergé par un tiers. Ces infrastructures ne vous appartiennent pas, même si elles servent votre client. Scanner systématiquement l'adresse IP qui répond derrière un domaine revient à sonder la plateforme partagée, et donc à toucher des centaines d'autres clients. Restez sur les noms déclarés, référencez les dépendances tierces comme observables externes, et signalez-les : elles sont utiles au client sans que vous ayez besoin de les tester.
+
+Un autre point concerne les données personnelles que vous croiserez inévitablement. Une messagerie exposée, un fichier d'annuaire interne, une base de test contenant de vrais noms : vous devez les traiter comme des données à caractère personnel, les minimiser, ne pas les copier hors des canaux prévus, ne pas les mentionner dans un rapport diffusé largement, et suivre la procédure de notification convenue avec le client. Votre mission vous autorise à constater, pas à constituer une copie de leurs fichiers. Une trouvaille de ce type se signale de vive voix, se décrit sans son contenu, et ne se conserve que si le client l'exige par écrit.
+
+Enfin, cadrez votre mission dans le temps et dans les exigences de niveau. Un audit débutant se limite à la surface visible, sans tentative d'exploitation, sans test d'authentification robuste, sans manipulation de données réelles. Les référentiels publics de test d'intrusion, notamment ceux de l'ANSSI et du consortium OWASP, décrivent des méthodes structurées que vous devrez suivre au fur et à mesure du parcours : vous n'avez pas besoin de les connaître tous dès aujourd'hui, mais vous devez déjà savoir qu'ils existent et qu'on vous demandera de vous y référer. La règle à retenir tient en une phrase : si le doute persiste sur une action, elle ne se fait pas, elle se demande.
+
+Un mot sur les situations d'apprentissage, parce qu'elles posent un problème particulier. Travailler sur une machine que vous possédez, sur un laboratoire virtuel constitué pour l'occasion ou sur le domaine de démonstration réservé à la documentation ne pose aucun problème : vous êtes à la fois le testeur et le testé. En revanche, appliquer les mêmes gestes au réseau de votre employeur, de votre association ou de votre école, parce que vous avez l'intention de rendre service, reste un dépassement de mission tant que personne n'a écrit son accord. Demandez un mandat, aussi court soit-il, et vous protégez à la fois l'organisation et vous-même. À l'inverse, lorsque vous découvrez par inadvertance une exposition grave chez un tiers sans mandat, la seule conduite correcte consiste à signaler par un canal officiel, sans détailler l'accès, sans persister, et sans chercher à démontrer quoi que ce soit.

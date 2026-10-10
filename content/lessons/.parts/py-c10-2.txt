@@ -1,0 +1,134 @@
+## Tester comme un professionnel : de la sortie qui défile au test
+
+Un test n'est pas un programme que l'on regarde tourner, c'est une affirmation précise sur le comportement attendu, exécutée automatiquement, qui échoue bruyamment quand la réalité contredit le code. Cette définition tient en une phrase, mais elle en contient trois exigences. L'affirmation doit être vérifiable sans interprétation : moyenne de 12, 14 et 16 vaut 14, une note de 16 donne Félicitations du jury, un fichier absent provoque une erreur explicite. Elle doit s'exécuter sans intervention humaine, d'une simple commande. Et elle doit échouer de façon parlante, en montrant la valeur attendue, la valeur obtenue et l'endroit du code qui les produit. Si votre vérification ne peut pas échouer, elle ne vérifie rien : elle vous rassure, ce qui n'est pas le même service.
+
+Deuxième exigence, plus délicate : un test doit être rapide, isolé et déterministe. Rapide, parce qu'une suite qui met trois minutes à tourner ne sera plus lancée à chaque modification, et un test qu'on ne lance plus est un test mort. Isolé, parce que chaque test doit fabriquer son propre monde, avec ses propres fichiers et ses propres données, sans dépendre de ce qu'un autre test a laissé derrière lui. Déterministe, parce que le même code doit produire le même résultat à chaque exécution : ni heure courante, ni contenu d'un dossier partagé, ni ordre d'importation, ni accès réseau. Ces trois propriétés ne sont pas des raffinements d'équipe expérimentée, ce sont les conditions de la confiance : sans elles, un échec rouge vous apprend seulement que quelque chose a bougé, sans vous dire quoi exactement.
+
+pytest est le framework de test que vous allez utiliser, et il s'impose par trois caractéristiques. Il découvre les tests par convention, tous les fichiers nommés à partir de test_ et toutes les fonctions nommées à partir de test_, sans aucune déclaration à écrire. Il réécrit les assertions pour produire des messages d'erreur lisibles : en cas d'échec, vous voyez la valeur calculée et la valeur attendue, pas une simple mention de AssertionError. Et il organise la préparation du monde des tests grâce aux fixtures, que vous verrez dans la section suivante. S'y ajoutent une centaine de plugins pour la couverture, les paramètres d'entrée, les appels réseaux ou les comparaisons de fichiers, ainsi qu'un code de retour non nul en cas d'échec, ce qui permet de brancher pytest dans un script ou dans une chaîne d'intégration continue sans rien interpréter.
+
+```python
+import pytest
+from analyse_notes.calcul import moyenne, mention
+
+
+def test_moyenne_d_un_groupe():
+    assert moyenne([12, 14, 16]) == pytest.approx(14)
+
+
+def test_moyenne_vide_leve_une_erreur():
+    with pytest.raises(ValueError):
+        moyenne([])
+
+
+def test_mention_du_seuil_haut():
+    assert mention(16) == "Félicitations du jury"
+```
+
+Le premier bloc contient déjà deux leçons. La comparaison passe par pytest.approx parce que la moyenne d'une série de flottants n'est jamais rigoureusement égale à une valeur littérale : comparer des flottants avec == revient à exiger une exactitude que la machine ne garantit pas, et vos tests échoueraient parfois sans raison apparente. Le deuxième bloc montre le contraire : on ne teste pas qu'une erreur est levée, on teste laquelle. Attraper toute exception revient à valider le fait que quelque chose a cassé, ce qui est déjà le cas. Le contexte pytest.raises resserre l'attente sur le type attendu, et vous pouvez même vérifier le message avec l'argument match quand le texte fait partie du contrat.
+
+La troisième exigence concerne la structure de la suite, pas des fichiers isolés. Les tests se répartissent en plusieurs niveaux, et leur répartition n'a rien d'arbitraire : plus on monte d'un niveau, plus le test est lent, plus il mobilise de composants, et moins on en écrit. Le tableau suivant indique ce que vous devez couvrir dans l'analyseur et à quelle fréquence vous le ferez.
+
+```table
+Niveau de test | Ce qu'il vérifie | Exemple dans l'analyseur | Volume et coût
+Unitaire | Une fonction, sans fichier ni terminal | moyenne, mention, classement sur des listes fournies en dur | Nombreux, très rapides
+Intégration | Deux ou trois composants assemblés | charger_notes lit un CSV valide et renvoie la liste d'étudiants | Modérés, besoin de fichiers réels
+Bout en bout | La commande telle qu'un utilisateur la tape | analyse-notes --csv notes.csv écrit rapport.txt et renvoie un code | Peu nombreux, plus lents
+Régression | Un bug corrigé qui ne reviendra pas | une note en virgule décimale était refusée | Un par incident survenu
+```
+
+Cette hiérarchie a une conséquence pratique sur votre organisation. Le dossier tests/ se découpe en fichiers qui reprennent les modules du paquet : test_calcul.py pour les fonctions pures, test_chargement.py pour la lecture des fichiers, test_cli.py pour la ligne de commande et l'écriture du rapport. Chaque test se lit en trois temps, ce que l'on appelle les trois phases : on prépare les données, on appelle ce que l'on vérifie, on compare au résultat attendu. Une assertion par comportement, un comportement par test, et un nom de fonction qui décrit ce comportement en anglais ou en français, à condition qu'il soit lisible dans la liste des échecs. Un test nommé test_deux ne vous dira jamais ce qui a cassé.
+
+L'exécution, elle, tient en quelques commandes que vous apprendrez par cœur. `pytest` lance toute la suite. `pytest -k mention` n'exécute que les tests dont le nom contient cette chaîne, ce qui fait gagner des minutes quand vous travaillez sur un seul module. `pytest -x` s'arrête au premier échec quand vous cherchez à dégager un blocage, tandis que `pytest --lf` ne rejoue que les tests qui ont échoué la fois précédente. `pytest -q` résume en quelques lignes, `pytest -vv` liste chaque test avec son résultat. Dans tous les cas, le code de retour vaut 0 quand tout passe et un entier non nul en cas d'échec : c'est ce code que l'intégration continue lira plus loin, sans jamais ouvrir votre code source.
+
+Un réflexe à prendre dès la première exécution consiste à lire la sortie en entier, y compris quand tout est vert. La ligne de résumé vous donne le nombre de tests exécutés, la durée totale et les avertissements éventuels, et ces avertissements sont des erreurs futures : un import déprécié, une fixture obsolète, un message de Python que vous avez choisi d'ignorer aujourd'hui. Traitez-les comme des défauts, parce qu'une suite qui défile en jaune pendant des semaines finit par ne plus être regardée du tout. De même, en cas d'échec, résistez à l'envie de corriger immédiatement le test : lisez d'abord le message, déterminez si c'est le code qui a tort ou l'attente qui a vieilli, puis ne modifiez l'une des deux qu'une fois cette décision prise et énoncée clairement.
+
+## Fixtures : préparer un monde reproductible
+
+Le premier réflexe de qui écrit ses premiers tests est de copier-coller la préparation d'un fichier de test en tête de chaque fonction. Trois tests plus tard, vous maintenez quatre exemplaires du même contenu CSV, et le jour où le séparateur change, vous en modifiez trois et oubliez le quatrième. Le quatrième test continue de passer, mais il vérifie une hypothèse que votre code ne remplit plus : vous venez de fabriquer un faux positif, le pire des défauts d'une suite de tests, parce qu'un test qui échoue à tort finit par être ignoré. La fixture est l'antidote : une fonction unique, décorée par pytest.fixture, qui prépare une donnée et la met à disposition de tous les tests qui en demandent le nom en paramètre.
+
+Concrètement, une fixture est une fonction qui retourne une valeur et dont le nom devient un paramètre de vos tests. Le test ne crée rien, il reçoit. Quand vous écrivez `def test_classement(etudiants)`, pytest cherche une fixture nommée etudiants, l'exécute une fois pour ce test, lui donne le résultat, puis lance le test. La préparation est écrite une seule fois, elle est visible en haut du fichier ou dans le conftest, et surtout elle est exactement la même d'un test à l'autre. Cette mécanique vous semble peut-être anecdotique, elle supprime pourtant la cause n° 1 des suites incohérentes : la duplication de la préparation.
+
+```python
+# tests/conftest.py
+import pytest
+from analyse_notes.chargement import charger_notes
+
+
+@pytest.fixture
+def fichier_notes(tmp_path):
+    chemin = tmp_path / "notes.csv"
+    chemin.write_text(
+        "nom;note\nDupont;15.5\nMartin;12\nDurand;8.5\n",
+        encoding="utf-8",
+    )
+    return chemin
+
+
+@pytest.fixture
+def etudiants(fichier_notes):
+    return charger_notes(fichier_notes)
+```
+
+Ce conftest.py mérite une explication, car c'est le fichier le plus important du dossier de tests. Il est placé à la racine de tests/, pytest le charge automatiquement, et il n'a besoin d'aucun import de votre part pour exposer ses fixtures : tout fichier test du dossier peut les demander par simple nom de paramètre. Il sert aussi de point de mutualisation des réglages communs, des marqueurs ou des chemins. Une règle à connaître : si deux conftest.py existent, l'un à la racine et l'autre dans un sous-dossier, le plus proche du test l'emporte pour les noms qu'il redéfinit, ce qui permet d'adapter une fixture à un sous-ensemble de tests sans toucher au reste.
+
+La fixture fichier_notes illustre le second principe : chaque test travaille dans son propre territoire. La fixture tmp_path est fournie par pytest, elle désigne un dossier temporaire unique par test, déjà créé, déjà nettoyé à la fin. Vous y écrivez votre CSV, le test l'utilise, pytest le supprime. Aucun fichier ne traîne dans le dépôt, aucun test ne peut lire celui d'un autre, et vous pouvez lancer la suite cent fois de suite sans jamais observer d'écart dû à un fichier resté d'une exécution précédente. Comparez avec un fichier notes-test.csv écrit à la main dans le dossier du projet : le premier test le modifie, le second lit la version modifiée, et vos résultats dépendent désormais de l'ordre d'exécution.
+
+```table
+Fixture de pytest | Ce qu'elle fournit | Usage dans l'analyseur
+tmp_path | Un dossier temporaire propre à chaque test | Écrire un CSV éphémère, vérifier rapport.txt puis l'oublier
+monkeypatch | Modification réversible d'attributs, d'environnement ou de répertoire | Changer le répertoire courant ou remplacer une fonction
+capsys | La sortie standard capturée | Vérifier le résumé affiché dans le terminal
+recwarn | La liste des avertissements émis | Contrôler qu'aucun avertissement n'apparaît à l'import
+```
+
+Les fixtures se composent entre elles, et c'est leur force la plus sous-estimée. Ici, la fixture etudiants demande fichier_notes, qui demande tmp_path : pytest construit la chaîne, exécute chaque maillon une seule fois par test et fournit le résultat final. Vous obtenez ainsi une bibliothèque de mondes de test, un monde valide, un monde vide, un monde dont l'en-tête est cassé, un monde avec une note illisible, et chaque test déclare le monde dont il a besoin en un seul mot. Le coût de la préparation est payé une fois, la lisibilité gagnée est permanente, et l'ajout d'un cas limite devient l'ajout d'une fixture de dix lignes.
+
+Une question de portée vient compléter le tableau. Par défaut, une fixture est recalculée pour chaque test, ce qui garantit l'isolation mais coûte cher quand la préparation est lourde. L'argument scope="module" la calcule une fois par fichier de test, scope="session" une fois pour toute la suite. Réservez ces raccourcis à des préparations coûteuses et impossibles à altérer, une base de données de référence ou un jeu de données volumineux, et gardez la portée par défaut partout ailleurs, en particulier dès qu'une fixture écrit un fichier : un monde partagé est exactement ce que vous essayez d'éviter.
+
+## Paramétrer : un cas, dix déclinaisons
+
+La grille des mentions de votre analyseur comporte six seuils, et un test qui les couvre une par une produit six fonctions dont le corps ne change que par la donnée. Cette répétition a deux défauts : elle encombre le fichier, et surtout elle rend l'ajout d'un cas coûteux, si bien qu'on n'ajoute jamais le cas. La règle de bon sens est que le nombre de lignes d'un test doit refléter le nombre de cas réellement couverts, et rien d'autre. pytest résout le problème avec le marqueur parametrize, qui déclare une table de données et exécute le même corps de test une fois par ligne.
+
+```python
+import pytest
+from analyse_notes.calcul import mention, classement
+
+
+@pytest.mark.parametrize(
+    "note,attendu",
+    [
+        (16, "Félicitations du jury"),
+        (15.99, "Très bien"),
+        (14, "Très bien"),
+        (12, "Bien"),
+        (8, "Passable"),
+        (7.99, "Insuffisant"),
+    ],
+)
+def test_mention(note, attendu):
+    assert mention(note) == attendu
+
+
+@pytest.mark.parametrize(
+    "notes,rangs_attendus",
+    [
+        ([14, 14, 10], [1, 1, 3]),
+        ([17, 12, 12, 8], [1, 2, 2, 4]),
+        ([20], [1]),
+    ],
+)
+def test_classement_ex_aequo(notes, rangs_attendus):
+    etudiants = [
+        {"nom": f"E{i}", "note": note} for i, note in enumerate(notes)
+    ]
+    resultats = classement(etudiants)
+    assert [item["rang"] for item in resultats] == rangs_attendus
+```
+
+Lisez ce que produit ce code à l'exécution. Le premier test devient six tests indépendants, chacun avec son propre identifiant dans le rapport : test_mention[16-Félicitations du jury], test_mention[7.99-Insuffisant]. Quand l'un échoue, le message nomme exactement le cas fautif, sans que vous ayez écrit un mot de plus. Le second test fait de même pour les ex æquo, et le tableau affiché dans le code devient une spécification lisible : n'importe qui, sans exécuter quoi que ce soit, voit la règle métier attendue. C'est là le véritable avantage du paramétrage, bien au-delà de la ligne de gagnée : le test cesse d'être une vérification cachée pour devenir un document partagé.
+
+Les cas limites sont la matière première du paramétrage, et ils méritent d'être traités en priorité. Un seuil exact, la note 14 qui doit tomber dans Très bien et non dans Bien. Une valeur flottante juste en dessous, 13.999 qui doit encore appartenir à la catégorie inférieure. Une liste d'une seule note, qui doit rendre un classement cohérent. Une liste vide, qui doit lever ValueError plutôt que de diviser par zéro. Une note écrite avec une virgule, qui doit être acceptée par le chargement. Chacun de ces cas tient en une ligne dans le tableau, et leur présence physique dans le code empêche l'oubli le plus fréquent : celui du cas que l'on avait imaginé mais jamais écrit.
+
+Quand le cas attendu est une erreur, le paramétrage s'exprime avec pytest.raises placé dans le corps, ou avec pytest.param si vous voulez donner un identifiant lisible à chaque scénario. Méfiez-vous en revanche d'une tentation récurrente : paramétrer un test dont chaque ligne exige une préparation différente, un fichier différent, plusieurs assertions disparates. Au-delà de trois ou quatre données, la lecture du tableau devient plus coûteuse qu'une série de tests nommés, et la lisibilité passe avant la concision. Le bon critère est simple : si le corps du test tient en une ou deux assertions et ne varie que par ses données, paramétrez ; sinon écrivez des tests séparés, dont le nom raconte l'histoire.
+
+Un dernier bénéfice apparaît quand la suite grandit. Les identifiants produits par parametrize servent de filtre : `pytest -k "Felicitations"` n'exécute que les cas concernés, ce qui permet d'isoler une déclinaison précise pendant le débogage. Et parce que les données sont déclarées en tête de fonction, vous disposez d'une vue d'ensemble que n'aucun commentaire ne peut offrir : le nombre de cas couverts se lit d'un coup d'œil. Votre objectif n'est pas un pourcentage de couverture élevé, c'est une liste de cas visible et complètement explicite, celle-là même que vous relirez avant chaque livraison.

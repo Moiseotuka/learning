@@ -1,0 +1,173 @@
+## Modbus RTU : la grammaire des échanges
+
+Modbus est né en 1979 auprès d'un automate de la société Modicon et il est devenu, sans licence et sans abandonner son vocabulaire d'origine, le langage le plus répandu de l'automatisme. Il se décline en trois formats qui partagent exactement le même modèle de données et les mêmes codes de fonction. Le format RTU, binaire et compact, est celui que l'on règle sur une liaison série. Le format ASCII, plus lent puisque chaque octet est transmis sous forme de deux caractères hexadécimal encadrés, existe surtout pour son confort de lecture sur un terminal. Le format TCP transporte les mêmes données sur le réseau local, au port 502. Tous trois supposent que vous connaissiez déjà la ligne : Modbus ne définit ni le câble, ni le débit, ni la tension.
+
+La règle de conversation est d'une simplicité stricte. Un segment compte un maître, en général votre automate, votre poste de supervision ou votre ESP32, et un ou plusieurs esclaves, de un à cent quarante-sept. Le maître envoie une requête, attend la réponse de l'esclave interpellé, puis recommence. L'esclave ne prend jamais l'initiative : il ne signale pas qu'une alarme est survenue, il ne parle que si on l'interroge. C'est une contrainte de conception à connaître avant de promettre un temps de réaction : si la donnée doit pousser vers le maître, il faut soit interroger plus souvent, soit changer de protocole.
+
+Le modèle de données Modbus comporte quatre tableaux indépendants, et les confondre est la première source d'erreurs de programmation. Les bobines sont des bits commandables, typiquement des relais ou des consignes marche-arrêt. Les entrées discrètes sont des bits en lecture seule, des contacts de fin de course ou des voyants. Les registres d'entrée sont des mots de seize bits en lecture seule, des mesures brutes de capteur. Les registres de conservation sont des mots de seize bits lisibles et écrits, c'est là que vivent les consignes, les seuils et les paramètres. Chacun de ces tableaux peut accueillir jusqu'à soixante-cinq mille cinq cent trente-six entrées, numérotées à partir de zéro dans la trame.
+
+La trame elle-même tient en quatre champs. Un octet d'adresse d'esclave, un octet de code de fonction, une zone de données dont la longueur dépend de la fonction, puis deux octets de contrôle d'intégrité calculés sur l'ensemble et transmis poids faible d'abord. La réponse réutilise l'adresse et le code de fonction, remplace la zone de données et recalcule le contrôle. Si l'esclave refuse, il renvoie le code de fonction auquel il ajoute le bit de poids fort, ce qui transforme par exemple 0x03 en 0x83, accompagné d'un code d'erreur explicite : fonction non autorisée, adresse hors plage, valeur incohérente, esclave en surcharge.
+
+Le tableau ci-dessous réunit les fonctions que vous utiliserez réellement, avec leurs limites de trame. Les autres fonctions existent, mais elles concernent le diagnostic de liaison ou des cas rares : inutile de les mémoriser toutes.
+
+| Code | Nom | Ce qu'elle fait | Limite par trame |
+|---|---|---|---|
+| 0x01 | Lecture de bobines | lit des bits commandables | 2000 bits |
+| 0x02 | Lecture d'entrées discrètes | lit des bits en lecture seule | 2000 bits |
+| 0x03 | Lecture de registres de conservation | lit des mots de seize bits | 125 registres |
+| 0x04 | Lecture de registres d'entrée | lit des mesures en lecture seule | 125 registres |
+| 0x05 | Écriture d'une bobine | force un bit à l'état demandé | une bobine |
+| 0x06 | Écriture d'un registre | écrit un mot de seize bits | un registre |
+| 0x0F | Écriture de bobines | écrit plusieurs bits | 1968 bits |
+| 0x10 | Écriture de registres | écrit plusieurs mots de seize bits | 123 registres |
+
+L'adressage comporte lui aussi deux faces, et c'est le piège classique du domaine. Dans la trame, tout se compte à partir de zéro : la requête indique l'adresse du premier registre et le nombre de registres demandés. Dans la documentation et sur les afficheurs, on emploie au contraire des adresses affichées de plage, où 40001 désigne le premier registre de conservation et 30001 le premier registre d'entrée. Il faut donc convertir l'adresse que fournit votre documentation en adresse de protocole avant de l'insérer dans la trame, et certaines marques ajoutent encore un décalage d'une unité. Le seul moyen d'être sûr consiste à lire le registre zéro et à vérifier que la valeur obtenue est plausible.
+
+| Nature | Code de fonction | Adresse affichée | Adresse envoyée dans la trame | Accès |
+|---|---|---|---|---|
+| Bobines | 0x01, 0x05, 0x0F | 00001 à 09999 | zéro comme origine | lecture et écriture |
+| Entrées discrètes | 0x02 | 10001 à 19999 | zéro comme origine | lecture seule |
+| Registres d'entrée | 0x04 | 30001 à 39999 | zéro comme origine | lecture seule |
+| Registres de conservation | 0x03, 0x06, 0x10 | 40001 à 49999 | zéro comme origine | lecture et écriture |
+
+Enfin, l'adresse zéro est réservée : elle désigne la diffusion, un message écrit destiné à tous les esclaves à la fois, qui ne reçoivent aucune réponse. Elle ne peut donc servir qu'aux écritures, jamais aux lectures, et aucun esclave ne doit être configuré à l'adresse zéro. Les adresses de cent quarante-huit à deux cent cinquante-cinq sont réservées elles aussi. Dans l'atelier, l'attribution est la suivante : le variateur porte l'adresse un, les trois capteurs les adresses deux, trois et quatre, la passerelle l'adresse cinq, et l'ESP32 est le maître du segment.
+
+## Construire et vérifier une trame : CRC16 et silences
+
+Le contrôle d'intégrité d'une trame Modbus RTU est un CRC sur seize bits calculé avec le polynôme 0xA001, forme réfléchie du polynôme 0x8005, en partant de la valeur initiale 0xFFFF. L'algorithme est volontairement petit : on mélange l'octet courant dans le registre, puis on répète huit fois l'opération de décalage et de condition. Deux détails font toute la différence à l'implémentation : le résultat s'ajoute à la fin de la trame poids faible d'abord, alors que les adresses et les valeurs sont en poids fort, et le registre part de la valeur maximale plutôt que de zéro.
+
+```text
+TRAME DE REQUETE — lecture de trois registres de conservation
+  adresse esclave   : 01
+  code de fonction  : 03
+  adresse de depart : 00 00
+  nombre            : 00 03
+  CRC               : 05 CB
+  complet           : 01 03 00 00 00 03 05 CB
+
+TRAME DE REPONSE — l'esclave renvoie six octets de donnees
+  adresse           : 01
+  fonction          : 03
+  nombre d'octets   : 06
+  registre 0        : 01 2C   (300, soit 30,0 en frequency)
+  registre 1        : 00 55   (85, soit 8,5 en courant)
+  registre 2        : 01 F4   (500, soit 500 en tension)
+  CRC               : A1 65
+  complet           : 01 03 06 01 2C 00 55 01 F4 A1 65
+```
+
+Vérifiez que la longueur de la réponse est bien prévisible avant même de la lire : adresse, fonction, nombre d'octets, données, contrôle. Toute trame plus courte signale un problème de liaison ou d'alimentation de l'esclave ; toute trame plus longue signale généralement un décalage de lecture, par exemple une donnée antérieure restée dans le tampon du port. Une bonne pratique consiste à vider le tampon d'entrée avant chaque requête et à n'accepter que la longueur exactement attendue.
+
+Le fragment Python suivant construit une requête et calcule son contrôle. Servez-vous-en comme d'un banc de test : il fonctionne sans matériel, et son affichage vous sert de référence pour comparer à ce que vous capterez réellement.
+
+```python
+def crc16_modbus(trame):
+    crc = 0xFFFF
+    for octet in trame:
+        crc ^= octet
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return bytes([crc & 0xFF, crc >> 8])
+
+
+def requete_lecture(adresse, fonction, depart, nombre):
+    corps = bytes([
+        adresse, fonction,
+        (depart >> 8) & 0xFF, depart & 0xFF,
+        (nombre >> 8) & 0xFF, nombre & 0xFF,
+    ])
+    return corps + crc16_modbus(corps)
+
+
+print(requete_lecture(1, 3, 0, 3).hex(" ").upper())
+# 01 03 00 00 00 03 05 CB
+```
+
+Le second pilier de la fiabilité tient au silence. Modbus RTU sépare les trames par un intervalle sans activité : trois virgule cinq caractères entre deux trames, un virgule cinq caractère à l'intérieur d'une même trame. À 9600 bits par seconde avec onze bits par caractère, un caractère dure un peu plus d'un milliseconde : l'intervalle entre deux trames vaut environ quatre millisecondes et celle qui fragmente une trame vaudrait un peu moins de deux. Au-delà de 19200 bits par seconde, la norme remplace ces durées calculées par des valeurs fixes de 1,75 et 0,75 milliseconde.
+
+Deux conséquences pratiques découlent de ces chiffres. La première est que vous devez envoyer une trame entière en une seule écriture : écrire l'en-tête, puis réfléchir, puis écrire les données crée un silence interne supérieur à la tolérance, et l'esclave interprète les deux morceaux comme deux trames incomplètes. Avec FreeRTOS, cela signifie construire le message dans un tampon, le verrouiller si une autre tâche peut l'utiliser, puis écrire d'un bloc. La seconde conséquence est le temps de cycle : une lecture de trois registres demande huit caractères pour la requête et onze pour la réponse, soit un peu plus de vingt millisecondes tout compris à 9600 bauds.
+
+Le format de la ligne se règle en conséquence. Modbus suppose un caractère de onze bits pour que ses durées soient exactes : une donnée de huit bits, une parité et un bit d'arrêt. Si vous choisissez huit bits de données, aucune parité et un seul bit d'arrêt, vous n'avez que dix bits par caractère et vous introduisez une erreur d'environ dix pour cent dans le calcul des silences. La norme prévoit ce cas : deux bits d'arrêt dans cette configuration. En pratique, la combinaison 9600 bauds, huit bits, parité paire, un bit d'arrêt est la plus courante en atelier, et elle respecte exactement l'hypothèse des onze bits.
+
+Avant d'écrire la moindre donnée, écoutez. Le réflexe qui fait gagner le plus de temps consiste à capter le trafic existant entre l'automate et les équipements, à reproduire à l'identique le débit, la parité et le format des trames, puis à substituer progressivement votre outil au maître d'origine. Un calculateur de contrôle d'intégrité, un envoi manuel octet par octet sur un terminal et un affichage hexadécimal suffisent alors à valider chaque étape : si l'esclave répond, votre trame est juste ; s'il ne répond pas, le problème se réduit au câble, à l'adresse ou aux paramètres de ligne.
+
+## Échanger avec un variateur : le cas de l'atelier
+
+Le variateur VX-400 du convoyeur n°2 est configuré par son menu d'affichage avant toute intervention logicielle. L'adresse esclave est réglée sur un, le débit sur 9600 bits par seconde, la parité sur paire et le nombre d'arrêt sur un. Le manuel fourni par le constructeur donne la carte des registres que nous utiliserons : la vitesse mesurée au registre zéro avec une résolution de dixièmes de hertz, le courant triphasé au registre un avec des dixièmes d'ampère, la tension du bus continu au registre deux en volts, et la consigne de fréquence au registre dix que nous n'écrirons que lors des essais. Ces quatre lignes de documentation valent mieux que n'importe quel tutoriel : sans elles, vous ne saurez pas interpréter un entier brut.
+
+La lecture des trois premières valeurs se fait en une seule requête, comme le montre l'échange complet ci-dessous. Notez que l'esclave renvoie six octets de données pour trois registres, soit un mot de seize bits par registre, toujours en poids fort.
+
+```text
+INTERROGATION DU VARIATEUR — segment RS-485, 9600 8E1, esclave 01
+  maitre -> esclave : 01 03 00 00 00 03 05 CB
+  esclave -> maitre : 01 03 06 01 2C 00 55 01 F4 A1 65
+  delai mesure      : environ 22 ms, silences comprises
+
+  decodage de la reponse
+    01       adresse esclave confirmee
+    03       fonction de lecture confirmee
+    06       six octets de donnees
+    01 2C    vitesse mesuree = 300 -> 30,0 Hz
+    00 55    courant         = 85  -> 8,5 A
+    01 F4    bus continu     = 500 -> 500 V
+    A1 65    controle d'integrite
+```
+
+Le script Python suivant réalise l'échange complet, contrôle la réponse et renvoie les trois valeurs. Il impose un délai d'attente, rejette toute trame dont le contrôle d'intégrité ne correspond pas, traite les codes d'exception et rejette les réponses tronquées : ces quatre garde-fous suffisent à éliminer la quasi-totalité des diagnostics erronés.
+
+```python
+import serial
+
+PORT, BAUD, DELAI = "/dev/ttyUSB0", 9600, 0.4
+
+
+def crc16(trame):
+    crc = 0xFFFF
+    for octet in trame:
+        crc ^= octet
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return bytes([crc & 0xFF, crc >> 8])
+
+
+def lire_registres(esclave, depart, nombre):
+    corps = bytes([
+        esclave, 3,
+        (depart >> 8) & 0xFF, depart & 0xFF,
+        (nombre >> 8) & 0xFF, nombre & 0xFF,
+    ])
+    requete = corps + crc16(corps)
+    port = serial.Serial(PORT, BAUD, parity=serial.PARITY_EVEN,
+                         stopbits=serial.STOPBITS_ONE, timeout=DELAI)
+    try:
+        port.reset_input_buffer()
+        port.write(requete)
+        port.flush()
+        reponse = port.read(5 + 2 * nombre)
+    finally:
+        port.close()
+
+    if len(reponse) != 5 + 2 * nombre:
+        raise TimeoutError("reponse absente ou tronquee")
+    if reponse[-2:] != crc16(reponse[:-2]):
+        raise ValueError("controle d'integrite invalide")
+    if reponse[1] & 0x80:
+        raise RuntimeError("exception Modbus %02X" % reponse[2])
+    return [int.from_bytes(reponse[i:i + 2], "big")
+            for i in range(3, 3 + 2 * nombre)]
+
+
+vitesse, courant, bus = lire_registres(1, 0, 3)
+print("vitesse : %.1f Hz" % (vitesse / 10))
+print("courant : %.1f A" % (courant / 10))
+print("bus     : %d V" % bus)
+```
+
+L'interprétation des valeurs exige la même rigueur que dans le chapitre consacré à la mesure : une donnée brute n'a de sens qu'après son échelle et son domaine de validité. Une vitesse de trente hertz sur un convoyeur censé tourner à cinquante n'est pas une panne, c'est peut-être simplement la consigne en cours. Un courant de zéro ampère avec un moteur censé tourner, en revanche, mérite une alerte. Appliquez donc la validation de domaine apprise au chapitre cinq avant de publier quoi que ce soit, et distinguez une valeur hors plage d'une lecture impossible : la première se journalise comme un événement métier, la seconde comme un incident de liaison.
+
+L'écriture, elle, se traite avec plus de prudence que la lecture, parce qu'elle agit sur une machine. La fonction 0x06 écrit un registre unique et l'esclave renvoie exactement la requête reçue ; la fonction 0x10 écrit plusieurs registres d'un coup et renvoie l'adresse de départ avec le nombre écrit. Avant de modifier la consigne de fréquence, on vérifie que la machine est au repos, on écrit une valeur dans le domaine admissible, on relit le registre pour confirmer, puis seulement on autorise le départ. Un ordre d'opération inversé — écrire la consigne avant d'avoir vérifié l'état du variateur — est exactement le type d'incident que la recette doit exclure. La diffusion à l'adresse zéro, enfin, ne convient qu'à des commandes groupées sans réponse attendue, jamais à une écriture critique dont vous devez garantir l'effet.
+
+Le raccordement avec le reste du système se fait dans votre tâche de supervision. À cadence fixe, la tâche interroge le variateur, publie les trois valeurs sur des topics MQTT distincts, puis enregistre dans un journal le temps de réponse et le nombre d'échecs consécutifs. Le calcul du temps de cycle est important ici : à 9600 bauds, l'échange des trois registres coûte environ vingt-deux millisecondes, silences compris ; si vous interrogez quatre appareils du segment, comptez une centaine de millisecondes par passage complet. Au-delà de quelques interrogations par seconde et par appareil, c'est le débit de la liaison qui devient le facteur limitant, et c'est le premier chiffre à regarder quand les valeurs semblent arriver avec retard.

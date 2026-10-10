@@ -1,0 +1,125 @@
+Bienvenue dans le neuvième et dernier chapitre du parcours Arduino et ESP32 embarqué, celui où votre prototype cesse d'être une démonstration pour devenir un objet que l'on peut laisser seul. Tout ce que vous avez construit jusqu'ici fonctionne sur l'établi : vos programmes lisent des capteurs, pilotent des sorties, passent par des machines à états, se connectent au Wi-Fi, publient en MQTT, découpent leur travail en tâches FreeRTOS et dialoguent avec des automates industriels par Modbus ou par CAN. Rien de tout cela ne garantit pourtant que l'objet survivra une semaine hors de la prise murale. Un objet de production se juge à quatre questions : combien d'énergie il consomme lorsqu'il ne fait rien, s'il peut rester des mois sans intervention, s'il résiste à un blocage logiciel comme à une tentative de reprogrammation, et s'il peut être corrigé sans être démonté. Ces quatre questions constituent le programme exact de ce chapitre.
+
+Les compétences que vous allez acquérir sont celles d'un ingénieur qui signe une mise en production. Vous saurez réduire la consommation en veille, ce qui suppose de comprendre et d'exploiter les modes de sommeil de l'ESP32 — veille légère, veille profonde, hibernation — puis de calculer l'autonomie réelle d'une batterie au lieu de l'espérer. Vous saurez protéger le code et les données : chiffrement de la flash, amorce de démarrage sécurisé, clés conservées dans les eFuses, gestion rigoureuse des secrets. Vous saurez préparer et déployer une mise à jour à distance : table de partitions, firmware en double, validation de l'image, retour automatique au programme précédent si le nouveau échoue. S'y ajoutent le chien de garde, premier rempart contre les blocages, et la checklist finale qui sépare nettement un prototype d'un produit expédié.
+
+Le fil rouge de ce chapitre est une sonde de terrain : un boîtier posé dans une parcelle, alimenté par une petite batterie, qui mesure l'humidité du sol toutes les trente minutes, se met en veille entre deux relevés et transmet ses résultats par Wi-Fi. La contrainte est simple à énoncer et exigeante à tenir : six mois d'autonomie, aucun déplacement sur site pendant la période, et un correctif à déployer à distance si un défaut est découvert au bout du troisième mois. Cette sonde vous accompagnera dans l'étude de cas sur l'alimentation, puis dans l'étude de cas sur la mise à jour à distance. À la fin de la leçon, vous aurez calculé son budget énergétique ligne à ligne, écrit son firmware endormi, durci sa carte et préparé la mise à jour que vous lui enverrez depuis votre bureau.
+
+Un mot sur la manière d'aborder ce chapitre, car il est à la fois le plus concret et le plus sévère du parcours. Rien ici ne se voit à l'œil : un courant de veille de quelques microampères, un retour arrière au firmware précédent, un chiffrement de flash ne s'observent pas en regardant une LED. Il faudra donc accepter de mesurer, de lire des spécifications et de raisonner sur des ordres de grandeur avant d'écrire une ligne de code. Commencez par le courant : l'énergie dicte tout le reste, de la taille de la batterie à la fréquence des réveils, en passant par l'autorisation d'allumer la radio. Un objet qui consomme mal ne se sauve pas par la suite, quelle que soit la qualité de son logiciel.
+
+## Le bilan énergétique : où part vraiment le courant
+
+Avant d'endormir quoi que ce soit, il faut savoir où part le courant. Sur un établi, la question ne se pose jamais : le câble USB délivre cinq cents milliampères et personne ne les compte. Dès qu'on passe sur batterie, chaque milliampère-heure devient une ressource comptable, et le budget se joue rarement là où le débutant l'imagine. La première habitude à prendre est donc de chiffrer avant de coder, en convertissant chaque état de votre programme en courant moyen sur une période de référence.
+
+Sur une carte ESP32, quatre consommateurs se partagent le budget : la puce elle-même, la radio, les composants de la carte régulateur de tension, convertisseur USB-série, voyant de statut, résistances de rappel et, enfin, les capteurs et actionneurs que vous ajoutez. La radio domine par instants très brefs : un envoi en puissance maximale tire de l'ordre de deux cents milliampères, une réception de l'ordre de cent, tandis que le processeur en pleine charge reste très en deçà. C'est la première leçon de ce chapitre : le pic de courant n'est presque jamais le problème, la durée pendant laquelle on le dépasse l'est. Un objet qui émet trois secondes par heure ne se juge pas sur sa crête, mais sur la moyenne de son cycle complet.
+
+La conversion en milliampères-heure sur vingt-quatre heures rend les choses limpides. Une ESP32 maintenue active en permanence, radio comprise, consomme de l'ordre de quarante milliampères en moyenne : cela représente neuf cent soixante milliampères-heures par jour, soit à peine deux jours pour une petite batterie de deux ampères-heure. La même puce en veille profonde, à dix microampères, absorbe un quart de milliampère-heure par jour : théoriquement plusieurs décennies, ce qui revient à dire que la batterie se sera déchargée toute seule bien avant. Entre ces deux extrêmes se joue toute l'autonomie de votre produit, et le tableau ci-dessous donne les ordres de grandeur à retenir avant tout calcul.
+
+| État de la carte | Courant typique | Observations |
+| --- | --- | --- |
+| ESP32 actif, Wi-Fi en émission | 240 mA en crête | Quelques millisecondes par paquet |
+| ESP32 actif, Wi-Fi en réception | 100 mA environ | Conservation de la liaison, boucle principale qui tourne |
+| ESP32 actif, radio coupée | 24 à 40 mA | Processeur à 240 MHz, périphériques activés |
+| Modem sleep | 20 mA environ | Radio coupée, processeur maintenu en marche |
+| Veille légère | 0,8 mA environ | Processeur en pause, mémoire et contexte conservés |
+| Veille profonde | 10 µA environ | Seul le domaine RTC reste alimenté |
+| Hibernation | 7 µA environ | RTC minimal, réveil par voie matérielle seulement |
+| Arduino Uno en fonctionnement | 50 mA environ | Convertisseur, régulateur et voyant compris |
+| AVR sous tension minimale | moins de 10 µA | Horloge arrêtée, réveil par veille matérielle |
+
+Ces chiffres sont des ordres de grandeur publiés par le fabricant, mesurés à tension et température nominales. Ils varient selon la version de la puce, l'ESP32 classique, le S2, le S3 ou le C3 ne se comportant pas tout à fait pareil, selon la tension d'alimentation et selon la température de jonction. Retenez-en la hiérarchie plutôt que les valeurs exactes : radio très coûteuse par instants, processeur coûteux quand il tourne, domaine RTC presque gratuit. Toute décision d'architecture se déduit de cet ordre.
+
+La mesure au banc reste indispensable, car les composants de votre carte mangent leur part. Le régulateur linéaire consomme lui-même quelques microampères en repos, le convertisseur USB-série parasite la carte tant que le jumper reste en place, les voyants et les résistances de rappel ajoutent des milliampères parfois inattendus. La méthode correcte consiste à alimenter la carte par une alimentation stable, à intercaler un multimètre en série sur la ligne trois volts trois et à lire le courant dans chaque état du programme, radio allumée, radio coupée, veille légère, veille profonde. Quand la consommation est pulsée, un multimètre standard ne suffit plus : il faut un shunt de faible valeur ou un instrument capable d'intégrer sur un cycle entier, car c'est la moyenne, jamais l'instantané, qui décide de l'autonomie.
+
+Une dernière précision méthodologique, souvent négligée : mesurez toujours dans l'ordre où le programme réveille les périphériques. Coupez la radio et notez, activez le processeur à pleine vitesse et notez, allumez un capteur et notez. Cette marche progressive vous indique en une heure ce que la lecture d'une spécification ne dira jamais : la part de votre propre code dans la facture. Beaucoup de projets découvrent alors que le capteur lui-même, une résistance chauffante ou un régulateur mal choisi consomme davantage que la puce en veille, et aucun logiciel ne corrigera un mauvais choix de composant.
+
+## Les quatre modes de sommeil de l'ESP32
+
+L'ESP32 ne connaît pas un sommeil mais plusieurs, et confondre ceux-ci est la faute la plus fréquente dans un projet sur batterie. Le premier s'appelle veille de la radio, ou modem sleep : la puce coupe le Wi-Fi et le Bluetooth quand elle ne les utilise pas, tout en laissant le processeur tourner. Ce mode s'active automatiquement lorsque la liaison est inactive et peut aussi se piloter explicitement. Il divise par deux la consommation sans rien changer à l'exécution du programme, ce qui en fait l'option à activer par défaut dès que votre boucle principale passe plus d'une fraction de seconde à attendre.
+
+Le second mode est la veille légère. Le processeur s'arrête, la mémoire vive et le contexte d'exécution sont conservés, et la puce se réveille en quelques millisecondes en reprenant exactement là où elle s'était arrêtée. Pour votre programme, c'est un simple appel : la boucle reprend, les variables existent encore, les périphériques restent configurés. La consommation tombe à moins d'un milliampère. C'est le mode idéal pour une attente courte, de quelques millisecondes à quelques secondes, où l'on veut gagner de l'énergie sans réécrire la suite du code.
+
+Le troisième mode est la veille profonde, celui que vous utiliserez pour les longues pauses. Seul un petit domaine autonome, appelé domaine RTC, reste alimenté : le compteur de cycles, quelques broches dédiées et une mémoire réduite. Tout le reste, processeur, mémoire vive, périphériques, radio, est éteint. Le réveil ressemble à un démarrage à froid : le programme repart du début de setup(). Ce n'est pas un détail, c'est une contrainte d'architecture complète. Vous devrez reconstruire l'état nécessaire, ou le conserver dans la mémoire du domaine RTC, qui survit précisément à cette opération.
+
+Le quatrième mode, l'hibernation, va plus loin encore : il ne conserve qu'une horloge très basique et un détecteur de réveil matériel, pour une consommation encore plus faible. On y perd tout ce que la veille profonde conservait. Il convient aux objets qui ne se réveillent que sur un événement physique rare, bouton ou contacteur, et dont le démarrage complet est de toute façon nécessaire à chaque cycle. Pour une sonde qui doit se réveiller toutes les trente minutes, il n'apporte rien face à la veille profonde : la séquence d'initialisation coûterait davantage que l'énergie économisée.
+
+Le tableau récapitulatif ci-dessous sert de référence rapide pendant le développement. Lisez-le de gauche à droite avant de choisir : plus vous descendez, plus vous gagnez en autonomie, et plus vous perdez en contexte. Il n'existe pas de meilleur mode en soi, seulement le mode le moins coûteux qui satisfasse votre temps de réponse et votre fréquence de réveil.
+
+| Mode | Processeur | Mémoire vive | Radio | Courant | Réveil | Contexte après réveil |
+| --- | --- | --- | --- | --- | --- | --- |
+| Actif | en marche | conservée | selon usage | 24 à 40 mA | sans objet | poursuite normale |
+| Modem sleep | en marche | conservée | coupée | 20 mA environ | sans objet | poursuite normale |
+| Veille légère | en pause | conservée | coupée | 0,8 mA environ | 3 ms environ | reprise exacte du code |
+| Veille profonde | éteint | perdue | coupée | 10 µA environ | 10 ms environ | démarrage à froid |
+| Hibernation | éteint | perdue | coupée | 7 µA environ | matériel | démarrage à froid |
+
+```image
+esp32
+| Une carte de développement ESP32 : la puce dual-core au centre, l'antenne radio d'un côté et les deux rangées de broches de l'autre, dont certaines rattachées au domaine RTC qui survit à la veille profonde.
+```
+
+Le domaine RTC mérite qu'on s'y arrête, car il est au cœur de toute économie d'énergie. Quelques broches seulement lui appartiennent, parmi lesquelles les GPIO trente-deux et trente-trois sur une carte classique, ou les GPIO deux et quatre selon le modèle. Ces broches restent pilotables et lisibles pendant que tout le reste dort, ce qui permet de maintenir un relais fermé ou de détecter l'appui d'un bouton sans réveiller la puce. À l'inverse, la broche douze, utilisée au démarrage pour sélectionner la taille de la flash, impose une prudence particulière : mal polarisée au réveil, elle empêche la carte de redémarrer. Prenez l'habitude de vérifier la correspondance entre votre broche de réveil et les broches RTC avant tout câblage définitif.
+
+Le choix entre les modes suit une règle simple à appliquer. Pour une attente inférieure à quelques secondes, pendant laquelle le contexte doit rester intact, choisissez la veille légère : le gain est immédiat et le code inchangé. Pour toute attente mesurée en minutes ou en heures, choisissez la veille profonde et acceptez de reconstruire l'état au réveil. N'oubliez jamais de couper la radio avant de dormir, sinon votre veille profonde affichera un courant dix fois supérieur à la valeur annoncée, et vous conclurez à tort que la puce ne sait pas dormir. La section suivante traite précisément de l'écriture de ce sommeil, sans lequel aucun des objectifs de ce chapitre n'est atteignable.
+
+## Dormir pour de vrai : veille légère et veille profonde
+
+La théorie est en place, il est temps d'écrire le sommeil. Les deux appels qui structurent l'essentiel sont esp_light_sleep_start pour la veille légère et esp_deep_sleep_start pour la veille profonde. Le premier est réversible : il rend la main à votre programme une fois le réveil produit. Le second ne l'est jamais : la fonction ne retourne pas, puisque la puce redémarre. Cette différence de nature commande toute la structure de votre sketch, et il faut la décider avant d'écrire setup().
+
+Pour la veille légère, le réveil peut venir d'un minuteur ou d'une broche. La séquence consiste à configurer la broche en entrée avec son rappel, à autoriser son réveil, à demander un réveil temporisé, puis à endormir la puce. La boucle reprend au retour de l'appel, avec toutes les variables intactes. Le compteur suivant illustre l'usage : la carte se réveille toutes les trente minutes ou dès qu'un bouton est enfoncé, compte les réveils et continue son travail sans jamais repasser par setup().
+
+```cpp
+#include "esp_sleep.h"
+
+const uint64_t DUREE_VEILLE_US = 30ULL * 60ULL * 1000000ULL;
+constexpr gpio_num_t BROCHE_BOUTON = GPIO_NUM_33;
+
+RTC_DATA_ATTR uint32_t compteurReveils = 0;
+
+void preparerLeReveil() {
+  gpio_config_t cfg = {};
+  cfg.pin_bit_mask = 1ULL << BROCHE_BOUTON;
+  cfg.mode = GPIO_MODE_INPUT;
+  cfg.pull_up_en = GPIO_PULLUP_ENABLE;
+  cfg.intr_type = GPIO_INTR_DISABLE;
+  gpio_config(&cfg);
+  gpio_wakeup_enable(BROCHE_BOUTON, GPIO_INTR_HIGHLEVEL);
+  esp_sleep_enable_timer_wakeup(DUREE_VEILLE_US);
+  esp_sleep_enable_gpio_wakeup();
+}
+
+void sommeilLeger() {
+  Serial.print("dormir, reveil numero ");
+  Serial.println(compteurReveils + 1);
+  Serial.flush();
+  esp_light_sleep_start();
+  compteurReveils++;
+  Serial.print("reveille, cause ");
+  Serial.println((int)esp_sleep_get_wakeup_cause());
+}
+```
+
+Pour la veille profonde, la logique est la même mais la séquence se termine par un départ sans retour. On y ajoute deux précautions : la persistance des données dans la mémoire du domaine RTC, qui survit au sommeil, et le maintien des états de broches, sans quoi un relais commandé avant l'endormissement retombera une fois la puce privée de ses périphériques. Le compteur des réveils est déclaré avec l'attribut RTC_DATA_ATTR, précisément pour conserver son évolution d'un cycle à l'autre malgré l'extinction complète de la mémoire vive.
+
+```cpp
+constexpr gpio_num_t BROCHE_RELAIS = GPIO_NUM_27;
+constexpr gpio_num_t BROCHE_REVEIL = GPIO_NUM_4;
+
+void dormirProfond(uint64_t dureeUs) {
+  pinMode(BROCHE_REVEIL, INPUT_PULLUP);   // contact ferme a la masse
+  gpio_hold_en(BROCHE_RELAIS);
+  gpio_deep_sleep_hold_en();
+
+  esp_sleep_enable_timer_wakeup(dureeUs);
+  esp_sleep_enable_ext0_wakeup(BROCHE_REVEIL, 0);
+
+  WiFi.mode(WIFI_OFF);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+```
+
+La fonction de maintien, gpio_hold_en, mérite une attention particulière. Pendant la veille profonde, les broches qui n'appartiennent pas au domaine RTC perdent leur état et se retrouvent flottantes. Un relais de puissance piloté en logique haute peut donc s'ouvrir au moment exact où vous vouliez le maintenir fermé, et une alimentation commandée peut se couper. Le maintien de broche résout le problème tant qu'il reste compatible avec le circuit : vérifiez toujours que la broche maintenue appartienne bien au domaine RTC, sinon l'appel est sans effet et votre constat de terrain reste inexpliqué. Réciproquement, relevez ce maintien dès le démarrage suivant, avec gpio_hold_dis puis gpio_deep_sleep_hold_dis, sans quoi la broche reste figée et vos écritures ultérieures n'ont plus aucun effet, ce qui ressemble à une panne de la sortie.
+
+Au réveil, distinguez toujours sa cause avant toute autre opération. La fonction esp_sleep_get_wakeup_cause renvoie un code qui différencie le réveil temporisé, le réveil par broche, le réveil par touche et le démarrage normal. Un objet qui ignore pourquoi il s'est réveillé ne peut pas décider correctement de la suite : il doit-il publier une mesure, traiter un événement physique ou simplement se rendormir ? Cette information coûte une ligne de code et vous fera gagner des heures de débogage, car le symptôme d'un réveil parasite ressemble trait pour trait à celui d'un programme défaillant.
+
+Une dernière règle, non négociable : la radio doit être coupée avant l'endormissement, et la sortie série vidée avec Serial.flush(). Une connexion Wi-Fi maintenue pendant la veille profonde fait exploser la consommation mesurée, tandis qu'un message coupé en cours d'écriture vous prive du seul diagnostic fiable dont vous disposez, le port série. Les deux lignes supplémentaires coûtent quelques microampères d'énergie et évitent l'immense majorité des campagnes de débogage sur batterie. C'est exactement le genre de discipline qui sépare un prototype qui fonctionne au bureau d'un objet qui tient six mois dans une parcelle.

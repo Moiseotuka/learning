@@ -1,0 +1,115 @@
+Vous savez désormais créer des modèles, des vues et des templates avec Django. Pourtant, une application web ne vit plus seule aujourd'hui : elle dialogue souvent avec une application mobile, un front-end JavaScript ou des services tiers. Pour ces échanges, il faut une API, c'est-à-dire un ensemble de points d'accès HTTP qui renvoient des données structurées en JSON plutôt que des pages HTML. C'est précisément le métier de Django REST Framework, l'outil de référence dans l'écosystème Python pour construire des API robustes en quelques heures.
+
+Django REST Framework, que tout le monde appelle DRF, s'appuie sur tous les acquis de Django : le système de modèles, les requêtes de base de données, le routage d'URLs, les middlewares. Il y ajoute une couche spécialisée : les serializers qui convertissent vos objets Python en JSON, les vues génériques et les ViewSets qui évitent de réécrire les mêmes traitements, un système de permissions fin, une authentification par token, et même une interface web navigable pour tester votre API à la main. Ce chapitre vous prend par la main, de l'installation jusqu'aux tests automatisés, en passant par le filtrage, la pagination et le versioning.
+
+Nous allons construire pas à pas une petite API de bibliothèque : des livres, des auteurs, des catégories. À la fin de ce chapitre, vous saurez installer DRF, déclarer des serializers avec validation, exposer vos données avec des ViewSets et un routeur, protéger vos routes avec des permissions, authentifier vos utilisateurs par token, filtrer et paginer les listes, et surtout tester chaque endpoint avec APIClient. Chaque notion sera accompagnée d'exemples complets que vous pourrez copier dans votre projet. Prenez le temps de taper chaque exemple, de l'exécuter, de le modifier : c'est ainsi que les concepts s'ancrent.
+
+Une API bien construite est un contrat entre votre serveur et ses clients. Quand ce contrat est clair, documenté et testé, les applications mobiles, les sites partenaires et les services tiers peuvent consommer vos données sans friction. DRF vous donne les outils pour respecter ce contrat avec rigueur : des réponses uniformes, des codes de statut explicites, des erreurs structurées. Ce contrat, vous allez l'écrire vous-même ligne par ligne dans ce chapitre.
+
+## Installation et configuration de DRF
+
+La première étape consiste à installer le package. Dans votre environnement virtuel Django habituel, lancez la commande pip install djangorestframework. DRF ne dépend que de Django lui-même, l'installation est donc rapide et sans surprise. Si vous utilisez un fichier requirements.txt, ajoutez la ligne djangorestframework avec la version de votre choix, puis relancez pip install -r requirements.txt pour figer votre environnement. Cette figement est important : il garantit que votre équipe et votre serveur de production utilisent exactement la même version de DRF, évitant les comportements différents selon les machines.
+
+Une fois le package installé, il faut déclarer votre application dans le fichier settings.py de votre projet. DRF n'est pas une application à part entière comme vos propres applications métier : c'est une bibliothèque. Vous l'ajoutez donc à la liste INSTALLED_APPS sous le nom rest_framework. Cette inscription permet à Django de charger les templates de la Browsable API, les fichiers statiques et les traductions fournies par DRF. Sans cette ligne, les vues fonctionneront mais l'interface navigable renverra des pages sans style, ce qui rend le développement pénible.
+
+```python
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "rest_framework",
+    "bibliotheque",
+]
+```
+
+La configuration propre à DRF se fait dans un dictionnaire nommé REST_FRAMEWORK, toujours dans settings.py. Ce dictionnaire accepte une trentaine de clés. Les plus importantes pour débuter sont DEFAULT_PERMISSION_CLASSES, qui définit la permission appliquée par défaut à toutes les vues, DEFAULT_PAGINATION_CLASS et PAGE_SIZE pour la pagination, et DEFAULT_AUTHENTICATION_CLASSES pour l'authentification. Voici une configuration de départ raisonnable, qui rend l'API navigable sans imposer de restriction globale. Vous remarquerez que DEFAULT_PERMISSION_CLASSES est volontairement absent : chaque vue décidera de ses propres règles, ce qui est plus pédagogique et plus sûr que de tout verrouiller ou tout ouvrir par défaut.
+
+```python
+REST_FRAMEWORK = {
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+}
+```
+
+Avec cette configuration, toutes les listes seront paginées par vingt éléments, et deux mécanismes d'authentification seront disponibles : la session, pratique pour la Browsable API, et le token, pratique pour les clients distants. La session fonctionne car votre navigateur envoie automatiquement le cookie de session à chaque requête ; le token fonctionne car le client l'ajoute dans l'en-tête Authorization. Avoir les deux en parallèle est le confort du développeur : vous testez dans le navigateur en session, et vos tests automatisés utilisent le token.
+
+Il faut aussi penser aux URLs. DRF fournit deux vues très utiles à inclure dans votre fichier urls.py principal : une vue de connexion et de déconnexion pour la Browsable API, et une vue pour obtenir un token d'authentification. La première s'obtient avec le chemin api-auth/ et le nom rest_framework.urls. La seconde avec le chemin api-token-auth/ et la vue obtain_auth_token. Ces deux inclusions vous feront gagner un temps précieux pendant le développement, car elles vous évitent d'écrire vous-mêmes des vues de session.
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("api-auth/", include("rest_framework.urls")),
+    path("api-token-auth/", obtain_auth_token),
+    path("api/", include("bibliotheque.urls")),
+]
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Django_logo.svg/960px-Django_logo.svg.png
+| Le logo du framework Django, sur lequel s'appuie entièrement Django REST Framework.
+```
+
+Avant d'aller plus loin, prenez l'habitude de lancer le serveur de développement et d'ouvrir votre navigateur sur une URL d'API. Même sans avoir écrit la moindre vue, vous pouvez déjà visiter la page de connexion de la Browsable API à l'adresse api-auth/login. Si cette page s'affiche, c'est que DRF est correctement installé et configuré. Cette vérification simple vous évitera de chercher pendant des heures un problème d'installation alors que tout fonctionne. Si la page renvoie une erreur 404, vérifiez que l'URL est bien incluse avant vos propres routes, car Django parcourt la liste urlpatterns dans l'ordre et s'arrête sur la première correspondance.
+
+Une dernière vérification utile : la commande python manage.py check. Cette commande intégrée à Django vérifie la cohérence de votre configuration, y compris les paramètres propres à DRF. Si une clé de REST_FRAMEWORK est mal orthographiée ou si une classe référencée n'existe pas, la commande vous le signalera immédiatement. Prenez l'habitude de l'exécuter après chaque modification de settings.py : elle ne coûte qu'une seconde et elle détecte les erreurs de frappe avant qu'elles ne deviennent des bugs mystérieux en production.
+
+## Les serializers : transformer les modèles en JSON
+
+Le cœur de DRF s'appelle le serializer. Un serializer est une classe qui décrit comment convertir un objet Python, généralement une instance de modèle Django, en dictionnaire JSON, et inversement. C'est le traducteur entre votre base de données et le monde extérieur. Sans serializer, vous devriez écrire à la main des dictionnaires pour chaque objet, gérer les dates, les clés étrangères, les erreurs de format : un travail fastidieux et source de bugs. Le serializer automatise tout cela tout en vous donnant un point d'accroche pour chaque transformation.
+
+Pour notre application bibliothèque, imaginons un modèle Livre avec un titre, un auteur, une date de publication et un prix. Le serializer correspondant hérite de serializers.ModelSerializer, la classe la plus utilisée car elle génère automatiquement les champs à partir du modèle. Vous indiquez simplement le modèle concerné et la liste des champs à exposer. DRF déduit alors le type de chaque champ : un CharField pour le titre, un FloatField pour le prix, une DateTimeField pour la date. Cette déduction suit les mêmes règles que les formulaires Django : le type du champ du modèle est analysé, et le champ de serializer correspondant est choisi.
+
+```python
+from rest_framework import serializers
+from bibliotheque.models import Livre
+
+class LivreSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Livre
+        fields = ["id", "titre", "auteur", "date_publication", "prix"]
+```
+
+Ce serializer fait deux choses. En écriture de données, la méthode to_representation convertit une instance de Livre en dictionnaire sérialisable : les valeurs sont extraites de l'instance, la date est formatée en chaîne ISO 8601, et le résultat peut être passé à un renderer JSON. En lecture, la méthode to_internal_value reçoit le dictionnaire envoyé par le client, vérifie les types, et renvoie un dictionnaire de valeurs validées prêt à être enregistré en base. Ce double sens de conversion est le principe fondamental de DRF, et chaque serializer que vous écrirez fonctionnera ainsi.
+
+Pour sérialiser un objet, on instancie le serializer avec l'instance en paramètre, puis on lit l'attribut data. Pour sérialiser un queryset entier, on passe many=True et DRF utilise un ListSerializer en interne pour traquer chaque élément. Pour désérialiser, on instancie le serializer avec data=..., on appelle is_valid() pour déclencher la validation, puis save() pour créer ou mettre à jour l'objet. Ce cycle de vie en trois étapes est le même partout dans DRF : instancier, valider, sauvegarder. Retenez-le, car toutes vos vues le suivront.
+
+```python
+livre = Livre.objects.get(id=1)
+serializer = LivreSerializer(livre)
+print(serializer.data)
+# {"id": 1, "titre": "Le Petit Prince", "auteur": "Antoine de Saint-Exupery", ...}
+
+donnees = {"titre": "Dune", "auteur": "Frank Herbert", "prix": 12.5}
+serializer = LivreSerializer(data=donnees)
+if serializer.is_valid():
+    livre = serializer.save()
+```
+
+Les champs calculés méritent une attention particulière. Si vous souhaitez exposer une valeur qui n'existe pas directement en base, comme le nom complet de l'auteur ou un prix avec la devise, vous déclarez un champ en lecture seule avec SerializerMethodField. La méthode associée, nommée get_ suivi du nom du champ, reçoit l'instance et renvoie la valeur à insérer dans le JSON. Cette technique est idéale pour enrichir la réponse sans toucher au modèle. Vous pouvez par exemple ajouter un champ prix_formatte qui renvoie une chaîne comme « 12,50 € », ou un champ resume qui tronque la description à deux cents caractères.
+
+```python
+class LivreSerializer(serializers.ModelSerializer):
+    auteur_nom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Livre
+        fields = ["id", "titre", "auteur_nom", "prix"]
+
+    def get_auteur_nom(self, objet):
+        return objet.auteur.nom_complet()
+```
+
+Un point souvent négligé : les champs en lecture seule. Si un champ ne doit jamais être modifié par l'API, comme l'identifiant ou la date de création, déclarez-le avec read_only=True ou ajoutez-le à la liste read_only_fields dans la classe Meta. DRF l'ignorera alors lors de la désérialisation, ce qui évite qu'un client malveillant ne modifie pas vos métadonnées. Cette habitude simple protège votre intégrité de données sans effort supplémentaire. Dans une API en production, la moitié de vos champs seront probablement en lecture seule : les identifiants, les dates système, les statuts calculés, les compteurs.
+
+Enfin, parlons relations. Un livre a un auteur, une catégorie, peut-être des tags. DRF propose plusieurs façons de représenter ces relations : la clé primaire par défaut avec PrimaryKeyRelatedField, l'URL de l'objet lié avec HyperlinkedRelatedField, ou l'objet imbriqué complet avec un serializer imbriqué. Le choix dépend de votre design d'API : la clé primaire est compacte, l'URL est navigable, l'imbrication est pratique mais peut alourdir les réponses. Nous reviendrons sur ce choix dans la section consacrée au design des URLs. Retenez simplement qu'un serializer peut en contenir un autre, et que cette imbrication est le moyen naturel de représenter les objets liés en JSON.
+
+Une bonne pratique consiste à inspecter votre serializer avant de le livrer. Dans le shell Django, instanciez-le sur quelques objets réels et examinez la sortie. Vérifiez les noms des champs, les formats de dates, les valeurs par défaut. Cette inspection vous surprendra souvent : un champ qui vous semblait anodin révèle un format inattendu, ou une relation affiche une clé primaire là où vous attendiez un nom. Cinq minutes d'inspection dans le shell vous éviteront des allers-retours avec l'équipe front-end plus tard.

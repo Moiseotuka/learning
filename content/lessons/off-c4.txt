@@ -1,0 +1,576 @@
+Bienvenue dans le quatrième chapitre du parcours Cybersécurité offensive, consacré à la post-exploitation. Les chapitres précédents vous ont appris à observer un réseau, à éprouver une application et à obtenir un accès initial dans un laboratoire contrôlé. Ce chapitre prend le relais exactement à l'endroit où ils s'arrêtent : la session s'ouvre enfin, l'invite de commande affiche un identifiant, et vous vous demandez ce qu'il faut faire ensuite. La post-exploitation est l'ensemble des gestes que l'on mène après l'accès pour transformer celui-ci en démonstration utile, sans dégrader le système, sans sortir du périmètre autorisé et sans laisser d'actions que vous ne seriez pas capable d'expliquer.
+
+L'objectif n'est pas d'accumuler les superpouvoirs. Dans un audit autorisé, la valeur d'une mission se mesure à la clarté de ce qu'elle démontre : voici l'obtenu, voici ce qu'il permet concrètement, voici le risque pour l'organisation, voici comment le corriger. Un accès restreint, soigneusement exploité et rigoureusement documenté convainc davantage qu'une escalade spectaculaire dont personne ne peut reconstituer le déroulé. C'est pourquoi ce chapitre est organisé comme une suite de gestes mesurés : vous observez, vous hiérarchisez, vous démontrez au strict nécessaire, puis vous remettez l'environnement en état.
+
+Tout ce qui suit se déroule dans un laboratoire isolé, sur des machines qui vous appartiennent ou qui ont été explicitement mises à votre disposition par un mandat écrit. Aucune cible réelle, aucun service tiers, aucune organisation qui ne vous a pas donné son accord par écrit. Le cadre légal n'est pas une note de bas de page : il détermine ce que vous avez le droit de faire, ce que vous devez consigner et ce que vous devez rendre en fin de mission. Gardez cette règle en tête dès la première commande : si vous ne pouvez pas l'écrire dans votre rapport, ne l'exécutez pas.
+
+## Après l'accès : ce que la post-exploitation change
+
+La phase d'exploitation cherche une chose : entrer. La phase de post-exploitation en cherche une autre : comprendre ce que l'entrée vaut. Un compte compromis sur une machine de test n'a aucune valeur tant que vous ne savez pas à quoi il donne accès, quelles machines il peut atteindre, quels fichiers il peut lire et quel niveau de privilèges il détient. Le changement est donc d'abord intellectuel : vous passez d'une logique de percée, rapide et bruyante, à une logique d'enquête, lente et méthodique. Le rythme ralentit, la documentation s'accélère.
+
+Ce changement de rythme se justifie par une contrainte pratique : dans un audit, chaque action laisse une marque et consomme du temps. Une commande d'énumération se lit dans les journaux, un transfert de fichier occupe de la bande passante, un service redémarré coupe une application que quelqu'un surveille. Vous devez donc arbitrer en permanence entre l'information que vous obtenez et le bruit que vous produisez. La règle que nous appliquerons dans tout le chapitre tient en une phrase : n'exécutez que la commande qui répond à une question que vous vous êtes posée à l'écrit.
+
+Le tableau suivant résume les quatre temps de la phase et le livrable attendu à chacun. Il servira de fil rouge : à chaque instant, vous devez pouvoir dire dans quelle colonne vous vous trouvez et quelle pièce vous devez produire avant de passer à la suivante.
+
+```table
+| Temps | Question posée | Exemple de geste | Livrable |
+|---|---|---|---|
+| Cadrage | Qu'ai-je le droit de faire ? | Lecture du mandat, rappel des exclusions | Périmètre écrit en tête du journal |
+| Enumeration | Sur quoi suis-je exactement ? | whoami, id, uname, decouverte du reseau | Fiche machine d'une page |
+| Demonstration | Que permet vraiment cet accès ? | Lecture d'un fichier temoin, test de privilege | Preuve horodee et empreintee |
+| Remise en etat | Qu'ai-je change, et tout est-il revenu ? | Suppression des artefacts, verification | Journal d'assainissement signe |
+```
+
+Un dernier point sur ce que la post-exploitation n'est pas. Elle ne consiste pas à parcourir le disque à la recherche de données personnelles, à copier des bases entières « pour voir », ni à installer un outil de surveillance « au cas où ». Ces gestes n'ont aucune valeur probante dans un audit, sortent du périmètre contractuel et constituent, hors mandat, des infractions. La collecte se limite à ce qui démontre le risque, et rien de plus : un fichier témoin choisi avec le client, un compteur, une capture, une empreinte.
+
+Il faut aussi distinguer nettement le laboratoire d'apprentissage, la compétition de type capture the flag et l'audit contractuel, car les trois se ressemblent au premier regard et n'autorisent pas les mêmes gestes. Dans un laboratoire, vous êtes seul propriétaire des machines : vous pouvez tout essayer, tout casser, recommencer, y compris provoquer un plantage volontaire pour comprendre ce qui se passe. Dans une compétition, le but est d'obtenir des drapeaux dans un temps limité, l'infrastructure est jetable et la persistance n'a aucun sens. Dans un audit, l'environnement vit, d'autres personnes l'utilisent, les journaux sont conservés et votre patron n'est pas le directeur technique de la cible mais son conseil d'administration. Les habitudes prises en laboratoire ne se transfèrent donc pas telles quelles : c'est précisément l'objet des sections sur la persistance et sur l'assainissement.
+
+Un autre changement concerne la façon dont vous rendez compte. En laboratoire, vous apprenez en échouant et personne ne vous demande de justifier vos tentatives. En audit, chaque tentative se compte, y compris les échecs, parce qu'une tentative d'élévation refusée apparaît dans les journaux et qu'on vous demandera ce que vous cherchiez à ce moment-là. Vous devez donc être capable de relire votre propre séquence et de l'expliquer ligne à ligne. C'est la raison pour laquelle le journal de bord n'est pas une corvée administrative : c'est votre seule protection contre l'incompréhension.
+
+## Énumération locale : cartographier la machine sans rien casser
+
+La première heure après l'accès appartient à l'énumération locale. L'objectif est de produire une fiche machine complète : système d'exploitation et version exacte, identité de la session, privilèges réels, carte réseau et voisins, services à l'écoute, comptes locaux, tâches planifiées et fichiers de configuration remarquables. Cette fiche se rédige pendant que vous commandez, pas après, car les détails oubliés ne se reconstituent plus. Ouvrez un fichier de notes à côté du terminal, notez l'heure de début en heure UTC, puis avancez par famille d'informations.
+
+Commencez par l'identité et le système, qui déterminent toutes vos hypothèses ultérieures. Prenons l'exemple d'une machine où whoami renvoie un compte de service : vous n'aurez probablement ni sudo ni accès direct aux journaux, mais peut-être des droits sur un répertoire applicatif. À l'inverse, un compte nommé avec un shell complet change la stratégie : les fichiers d'historique, les variables d'environnement et les clés présentes dans le répertoire deviennent prioritaires.
+
+```bash
+# Fiche d'identite et de systeme, a coller tel quel dans le journal
+date -u +"%Y-%m-%dT%H:%M:%SZ"
+whoami; id; hostname
+uname -a
+cat /etc/os-release
+cat /proc/version
+
+# Seance en cours : quels autres utilisateurs sont presents ?
+w
+who
+
+# Variables d'environnement : souvent la source des secrets
+env | sort
+```
+
+La famille suivante décrit le réseau, parce qu'elle détermine ce qui est atteignable sans franchir de frontière nouvelle. Notez les adresses configurées, la passerelle, le ou les serveurs de résolution, puis les connexions déjà ouvertes : elles appartiennent au périmètre, à la différence d'un scan que vous lanceriez sur un segment non mentionné dans le mandat. La découverte des voisins se limite ici à la table de routage et à la table ARP, deux lectures qui ne produisent aucun paquet suspect.
+
+```bash
+# Carte et routage : lecture seule
+ip -brief address
+ip route
+cat /etc/resolv.conf
+
+# Ce qui écoute et ce qui est connecte
+ss -tulpn
+ss -tnp
+
+# Voisins deja connus du systeme
+ip neigh
+```
+
+Enfin, relevez les processus, les tâches planifiées et les fichiers de configuration utiles. Un service tourne avec un compte de service dont le mot de passe figure dans un fichier de configuration world-readable : c'est une trouvaille, et elle se documente sans être exploitée immédiatement. Une tâche planifiée s'exécute toutes les cinq minutes avec des droits élevés : c'est une piste d'escalade, à classer dans votre carte des vecteurs plutôt qu'à manipuler.
+
+```bash
+# Processus et taches planifiees
+ps aux --sort=-%mem | head -n 25
+crontab -l 2>/dev/null
+ls -la /etc/cron.d /etc/cron.daily 2>/dev/null
+
+# Fichiers de configuration contenant potentiellement des secrets
+grep -RIl --exclude-dir=proc --exclude-dir=sys -E 'password|passwd|secret|token' \
+  /etc /opt /srv 2>/dev/null | head -n 20
+```
+
+La capture d'écran ci-dessous montre l'état d'un poste de laboratoire au début de l'énumération : une session ouverte en tant que compte local, un répertoire de travail limité et les premières commandes d'identification défilant dans le terminal. C'est exactement le point de départ que vous devez consigner avant toute action plus intrusive, car tout le reste de votre rapport s'appuiera sur cette heure et cette identité.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/VirtualBox_Kali_Linux_21.01_x64_Terminal_%28root%29_GER_26_02_2021_16_59_57.png/960px-VirtualBox_Kali_Linux_21.01_x64_Terminal_%28root%29_GER_26_02_2021_16_59_57.png
+| Début d'énumération locale dans un laboratoire isolé : une session ouverte, l'identité et le système relevés avant toute autre action.
+```
+
+Un piège attend le débutant à ce stade, et il est fréquent : l'énumération sans question. On lance un script qui balaie tout, on obtient mille lignes, puis on ne sait plus ce qui est intéressant. Retournez la méthode : écrivez d'abord les cinq questions auxquelles vous devez répondre, commande automatique ou manuelle. Quel système ? Quels privilèges ? Quelles interfaces ? Quels comptes ? Quels candidats à l'escalade ? Une énumération ciblée de quarante lignes vaut mieux qu'un inventaire de dix mille que personne ne relira.
+
+Deux habitudes de terrain complètent cette méthode. La première consiste à capturer la sortie de chaque commande dans un fichier daté, plutôt qu'à la laisser défiler dans un terminal que vous refermerez. Vous écrivez la sortie dans un répertoire de travail unique, nommé d'après la machine et la date, de sorte que votre rapport puisse citer un fichier et non votre mémoire. La deuxième consiste à horodater en UTC chaque famille de commandes : les journaux du système sont en UTC, votre montre est en heure locale, et un décalage non signalé suffit à rendre toute chronologie suspecte.
+
+```bash
+# Repertoire de travail unique, cree une seule fois par mission
+export AUDIT_DIR="$HOME/audit-2026-10-09/serveur-web-01"
+mkdir -p "$AUDIT_DIR"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$AUDIT_DIR/debut.txt"
+
+# Chaque famille de commandes alimente son propre fichier
+id >> "$AUDIT_DIR/identite.txt" 2>&1
+uname -a >> "$AUDIT_DIR/identite.txt" 2>&1
+ss -tulpn >> "$AUDIT_DIR/reseau.txt" 2>&1
+ps aux >> "$AUDIT_DIR/processus.txt" 2>&1
+```
+
+Attention enfin aux scripts d'énumération automatiques téléchargés depuis un dépôt public. Dans un laboratoire, ils font gagner du temps ; dans un audit, ils posent trois problèmes simultanés : ils exécutent du code dont vous n'avez pas vérifié la portée, ils balayent souvent des répertoires hors périmètre, et leurs sorties mélangent l'utile et l'inutile dans un format que vous devrez de toute façon réécrire. Préférez les commandes que vous pouvez expliquer une par une, et gardez les outils automatisés pour les phases où leur comportement est documenté et borné.
+
+## Lire l'environnement : identités, réseau, services et fichiers sensibles
+
+Une fois la fiche machine constituée, il faut l'interpréter. L'énumération vous donne des données ; l'interprétation vous donne un ordre de priorité. Prenons l'exemple des comptes locaux : la liste des entrées de /etc/passwd n'a d'intérêt que si vous la recoupez avec les comptes qui disposent d'un shell, les membres des groupes d'administration et les comptes dont le mot de passe semble absent ou vide. Trois lignes croisées valent mieux qu'une page de noms.
+
+Le réseau se lit de la même façon. Une interface vers un segment de serveurs, une passerelle par défaut et un serveur de résolution interne vous disent que la machine est un point de départ légitime vers d'autres ressources du périmètre. Une machine sans route vers l'extérieur, en revanche, vous indique que tout transfert devra passer par un canal déjà ouvert, ce qui change votre stratégie de démonstration. Observez aussi les règles de filtrage en place, car elles dessinent la frontière que vous n'avez pas le droit de franchir.
+
+```bash
+# Comptes locaux utiles : shells, groupes d'administration
+awk -F: '($7 !~ /(nologin|false)$/){print $1, $7}' /etc/passwd
+getent group sudo wheel admin 2>/dev/null
+awk -F: '($3==0){print "UID 0 :", $1}' /etc/passwd
+
+# Fichiers sensibles et repertoires d'identite
+ls -la ~/.ssh 2>/dev/null
+find / -maxdepth 4 -name 'id_*' -o -name '*.pem' 2>/dev/null | head -n 20
+
+# Regles de filtrage actives, si l'identite le permet
+sudo -n iptables -L -n 2>/dev/null || cat /proc/net/ip_tables_names 2>/dev/null
+```
+
+Les fichiers sensibles méritent une attention particulière parce qu'ils sont la source la plus courante d'obtention de privilèges sans aucune faille : une clé privée laissée dans un dépôt, un mot de passe de base de données dans un fichier d'application, un script de sauvegarde contenant un compte de service. Vous les notez, vous les citez par chemin et par date, et vous vous arrêtez là. La démonstration du risque consiste à prouver que le fichier était lisible, pas à en extraire le contenu complet ni à l'emporter hors du laboratoire.
+
+Le dernier volet de l'interprétation consiste à distinguer ce qui relève du périmètre de ce qui en sort. Un répertoire d'application déployée sur la machine visée entre dans le mandat ; le répertoire personnel d'un autre utilisateur, non mentionné, en sort. Cette frontière n'est pas toujours évidente, surtout sur une machine partagée : en cas de doute, vous demandez, vous notez la question dans votre journal et vous poursuivez sur ce qui ne fait aucun doute. Une mission qui pose des questions est une mission qui tiendra debout en réunion de restitution.
+
+La rigueur du croisement fait toute la différence entre une observation et un constat. Un fichier lisible n'est un risque que si vous pouvez dire qui pouvait le lire, depuis quel compte, avec quels droits et depuis quand. C'est exactement le travail que vous ferez dans la section suivante, lorsqu'il s'agira d'examiner les voies d'élévation de privilèges : partir de la configuration réelle du système, jamais d'une liste d'exploits mémorisée.
+
+Les systèmes de fichiers montés et les partages distants complètent cette lecture. Un répertoire monté en écriture depuis un autre serveur vous indique que la machine n'est pas une île, et qu'une modification locale se répercutera ailleurs, y compris après votre départ. Inversement, un montage en lecture seule vous donne un repère précieux : vous pourrez y chercher des informations sans risquer d'altérer quoi que ce soit. Notez systématiquement les options de montage, elles apparaîtront dans votre rapport pour expliquer pourquoi tel répertoire a été consulté et tel autre laissé intact.
+
+```bash
+# Systemes de fichiers montes et espaces occupes
+findmnt -t ext4,xfs,btrfs,nfs,cifs
+df -hT
+
+# Services demarres : ce qui tourne reellement, pas ce qui est installe
+systemctl list-units --type=service --state=running --no-pager
+systemctl list-units --type=service --state=failed --no-pager
+```
+
+Enfin, une remarque sur la qualité de vos notes. Notez aussi ce que vous n'avez pas pu vérifier, et pourquoi : une commande refusée par manque de droits, un répertoire non accessible, une information absente de la machine. Ces lignes, qui semblent inutiles le jour où vous les écrivez, deviennent les limites explicites de votre rapport trois semaines plus tard. Un constat qui affiche ses trous est plus crédible qu'un constat complet qui les dissimule, parce que le lecteur n'a alors aucune objection imprévue à vous opposer.
+
+L'élévation de privilèges est la partie du chapitre où l'on se trompe le plus souvent, non parce qu'elle est difficile, mais parce qu'elle attire les mauvais réflexes. Face à un système, la tentation est d'ouvrir immédiatement une liste d'exploits et d'essayer, un par un, jusqu'à ce que quelque chose fonctionne. Cette méthode produit exactement l'inverse de ce qu'attend un client : du bruit dans les journaux, des risques de stabilité, et une démonstration qu'aucun tiers ne peut reconstituer. Nous adopterons ici l'approche inverse, celle que tout auditeur expérimenté applique : commencer par les voies prévues par la configuration du système, puis remonter en intuition de risque, et ne considérer le noyau qu'en dernier recours, comme une limite à signaler plutôt que comme une porte à forcer.
+
+La distinction fondamentale porte sur la valeur probante. Un compte de service obtenu parce que son mot de passe traînait dans un fichier de configuration, ou parce que sudo lui autorise une commande sans mot de passe, démontre un défaut de configuration : c'est un vrai constat, corrigeable, priorisable, compréhensible par un dirigeant. Un compte root obtenu par une faille de noyau exploite une faille logicielle dont la correction dépend d'un fournisseur : le constat est plus spectaculaire, mais il dit moins de choses sur l'organisation, et il expose la machine à un plantage. Les deux ont leur place dans une compétition ; un seul a sa place dans la plupart des rapports d'audit.
+
+```table
+| Voie | Ce qu'elle démontre | Bruit produit | Risque pour la cible | Place dans un audit |
+|---|---|---|---|---|
+| Voies legitimement configurees | Defaut de configuration, mauvaise hygiene | Quasi nul | Nul | Prioritaire |
+| Fichiers et droits mal poses | Regle d'acces appliquee a tort | Faible | Tres faible | Prioritaire |
+| Binaire ou script a privileges | Etat des logiciels, detournement de fonction | Faible a moyen | Faible | Courant, a documenter |
+| Faille de noyau | Retard de correctif majeur | Fort | Eleve : plante possible | Signaler, rarement exploiter |
+```
+
+## Élévation de privilèges : la méthode avant les outils
+
+Le premier geste n'est pas technique, il est documentaire : reprenez le mandat et notez, en haut de votre journal, ce qui est autorisé concernant les privilèges. Certaines missions autorisent explicitement à tenter une escalade sur les machines du périmètre ; d'autres se limitent à constater les configurations dangereuses sans les exploiter ; d'autres encore excluent totalement les opérations susceptibles de dégrader le système. Vous ne pouvez pas décider seul de franchir cette ligne, et un rapport qui annonce une escalade non autorisée est un rapport qui déclenche un litige. La question se pose donc avant la commande, jamais pendant.
+
+Une fois le cadre écrit, vous établissez votre carte des vecteurs, c'est-à-dire une liste ordonnée des chemins d'escalade plausibles sur cette machine précise. La carte se construit à partir de trois observations : ce que la configuration autorise explicitement, ce que les droits de fichiers permettent implicitement, et ce qui manque au système en matière de correctifs. Chaque entrée reçoit une ligne dans votre journal : vecteur, élément observé, commande qui l'a révélé, estimation du risque, décision de la tester ou non. Cette discipline transforme une exploration improvisée en examen reproductible.
+
+```bash
+# 1. Ce que la configuration autorise explicitement
+sudo -n -l 2>/dev/null || sudo -l 2>/dev/null
+
+# 2. Ce que les droits de fichiers permettent implicitement
+find / -perm -4000 -type f 2>/dev/null
+find / -perm -2000 -type f 2>/dev/null
+find / -writable -type d -not -path '/proc/*' 2>/dev/null | head -n 30
+
+# 3. Ce qui manque : version exacte du systeme
+uname -r
+cat /etc/debian_version 2>/dev/null || cat /etc/redhat-release 2>/dev/null
+```
+
+L'ordre de ces trois familles n'est pas arbitraire. sudo est examiné en premier parce que c'est la voie la plus fréquente et la plus légitime : quand un administrateur configure sudo, il prend une décision consciente, et vous vous contentez de la constater. Les droits de fichiers viennent ensuite, parce qu'ils résultent d'erreurs d'installation ou d'habitudes de gestion, pas d'une décision. La version du noyau arrive en dernier, car elle appartient à un problème de cycle de correctifs que l'organisation ne tranchera pas pendant la mission.
+
+Le paragraphe suivant mérite d'être médité par quiconque a déjà collé une commande copiée depuis un forum : une escalade qui ne s'inscrit pas dans la carte des vecteurs n'a pas sa place dans la mission. Si vous découvrez un chemin que vous n'aviez pas prévu, vous l'ajoutez à la carte, vous notez l'heure à laquelle il est apparu, vous demandez si son exploitation est dans le mandat, et seulement ensuite vous agissez. Ce détour de deux minutes est ce qui distingue une démarche professionnelle d'une promenade opportuniste.
+
+La carte se lit aussi à l'envers, et c'est là qu'elle devient utile au rapport. Chaque vecteur non exploité mais réel constitue une recommandation : sudo autorise une commande qui peut exécuter un shell, un binaire sensible appartient à un répertoire inscrit dans le chemin d'exécution d'un service, un compte dispose de droits d'écriture sur un script démarré par root. Vous n'avez pas besoin de démontrer l'exploitation pour démontrer le risque : la configuration observée suffit, à condition de la citer précisément avec la commande et l'heure.
+
+L'image ci-dessous rappelle la structure mentale de l'opération : depuis un niveau donné, plusieurs chemins mènent à un niveau supérieur, chacun reposant sur une hypothèse différente que vous devez vérifier avant de l'emprunter. Le schéma a moins d'importance que l'habitude qu'il décrit : ne jamais sauter d'étape, ne jamais emprunter un chemin sans l'avoir identifié à l'écrit, ne jamais considérer un succès technique comme une autorisation morale.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/c/cc/Privilege_Escalation_Diagram.svg/960px-Privilege_Escalation_Diagram.svg.png
+| Carte des chemins d'élévation de privilèges : chaque flèche correspond à une hypothèse distincte qu'il faut vérifier avant de l'emprunter.
+```
+
+## sudo, SUID et capabilities : les trois voies ordinaires
+
+Commençons par sudo, qui reste de loin la voie la plus fréquente et la plus facile à expliquer. La commande sudo -l liste ce que votre compte a le droit d'exécuter avec des privilèges élevés. Trois résultats sont possibles : rien, auquel cas vous notez l'absence et vous passez à la famille suivante ; une commande précise avec un chemin absolu, ce qui vous autorise à exécuter cette commande et rien d'autre ; enfin, une commande avec l'option NOPASSWD, qui supprime la saisie du mot de passe. Chacun de ces résultats a un sens métier qu'il faut traduire dans le rapport.
+
+```bash
+# Liste exacte des droits sudo de la session courante
+sudo -l
+
+# Exemple de sortie rencontree en laboratoire :
+#   User service-catalogue may run the following commands on web-01:
+#       (ALL) NOPASSWD: /usr/bin/find /srv/data *
+```
+
+La traduction métier de cette sortie tient en une phrase : le compte peut exécuter un outil qui accepte des options interprétées par un shell, avec les droits les plus élevés du système. Dans un audit, vous ne cherchez pas à transformer cela en shell root pour le plaisir ; vous cherchez à démontrer que la règle est trop large. Un test minimal, effectué dans un répertoire de travail que vous avez créé, suffit à établir le risque, et il laisse une trace lisible que le responsable pourra reproduire lui-même.
+
+Le principe s'applique à toutes les commandes dont le mode d'emploi comporte une option d'exécution : éditeurs, gestionnaires de paquets, contrôleurs de services. Ce qu'il faut retenir n'est pas une liste à apprendre par cœur, mais la question à poser à chaque entrée de sudo -l : cette commande peut-elle écrire un fichier, lancer un programme ou modifier une configuration ? Si la réponse est oui, la règle est trop large, et le constat tient en trois lignes dans votre rapport.
+
+```bash
+# Demonstration minimale et reversible dans un repertoire de travail
+mkdir -p "$AUDIT_DIR/demo-sudo"
+cd "$AUDIT_DIR/demo-sudo"
+sudo -n find /srv/data -exec id {} \; 2>&1 | head -n 5
+
+# Preuve : le fichier cree par la commande est bien en root
+sudo -n find . -name 'preuve*' -exec ls -la {} \; 2>/dev/null
+```
+
+Passons aux binaires SUID, le deuxième pilier. Un bit posé sur un fichier signifie que le programme s'exécute avec les droits du propriétaire du fichier, et non avec ceux de l'utilisateur qui le lance. Sur un système sain, les binaires SUID appartiennent à root et font tous la même chose : demander un mot de passe, puis effectuer une opération définie. Le problème apparaît quand le programme n'est pas conçu pour être exposé de cette façon, ou quand il lit une configuration, un chemin ou une variable que l'utilisateur peut contrôler.
+
+```bash
+# Inventaire commente des binaires SUID et SGID
+find / -perm -4000 -type f -exec ls -la {} \; 2>/dev/null | tee "$AUDIT_DIR/suid.txt"
+find / -perm -2000 -type f -exec ls -la {} \; 2>/dev/null | tee -a "$AUDIT_DIR/suid.txt"
+
+# Controle des proprietaires inattendus
+find / -perm -4000 -type f ! -user root 2>/dev/null
+```
+
+La lecture de cet inventaire suit une logique simple. Vous cherchez d'abord les fichiers qui ne devraient pas avoir ce bit, un script personnel oublié en mode SUID, un binaire de test laissé par un développeur. Vous cherchez ensuite les programmes connus pour accepter des options dangereuses quand ils tournent avec des privilèges, un éditeur qui peut ouvrir un shell, un lecteur d'archives capable d'écrire n'importe où, un outil de recherche qui peut exécuter une commande pour chaque fichier trouvé. La règle du jeu n'est pas de mémoriser des binaires, c'est de tester l'hypothèse : ce programme lit-il quelque chose que je contrôle ?
+
+Trois conditions font le lien entre un binaire SUID et un risque réel, et les trois doivent être réunies avant de conclure. Le programme doit tourner avec des privilèges supérieurs aux vôtres. Il doit accepter une entrée que vous contrôlez : un chemin, un fichier de configuration, une variable d'environnement, une expression de recherche. Enfin, cette entrée doit pouvoir provoquer une action qui vous intéresse : exécuter un programme, écrire un fichier protégé, modifier une configuration système. Retirez une des trois conditions et le constat s'effondre ; c'est exactement ce que votre rapport doit démontrer.
+
+Le troisième pilier, les capacités, découpe le privilège en unités fines. Plutôt qu'un bit qui accorde tous les droits, une capacité accorde une faculté précise : ouvrir un socket brut, changer d'identité, ajouter un identifiant au système, attacher un détecteur de performance. Elles sont appliquées aux fichiers et se lisent avec getcap. Pour l'auditeur, l'intérêt est le même que pour sudo : elles transforment une intention d'administration en configuration lisible, et toute capacité inattendue sur un binaire de circulation courante constitue un constat.
+
+```bash
+# Capacites posees sur les fichiers du systeme
+getcap -r / 2>/dev/null | tee "$AUDIT_DIR/capabilities.txt"
+
+# Ce qu'une capacite accorde, traduit pour le rapport
+#   cap_setuid+ep  : le binaire peut changer d'identite
+#   cap_net_raw+eip: le binaire peut creer des bruts reseau
+#   cap_dac_override: le binaire peut ignorer les droits de fichiers
+```
+
+La conséquence pratique tient en une phrase : une capacité sur un interpréteur de scripts, un shell ou un outil généraliste équivaut presque toujours à un accès complet. La différence avec SUID est subtile et importante : SUID dit qui possède le fichier, la capacité dit ce que le fichier peut faire. Dans votre rapport, citez toujours les deux informations, propriétaire et capacité, car le correctif n'est pas le même : retirer le bit d'un côté, retirer l'autre de l'autre.
+
+Une remarque sur les outils d'aide. Il existe des scripts d'énumération qui produisent en une seconde la liste des sudo, des SUID et des capacités, classée par probabilité d'exploitation. Leur usage est légitime dans un laboratoire et utile dans un audit, à une condition : vous devez être capable de refaire à la main, commande par commande, ce que l'outil a affirmé. Un résultat que vous ne pouvez pas reproduire ne peut pas figurer dans un constat, parce qu'il ne sera pas défendable face à la question simple : comment savez-vous ?
+
+## Le noyau et les exploits : la limite que l'audit ne franchit pas
+
+La version du noyau constitue la dernière famille de vecteurs, et la plus délicate. Un système dont le noyau est en retard sur les correctifs peut être vulnérable à des failles connues depuis des années, certaines très simples à déclencher. Le problème n'est pas technique, il est contractuel et matériel : un exploit de noyau écrit par un tiers, exécuté sur une machine qui n'est pas la vôtre, peut provoquer un plantage, corrompre des données, ou réussir partiellement en laissant le système dans un état inconnu. Vous ne devez jamais lancer ce type de code sans une autorisation expresse et un environnement sacrifiable.
+
+```bash
+# Identification, sans execution d'aucun code d'exploitation
+uname -r
+cat /proc/version
+ls -la /boot 2>/dev/null | head -n 15
+cat /proc/cmdline
+
+# Existe-t-il un paquet de noyau plus recent sur ce systeme ?
+apt list --upgradable 2>/dev/null | grep -i linux || \
+  yum check-update kernel 2>/dev/null | head -n 5
+```
+
+Le raisonnement à adopter remplace l'exploitation par la démonstration. Au lieu de prouver qu'une faille fonctionne, vous prouvez que la condition d'exécution existe : version du noyau relevée, correctif correspondant identifié dans l'annonce de sécurité du distributeur, paquet non installé constaté sur la machine. Ce constat est plus fort qu'un exploit, parce qu'il est vérifiable par n'importe quel administrateur sans risque, et parce qu'il se traduit directement en action : mettre à jour le noyau, redémarrer, revérifier.
+
+Il existe pourtant une situation où l'identification ne suffit pas : lorsque la direction veut mesurer la vulnérabilité réelle plutôt que supposée. Dans ce cas, deux conditions s'imposent. La première est écrite : une autorisation nominative mentionnant la machine, l'opération, l'heure prévue et le plan de retour arrière. La seconde est matérielle : une machine jetable, isolée, dont la sauvegarde a été vérifiée avant l'essai. Hors de ces deux conditions, vous vous en tenez à l'identification, et vous écrivez dans votre rapport que l'exploitation n'a pas été tentée, et pourquoi.
+
+Une subtilité fréquente mérite d'être signalée : la version du noyau affichée n'est pas toujours celle qui tourne. Après une mise à jour sans redémarrage, le paquet installé est récent alors que l'image chargée reste ancienne, ou l'inverse selon les distributions. C'est pourquoi la commande à citer dans le rapport est uname -r, qui donne la version en fonctionnement, et non la version du paquet. Précisez aussi la date du dernier redémarrage : elle explique bien des écarts et évite qu'un correcteur ne vous contredise devant un tiers.
+
+Le dernier point concerne la manière de formuler la conclusion sur le noyau. Écrivez : la machine exécute la version X, les annonces de sécurité du distributeur indiquent que la faille Y est corrigée à partir de la version Z, le paquet installé est antérieur ; la mise à jour est recommandée sous sept jours, avec redémarrage planifié. Évitez : la machine est vulnérable, ce qui suppose une démonstration que vous n'avez pas faite. La première formulation est un constat ; la seconde est une hypothèse habillée en fait, et c'est précisément la confusion qui ruine des rapports pourtant bien conduits.
+
+## Mouvement latéral simple : une seule étape à la fois
+
+Le mouvement latéral désigne le passage d'une machine à une autre à l'intérieur du périmètre autorisé. Dans un audit, il est presque toujours la partie la plus sensible de la mission : vous quittez la machine où vous vous trouviez pour en rejoindre une autre, ce qui multiplie les journaux touchés, les comptes sollicités et les responsabilités. La règle que nous appliquerons tient en trois mots : une seule étape à la fois. Vous ne passez d'un hôte à l'autre que si l'étape précédente est documentée, si la cible suivante figure explicitement dans le mandat, et si vous avez écrit pourquoi ce déplacement est nécessaire pour démontrer le risque.
+
+Concrètement, le mouvement latéral dans un laboratoire repose le plus souvent sur des identifiants plutôt que sur des failles. Un mot de passe réutilisé entre deux comptes, une clé privée laissée dans un répertoire, un ticket de connexion encore valide, un compte de service partagé entre plusieurs hôtes : voilà la matière ordinaire de ces déplacements. C'est d'ailleurs ce qui rend le sujet intéressant pour le client, car la réutilisation d'identifiants est un défaut organisationnel qu'aucun correctif logiciel ne viendra corriger à sa place.
+
+```bash
+# Verification prealable : la cible est-elle dans le perimetre ?
+grep -n 'serveur-web-02' "$AUDIT_DIR/mandat.txt"
+
+# Ce qui est deja ouvert et vers qui (lecture seule)
+ss -tnp | grep -E 'ESTAB'
+awk '$4 == "01"{print $3}' /proc/net/tcp 2>/dev/null | head
+
+# Test de reachabilite le moins bruyant possible
+ping -c 2 -W 2 10.20.0.12
+```
+
+Le premier vrai déplacement se fait avec le moins de nouveautés possible. Vous réutilisez une session déjà autorisée, une clé dont vous avez constaté la présence dans le périmètre, ou un compte dont les droits ont été explicitement étendus par le mandat. Chaque méthode laisse un type de trace différent : une connexion SSH écrit une ligne d'authentification, un transfert de fichier apparaît dans les journaux de la cible, une commande exécutée à distance laisse un horodatage côté serveur. Vous notez laquelle vous avez choisie, et pourquoi celle-là plutôt qu'une autre.
+
+```bash
+# Deplacement par cle presente dans le perimetre (lab isole)
+ssh -i "$AUDIT_DIR/cle_web01" -o IdentitiesOnly=yes \
+    -o BatchMode=yes auditor@10.20.0.12 \
+    'date -u; whoami; hostname' | tee -a "$AUDIT_DIR/deplacement.txt"
+
+# Journal de l'etape : heure, origine, cible, methode
+printf '%s | %s | %s | %s\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "10.20.0.11" "10.20.0.12" "ssh-cle-lab" \
+  >> "$AUDIT_DIR/journal_etapes.log"
+```
+
+Un mot sur le tunnelling et le relais, que vous rencontrerez dans les environnements un peu plus fournis. Un transfert de port permet d'atteindre un service qui n'est exposé que sur une machine intermédiaire ; un relais de connexion utilise une session existante pour ouvrir une nouvelle. Ces techniques sont légitimes dans un audit, mais elles déplacent votre action dans des journaux que vous ne contrôlez peut-être pas, et elles compliquent considérablement la reconstitution. Utilisez-les seulement quand le déplacement direct est impossible, et décrivez alors le chemin complet : machine d'origine, machine intermédiaire, machine finale.
+
+Le périmètre mérite d'être répété parce qu'il est la première chose que l'on oublie quand la technique devient intéressante. Une machine qui apparaît dans la table ARP mais pas dans le mandat n'est pas une cible : c'est une machine voisine. Vous pouvez noter son existence si votre commanditaire le demande, vous ne pouvez pas vous y connecter, y déposer un fichier, ni y tester un identifiant. La même discipline s'applique aux comptes : un compte trouvé sur la machine A n'autorise pas à l'essayer sur la machine B tant que le mandat ne le prévoit pas.
+
+La démonstration du risque de mouvement latéral se formule autrement que par la réussite d'une connexion. Elle tient en trois éléments réunis : des identifiants valides sur deux hôtes différents, une configuration qui l'autorise, et l'absence de contrôle qui l'aurait détecté. Vous écrivez ces trois éléments, vous citez les commandes qui les ont établis, et vous concluez sur la recommandation : rotation des mots de passe, comptes nommés par hôte, journalisation des connexions distantes, alerte sur authentification inhabituelle.
+
+Un point sur la détection, qui appartient autant à la post-exploitation qu'à la défense. Un déplacement propre laisse peu de traces visibles, mais il en laisse toujours : ouverture de session à distance, création de processus, accès à un répertoire nouveau, éventuellement transfert de fichier. Si le client dispose d'un centre d'opérations de sécurité, demandez-lui, après votre démonstration, si l'étape a été vue et à quelle heure. Cette seule question transforme votre preuve de risque en mesure de maturité : l'accès a fonctionné, la détection a fonctionné ou non, et le rapport contient les deux constats au lieu d'un seul.
+
+La discipline du journal mérite d'être illustrée, car c'est là que les équipes lâchent le plus souvent. Une ligne par étape, écrite au moment du déplacement, avec l'heure à la seconde, l'adresse d'origine, l'adresse de destination, la méthode employée, l'identifiant sollicité et l'issue. Si l'étape échoue, elle figure aussi dans le journal, avec la raison : refus d'authentification, route absente, port fermé. Un journal qui ne contient que les succès donne une image faussée de la mission et ne permet pas de reconstituer ce qui s'est réellement passé.
+
+## Persistance : mécanismes courants et interdiction en audit
+
+La persistance désigne tout ce que l'on installe pour retrouver un accès après le rétablissement de la situation normale : compte ajouté, clé déposée, tâche planifiée, service modifié, configuration système altérée. Dans une compétition ou un exercice de compromission prolongée, elle a du sens. Dans un audit classique, elle n'en a presque aucun, et ses inconvénients sont supérieurs à son intérêt. Comprendre ces mécanismes reste indispensable, ne serait-ce que pour les décrire, les prévenir et les rechercher côté défense.
+
+La première raison est la responsabilité résiduelle. Une clé ajoutée dans un répertoire d'administration reste valide après votre départ, même si vous avez oublié de la retirer. Un compte créé reste dans le système. Une tâche planifiée continue de s'exécuter à 3 heures du matin, avec les privilèges qu'on lui a donnés. Si vous quittez la mission demain et que la machine est compromise dans trois semaines, ce sera votre artefact que l'enquêteur trouvera, et il devra prouver qu'il ne vient pas de vous. Aucun avantage ne compense ce risque.
+
+```bash
+# Les quatre familles de persistance, en lecture seule d'abord
+crontab -l 2>/dev/null; ls -la /etc/cron.d /var/spool/cron 2>/dev/null
+systemctl list-unit-files --state=enabled --no-pager | head -n 20
+ls -la /etc/systemd/system/*.service 2>/dev/null | grep -v '^total'
+cat /etc/ld.so.preload 2>/dev/null
+grep -R 'PermitRootLogin\|AuthorizedKeysFile' /etc/ssh/sshd_config 2>/dev/null
+```
+
+La deuxième raison est l'effet sur la stabilité et sur les autres utilisateurs. Un service modifié peut ne plus démarrer après redémarrage, une tâche planifiée peut saturer un disque, un compte ajouté peut déclencher une alerte de conformité qui immobilise une équipe pendant une journée. Un audit a pour principe de ne pas dégrader la production. Quand bien même votre mandat autoriserait la persistance, le rapport de fin de mission devrait lister chaque élément à supprimer et en attester la suppression : vous transformez alors une opération à risque en une ligne de travail supplémentaire.
+
+```table
+| Mecanisme | Ou il se pose | Pourquoi l'eviter en audit | Contre-mesure cote defense |
+|---|---|---|---|
+| Cle ajoutee a authorized_keys | Repertoire .ssh admin | Acces residuel apres la mission | Audit periodique des cles, alerte a l'ajout |
+| Compte local privilegie | /etc/passwd | Identite fantome, mot de passe oublie | Comptes nominatifs, expiration, revue mensuelle |
+| Tache planifiee | cron, systemd timer | Execution silencieuse a distance | Liste blanche, journalisation des creations |
+| Service modifie | unité systemd, init | Modification durable de la demarrage | Gestion par version, verification d'integrite |
+| Fichier de preload | /etc/ld.so.preload | Contourne toute authentification | Verification a demarrage, fichiers scelles |
+```
+
+La troisième raison est la qualité du rapport. Un auditeur qui installe de la persistance doit passer autant de temps à décrire son retrait qu'à décrire son installation, et le moindre oubli se paie en crédibilité. À l'inverse, une mission sans persistance se résume à des lectures, des tests bornés et une remise en état vérifiable. Le lecteur comprend immédiatement que rien ne subsiste. Si votre mandat exige explicitement un test de détection, par exemple vérifier que les équipes voient une clé ajoutée, vous le faites en boîte de test, à heure convenue, avec un préavis, et vous retirez l'élément devant témoin.
+
+Voici comment décrire un mécanisme de persistance sans l'installer, ce qui suffit dans la grande majorité des missions. Vous écrivez la commande exacte qui serait nécessaire, vous la posez dans un répertoire jetable du laboratoire si vous voulez valider son comportement, vous photographiez la sortie, puis vous supprimez tout. Le rapport cite la configuration observée sur la cible, l'autorisation requise pour la modifier et la détection correspondante. La démonstration tient sans jamais altérer le système d'exploitation.
+
+```bash
+# Demonstration dans un bac a sable, jamais sur la cible
+SANDBOX="$AUDIT_DIR/sandbox"
+mkdir -p "$SANDBOX"
+
+# Ce qu'une tache de persistance serait, ecrite puis testee localement
+cat > "$SANDBOX/demo-cron.txt" <<'EOF'
+# Tache hypothetique : elle tournerait toutes les cinq minutes
+*/5 * * * * /usr/local/bin/agent.sh --check
+EOF
+
+# Verification que rien n'a ete pose sur le systeme reel
+crontab -l 2>&1 | grep -c 'agent.sh' || true
+```
+
+Il reste une situation où la persistance est explicitement demandée : le test de détection des équipes de surveillance. Là encore, la méthode prime sur la technique. Vous convenez d'une plage horaire, vous annoncez le type d'élément qui sera posé, vous l'installez avec l'administrateur de la machine, vous relevez l'heure de la détection et vous retirez l'élément le jour même, devant témoin. Le livrable n'est pas la persistance, c'est le délai de détection constaté et les journaux qui l'ont révélé, deux informations que l'organisation ne peut obtenir autrement.
+
+Le cas contraire, la persistance découverte dans un environnement défendu, se traite sans jamais la reproduire. Vous photographiez l'élément, vous notez sa date de création, son propriétaire, son contenu et sa localisation exacte, vous calculez son empreinte, puis vous signalez. Ne l'exécutez pas pour « voir ce qu'il fait » : un script de persistance peut chiffrer des données, appeler un service distant ou effacer ses propres traces à l'exécution. L'analyse statique, ligne par ligne, fournit presque toujours tout ce qu'il faut pour le rapport.
+
+## Collecte de preuves limitée au périmètre
+
+La collecte en post-exploitation ne vise pas à comprendre le système, elle vise à prouver un risque précis. La différence est capitale : comprendre vous pousse à tout regarder, prouver vous impose de ne prendre que ce qui sert la démonstration. Dans la pratique, cela signifie que vous avez défini avant la mission, avec votre commanditaire, le ou les fichiers témoins qui serviront de preuve : un fichier de configuration, un enregistrement de base de test, une page de contenu. Vous prouvez que l'accès permet de les lire ou de les modifier, et vous vous arrêtez là.
+
+La première règle est la proportionnalité. Si la démonstration exige de montrer qu'un compte peut lire un fichier, vous en prenez une copie du fichier autorisé, vous la rangez dans votre espace de travail, vous calculez son empreinte, et vous notez le chemin d'origine. Vous ne dupliquez pas le répertoire entier, vous ne compressez pas l'arborescence, vous n'emportez rien qui contienne des données de personnes. Une collecte qui déborde du périmètre transforme un audit en incident, et elle se voit immédiatement dans le rapport, par le volume anormal des pièces jointes.
+
+Le choix du témoin se prépare avec le client avant la mission, et il a plus d'importance qu'il n'y paraît. Un fichier modifié pendant des mois par un traitement automatique ne convient pas, car sa date de modification ne prouve rien de votre passage. Un fichier créé pour l'occasion, horodaté et nommé d'après la mission, donne en revanche une preuve limpide : vous pouvez montrer qu'il existait avant votre intervention, que vous y avez accédé, et qu'il est resté intact après. Demandez toujours un témoin dédié, plutôt que de choisir vous-même dans la production.
+
+```bash
+# Preuve minimale : copie, empreinte, horodatage, provenance
+SRC="/srv/data/fichier-temoin.txt"
+DST="$AUDIT_DIR/preuves/fichier-temoin.txt"
+mkdir -p "$AUDIT_DIR/preuves"
+
+cp -p "$SRC" "$DST"
+sha256sum "$SRC" "$DST" | tee "$AUDIT_DIR/preuves/empreintes.sha256"
+stat -c '%n | %U:%G | %a | %y' "$SRC" >> "$AUDIT_DIR/preuves/provenance.txt"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$AUDIT_DIR/preuves/acquisition.txt"
+```
+
+La seconde règle concerne l'intégrité de ce que vous produisez. Une preuve sans empreinte est une allégation ; une preuve avec empreinte, horodatée et conservée dans un répertoire d'affaire unique, est un élément défendable. Calculez l'empreinte immédiatement après la copie, enregistrez-la dans un fichier distinct, et ne modifiez plus jamais la pièce. Si vous devez la faire analyser par un collègue, vous lui transmettez l'empreinte en même temps que le fichier, de sorte que le contrôle puisse être refait indépendamment.
+
+La troisième règle touche à la vie privée et aux données de personnes, même dans un laboratoire. Vous vous entraînez sur des jeux de données fictifs, et si un environnement réel vous est confié, vous vous limitez aux éléments contractuellement prévus. Une capture d'écran qui montre une liste de noms réels, même sans intention malveillante, contient des données personnelles que vous n'avez pas le droit de conserver. Nettoyez vos captures, floutez ce qui n'est pas nécessaire, et joignez au rapport la liste exacte des pièces produites avec leur taille et leur empreinte.
+
+Le périmètre temporel compte autant que le périmètre fonctionnel. Une preuve se situe dans une période : celle du mandat. Un fichier modifié avant la période n'intéresse pas l'audit, un journal antérieur ne doit pas être exfiltré, et une donnée découverte par hasard hors période se signale sans être emportée. Notez systématiquement l'horodatage des éléments récoltés, en UTC, avec le fuseau d'origine quand il diffère : c'est ce détail qui permettra à un tiers de reconstituer votre séquence et de vérifier qu'elle ne déborde nulle part.
+
+Enfin, la collecte se pense comme un inventaire fermé. Vous ouvrez un registre au début de la mission, une ligne par pièce : identifiant, chemin d'origine, chemin de destination, heure, opérateur, empreinte, justification. Vous le refermez en fin de mission et vous y adjoignez le résultat de la vérification finale, c'est-à-dire la commande qui confirme que chaque empreinte enregistrée correspond toujours au fichier conservé. Cet inventaire devient l'annexe A du rapport, et il évite la question que tout commanditaire finit par poser : qu'avez-vous exactement emporté ?
+
+Le sort des pièces après la mission se décide lui aussi avant de commencer. Elles restent sur le poste de travail de l'audit, dans un répertoire chiffré si elles contiennent des informations sensibles, avec une durée de conservation fixée par le mandat. À l'échéance, vous les détruisez et vous en attestez la destruction par une ligne datée dans le registre. Une preuve conservée indéfiniment est un risque : elle expose le client, elle vous expose, et son existence non justifiée pèse davantage dans un litige que son absence au moment opportun.
+
+## Revêtement (defacement) dans le cadre d'un CTF
+
+Le revêtement, ou defacement, consiste à remplacer le contenu visible d'un site ou d'une application pour afficher un message à sa place. Dans le monde réel, c'est un acte de vandalisme numérique qui engage la responsabilité pénale de son auteur ; dans une compétition de type capture the flag, c'est une épreuve classique dont le but est de prouver que vous contrôlez la chaîne de publication. Nous n'étudions ici que ce second cadre, et uniquement : une machine qui vous appartient, une application de test, un contenu témoin dont vous détenez l'original. La section a pour objet d'apprendre à préparer une démonstration propre, réversible et horodatée, jamais à suggérer ce geste sur un service qui ne vous a pas été confié.
+
+Le premier réflexe est de faire une copie. Avant toute modification, vous enregistrez le contenu d'origine, son empreinte et sa date, dans votre répertoire de travail. Cette copie sert trois buts : elle vous permet de restaurer exactement l'état antérieur, elle prouve que vous n'avez pas fabriqué le contenu initial, et elle vous évite la discussion interminable sur ce que le site affichait avant votre passage. Une démonstration sans sauvegarde n'est pas réversible, et une démonstration non réversible ne relève pas d'un audit.
+
+```bash
+# Sauvegarde obligatoire avant toute modification
+WEBROOT="/var/www/football-lab/html"
+mkdir -p "$AUDIT_DIR/defacement"
+cp -a "$WEBROOT/index.html" "$AUDIT_DIR/defacement/index.html.orig"
+sha256sum "$WEBROOT/index.html" > "$AUDIT_DIR/defacement/index.html.sha256"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$AUDIT_DIR/defacement/avant.txt"
+```
+
+La seconde réflexion concerne le contenu lui-même. Un message de revêtement dans un cadre pédagogique reste factuel et neutre : identifiant de la mission, date en UTC, phrase indiquant que la page a été modifiée à titre de démonstration, référence du ticket d'audit. Pas d'insulte, pas de politique, pas d'image choquante, pas de signature personnelle. Vous écrivez ce que vous feriez devant un juge : que l'opération a eu lieu dans le cadre d'une mission autorisée, à une heure donnée, sur une machine désignée par le mandat.
+
+```html
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Demonstration - audit autorise</title>
+</head>
+<body>
+  <h1>Demonstration de controle</h1>
+  <p>Mission AUD-2026-10-09, operation realisee le 2026-10-09 a 14:05 UTC.</p>
+  <p>Contenu original conserve et empreinte disponible en annexe.</p>
+</body>
+</html>
+```
+
+Trois vérifications suivent l'écriture du fichier : le résultat s'affiche correctement, l'empreinte du nouveau contenu est enregistrée, et l'heure de la modification est notée à la seconde. Vous photographiez la page, vous joignez la capture au dossier, puis vous notez dans le journal l'identifiant de la session qui a effectué l'écriture. Cette triple preuve, contenu, empreinte, horodatage, fait la différence entre une plaisanterie et une démonstration professionnelle.
+
+La restauration se prépare en même temps que la modification. Vous testez la commande de retour avant d'aller plus loin, vous vous assurez que la sauvegarde est lisible, puis vous relevez l'état du service après remise en place : réponse HTTP, contenu affiché, absence d'erreur dans les journaux. Un client retient rarement la réussite d'une intrusion ; il retient en revanche très bien la qualité du retour à la normale, qui démontre que vous maîtrisiez votre opération du début à la fin.
+
+Enfin, une frontière à ne jamais franchir : le revêtement d'un service en production, même pour rire, même avec l'accès verbal de quelqu'un, n'a sa place dans aucun scénario légitime. Hors mandat écrit, il constitue une atteinte aux systèmes, expose l'organisation à une interruption de service et vous expose personnellement. Si un exercice de formation vous demande ce geste, exigez un environnement isolé, un contenu témoin et une heure de replanification ; sinon, déclinez et proposez une démonstration sur copie.
+
+## Assainissement : remettre le laboratoire en état
+
+L'assainissement est la phase la plus souvent bâclée, parce qu'elle n'apporte rien de spectaculaire et que l'enthousiasme de la fin de mission est déjà retombé. Pourtant c'est elle qui décide de la qualité perçue de tout le reste. Un environnement rendu exactement dans son état initial, avec un journal de remise en état vérifiable, transforme une mission correcte en mission dont on reparlera. Un environnement laissé avec trois fichiers de plus, un compte oublié et une tâche planifiée déclenchera, à la première alerte, un incident qui vous concernera personnellement.
+
+La méthode tient en un principe : vous ne nettoyez pas au jugé, vous exécutez la liste inverse de celle que vous avez tenue. Chaque action consignée pendant la mission possède, dans votre journal, une ligne de contre-mesure correspondante. Une clé ajoutée, elle est retirée et la retraite est vérifiée. Un fichier créé, il est supprimé avec sa trace d'accès. Un service redémarré, il est vérifié dans son état. Un compte modifié, la modification est annulée et le mot de passe d'origine, s'il a été changé, est rétabli selon la procédure convenue.
+
+```bash
+# Contre-mesures, dans l'ordre inverse du journal
+grep -q 'cle_audit' "$HOME/.ssh/authorized_keys" 2>/dev/null && \
+  sed -i '/cle_audit/d' "$HOME/.ssh/authorized_keys"
+
+test -f "$AUDIT_DIR/sandbox/demo-cron.txt" && rm -rf "$AUDIT_DIR/sandbox"
+test -f /tmp/agent_audit.sh && rm -f /tmp/agent_audit.sh
+
+# Verification : rien ne subsiste hors du repertoire de mission
+find /tmp /var/tmp -maxdepth 1 -name '*audit*' -o -name '*agent*' 2>/dev/null
+crontab -l 2>&1 | grep -c 'audit' || true
+```
+
+Le périmètre de l'assainissement dépasse vos seuls artefacts. Vous avez aussi modifié l'état du système par le simple fait d'agir : des journaux ont été écrits, des dates d'accès ont bougé, des caches ont été remplis, des processus ont été lancés, une session a existé. Vous ne rembobinez pas ces effets, et c'est très bien ainsi : vous les décrivez. Un paragraphe intitulé effets de bord, dans le rapport, listant ce qui a inévitablement changé, rassure davantage qu'un rapport qui prétend n'avoir rien touché.
+
+La vérification finale se fait en trois contrôles que vous exécutez devant témoin quand c'est possible. Premier contrôle : état des services, en comparant la liste des services actifs relevée au début et celle relevée à la fin. Deuxième contrôle : intégrité des fichiers de configuration, par comparaison d'empreintes relevées au démarrage de la mission. Troisième contrôle : liste des comptes et des clés, comparée à l'inventaire initial. Chaque comparaison produit une ligne de sortie que vous joignez au journal d'assainissement.
+
+```bash
+# Trois controles de fin de mission, compares aux releves d'ouverture
+systemctl list-units --type=service --state=running --no-pager \
+  | sort > "$AUDIT_DIR/fin_services.txt"
+diff "$AUDIT_DIR/debut_services.txt" "$AUDIT_DIR/fin_services.txt" && echo "services OK"
+
+grep -v '^#' "$AUDIT_DIR/debut_empreintes.sha256" | sha256sum -c - && echo "config OK"
+
+getent passwd | cut -d: -f1 | sort > "$AUDIT_DIR/fin_comptes.txt"
+diff "$AUDIT_DIR/debut_comptes.txt" "$AUDIT_DIR/fin_comptes.txt" && echo "comptes OK"
+```
+
+Un mot sur les redémarrages, qui sont l'arme la plus efficace et la plus risquée de la phase finale. Redémarrer un service efface son état en mémoire, coupe les connexions en cours et parfois démasque une erreur de configuration que personne n'attendait. Ne redémarrez que ce que vous avez vous-même redémarré pendant la mission, et toujours après avoir annoncé l'heure prévue au responsable de la machine. Un redémarrage non planifié sur une machine de production peut coûter plus cher que la faille que vous êtes venu démontrer.
+
+Enfin, la remise en état se clôt par un document, pas par une impression. Le journal d'assainissement contient l'heure de début, l'heure de fin, l'opérateur, la liste des contre-mesures exécutées, le résultat des trois contrôles et les exceptions éventuelles, c'est-à-dire ce qui n'a pas pu être restauré et pourquoi. Vous le signez, vous le transmettez avec le rapport, et vous gardez votre exemplaire. C'est ce document qui vous protège le jour où une anomalie signalée trois mois plus tard remontera jusqu'à vous.
+
+## Effets de bord et traçabilité de vos actions
+
+Les effets de bord sont les modifications involontaires qu'une opération provoque chez celui qui la subit. Ils ne relèvent pas de la malveillance, mais ils existent et ils se voient : journaux d'authentification garnis, fichiers dont la date de dernier accès a bougé, caches d'application rafraîchis, fichiers temporaires, connexions ouvertes, paquets envoyés sur le réseau, mémoire occupée par vos outils. Un rapport qui les ignore laisse le client découvrir, seul, que quelque chose s'est passé sur sa machine.
+
+Il est utile de les classer en trois familles, car elles appellent des réponses différentes. Les effets d'enregistrement sont inévitables et se décrivent : toute commande écrit quelque part. Les effets d'état se réparent : un fichier déplacé, un service arrêté, une configuration modifiée. Les effets de performance se mesurent : charge CPU supplémentaire, bande passante consommée, espace disque occupé par vos fichiers de travail. Chaque famille trouve sa place dans le rapport, avec la manière dont vous l'avez limitée.
+
+```bash
+# Ce que vos propres actions ont produit comme traces
+last -F | head -n 5
+journalctl --since "$DEBUT_UTC" --until "now" --no-pager | wc -l
+du -sh "$AUDIT_DIR"
+
+# Fichiers que vous avez crees ou modifies, a lister pour le rapport
+find "$AUDIT_DIR" -type f -printf '%TY-%Tm-%TdT%TH:%TM:%TSZ %p\n' | sort
+```
+
+La traçabilité complète, elle, repose sur un principe simple : tout ce que vous exécutez doit pouvoir être relu par une personne qui n'était pas présente. Dans la pratique, cela signifie que vous capturez la sortie de chaque commande significative dans un fichier daté, que vous notez l'heure en UTC avant et après chaque étape importante, et que vous reliez ces fichiers à une ligne de journal. Le lecteur doit pouvoir reconstituer votre séquence sans vous appeler, et obtenir la même réponse que vous en relançant la commande dans le même état.
+
+```bash
+# Format d'une entree de journal, ecrite au moment du fait
+log_step() {
+  printf '%s | %s | %s | %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$AUDITEUR" "$1" "$2" \
+    >> "$AUDIT_DIR/journal_bord.log"
+}
+
+log_step "enumeration" "fiche identite et reseau recueillie"
+log_step "privilges" "sudo -l effectue, droits limits a find"
+log_step "preuve" "fichier temoin copie, empreinte sha256 enregistree"
+```
+
+L'image ci-dessous illustre le dernier volet de cette discipline : l'atelier de restitution, où les journaux, les captures et les empreintes sont revus et archivés avant transmission. C'est le moment où l'on découvre qu'une commande exécutée le matin n'a été ni capturée ni horodatée. Il est trop tard pour la refaire proprement ; il ne l'est pas pour la signaler comme lacune. Mieux vaut une ligne de journal disant que la sortie n'a pas été conservée qu'une ligne inventée après coup.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Computer_Investigations_and_Analysis_Division_%2838318207684%29.jpg/960px-Computer_Investigations_and_Analysis_Division_%2838318207684%29.jpg
+| Revue et archivage des pièces avant restitution : les journaux, captures et empreintes sont relus ensemble, puis scellés pour la remise.
+```
+
+Une dernière habitude vaut d'être prise dès la première mission : celle du résumé de fin de journée. Cinq minutes, en fin de session, pour relire votre journal, compléter les lignes manquantes, joindre les sorties oubliées et écrire trois phrases sur ce qui reste à faire. Ce rituel compense l'essentiel des oublis, car la mémoire d'une journée d'audit se dégrade en quelques heures, et c'est précisément au moment de la rédaction que l'absence d'une heure exacte devient coûteuse.
+
+## Rendre compte : le rapport de ce qui a été touché
+
+Le rapport de mission est le seul livrable que le commanditaire conserve après votre départ. Il doit répondre à trois questions sans ambiguïté : qu'avez-vous fait, qu'avez-vous constaté, et qu'est-ce qui a changé sur nos systèmes. La structure la plus sûre tient en six parties, dans cet ordre : résumé en un paragraphe, périmètre et mandat, méthodologie employée, actions réalisées avec leurs preuves, effets de bord et assainissement, recommandations priorisées. Les annexes contiennent les journaux, les empreintes et les captures.
+
+La partie actions réalisées se présente idéalement sous forme de tableau, une ligne par opération, avec heure en UTC, machine, commande ou méthode, résultat et référence de la preuve associée. Ce tableau est le cœur du document, car c'est lui qu'un tiers relira en priorité. Rédigez-le avec des verbes précis, lu, copié, comparé, redémarré, et non des adjectifs. Chaque ligne doit pouvoir être vérifiée dans une annexe ; s'il n'existe pas de preuve, la ligne ne figure pas au tableau, elle figure dans la rubrique des limites.
+
+```table
+| Heure UTC | Machine | Action | Resultat | Preuve |
+|---|---|---|---|---|
+| 09:12 | serveur-web-01 | Relevé d'identite et de reseau | Fiche complete | annexe B1 |
+| 09:34 | serveur-web-01 | Lecture du fichier temoin | Acces confirme | annexe C1 |
+| 10:05 | serveur-web-02 | Test de deplacement par cle | Session ouverte | annexe D1 |
+| 14:05 | poste-test | Sauvegarde, modification, restauration | Page rendue a l'identique | annexe E1 |
+| 15:40 | ensemble | Controles d'assainissement | Aucune difference | annexe F1 |
+```
+
+La rubrique des effets de bord mérite un paragraphe entier, jamais une simple mention. Décrivez ce qui a inévitablement changé : journaux d'authentification enrichis, dates d'accès modifiées, caches rafraîchis, fichiers temporaires créés puis supprimés, services redémarrés avec l'heure exacte, charge d'observation pendant les phases d'énumération. Ce paragraphe rassure le lecteur technique, qui sait pertinemment qu'une opération sans effet de bord n'a probablement jamais eu lieu.
+
+Les recommandations concluent le rapport et doivent être priorisées, chiffrées et attribuables. Une recommandation sans responsable ni échéance est un vœu. Écrivez : corriger la règle sudo permettant find sur /srv/data, responsable le référent infrastructure, échéance quinze jours, vérification par rejeu de sudo -l. Chaque constat de la mission doit apparaître au moins une fois dans cette liste, sinon le lecteur se demandera pourquoi vous l'avez relevé.
+
+Le style, enfin, suit les mêmes règles que dans tout document opposable : phrases courtes, voix active, faits séparés des interprétations, limites affichées. Distinguez systématiquement ce qui est établi, ce qui est probable et ce qui n'est pas vérifié. Évitez les intensifs et les intentions : vous ne savez pas ce que voulait faire le responsable de configuration, vous savez seulement ce que permettait la configuration. Cette honnêteté de vocabulaire est ce qui fera tenir votre rapport face aux questions, et ce qui fera de vous un auditeur que l'on rappelle.
+
+## À retenir
+
+- La post-exploitation transforme un accès en démonstration : elle ne cherche ni à accumuler les privilèges, ni à collecter des données hors périmètre.
+- Avant toute commande, écrivez la question à laquelle elle répond ; une énumération sans question produit du bruit inexploitable.
+- L'ordre des privilèges est le même partout : sudo, puis droits de fichiers et SUID, puis capabilities, et seulement en dernier le noyau.
+- sudo -l, find -perm -4000 et getcap -r constituent les trois lectures fondamentales, et chacune se cite telle quelle dans le rapport.
+- Une escalade qui ne figure pas dans votre carte des vecteurs n'a pas sa place dans la mission : on l'ajoute, on demande, puis on décide.
+- Le noyau s'identifie, il ne s'exploite pas, sauf autorisation écrite et machine sacrifiable ; citez uname -r et la date du dernier redémarrage.
+- Le mouvement latéral avance une seule étape à la fois, avec journal d'étape et vérification du périmètre avant chaque déplacement.
+- La persistance est à éviter en audit : elle laisse une responsabilité résiduelle après le départ de l'auditeur.
+- La collecte se limite au fichier témoin convenu, avec copie, empreinte et horodatage ; jamais au répertoire entier.
+- Le revêtement n'existe que dans un CTF ou un bac à sable, avec sauvegarde préalable, contenu neutre et restauration vérifiée.
+- L'assainissement suit l'ordre inverse du journal et se clôt par un document signé, pas par une impression.
+- Le rapport distingue ce qui est établi, ce qui est probable et ce qui n'est pas vérifié, et il cite ses preuves.
+
+## Erreurs fréquentes
+
+- Piège : lancer un script d'énumération complet sans savoir ce qu'il fait. Correction : une commande par question, sortie capturée et datée.
+- Piège : conclure « la machine est vulnérable » à partir d'une version de noyau. Correction : écrire le correctif manquant et l'annonce de sécurité correspondante.
+- Piège : exploiter sudo pour obtenir un shell root alors que le constat demandé était la règle trop large. Correction : démonstration minimale, réversible, dans un répertoire de travail.
+- Piège : tester un identifiant trouvé sur une machine A sur une machine B non mentionnée dans le mandat. Correction : vérifier le périmètre avant chaque déplacement.
+- Piège : installer une clé « juste pour tester » et l'oublier. Correction : contre-mesure écrite en même temps que l'action, vérifiée à la fin.
+- Piège : emporter tout le répertoire de données pour montrer l'ampleur du risque. Correction : un fichier témoin, son empreinte, sa provenance.
+- Piège : restaurer le site sans avoir sauvegardé l'original. Correction : copie et empreinte avant toute écriture, test de la commande de retour.
+- Piège : affirmer n'avoir rien modifié alors que les journaux portent votre empreinte. Correction : rubrique effets de bord explicite et chiffrée.
+- Piège : reconstituer les heures après coup, à partir de la mémoire. Correction : journal tenu en UTC au moment du fait.
+- Piège : livrer un rapport sans annexe de preuves. Correction : chaque ligne du tableau renvoie à une annexe vérifiable.
+
+## Pour aller plus loin
+
+La documentation officielle de sudo constitue la meilleure entrée pour approfondir la première famille de vecteurs. Le manuel de la syntaxe de sudoers, consultable à l'adresse https://www.sudo.ws/docs/man/sudoers.man/, explique en détail ce que signifient les options de commande, les digests et les restrictions par hôte. Deux heures de lecture attentive vous donneront une lecture bien plus fine des sorties de sudo -l que n'importe quel article de synthèse, et vous verrez que la plupart des règles dangereuses résultent d'un raccourci de syntaxe plutôt que d'une intention.
+
+Pour la deuxième famille, le site GTFOBins, accessible à l'adresse https://gtfobins.github.io/, référence les binaires dont un usage détourné peut conduire à l'exécution de commandes ou à l'accès aux fichiers. Utilisez-le comme un catalogue de questions, pas comme une liste à dérouler : pour chaque binaire identifié sur votre machine de test, cherchez d'abord si les trois conditions du chapitre sont réunies, privilèges, entrée contrôlée, action utile. Le site Windows counterpart, à l'adresse https://lolbas-project.github.io/, prolonge la même méthode pour les systèmes Microsoft.
+
+Enfin, les référentiels de détection permettent de retourner le problème : au lieu de seulement exploiter les vecteurs, décrivez-les avec le vocabulaire de la défense. La matrice ATT&CK, consultable à l'adresse https://attack.mitre.org/, décrit les techniques d'élévation de privilèges et de mouvement latéral telles qu'un centre d'opérations de sécurité les voit. Pratiquez en rédigeant, pour chaque action de votre mission, la technique correspondante et le journal qui permettrait de la détecter : vous obtiendrez immédiatement un rapport que les équipes de surveillance sauront lire.
+
+## Et maintenant : passez à l'exercice pratique
+
+Vous disposez de l'ensemble du cheminement : cadrer, énumérer, hiérarchiser les voies de privilèges, démontrer au plus juste, éviter la persistance, limiter la collecte, exécuter un revêtement réversible dans un bac à sable, puis assainir, décrire vos effets de bord et rendre compte. L'exercice qui accompagne ce chapitre vous demandera d'appliquer cette chaîne complète sur un laboratoire isolé constitué pour l'occasion, en produisant les livrables attendus : fiche machine, carte des vecteurs, journal de bord en UTC, preuves empreintées, journal d'assainissement et rapport final.
+
+Avant de commencer, relisez une seule chose : la frontière du périmètre. Tout ce qui la franchit, même par curiosité légitime, même avec un résultat spectaculaire, détruit la valeur de tout le reste. Le quiz qui suit vérifiera précisément ces arbitrages : l'ordre des voies d'élévation, le statut de la persistance en audit, la composition d'une preuve recevable et la manière correcte de rendre compte des effets de bord. Après l'exercice et le quiz, poursuivez le parcours Cybersécurité offensive : la discipline acquise ici, une question par commande, une preuve par constat, une contre-mesure par action, se retrouvera dans tous les volets suivants.

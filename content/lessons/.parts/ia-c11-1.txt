@@ -1,0 +1,115 @@
+Bienvenue au dernier chapitre du parcours Intelligence artificielle et Data Science. Vous avez franchi, au chapitre 7, la frontière qui sépare le notebook du service : vous avez écrit une API de prédiction, donné à chaque artefact un numéro et une empreinte, observé les réponses en production et appris à décider d'un réentraînement. Au chapitre 8, vous vous êtes frotté à l'IA générative, ces systèmes dont la qualité dépend autant du contexte qu'on leur fournit que du modèle lui-même. Il reste une étape, et c'est elle qui sépare une démonstration réussie d'un outil sur lequel l'organisation peut compter : transformer cette chaîne artisanique en usine. C'est le sens exact du mot MLOps, contraction de apprentissage machine et d'opérations : appliquer à l'entraînement des modèles l'exigence que l'on applique depuis dix ans au déploiement du logiciel.
+
+À la fin de cette leçon, vous saurez faire trois choses, et vous les aurez déjà manipulées dans du code exécutable. Premièrement, vous reproductibiliserez un entraînement : même graine, même environnement, mêmes données, donc mêmes métriques, à la virgule près, sur la machine de votre collègue comme sur la vôtre. Deuxièmement, vous versionnerez données et modèles avec la rigueur que Git impose au code, jusqu'à pouvoir répondre à la question qui arrive toujours un lundi matin : avec quelles données ce modèle a-t-il été appris ? Troisièmement, vous installerez une surveillance de dérive en production, capable de distinguer une distribution d'entrées qui bouge d'une relation entre entrées et cible qui se rompt, et de lancer une alerte avant que le métier ne s'en aperçoive.
+
+Le fil rouge de ce chapitre est un modèle de crédit. Il estime la probabilité de défaut d'un emprunteur à partir de son revenu, son ancienneté, son endettement et son historique de paiement. Il n'a rien d'exotique : c'est le cas type de l'industrie, celui où l'on remet le modèle en production chaque semaine parce que les données, les taux et les comportements changent en continu. Toutes les notions abordées ici — graine, empreinte de données, pipeline, registre, déploiement progressif, PSI, test de Kolmogorov-Smirnov, contrat de données, intégration continue — seront posées sur ce terrain, puis vérifiées sur le vôtre.
+
+Un mot sur la manière d'aborder ce cours. Le MLOps s'apprend comme un métier d'atelier : en exécutant, en cassant, en réparant. Nous avancerons par étapes courtes, en alternant explications, cas concret, tableaux de synthèse et blocs de commande à reproduire tels quels. Gardez une règle simple en tête : un modèle qui ne se reproduit pas n'est pas un modèle, c'est un coup de chance ; un modèle qui se reproduit mais ne se surveille pas n'est pas un service, c'est une bombe à retardement. Tout ce chapitre tient dans ces deux phrases.
+
+## Pourquoi industrialiser : du prototype au service fiable
+
+La première raison d'industrialiser est la régression silencieuse. Dans un notebook, si le résultat change d'un jour à l'autre, vous le voyez parce que vous relancez la même cellule et que l'affichage vous saute aux yeux. En production, personne ne relance rien : les données arrivent, le service répond, les courbes défilent, et c'est trois semaines plus tard, lorsqu'un indicateur métier a déjà baissé, qu'on remonte le fil. L'industrialisation commence donc par un acte de foi méthodologique : figer ce qui doit l'être pour que tout ce qui bouge soit suspect, et non l'inverse.
+
+La seconde raison est l'échelle. Le prototype appartient à une personne qui connaît le détail de chaque décision prise en chemin : le filtre appliqué ici, la variable abandonnée là, le seuil choisi après trois tentatives. L'usine appartient à une équipe, qui change, qui se suit, qui prend des congés, et dont la mémoire institutionelle ne survit pas à trois mois sans trace écrite. Ce que vous n'avez pas versionné, testé et documenté, votre successeur le redécouvrira par erreur, souvent le vendredi après-midi.
+
+La troisième raison est la confiance, et elle se mesure plus facilement qu'on ne le croit. Un modèle industriel se caractérise par des propriétés vérifiables : on peut dire quelle version tourne, on peut la remplacer sans coupure, on peut revenir en arrière en moins de cinq minutes, on peut expliquer une décision contestée en retraçant l'entrée, le prétraitement et le poids utilisé. Aucune de ces propriétés n'est spectaculaire ; toutes sont absentes d'un notebook livré par fichier.
+
+Le tableau suivant met face à face les deux régimes. Servez-vous-en comme d'un diagnostic : si vous vous reconnaissez dans la colonne de gauche sur trois lignes au moins, votre chaîne a besoin du présent chapitre.
+
+| Aspect | Prototype en notebook | Chaîne industrialisée |
+|---|---|---|
+| Exécution | Manuelle, relancée à la main | Déclenchée par événement ou planifiée |
+| Résultat | Variable selon la machine et l'humeur des bibliothèques | Reproduit à l'identique, vérifié par empreinte |
+| Données | Fichier local, parfois modifié à la main | Jeu versionné, immuable, référencé par hash |
+| Modèle | Dossier écrasé à chaque essai | Registre avec états, historique et retour arrière |
+| Changement | Réécriture opportuniste | Branche, revue, tests, déploiement progressif |
+| Panne | Découverte par un utilisateur | Détectée par une surveillance, avant l'utilisateur |
+| Responsabilité | La personne qui a écrit le code | L'équipe qui assure le service |
+
+Une précision s'impose avant d'aller plus loin, car le mot MLOps est souvent vendu trop grand. Industrialiser ne signifie pas tout automatiser. Certaines décisions restent humaines et doivent le rester : publier un modèle en production, changer un seuil de risque, accepter une baisse de métrique compensée par un gain métier, décider qu'une dérive est une nouveauté légitime plutôt qu'un incident. L'automatisation porte sur la préparation, les tests, la mesure et la remontée d'information ; elle libère du temps pour les décisions, elle ne les remplace pas. Un pipeline qui publie tout, tout le temps, sans regard humain, n'est pas industriel : c'est une machine à diffuser des erreurs.
+
+Enfin, notez que rien de ce qui suit n'exige une grande infrastructure. Les commandes de ce chapitre tournent sur un poste de développement, les exemples de pipeline tiennent en quelques dizaines de lignes, et la surveillance de dérive tient en un script Python de moins de cent lignes. Ce qui change avec l'industrialisation, ce n'est pas le matériel, c'est la discipline : tout est nommé, tout est versionné, tout est rejouable, tout est mesuré.
+
+## Reproductibilité : graine, environnement, données
+
+Reproduire un entraînement, c'est pouvoir le relancer dans six mois et obtenir exactement la même métrique, ce qui suppose de maîtriser toutes les sources d'aléa. Il en existe quatre grandes, et chacune appelle un contrepoids distinct. La première est l'aléa algorithmique : initialisation des poids, mélange des échantillons, découpage en sous-ensembles, sélection aléatoire d'hyperparamètres. On la neutralise par des graines. La seconde est l'aléa d'environnement : version de la bibliothèque, version de l'interpréteur, options de compilation, nombre de threads. On la neutralise en figeant l'environnement. La troisième est l'aléa de données : un fichier ré-extrait, une ligne corrigée à la main, un ordre de lecture différent. On la neutralise en versionnant les données. La quatrième, plus insidieuse, est l'aléa matériel : le même code, sur deux processeurs différents, peut produire des résultats différant au dernier chiffre significatif, par l'ordre des opérations flottantes.
+
+Commençons par la graine. Un générateur pseudo-aléatoire n'est pas vraiment aléatoire : c'est une suite déterministe qui part d'une graine. Si vous fixez la graine, la suite est la même à chaque exécution, sur toute machine. En Python pur, cela se fait avec le module random ; avec NumPy, par l'objet générique de génération ; avec scikit-learn, par le paramètre random_state de chaque estimateur, qui doit être posé explicitement, estimateur par estimateur. Le bloc suivant est la mise en place minimale que vous devriez copier en tête de tout script d'entraînement.
+
+```python
+import os
+import random
+
+# 1. Graine d'interpréteur : doit être fixee AVANT l'import de numpy/sklearn,
+#    car elle influence l'ordre de traitement de certains hashages.
+os.environ["PYTHONHASHSEED"] = "0"
+random.seed(42)
+
+# 2. Graine explicite pour chaque estimateur, pas seulement au debut du fichier.
+from sklearn.ensemble import RandomForestClassifier
+
+modele = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=1)
+
+# 3. n_jobs=1 : le parallelisme peut changer l'ordre d'addition des gradients
+#    et faire diverger les resultats au dernier chiffre.
+modele.fit(X_train, y_train)
+print("metrique figee :", round(modele.score(X_valid, y_valid), 6))
+```
+
+Le détail du n_jobs mérite d'être compris, parce qu'il contredit l'intuition. On croit volontiers que paralléliser n'altère que la vitesse ; en réalité, agréger des contributions dans un ordre différent modifie, à la septième décimale, la somme des flottants. Cette différence se propage ensuite, et un entraînement long peut finir par produire un modèle mesurablement distinct. Pour un travail de recherche, cela n'a pas d'importance ; pour une chaîne qui promet la reproductibilité, cela invalide la promesse. La règle : graines partout, exécution séquentielle pendant l'entraînement, parallélisme réservé à l'inférence.
+
+Vient l'environnement, qui est la cause la plus fréquente de non-reproductibilité observée sur le terrain. Votre script tourne aujourd'hui avec la version 1.5 de la bibliothèque ; votre collègue l'installe la semaine suivante et obtient la 1.6, qui a changé un comportement par défaut. Rien n'erre, aucune alerte ne se déclenche, mais les métriques ne sont plus comparables. La parade consiste à déclarer l'environnement comme du code : un fichier de dépendances verrouillé, généré une fois, commité, régénéré seulement quand on le décide. Trois outils se partagent le marché ; ce qui compte, c'est le principe, pas la marque.
+
+```bash
+# 1. Declaration de l'environnement, versionnees dans le depot
+uv pip compile requirements.in -o requirements.lock
+pip install -r requirements.lock
+
+# 2. Empreinte exacte, enregistree dans le registre a chaque entrainement
+python -c "import sys, sklearn, numpy; print(sys.version); print('numpy', numpy.__version__); print('sklearn', sklearn.__version__)"
+
+# 3. Verification du determinisme : deux executions, une empreinte comparee
+python train.py --seed 42 --out run_a.pkl
+python train.py --seed 42 --out run_b.pkl
+sha256sum run_a.pkl run_b.pkl
+```
+
+Attention à une limite honnête : deux empreintes identiques prouvent que le traitement est déterministe, pas que le modèle est bon. La reproductibilité est un prérequis, pas une métrique. Elle vous garantit que toute différence de performance vient d'une décision que vous avez prise, et non du hasard ; c'est déjà énorme, mais cela ne dit rien de la qualité du modèle.
+
+Le troisième pilier est le plus souvent négligé : la donnée elle-même. Un modèle est la function de trois entrées — code, environnement, données — et versionner les deux premières ne sert à rien si la troisième dérive. Si votre script relit à chaque exécution un entrepôt dont on peut réinsérer, corriger ou supprimer une ligne, alors votre résultat n'est pas reproductible, il est simplement coincé à une date. C'est pourquoi la section suivante est consacrée au versionnage des données : sans lui, la graine et le verrou d'environnement ne fabriquent qu'une reproductibilité de façade.
+
+## Versionner les données : Git ne suffit plus
+
+Git est un outil merveilleux pour du texte, et parfaitement inadapté aux données d'entraînement. Un jeu de crédit de quelques gigaoctets dépasse très vite les limites pratiques du dépôt ; un fichier binaire ne se diffume pas ligne à ligne, donc l'historique devient illisible ; surtout, des données clients contiennent souvent des informations personnelles qu'aucune configuration ne doit faire voyager dans un dépôt public. On ne met donc pas les données dans Git, mais on leur applique exactement la même discipline : chaque état reçoit une référence unique, chaque changement est tracé, chaque version est restaurable.
+
+Le principe le plus simple, et souvent le plus suffisant, est l'empreinte. On calcule une somme de contrôle sur chaque fichier — SHA-256 pour les fichiers, somme des empreintes pour un dossier — et on enregistre cette valeur dans un manifeste versionné avec le code. Si une seule ligne change, l'empreinte change, et le manifeste le dit. Le modèle peut alors déclarer non pas « entraîné sur les données du jour » mais « entraîné sur le jeu dont l'empreinte est 9f2c… », ce qui est vérifiable, comparable et définitif.
+
+```bash
+# Empreinte d'un jeu de donnees et enregistrement dans le manifeste
+sha256sum data/credit_train.csv > data/credit_train.sha256
+git add data/credit_train.sha256 train.py requirements.lock
+git commit -m "jeu d'entrainement v3 + scripts associés"
+
+# Avec un outil de versionnage de donnees (DVC) : le fichier part au stockage
+# distant, le depot Git ne garde que le pointeur et le pipeline
+dvc add data/credit_train.csv
+dvc push
+dvc dag                     # graphique des dependances data -> modele
+dvc exp run -S modele.depth=12   # experiment avec parametres traces
+dvc exp show                # tableau des metriques par experience
+```
+
+La distinction à retenir entre Git et un outil comme DVC tient en une phrase : Git versionne le texte, l'outil de versionnage de données place les gros fichiers dans un stockage distant et ne laisse dans le dépôt qu'un petit fichier pointeur. Vous gardez donc l'historique lisible, la collaboration sur le code, et en même temps la capacité à restaurer n'importe quel jeu d'entraînement, y compris celui d'il y a dix-huit mois, utilisé par un modèle toujours en service.
+
+Au-delà du mécanisme, c'est la sémantique qui compte. Versionner n'est utile que si l'on sait quoi regarder. Quatre informations doivent accompagner tout jeu utilisé pour entraîner un modèle en production, et leur absence se paie toujours tôt ou tard.
+
+| Information | Forme concrète | Question à laquelle elle répond |
+|---|---|---|
+| Empreinte | SHA-256 du fichier ou du dossier | Ce fichier a-t-il changé depuis la dernière fois ? |
+| Périmètre | Filtres, plage de dates, sélection de colonnes | Quelles lignes entrent réellement dans l'apprentissage ? |
+| Découpage | Indices ou clés d'affectation entraînement, validation, test | Un échantillon a-t-il fui d'un ensemble à l'autre ? |
+| Origine | Système source, date d'extraction, responsable | Où aller chercher les données manquantes ? |
+
+Le découpage mérite une insistance particulière, parce qu'il est la source d'une famille entière d'erreurs silencieuses. Si vous redécoupez aléatoirement votre jeu à chaque exécution, l'échantillon de test change, la métrique de référence bouge, et vous finissez par comparer deux modèles sur deux examens différents. Le découpage doit être une fonction déterministe de la clé primaire de l'observation — un hachage de l'identifiant, par exemple — de sorte que chaque client appartienne toujours au même ensemble, quelle que soit la date d'extraction. Cette seule mesure élimine la contamination entre entraînement et test, qui gonfle systématiquement les métriques et fait apparaître des gains qui n'existent pas.
+
+Un dernier point sur la durée de vie des données. Un jeu d'entraînement n'est pas une archive morte : tant qu'un modèle entraîné dessus sert encore, ce jeu reste un élément de production, avec ses contraintes de confidentialité et de disponibilité. Il faut donc décider, à l'avance, de la durée de rétention et de la manière de le restaurer, y compris après le départ de la personne qui l'a créé. Testez cette restauration dès maintenant, sur un jeu ancien : si vous n'arrivez pas à le récupérer en dix minutes, votre registre de modèles est une vitrine, pas une garantie.

@@ -1,0 +1,161 @@
+## À chacun sa structure : list, set, dict, deque en pratique
+
+La table de complexité donne les ordres de grandeur ; cette section montre les décisions concrètes qu'elle impose. Première décision : séparer le stockage de l'index. Une liste d'inscrits sert à afficher les noms dans l'ordre, à les compter, à les parcourir une fois ; elle ne sert pas à répondre mille fois à la question « cet élève y figure-t-il ? ». Dès que la question se pose à l'intérieur d'une boucle, il faut un ensemble construit une seule fois, avant la boucle. Cette seule distinction explique la quasi-totalité des ralentissements que vous rencontrerez dans vos projets de données.
+
+Le cas du collège se réécrit en douze lignes. La version initiale, écrite au chapitre quatre avec les outils de l'époque, parcourt la liste des inscrits pour chaque note ; la version corrigée construit un ensemble au démarrage du rapport. Les deux produisent exactement le même fichier, ce que garantit un test de comparaison exécuté avant et après.
+
+```python
+# Avant : une recherche linéaire à chaque note, O(n × m)
+for note in notes:
+    if note.matricule in inscrits:          # inscrits est une liste
+        lignes.append(formater(note))
+
+# Après : un index construit une fois, O(n + m)
+index = set(inscrits)
+for note in notes:
+    if note.matricule in index:
+        lignes.append(formater(note))
+```
+
+Le tableau suivant chiffre la différence sur les volumes réellement rencontrés dans l'application du collège, avec le temps du rapport complet plutôt que celui de l'appel isolé, car c'est ce chiffre que l'utilisateur perçoit.
+
+| Élèves | Notes à traiter | Avant (liste) | Après (ensemble) | Facteur |
+|---|---|---|---|---|
+| 150 | 6 000 | 0,8 s | 0,3 s | ×2,7 |
+| 300 | 13 000 | 4,2 s | 0,7 s | ×6 |
+| 600 | 27 000 | 41,7 s | 1,1 s | ×38 |
+| 1 200 | 55 000 | estimation O(n²) hors mémoire | 2,3 s | — |
+
+La croissance de la colonne de gauche suit le carré du nombre d'élèves ; la colonne de droite suit une droite. C'est la différence entre une complexité quadratique et une complexité linéaire, et elle ne se corrige pas par un micro-détail de syntaxe, seulement par le choix d'une structure.
+
+Deuxième décision : la file de traitement. Quand vous consommez des éléments dans l'ordre où vous les recevez et que vous retirez toujours par l'avant, list.pop(0) est un piège, car chaque retrait décale tous les autres éléments. deque.popleft() conserve la sémantique d'une file en O(1), et sa signature de mémoire est modeste. Le passage s'opère sans changer la logique du programme : on remplace la classe et l'on remesure.
+
+```python
+from collections import Counter, defaultdict, deque
+
+file = deque(lignes_brutes)
+while file:
+    ligne = file.popleft()
+    if ligne:
+        file.extend(lire_suite(ligne))
+
+par_classe = defaultdict(list)
+for eleve in effectif:
+    par_classe[eleve.classe].append(eleve.nom)
+
+absences = Counter(e.classe for e in eleves_absents)
+```
+
+Troisième décision : le regroupement. Un dictionnaire de listes bâti à la main, avec la vérification de clé absente écrite trois fois, est plus lent et plus brouillon que defaultdict, tandis que Counter répond directement à la question « combien de fois chaque valeur apparaît-t-elle », en une passe et en O(n). Ces deux classes de la bibliothèque standard ne sont pas des raccourcis de confort : elles déplacent la boucle dans du code C déjà testé par des millions d'utilisateurs, ce qui est à la fois plus rapide et plus lisible.
+
+L'écart entre list.pop(0) et deque.popleft() mérite d'être chiffré, car il illustre une leçon plus vaste : le choix d'une structure n'est pas un détail d'implémentation, c'est une décision d'algorithme. Sur une file de dix mille éléments vidée intégralement, la version basée sur la liste doit déplacer l'intégralité des pointeurs à chaque retrait, ce qui donne un coût quadratique ; la version basée sur deque conserve un coût linéaire. La mesure est stable d'une machine à l'autre, seul le facteur change.
+
+```python
+import timeit
+from collections import deque
+
+DONNEES = list(range(20000))
+
+def avec_liste():
+    copie = list(DONNEES)
+    while copie:
+        copie.pop(0)
+
+def avec_deque():
+    copie = deque(DONNEES)
+    while copie:
+        copie.popleft()
+
+print("pop(0)    ", min(timeit.repeat(avec_liste, number=20, repeat=3)) / 20)
+print("popleft() ", min(timeit.repeat(avec_deque, number=20, repeat=3)) / 20)
+```
+
+Quatrième décision, et non la moindre : garder la liste quand elle est la bonne réponse. Si vous devez afficher les résultats dans l'ordre, indexer le troisième élément, les trier, ou les parcourir une seule fois, la liste reste imbattable, y compris pour une recherche unique dans une petite collection. Le choix d'une structure n'est jamais une question de principe, c'est une question de fréquence : combien de fois la question se pose-t-elle, par rapport à combien d'éléments. Posez-vous ces deux chiffres avant de changer quoi que ce soit.
+
+```image
+python-logo
+| Le logo du langage Python : les structures de la bibliothèque standard suffisent à écrire un code rapide, à condition de les choisir selon leur coût réel.
+```
+
+## Compréhensions, générateurs et mémoire
+
+Les compréhensions de liste font deux choses à la fois : elles écrivent plus court et elles s'exécutent plus vite. La raison est interne : la boucle d'une compréhension est implémentée par des opcodes dédiés du bytecode, alors qu'une boucle explicite passe par l'appel répété de la méthode append, avec la recherche d'attribut qui accompagne chaque appel. Le gain n'est pas spectaculaire, souvent entre dix et trente pourcent sur une boucle simple, mais il est gratuit : il ne coûte ni lisibilité, ni maintenabilité.
+
+La mesure est facile à reproduire, et je vous invite à le faire plutôt qu'à me croire. Comparez la construction d'une liste de mille carrés par boucle avec append et par compréhension, dans des conditions identiques, avec le même nombre d'exécutions et la même sortie attendue.
+
+```python
+import timeit
+
+boucle = timeit.repeat(
+    "r = []\nfor i in range(1000):\n    r.append(i * i)",
+    number=2000, repeat=5,
+)
+comprehension = timeit.repeat("[i * i for i in range(1000)]", number=2000, repeat=5)
+print(f"boucle        : {min(boucle) / 2000 * 1e6:.0f} µs")
+print(f"compréhension : {min(comprehension) / 2000 * 1e6:.0f} µs")
+```
+
+Les compréhensions existent aussi pour les dictionnaires et les ensembles, avec la même économie de syntaxe et le même gain interne : une compréhension de dictionnaire bâtit un index en une passe, et une compréhension d'ensemble élimine les doublons sans écrire de boucle de gestion des clés. Attention toutefois au coût mémoire de ces formes : elles matérialisent le résultat complet, comme leur cousine de liste. Construire un ensemble de mille références est anodin ; en construire un de dix millions pour en tester l'appartenance une seule fois revient à payer la mémoire du tri à l'avance. Dans ce cas, si le tri est réellement nécessaire, il est justifié ; s'il ne sert qu'une fois, il faut revoir l'algorithme plutôt que la structure.
+
+La limite de la compréhension, c'est qu'elle construit toujours une liste complète en mémoire. Mille éléments ne posent aucun problème ; cinquante millions, oui, et c'est le moment où le code « rapide » devient un code qui plante. C'est là qu'interviennent les générateurs, dont vous avez découvert le principe quand vous avez parlé d'itérateurs : une fonction qui yield ne calcule une valeur que lorsqu'on la demande, et n'en conserve qu'une à la fois. Le coût devient constant, indépendant du nombre de lignes du fichier, au prix d'une contrainte simple : on ne peut parcourir un générateur qu'une seule fois.
+
+```python
+def lignes_valides(chemin):
+    """Parcourt le fichier une ligne à la fois, sans le charger en mémoire."""
+    with open(chemin, encoding="utf-8") as fichier:
+        for ligne in fichier:
+            if ligne.strip() and not ligne.startswith("#"):
+                yield ligne.rstrip("\n")
+
+total = sum(1 for _ in lignes_valides("effectif.csv"))
+```
+
+Le chiffre à retenir se mesure avec tracemalloc, et il est sans appel : charger effectif.csv de cent mille lignes dans une liste de chaînes consomme environ soixante mégaoctets, tandis que le générateur de l'exemple reste sous un mégaoctet, quel que soit le fichier. La vitesse, elle, est comparable, parfois légèrement en faveur du générateur puisqu'il n'alloue pas la liste entière. Le compromis est donc binaire : vous voulez parcourir une fois, travaillez en flux ; vous voulez trier, filtrer plusieurs fois ou connaître la longueur, il vous faut une liste, et vous assumez la mémoire.
+
+Le tableau suivant résume cette frontière pour trois situations typiques d'un projet de données. Il ne remplace pas une mesure sur vos propres fichiers, mais il indique de quel côté commencer.
+
+| Situation | Structure adaptée | Mémoire | Raison |
+|---|---|---|---|
+| Lire un fichier de cent mille lignes pour en calculer un total | Générateur | Bornée | Une seule ligne en mémoire à la fois |
+| Filtrer, trier puis réutiliser plusieurs fois | Liste | proportionnelle au résultat | Les données doivent exister physiquement |
+| Regrouper des milliers d'enregistrements par clé | dictionnaire de listes | proportionnelle aux groupes | Accès direct par clé, parcours unique des valeurs |
+
+Deux pièges de lecture accompagnent les générateurs. Le premier est la tentative d'indexer ou de mesurer la longueur d'un générateur, qui lève une erreur : si vous en avez besoin, convertissez explicitement en liste et acceptez le coût. Le second est plus insidieux : reconstruire une structure coûteuse à l'intérieur du générateur. Une expression du type `x for x in donnees if x in index` ne pose aucun problème si index est construit une fois avant, mais devient un O(n²) désastreux si la construction de l'index figure dans la boucle elle-même ; la règle reste la même que précédemment, on bâtit l'index une seule fois, puis on l'utilise.
+
+Les itérateurs de la bibliothèque standard complètent la boîte à outils et se composent entre eux sans jamais construire la liste entière : chain réunit plusieurs sources, islice prélève une tranche, groupby regroupe des éléments déjà triés, zip_longest aligne des séquences de longueurs différentes. Combinés aux compréhensions, ils permettent d'écrire des traitements entiers en flux, lisibles d'une ligne à l'autre, et dont la mémoire reste bornée quelle que soit la taille des données. C'est l'architecture qui convient au rapport du collège, où l'on écrit ligne à ligne un fichier qui peut contenir cent mille notes.
+
+## Miser sur la mémoïsation : functools.lru_cache
+
+Certaines fonctions, rappelées avec les mêmes arguments, refont exactement le même travail. C'est fréquent dans vos calculs : une fonction qui détermine la classe d'une note, qui convertit un matricule en identifiant interne, qui applique une table de correspondance ou qui relit une configuration. lru_cache automatise la mémoire de ces résultats : le premier appel exécute la fonction et conserve le résultat dans un dictionnaire interne, les suivants renvoient directement la valeur conservée, sans refaire le calcul. L'acronyme LRU désigne la politique de remplacement retenue, « least recently used », qui écarte en priorité la valeur la plus anciennement consultée quand la limite est atteinte.
+
+L'usage tient en une ligne, et la limite de taille se règle par argument. Le choix du maxsize n'est pas anodin : trop petit, il impose des effacements répétés qui annulent l'intérêt de la mémoire ; trop grand, il laisse la mémoire croître librement. Si chaque entrée pèse quelques octets et que le nombre de clés est naturellement borné, une valeur de 1024 ou 4096 convient ; si les clés dépendent d'un fichier entier, réfléchissez deux fois avant de laisser la cache sans limite avec functools.cache.
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=2048)
+def mention(note):
+    """Calcule la mention d'une note — fonction pure, args hachables."""
+    if note >= 16:
+        return "Très bien"
+    if note >= 14:
+        return "Bien"
+    if note >= 12:
+        return "Assez bien"
+    if note >= 10:
+        return "Passable"
+    return "Insuffisant"
+
+print(mention.cache_info())
+# CacheInfo(hits=119987, misses=13, maxsize=2048, currsize=13)
+```
+
+Le rapport d'informations hits et misses est le vrai indicateur de qualité : une mémoïsation qui affiche plus de succès que de manques apporte quelque chose, une qui enregistre une nouvelle entrée à chaque appel ne fait que consommer de la mémoire. Mesurez-le, ne le supposez pas. Dans le rapport du collège, la fonction de classification des notes, appelée cent vingt mille fois pour douze valeurs différentes, est passée de 1,2 seconde à moins de dix millisecondes, sans changer une ligne de la logique métier.
+
+Trois conditions doivent être vérifiées avant d'ajouter ce décorateur, sous peine de produire un bug plutôt qu'un gain. D'abord la pureté : la fonction ne doit ni modifier ses arguments, ni écrire dans un fichier, ni afficher, ni dépendre du temps ou d'une variable globale changeante, car aucun de ces effets ne se reproduira aux appels suivants. Ensuite l'hachabilité : les arguments doivent pouvoir servir de clé, ce qui exclut les listes et les dictionnaires, qui leveront un TypeError explicite. Enfin l'immuabilité de l'entourage : si la fonction lit une table qui peut être modifiée pendant l'exécution, la cache conservera une valeur périmée, et il faudra appeler cache_clear() au bon moment, ce qui est exactement le genre de détail oublié trois mois plus tard.
+
+La mémoïsation est également sans effet quand la fonction n'est appelée qu'une fois, quand ses arguments sont toujours neufs, ou quand le coût réel vient d'un réseau ou d'un disque que la mémoire ne supprime pas : dans ce dernier cas, c'est un cache de résultats externes qu'il faut, avec une politique d'expiration que vous construirez vous-même. Enfin, une mémoïsation mal bornée se paie en mémoire : une fonction dont les arguments sont des tuples de données massives accumulera des entrées jusqu'à faire tomber le service. Vérifiez donc la taille courante avec cache_info() et surveillez-la comme vous surveillez le reste.
+
+La vérification finale est un test, et il doit être écrit avant la ligne décorateur. On exécute la fonction une première fois sans cache, on efface le cache, on appelle avec les mêmes arguments, puis on compare les deux résultats ; on répète l'opération sur un jeu d'arguments limites, valeurs négatives, zéro, bornes exactes d'un seuil. Ce test sert à deux choses : il prouve que la mémoïsation n'a pas altéré le comportement, et il documente le fait que la fonction est censée être pure. Si le test échoue parce que la fonction dépend d'un contexte extérieur, la bonne décision n'est pas de le contourner, c'est de retirer le décorateur.
+
+Voici la discipline complète, à appliquer dans l'ordre : profiler pour confirmer que la fonction domine réellement le temps ; vérifier qu'elle est pure et que son jeu d'arguments est petit ; ajouter le décorateur avec une taille bornée ; mesurer le nouveau temps et le ratio hits sur misses ; écrire un test qui prouve l'équivalence des résultats avec et sans cache. Si l'une des étapes échoue, revenez en arrière : une optimisation qui exige de contourner une garantie de correction n'en est pas une, c'est un défaut reporté.

@@ -1,0 +1,611 @@
+Bienvenue dans le troisième chapitre du parcours Arduino et ESP32, consacré aux afficheurs et aux bus de communication. Les deux chapitres précédents vous ont appris à faire réagir la carte à son environnement : faire clignoter une LED, lire un bouton, mesurer une tension avec un convertisseur analogique-numérique et piloter un actionneur en modulation de largeur d'impulsion. Tout cela se passait en silence, entre votre carte et vos composants. Ce chapitre change d'échelle : il ajoute deux capacités indispensables à tout objet connecté, la capacité de montrer quelque chose à l'humain et la capacité de discuter avec d'autres circuits. Vous y découvrirez l'écran LCD 16x2, dans sa version parallèle historique comme dans sa version I2C que vous rencontrerez partout, puis le bus I2C dans sa totalité, le bus SPI avec la carte mémoire qui l'illustre le mieux, et enfin le port série asynchrone qui reste l'outil de débogage le plus puissant à votre disposition.
+
+À la fin de cette leçon, vous saurez faire des choses très concrètes, toutes testables sur votre paillasse en une dizaine de minutes. Vous câblerez un écran LCD 16x2 en mode parallèle avec six fils de données, puis vous le recâblerez en I2C avec deux fils seulement en utilisant un expandeur PCF8574. Vous écrirez du texte, positionnerez le curseur ligne par ligne, effacerez proprement un écran et créerez des caractères personnalisés tels qu'un cœur, une flèche ou une jauge de batterie. Vous balayerez le bus I2C pour découvrir les adresses des appareils présents, vous décoderez un capteur en lisant ses registres un par un, puis vous utiliserez le SPI pour écrire et relire un fichier sur une carte SD. Enfin, vous ferez dialoguer deux cartes par leur port série et vous choisirez le bon bus pour un projet donné en comparant leurs forces et leurs limites. Chaque compétence est montrée en code complet, puis réutilisée dans un exemple plus large.
+
+La méthode de travail que nous suivrons est la même que dans les chapitres précédents, parce qu'elle a fait ses preuves : on comprend d'abord le principe physique ou protocolaire, on regarde ensuite un exemple minimal qui fonctionne tel quel, puis on l'enrichit jusqu'à obtenir un utilisateur réel. Rien dans ce chapitre suppose des connaissances en électronique avancée : les seules notions requises sont celles des deux premiers chapitres, à savoir câbler une résistance, configurer une broche en entrée ou en sortie, et écrire une boucle. Le fil rouge de la leçon sera une petite station d'affichage : un écran LCD qui montre des mesures, un capteur branché sur le même bus I2C que l'écran, une carte SD qui archive les mesures sur le bus SPI, et un moniteur série qui reçoit le tout. Vous construirez cette station bribe par bribe, et vous la retrouverez entière dans l'exercice pratique du chapitre. Une seule règle avant de commencer : testez chaque bus isolément avant de les assembler. Un bus I2C mal câblé qui refuse de démarrer se diagnostique en trente secondes avec un scanner, alors que le même bus couplé à quatre autres composants vous coûtera une heure.
+
+## Pourquoi afficher et faire communiquer
+
+Un système embarqué sans afficheur est un système muet. Il fonctionne peut-être parfaitement, il mesure juste, il commande bien, mais l'utilisateur n'en sait rien : ni l'état du programme, ni la valeur mesurée, ni le fait qu'une panne vient de se produire. Ajouter un écran transforme immédiatement la perception du projet : on passe d'une boîte noire à un appareil avec lequel on dialogue. C'est la raison pour laquelle l'affichage figure parmi les premières fonctions des objets que l'on rencontre au quotidien, du thermostat mural à l'étal de caisse, en passant par le compteur de kilomètres. Pour apprendre, l'afficheur joue un second rôle, tout aussi important : il rend vos programmes observables sans ordinateur. Vous pouvez débrancher le câble USB, alimenter la carte en pile, emporter votre montage et vérifier qu'il se comporte comme prévu. Cette autonomie est un véritable changement de posture.
+
+Le deuxième motif qui pousse à ajouter un écran est temporaire mais décisif pendant l'apprentissage : remplacer le moniteur série. Le moniteur série reste votre meilleur allié, mais il exige un ordinateur relié, un logiciel ouvert et une fenêtre visible. Or de nombreux défauts n'apparaissent qu'une fois la carte autonome, précisément au moment où le moniteur n'est plus là. Un afficheur embarqué devient alors le journal de bord du système : il affiche les valeurs en continu, les compteurs d'exécution, les messages d'erreur et les étapes du démarrage. Le réflexe à acquérir est simple : affichez d'abord sur l'écran ce que vous cherchez à comprendre, puis, si le détail vous manque, basculez sur le port série pour voir les valeurs brutes à haute fréquence. Les deux se complètent au lieu de se concurrencer.
+
+Passons au second thème du chapitre, les bus de communication. Le problème qu'ils résolvent est arithmétique et très simple à énoncer. Un microcontrôleur comme l'Arduino Uno dispose d'environ vingt broches utilisables, et certaines sont réservées à des fonctions spécifiques. Un écran LCD en mode parallèle en consomme déjà six. Un capteur numérique en demande quatre. Une carte mémoire en réclame quatre autres. Si chaque composant récluait son propre lot de fils, vous atteindriez la limite de la carte en branchant trois périphériques, et vous feriez face à un faisceau de câbles ingérable. Les bus résolvent ce problème en partageant un même jeu de fils entre plusieurs composants, à la manière d'une route unique desservant plusieurs maisons. Chaque composant reçoit une identité, un message lui est adressé, et tous les autres font semblant de ne rien entendre.
+
+Trois grandes familles de bus structurent l'électronique amateur et industrielle, et chacune possède son territoire. Le bus I2C, prononcé i²c et littéralement inter-integrated circuit, utilise deux fils d'information, un pour l'horloge et un pour les données, et fait cohabiter une dizaine d'appareils grâce à un système d'adresses. Il est simple, économe en broches et suffisant pour la majorité des capteurs, des écrans, des horloges temps réel et des expandeurs d'entrées-sorties. Le bus SPI, pour serial peripheral interface, utilise quatre fils et va beaucoup plus vite, mais il faut une ligne de sélection distincte pour chaque appareil supplémentaire ; il est donc réservé aux échanges volumineux ou très rapides, comme une carte mémoire ou un écran graphique. Le port série asynchrone UART, enfin, ne relie que deux appareils, sans horloge partagée, et reste le moyen le plus universel de discuter avec un module externe ou avec l'ordinateur.
+
+Voici, sous forme de repères rapides, ce que chaque solution apporte concrètement. Ces chiffres ne sont pas à apprendre par cœur, ils servent à orienter un choix de conception.
+
+- I2C : deux fils de signal, adresses sur sept bits, fréquence courante de 100 kHz ou 400 kHz, idéal pour de nombreux capteurs lents.
+- SPI : quatre fils de signal par appareil sélectionné, fréquences de plusieurs mégahertzs, échanges en pleine duplex, idéal pour la mémoire et les écrans.
+- UART : deux fils croisés plus une masse commune, pas d'horloge partagée, vitesse convenue entre les deux parties, idéal pour le débogage et les modules sans fil.
+- Bus parallèle d'écran : six à huit fils pour un seul appareil, historiquement répandu, aujourd'hui remplacé au profit de l'I2C dans les projets d'apprentissage.
+
+Les sites officiels des fabricants, par exemple www.arduino.cc pour la documentation des bibliothèques et www.espressif.com pour la documentation de l'ESP32, décrivent chacun de ces protocoles avec des diagrammes de temporisation que vous pourrez consulter plus tard. Inutile de les lire maintenant : la pratique que vous allez faire vous donnera d'abord l'intuition, la théorie détaillée viendra se poser dessus beaucoup plus facilement.
+
+## L'écran LCD 16x2 en mode parallèle
+
+L'écran que vous allez utiliser est un module LCD 16x2, c'est-à-dire un afficheur à cristaux liquides capable d'afficher seize caractères sur deux lignes. À l'intérieur, un contrôleur de type HD44780, devenu un standard de fait, prend en charge l'essentiel du travail : il contient une mémoire de caractères, un générateur qui transforme chaque code en motif de pixels, les circuits de gestion du rétroéclairage et les registres de commande. Vous n'écrivez jamais pixels par pixels. Vous envoyez des octets, et le contrôleur s'occupe du reste. Chaque caractère s'affiche sur une grille de cinq colonnes sur huit lignes, dont six lignes sont visibles, ce qui donne ce rendu légèrement anguleux si caractéristique des afficheurs industriels. Le contrôleur possède en mémoire une table complète de caractères romains, des flèches, les symboles japonais Kana, et réserve huit emplacements que vous pouvez redéfinir vous-même.
+
+Le branchement d'un écran en mode parallèle comporte douze pistes, certaines absolument nécessaires, d'autres réglables. Les deux premières sont l'alimentation : la broche de masse et la broche de cinq volts. La troisième, souvent appelée V0 ou Vo, règle le contraste. Elle se connecte au curseur d'un potentiomètre de dix kiloohms, lui-même pris entre l'alimentation et la masse : c'est l'un des réglages les plus souvent oubliés, et pourtant un potentiomètre mal positionné donne un écran totalement vide alors que tout fonctionne. Viennent ensuite les commandes : RS distingue une donnée d'une commande, RW indique s'il s'agit d'une lecture ou d'une écriture, et E reçoit l'impulsion de validation. En pratique, RW est presque toujours relié à la masse, car on n'a que rarement besoin de lire ce que l'écran contient.
+
+Les huit broches de données D0 à D7 transportent le contenu. Dans le mode historique, on les utilise toutes ; dans le mode courant, on ne se sert que des quatre hautes, ce qui fait passer le nombre de fils de commande de six à deux. Les deux dernières pistes sont le rétroéclairage : une anode et une cathode, entre lesquelles on place en série une résistance de deux cent vingt ohms pour limiter le courant. Voici la table complète des connexions pour un Arduino Uno.
+
+```table
+| Broche de l'écran | Rôle | Connexion sur l'Uno |
+| --- | --- | --- |
+| VSS | masse | GND |
+| VDD | alimentation | 5 V |
+| V0 | contraste | curseur du potentiomètre 10 k |
+| RS | sélection donnée ou commande | broche 12 |
+| RW | lecture ou écriture | GND |
+| E | impulsion de validation | broche 11 |
+| D4 à D7 | données (mode 4 bits) | broches 5, 4, 3 et 2 |
+| A et K | rétroéclairage | 5 V et GND via 220 ohms |
+```
+
+
+La bibliothèque LiquidCrystal livrée avec l'environnement Arduino prend en charge ce protocole. Vous l'incluez, vous déclarez un objet en lui indiquant l'ordre des broches, et vous disposez de méthodes très lisibles. L'exemple suivant affiche deux phrases puis les remplace après quatre secondes.
+
+```cpp
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.setCursor(0, 0);
+  lcd.print("Bonjour !");
+  lcd.setCursor(0, 1);
+  lcd.print("Carte prete");
+  delay(4000);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Etape 2");
+}
+
+void loop() {
+}
+```
+
+Le mot-clé begin reçoit le nombre de colonnes puis le nombre de lignes et prépare l'afficheur dans le bon mode. Le curseur s'exprime en colonnes de zéro à quinze, puis en lignes, zéro pour la ligne du haut et un pour celle du bas. L'instruction clear efface tout et ramène le curseur à la position zéro, ce qui explique pourquoi un appel clear suivi d'un setCursor redondant ne fait aucun mal mais reste inutile. Notez enfin que rien n'est affiché avant que vous n'écriviez quelque chose : l'alimentation allume le rétroéclairage, elle ne remplit pas l'écran.
+
+Il existe une variante de ce branchement que l'on rencontre sur presque tous les kits vendus à distance : le mode 8 bits. Il utilise l'intégralité des broches D0 à D7 et ajoute deux fils de plus. Son intérêt historique tenait à la simplicité du logiciel, à une époque où la mémoire du microcontrôleur se comptait en octets. Aujourd'hui, la mémoire ne pose plus la question et le gain de deux broches est bien réel, si bien que le mode 4 bits est devenu la norme de fait. La bibliothèque s'en occupe elle-même : quand vous appelez begin avec six paramètres, elle configure automatiquement le transfert par nibbles.
+
+Le passage en mode 4 bits mérite d'être compris plutôt que subi, car il illustre une idée que vous retrouverez partout dans ce chapitre : économiser des fils se paie toujours par un protocole un peu plus riche. Au lieu d'envoyer un octet complet en une fois, la bibliothèque découpe l'octet en deux moitiés de quatre bits, envoie la première, pulse la ligne de validation, envoie la seconde, puis pulse à nouveau. Deux impulsions au lieu d'une, mais deux fils de sauvés sur la carte. Le contrôleur HD44780 sait faire cela de naissance : il existe même une commande pour lui dire qu'il va désormais travailler en quatre bits.
+
+```cpp
+// Même montage, mais on déclare explicitement le mode 4 bits.
+// Les quatre derniers paramètres sont D4, D5, D6 et D7.
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+void setup() {
+  lcd.begin(16, 2, FOURBIT);
+  lcd.print("Mode 4 bits");
+}
+```
+
+Si votre montage est déjà câblé avec seulement les quatre broches de données, l'exemple ci-dessus fonctionne à l'identique à l'exemple précédent. C'est le même objet, le même appel, le même affichage. La seule différence se situe dans les impulsions envoyées par la bibliothèque, invisibles pour vous. Gardez néanmoins à l'esprit que quatre fils, cela reste quatre fils à raccorder, à suivre sur une nappe et à souder : c'est précisément cette comptabilité qui motive la version I2C de l'écran, à laquelle nous passons maintenant.
+
+## Le LCD piloté en I2C : deux fils
+
+Le module LCD I2C que l'on trouve partout aujourd'hui n'est pas un écran fondamentalement différent. C'est exactement le même afficheur HD44780, avec la même dalle, le même rétroéclairage et les mêmes seize caractères sur deux lignes. Ce qui change se situe entre l'écran et votre carte : une petite carte de circuit imprimé soudée au dos, un expandeur d'entrées-sorties de type PCF8574, qui reçoit des octets par le bus I2C et les redistribue sur les huit pistes de l'afficheur. L'expandeur joue les interprètes. Votre carte lui dit, sur deux fils, l'équivalent de mets la broche RS à un niveau bas et envoie le mot 0x32, et l'expandeur se charge de produire physiquement les tensions sur les pistes correspondantes. Le câblage se réduit alors à quatre fils au total : masse, alimentation, horloge et données.
+
+Le point délicat de cette architecture tient à l'adresse. Sur le bus I2C, chaque appareil possède un numéro, et ce numéro doit être unique tant que les appareils partagent le même bus. Les expandeurs PCF8574 proposent seize adresses possibles, obtenues en reliant ou non à la masse une famille de six broches de sélection présentes sur la puce. Sur les modules couramment vendus, ces broches sont soudées par défaut, si bien que deux adresses reviennent sans arrêt : 0x27 pour la variante PCF8574 classique et 0x3F pour la variante PCF8574A. Il arrive qu'un fournisseur propose 0x38 ou 0x20. Devant un écran qui n'affiche rien, la première question à se poser n'est donc pas quoi écrit au logiciel, mais quelle adresse l'appareil détient réellement, et la réponse s'obtient en balayant le bus, ce que nous verrons précisément dans la section consacrée au scanner.
+
+Le câblage du module tient en un minuscule connecteur à quatre pins. VCC se branche sur l'alimentation, GND sur la masse, SDA sur la ligne de données I2C et SCL sur la ligne d'horloge. Sur un Arduino Uno, SDA correspond à la broche A4 et SCL à la broche A5. Sur un ESP32, les valeurs par défaut sont la broche 21 pour SDA et la broche 22 pour SCL, mais toute autre paire de broches compatibles convient si vous la déclarez au démarrage. Retenez une règle de câblage commune à tout le bus I2C : les deux lignes de signal ont besoin de résistances de rappel vers l'alimentation. Sur les cartes Arduino, ces résistances sont intégrées, sur les montages très extensifs il faut parfois les ajouter, et c'est l'une des causes classiques d'un bus muet.
+
+La bibliothèque LiquidCrystal_I2C reprend exactement la même API que la précédente, ce qui est un vrai plaisir pédagogique : vous changez le câblage, pas vos habitudes de code. L'objet se déclare avec l'adresse, le nombre de colonnes et le nombre de lignes, puis begin initialise le contrôleur, backlight allume le rétroéclairage et les méthodes setCursor, print, clear fonctionnent à l'identique.
+
+```cpp
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+void setup() {
+  Wire.begin();
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("LCD sur I2C");
+  lcd.setCursor(0, 1);
+  lcd.print("Adresse 0x27");
+}
+
+void loop() {
+}
+```
+
+Deux détails de cet exemple méritent votre attention. Le premier est l'appel à Wire.begin : la bibliothèque I2C du contrôleur, contenue dans le fichier Wire.h, doit être démarrée avant tout échange, sinon les appels suivants ne produisent rien. La plupart des bibliothèques d'afficheur le font en interne, mais l'expliciter évite des heures de débogage lorsque vous composez votre propre code. Le second détail est la ligne lcd.init, qui envoie une séquence précise de commandes pour réveiller le contrôleur, le passer en mode quatre bits, régler le nombre de lignes et effacer l'écran. Sans cette séquence, l'écran reste vide même si le câblage et l'adresse sont corrects, ce qui le rend redoutablement difficile à diagnostiquer pour un débutant.
+
+La comparaison entre les deux approches se résume à un arbitrage. Le mode parallèle consomme six broches mais n'a besoin d'aucune bibliothèque extérieure et fonctionne sur n'importe quelle carte, y compris les plus anciennes. Le mode I2C consomme deux broches, ajoute une dépendance à une bibliothèque installée depuis le gestionnaire de bibliothèques, et impose de connaître l'adresse. Pour un projet qui doit garder ses doigts libres pour des capteurs, des actionneurs et des entrées, l'I2C s'impose. Pour un montage éducatif minimal, le parallèle reste excellent car il rend visibles les signaux sur un oscilloscope. Dans la suite de cette leçon, nous adoptons l'I2C comme référence, car il nous sert aussi à introduire le bus dans sa généralité.
+
+Un dernier conseil pratique, tiré de l'expérience de terrain, concerne le contraste. Sur le dos du module I2C, un petit potentiomètre molette, souvent bleu, règle la tension de la broche V0. Si l'écran s'allume avec des carrés pleins sur toute la ligne, tournez doucement ce potentiomètre dans un sens puis dans l'autre jusqu'à ce que les caractères deviennent nets. Si rien ne change, c'est que l'alimentation ou l'horloge manque, et il faut revenir au câblage. Ce réglage n'apparaît dans aucun programme, il ne figure sur aucun schéma de logiciel, et il cause pourtant la moitié des premiers messages d'entraide sur les forums. Vous venez d'apprendre le plus important : dans un problème d'afficheur, on vérifie d'abord l'alimentation et le contraste, ensuite l'adresse, enfin le logiciel.
+
+Vous savez maintenant brancher un écran et l'allumer. Il reste à en faire un véritable afficheur : y écrire des informations qui changent, les placer au bon endroit, effacer proprement entre deux mises à jour et ajouter quelques pictogrammes qui rendent la lecture immédiate. Cette première moitié de leçon développe ces réflexes, avant que la seconde moitié ne vous emmène à l'intérieur du bus I2C lui-même. La progression est volontaire : on apprend d'abord à se servir d'un périphérique, puis on comprend comment il reçoit vos ordres. Cette démarche, utilisée à l'envers, c'est-à-dire la théorie puis la pratique, fonctionne nettement moins bien dans l'embarqué, parce que rien de ce qui se passe entre la carte et le composant n'est visible sans instrument de mesure.
+
+## Afficher comme un pro : texte, curseur et effacement
+
+L'instruction la plus utilisée reste l'affichage d'une valeur, et sa forme la plus robuste consiste à réécrire la même zone de l'écran à chaque mise à jour plutôt que d'effacer tout à chaque fois. L'effacement intégral produit un clignotement perceptible, car l'écran se vide puis se remplit à une vitesse que l'œil suit sans difficulté. La méthode professionnelle consiste à placer le curseur à une position fixe, à réécrire la chaîne complète sur une longueur connue, puis à terminer par des espaces qui balayent les caractères résiduels lorsque la nouvelle valeur est plus courte que l'ancienne. Si la température passait de 100.0 à 99.5, l'ancien zéro resterait visible sans cette manœuvre. Un espace de trop ne se voit jamais, un caractère orphelin se remarque aussitôt.
+
+```cpp
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+float valeur = 123.45;
+
+void setup() {
+  lcd.begin(16, 2);
+}
+
+void loop() {
+  lcd.setCursor(0, 0);
+  lcd.print("Valeur : ");
+  lcd.print(valeur);
+  lcd.print("     ");
+  valeur -= 10.0;
+  delay(500);
+}
+```
+
+Les autres méthodes de la bibliothèque méritent d'être passées en revue une fois pour toutes, car leur nom décrit exactement leur rôle. setCursor reçoit la colonne puis la ligne, toutes deux numérotées à partir de zéro, et déplace le curseur sans toucher au contenu. clear efface l'intégralité de l'écran et ramène le curseur en haut à gauche, ce qui la distingue d'un simple retour en début de ligne. home fait exactement ce dernier déplacement sans effacer. scrollDisplayLeft et scrollDisplayRight décalent tout le contenu d'une colonne, ce qui permet d'afficher des phrases plus longues que seize caractères en les faisant défiler. display allume l'afficheur et hide le rétail sans couper le rétroéclairage, une distinction utile pour économiser l'énergie sur un objet alimenté par pile. Enfin, autorscroll fait défiler automatiquement la ligne en cours, mais son rythme est difficile à maîtriser, si bien qu'un défilement manuel piloté par millis reste préférable dans un programme qui doit rester réactif.
+
+La gestion du temps dans un programme d'affichage pose une question que vous avez déjà rencontrée : faut-il utiliser delay. La réponse est non dès que le programme doit faire autre chose en parallèle. Un délai bloquant pendant quatre secondes empêche le microcontrôleur de lire un capteur, de surveiller un bouton ou de répondre sur le port série. La bonne pratique consiste à mémoriser la date du dernier rafraîchissement avec millis, puis à comparer à chaque passage de la boucle. L'affichage se produit lorsqu'un intervalle est écoulé, et pendant l'intervalle la boucle reste libre. Ce motif, que le chapitre sur les automates traitera en profondeur, s'applique immédiatement ici et transforme un exemple pédagogique en code exploitable.
+
+Un point sur la conversion des nombres s'impose également. La fonction print accepte un entier, un décimal et un texte, mais elle n'offre aucun contrôle sur le nombre de décimales affichées. Un flottant tel que 23,499999 s'affiche avec autant de chiffres que la représentation interne en produit, ce qui déborde instantanément d'une ligne de seize caractères. Les bibliothèques Arduino fournissent à cet effet la méthode print avec un second paramètre numérique, qui indique le nombre de décimales à conserver. Une température se lit très bien avec une décimale, une pression avec zéro, et la largeur de l'affichage reste maîtrisée. Vérifiez toujours que la ligne reste dans la largeur utile : au-delà de la seizième colonne, les caractères sont simplement perdus, sans message d'erreur et sans avertissement.
+
+La deuxième ligne de l'écran mérite une attention particulière dans les interfaces simples. Elle accueille traditionnellement l'information secondaire, celle qui change rarement ou qui qualifie la première ligne : l'unité, l'état du système, le nom de la grandeur mesurée. Un bon réflexe d'ergonomie consiste à écrire cette ligne une seule fois au démarrage, puis à ne plus la toucher, en se contentant de rafraîchir la première. On réduit ainsi de moitié les écritures sur le bus, donc le temps passé hors boucle principale, et l'écran cesse de trembloter. Quand la seconde ligne doit elle-même varier, remplacez le contenu de manière atomique, c'est-à-dire en réécrivant toute la ligne d'un bloc avec remplissage d'espaces plutôt qu'en écrivant seulement les nouveaux caractères.
+
+L'ordre d'écriture dans la mémoire de l'afficheur suit une contrainte physique qu'il est utile de connaître. L'écran possède deux zones correspondant aux deux lignes, et la mémoire du contrôleur réserve un emplacement de départ pour chacune d'elles. Les appels à setCursor expriment un index dans cette mémoire, pas une position géométrique sur la dalle. Pour une ligne de seize caractères, la correspondance est directe et vous n'aurez jamais à y penser. Si vous utilisiez un afficheur de vingt caractères ou une dalle de quatre lignes, il faudrait vérifier le mappage, car certains modèles physiques relient les lignes dans un ordre inattendu. Cette subtilité n'apparaît pas dans les tutoriels et constitue une des causes rares d'un affichage dont la troisième ligne s'affiche à la mauvaise place.
+
+## Créer des caractères personnalisés
+
+Tous les afficheurs de cette famille partagent une table de caractères gravée en mémoire, mais ils offrent aussi huit emplacements modifiables par l'utilisateur. C'est un avantage sous-estimé : il suffit d'y décrire un motif pour disposer d'une flèche, d'un thermomètre, d'une cloche, d'un niveau de batterie ou d'un cœur, et d'obtenir une interface qui se lit sans traduction. Le motif se définit pixel par pixel sur une grille de cinq colonnes par huit lignes, dont la dernière ligne sert d'espace de séparation entre deux glyphes voisins. Chaque ligne est codée sur cinq bits, que l'on écrit commodément en binaire avec le préfixe 0b, et l'ensemble des huit lignes forme un tableau d'octets.
+
+```cpp
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
+
+byte coeur[8] = {
+  0b00000,
+  0b01010,
+  0b11111,
+  0b11111,
+  0b01110,
+  0b00100,
+  0b00000,
+  0b00000
+};
+
+byte fleche[8] = {
+  0b00100,
+  0b00110,
+  0b11111,
+  0b01110,
+  0b00100,
+  0b00100,
+  0b00000,
+  0b00000
+};
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.createChar(0, coeur);
+  lcd.createChar(1, fleche);
+  lcd.setCursor(0, 0);
+  lcd.write(byte(0));
+  lcd.print(" Tout va bien");
+}
+```
+
+La fonction createChar reçoit l'identifiant, de zéro à sept, et l'adresse du tableau. Le motif est ensuite copié dans la mémoire vive du contrôleur, où il reste jusqu'à la prochaine réinitialisation électrique. Pour l'afficher, on utilise write et non print : write transmet un code brut, alors que print s'attend à recevoir du texte et interpréterait le nombre comme un caractère de la table standard. Comme les codes de caractères personnalisés se situent dans une plage que le compilateur interprète parfois comme un caractère spécial, il est plus sûr de convertir explicitement l'identifiant en octet avant de l'appeler. Cette différence entre print et write est l'une des plus fréquentes entre les débutants qui voient s'afficher un signe étrange à la place de leur jolie icône.
+
+Dessiner un motif demande un peu de méthode. On commence par tracer la grille sur du papier, on coche les pixels allumés, puis on lit chaque ligne de gauche à droite en convertissant la suite de bits. Un cœur se dessine aisément parce qu'il est symétrique ; une flèche directionnelle gagne à être centrée sur les cinq colonnes ; une jauge horizontale se construit en remplissant progressivement les colonnes de gauche. L'astuce qui fait gagner du temps consiste à réutiliser un même motif pour plusieurs valeurs : une jauge de quatre états peut être simulée par quatre glyphes distincts numérotés de zéro à trois, ou par un seul glyph complété par des blocs pleins. Essayez d'abord avec le cœur de l'exemple, observez-le à l'écran, puis modifiez un bit et rechargez le programme : la boucle d'itération entre l'idée et l'écran est si courte qu'elle rend l'exercice presque ludique.
+
+Un avertissement pratique concerne l'endroit où déclarer ces tableaux. Placés en dehors de toute fonction, ils sont initialisés au démarrage et occupent la mémoire de données disponible. Sur une carte à faible mémoire, une dizaine de motifs commence à se faire sentir, mais sur les cartes modernes vous disposez d'une marge confortable. Si vous créez plusieurs afficheurs, souvenez-vous qu'ils partagent la même mémoire de caractères physiques : créer un motif pour le second écrase le motif correspondant du premier, à moins de gérer soi-même les huit emplacements. Enfin, la fonction createChar doit être rappelée après chaque réinitialisation matérielle de l'écran, car init l'envoie, la mémoire vive du contrôleur repart à zéro et vos icônes disparaissent au profit des caractères d'origine.
+
+## Anatomie du bus I2C
+
+Le bus I2C repose sur une idée à la fois élégante et très économique : deux fils suffisent pour faire converser une dizaine de circuits. Le premier porte l'horloge, étiqueté SCL pour serial clock, et le second porte les données, étiqueté SDA pour serial data. Aucun de ces fils n'est dédié à un composant particulier : ils sont connectés en parallèle sur tous les appareils présents. La difficulté que cette économie crée se règle par deux mécanismes complémentaires, l'adressage et la ligne ouverte. Le premier permet d'adresser un destinataire précis. Le second empêche deux circuits de se disputer le niveau électrique du même fil.
+
+```text
+        +5V
+         |
+        [4k7]   [4k7]          tensions de rappel
+         |        |
+ SDA  ---+--------+----------------+---------+---------
+         |        |                |         |
+       +---+    +---+            +---+     +---+
+       |   |    |   |            |   |     |   |
+       |27 |    |76 |            |3C |     |50 |
+       |   |    |   |            |   |     |   |
+       +---+    +---+            +---+     +---+
+         |        |                |         |
+ SCL  ---+--------+----------------+---------+---------
+         |        |                |         |
+       maitre   capteur          ecran     horloge
+       (Uno)   (BME280)        (LCD I2C)  (DS3231)
+
+ Adresses hexa : 0x27  0x76  0x3C  0x50
+```
+
+La ligne ouverte, appelée open drain en anglais, est le concept à assimiler si vous voulez comprendre les pannes de bus. Aucun appareil ne peut pousser activement un fil vers le haut : il peut seulement le tirer vers le bas ou le relâcher. Les résistances de rappel, les deux résistances vues en haut du schéma, ramènent le fil vers l'alimentation dès qu'aucun circuit ne l'appuie. Quand deux équipements veulent émettre en même temps, l'un tire vers le bas et l'autre relâche, sans jamais court-circuiter. C'est ce qui rend possibles les bus partagés et c'est aussi pourquoi un bus dont les résistances de rappel manquent reste bloqué à un niveau bas indéfiniment. Sur les cartes Arduino, ces résistances sont présentes sur la carte mère, mais sur un module extérieur ou un montage sur plaque à perfouser, il faut parfois les prévoir soi-même.
+
+Les adresses se codent généralement sur sept bits, ce qui autorise cent vingt-huit combinaisons, dont une partie est réservée. En pratique, une centaine d'adresses est utilisable, ce qui semble beaucoup pour un hobbyiste mais se révèle vite insuffisant dans l'industrie, où deux composants identiques sur le même bus deviennent alors un problème de câblage et non de logiciel. La convention d'écriture mélange deux notations : en hexadécimal avec le préfixe 0x, par exemple 0x27, ou en décimal avec le suffixe décimal, par exemple 39 pour le même numéro. Les bibliothèques acceptent l'une comme l'autre. Un conseil : adoptez l'hexadécimal, car les tableaux techniques des fabricants sont tous exprimés ainsi, et convertir mentalement à chaque lecture est une source d'erreurs inutiles.
+
+Le déroulement d'une transmission est toujours le même, et il vaut la peine d'être mémorisé sous forme de séquence. L'émetteur émet d'abord une condition de départ, caractérisée par la ligne de données qui tombe pendant que l'horloge reste haute. Il adresse ensuite le destinataire avec son numéro suivi d'un bit qui indique s'il veut lire ou écrire. L'esclave reconnu répond par un acquittement, appelé ACK, signalé par un niveau bas sur la donnée pendant un coup d'horloge. Les données suivantes voyagent octet par octet, chaque octet étant confirmé. Enfin, l'émetteur émet une condition d'arrêt, la remontée de la donnée pendant l'horloge haute. Toute une conversation tient dans cette trame, et les bibliothèques la gèrent intégralement : vous ne manipulez ces signaux à la main que lorsque vous cherchez à comprendre pourquoi rien ne fonctionne.
+
+```table
+| Notion | Signification | Conséquence pratique |
+| --- | --- | --- |
+| SCL | ligne d'horloge partagée | une seule source d'horloge, le maître |
+| SDA | ligne de données partagée | niveaux ouverts, rappel obligatoire |
+| 0x27 | adresse d'un expandeur PCF8574 | l'écran LCD I2C répond souvent ici |
+| 0x76 | adresse courante d'un BME280 | à confirmer par le scanner |
+| ACK | accusé de réception | un octet envoyé ne prouve rien sans lui |
+```
+
+
+La fréquence du bus, appelée vitesse standard ou rapide selon les modèles, se situe le plus souvent à 100 kHz ou 400 kHz. Pour des capteurs et des écrans, ces débits sont largement suffisants : écrire seize caractères représente une vingtaine d'octets, donc quelques dizaines de microsecondes sur le fil. En revanche, la lecture d'un capteur à mesure rapide, l'échange avec un accéléromètre haute fréquence ou le pilotage d'une matrice de diodes commençent à saturer un bus à 100 kHz. Il est alors possible d'augmenter la vitesse, à condition que tous les appareils connectés la supportent. En cas de doute, restez à la vitesse standard : la fiabilité d'un bus vaut mieux que sa célérité.
+
+## Premiers échanges avec la bibliothèque Wire
+
+La bibliothèque Wire embarquée dans l'environnement Arduino résume toute cette mécanique en six ou sept appels. Elle prend en charge les conditions de départ et d'arrêt, les accusés de réception, la gestion du maître et même le rôle d'esclave si votre carte doit elle-même recevoir des ordres. Pour écrire chez un appareil, vous remplissez un tampon d'octets avec beginTransmission suivi de l'adresse, vous ajoutez les octets avec write, puis vous clôturez avec endTransmission qui renvoie zéro si l'appareil a répondu. Pour lire, vous demandez un nombre d'octets avec requestFrom, puis vous les récupérez un par un avec available et read. C'est l'intégralité du vocabulaire nécessaire.
+
+```cpp
+#include <Wire.h>
+
+void setup() {
+  Wire.begin();
+  Serial.begin(115200);
+  delay(1000);
+
+  Wire.beginTransmission(0x27);
+  Wire.write(0x00);
+  byte etat = Wire.endTransmission();
+  Serial.print("Reponse du peripherique : ");
+  Serial.println(etat);
+}
+
+void loop() {
+}
+```
+
+Le code de retour d'endTransmission mérite que l'on s'y arrête, car il contient la moitié de l'information diagnostique. Le zéro signifie que l'appareil à cette adresse a acquitté l'octet d'adresse. Un code de deux indique qu'aucun accusé de réception n'a été reçu, ce qui correspond très souvent à une adresse incorrecte ou à un appareil absent. Un code de trois signale que le bus a vu apparaître un bit d'accusé invalide, souvent dû à une ligne parasite. Un code de quatre traduit une condition de start transmise illégalement, typiquement quand une autre bibliothèque tient le bus pendant votre tentative. Un code de cinq indique que le bus est resté bloqué jusqu'à l'expiration du délai, ce qui ramène toujours au câblage et aux résistances de rappel. Lire ce chiffre plutôt que de supposer le succès fait gagner un temps considérable.
+
+L'ordre des appels comporte un piège classique : le tampon se vide à chaque clôture de transmission. Si vous appelez write plusieurs fois consécutivement sans endTransmission, tous les octets voyagent dans la même conversation, ce qui est souvent ce que vous voulez. En revanche, si vous intercalez une autre opération entre deux segments, le premier tampon est perdu. Une autre subtilité concerne la taille du tampon : la version Arduino classique accepte trente-deux octets par transmission, ce qui suffit largement pour un registre de capteur mais pas pour transférer une image ou un paquet volumineux. Lorsque vous manipulez des données plus longues, la découpez en plusieurs écritures adressées, ou vérifiez que la variante de la bibliothèque prévoit un tampon plus grand.
+
+Pour lire, requestFrom demande l'adresse puis le nombre d'octets attendus. Les octets arrivent dans le tampon de réception et vous les consommez avec read, après avoir vérifié available. Cette vérification n'est pas un formalisme : si l'appareil a répondu moins d'octets que demandés, appeler read sans contrôle renvoie des valeurs aberrantes qui se propagent ensuite dans vos calculs. Une lecture robuste vérifie toujours le nombre réellement reçu avant d'utiliser les données. C'est exactement le réflexe à prendre lorsque vous décrypterez un capteur dont les valeurs vous semblent incohérentes : le capteur n'est peut-être pas en cause, c'est peut-être le nombre d'octets lus qui diffère de celui que vous supposiez.
+
+Un dernier mot sur la cohabitation des bibliothèques. Une même carte peut piloter simultanément un écran LiquidCrystal_I2C, un capteur par une bibliothèque constructeur et une horloge temps réel, parce qu'ils partagent le même bus sans se gêner. Chacune appelle en interne les fonctions de Wire, ce qui suppose qu'aucune ne détient le bus indéfiniment. La plupart des bibliothèques bien écrites libèrent la transmission après chaque opération, mais certaines, anciennes ou mal conçues, laissent le bus verrouillé et bloquent toutes les suivantes. Si un composant cesse de répondre dès que vous en ajoutez un autre, testez-le isolément, puis testez-le à deux : le problème apparaissant seulement à l'assemblage désigne presque toujours une incompatibilité du logiciel de bibliothèque et non un défaut de câblage.
+
+Vous savez écrire chez un périphérique I2C et vous savez lire sa réponse. Il manque deux étapes décisives : la première consiste à découvrir ce qui est réellement connecté, la seconde à décoder un appareil dont personne n'a publié le mode d'emploi sous forme de fonctions toutes faites. Nous aborderons ensuite le second grand bus de ce chapitre, le SPI, plus rapide et plus mécanique, que vous mettrez en pratique avec une carte mémoire. La progression reste la même qu'auparavant : un outil de diagnostic d'abord, un échange brut ensuite, puis un nouveau protocole présenté avec la même rigueur.
+
+## Scanner le bus et diagnostiquer
+
+Le scanner I2C est l'outil le plus rentable du débutant en électronique communicante. Son principe tient en une ligne : pour chaque adresse de la plage utilisable, on tente une transmission et on observe si un accusé de réception revient. Si oui, un appareil est présent à cet endroit. Si non, l'adresse est libre. Trente lignes de code suffisent, et l'installation d'aucune bibliothèque n'est nécessaire. Le balayage part en général de la broche huit et va jusqu'à cent dix-neuf en décimal, ce qui couvre l'intégralité des adresses sur sept bits réservées aux composants usuels.
+
+```cpp
+#include <Wire.h>
+
+void setup() {
+  Wire.begin();
+  Serial.begin(115200);
+  Serial.println("Balayage du bus I2C...");
+}
+
+void loop() {
+  for (byte adresse = 8; adresse < 120; adresse++) {
+    Wire.beginTransmission(adresse);
+    byte erreur = Wire.endTransmission();
+    if (erreur == 0) {
+      Serial.print("Peripherique trouve a 0x");
+      if (adresse < 16) Serial.print("0");
+      Serial.println(adresse, HEX);
+    }
+  }
+  Serial.println("Balayage termine.");
+  delay(5000);
+}
+```
+
+L'interprétation des résultats suit un tableau simple. Une seule adresse révélée alors que vous avez branché deux appareils signale presque toujours un problème de câblage sur le second, une ligne coupée, deux fils inversés ou une alimentation manquante. Aucune adresse du tout oriente vers les trois coupables classiques : l'alimentation absente sur le module, les lignes SDA et SCL interverties, ou l'absence de tension de rappel sur un montage construit à la main. Enfin, une adresse qui apparaît puis disparaît d'un balayage à l'autre trahit un contact mécanique douteux ou un appareur qui redémarre en boucle, souvent par insuffisance d'alimentation lorsque l'ensemble est alimenté par un port USB faible. Un résultat stable et reproductible est le signe que le bus est sain.
+
+Le balayage a aussi une limite qu'il faut connaître pour ne pas en faire un oracle. Certains appareils ne répondent à une tentative d'écriture pure que pendant une fraction de seconde, d'autres imposent une condition particulière avant d'acquitter, et d'autres encore n'utilisent qu'une partie de leur adresse. Si un appareil ne figure pas au relevé, cela ne prouve pas qu'il est défectueux : cela prouve seulement qu'il n'a pas acquitté l'adresse essayée dans l'instant du test. La vérification définitive consiste alors à écrire un exemple constructeur minimal fourni par le fabricant, qui met généralement l'appareil dans un état où il répond. C'est d'ailleurs la raison pour laquelle les bibliothèques de capteurs commencent presque toutes par une vérification d'identité en lecture au démarrage.
+
+Une fois les adresses connues, il est bon de les écrire dans l'en-tête de votre sketch sous forme de constantes nommées. Un identifiant tel queAdresseEcran vaut de bien mieux que la suite de chiffres éparpillée dans le code, parce qu'il documente l'intention et parce qu'un changement de module ne touche qu'une seule ligne. Vérifiez aussi, dans les rares cas où deux appareils se disputent la même adresse, que la documentation ne prévoit pas une broche de sélection. La plupart des capteurs récents en disposent une : reliée à la masse, elle active telle adresse ; reliée à l'alimentation, elle en active une autre. C'est la solution privilégiée, bien préférable au recours à un multiplexeur.
+
+## Lire un capteur octet par octet
+
+Passons au décodage réel. Supposons que vous deviez interroger un capteur dont la documentation fournit seulement une table de registres, ce qui est la situation la plus courante lorsqu'on utilise un composant industriel plutôt qu'un module grand public. Le protocole se lit alors comme une conversation très simple : on écrit dans un registre l'adresse de la donnée que l'on souhaite, on relance une lecture, on récupère les octets, puis on assemble. L'écriture de l'adresse de registre se fait par une transmission qui contient d'abord le numéro de registre, souvent suivi de la valeur à y inscrire. La lecture, elle, demande un transfert dans l'autre sens.
+
+```cpp
+#include <Wire.h>
+
+const byte ADDR = 0x68;
+
+void setup() {
+  Wire.begin();
+  Serial.begin(115200);
+}
+
+void loop() {
+  Wire.beginTransmission(ADDR);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  Wire.requestFrom(ADDR, (byte)6);
+  if (Wire.available() == 6) {
+    int brut = (Wire.read() << 8) | Wire.read();
+    Serial.println(brut);
+  }
+  delay(1000);
+}
+```
+
+L'assemblage des octets est l'étape où se glissent le plus d'erreurs silencieuses. Quand une valeur est codée sur seize bits, elle arrive toujours en deux octets, d'abord le plus significatif puis le moins significatif dans la quasi-totalité des composants. Le décalage de huit positions sur le premier octet, réuni avec le second par un ou logique, reconstitue la valeur brute. Il faut ensuite appliquer le facteur d'échelle indiqué dans la fiche technique, par exemple un demi-degré par unité brute pour certains thermomètres. Ne sautez jamais cette dernière étape : une valeur brute cohérente mais non convertie se retrouve affichée telle quelle et paraît absurde, ce qui fait perdre un temps considérable avant qu'on ne pense à consulter la fiche technique.
+
+La vérification du nombre d'octets reçus, montrée dans l'exemple, n'est pas décorative. Si l'appareil répond moins d'octets que demandé, la condition échoue et vous évitez d'utiliser des données incomplètes. Dans le cas contraire, vous auriez construit une valeur à partir d'un octet absent, donnant un résultat erroné mais crédible en apparence. Ce genre de défaillance, qui ne produit aucun message d'erreur, est le plus coûteux en temps de débogage. L'habitude de contrôler systématiquement la disponibilité avant chaque lecture est l'un des signes qui distinguent un script d'apprentissage d'un programme fiable.
+
+Certains appareils exigent enfin que l'adresse de registre soit redémarrée avant chaque lecture, tandis que d'autres conservent le curseur interne et permettent des lectures multiples consécutives. C'est la différence entre une condition de redémarrage, émise par le maître sans relâcher le bus, et une simple continuité. Les bibliothèques gèrent cette nuance quand elles existent, mais quand vous écrivez votre propre échange, elle devient visible. Si vous lisez successivement plusieurs registres contigus et que les valeurs semblent décalées d'une position, pensez à ce détail de protocole avant de soupçonner le capteur.
+
+## Le bus SPI : quatre fils, haute vitesse
+
+Le SPI aborde le problème de la communication sous un angle complètement différent. Là où I2C cherche l'économie, SPI cherche la vitesse et la simplicité mécanique. Il ne possède ni adresse, ni accusé de réception, ni condition d'horloge complexe. Il transporte simplement des octets sur un fil de données pendant que le maître tourne une horloge, et il impose une ligne de sélection par appareil esclave. Quatre signaux composent le socle, avec la particularité d'avoir deux lignes de données distinctes, une dans chaque sens, ce qui permet de recevoir et d'émettre simultanément.
+
+```text
+   MAITRE (Uno / ESP32)                   ESLAVES
+  +---------------------+
+  |  MOSI --------------+------------> MOSI  (entree esclave)
+  |  MISO <-------------+------------< MISO  (sortie esclave)
+  |  SCK  --------------+------------> SCK   (horloge)
+  |  SS1  --------------+------------> CS    (carte SD)
+  |  SS2  --------------+------------> CS    (ecran TFT)
+  +---------------------+
+
+  MOSI : master out, slave in  -> donnees maitre vers esclave
+  MISO : master in, slave out  -> donnees esclave vers maitre
+  SCK  : horloge generee par le maitre
+  CS   : selection, active a l'etat bas
+```
+
+La sélection de l'esclave se fait par ligne dédiée, ce qui explique pourquoi le SPI ne s'adapte pas aussi bien que l'I2C à l'ajout d'appareils : chaque nouveau composant réclute une broche supplémentaire sur la carte. En contrepartie, aucune trame d'adressage ne pollue le flux : dès que la ligne de sélection tombe, tout ce qui circule sur les fils concerne l'appareil choisi. Cette mécanique explique les débits élevements atteints, de quelques mégahertzs pour un débutant à plusieurs dizaines de mégahertzs sur des montages soignés, très au-delà de ce qu'autorise un bus partagé avec ses résistances de rappel et ses accusés de réception.
+
+```table
+| Signal | Direction | Rôle | Nombre par esclave |
+| --- | --- | --- | --- |
+| MOSI | maître vers esclave | données envoyées | un fil partagé |
+| MISO | esclave vers maître | données reçues | un fil partagé |
+| SCK | maître vers esclave | horloge | un fil partagé |
+| CS | maître vers esclave | sélection de l'esclave | un fil dédié |
+```
+
+
+L'écran et la carte SD illustrent parfaitement cette architecture. Un écran graphique reçoit des milliers d'octets par image : le SPI lui envoie la totalité sans protocole superflu. Une carte mémoire doit écrire des secteurs entiers de données, souvent cinq cent douze octets à la fois, et supporter des débits qui rendraient l'I2C pénible. L'ordre de grandeur est facile à retenir : écrire une ligne de seize caractères sur un écran textuel relève de l'I2C, écrire une image complète ou archiver des milliers de mesures relève du SPI. Entre les deux, la frontière se place au volume d'octets et à la fréquence d'échange, pas à la sophistication du composant.
+
+Le SPI présente également une particularité de synchronisation : il n'existe pas d'horloge partagée négociée, le maître génère l'horloge et l'esclave doit s'y conformer. Si l'esclave est trop lent, le résultat est corrompu sans avertissement. C'est pourquoi les bibliothèques exposent souvent un réglage de fréquence, et pourquoi il faut parfois ralentir l'horloge pour que la carte mémoire soit réceptive. La deuxième particularité tient à l'absence totale d'accusé de réception : rien ne vous dit qu'un octet est bien arrivé. Les cartes mémoire compensent ce manque en retournant des octets d'état que l'on relit ensuite, et c'est à ce prix que la fiabilité est obtenue.
+
+## Une carte SD comme mémoire de masse
+
+Le passage à une carte SD se fait en deux temps, dont le premier est souvent oublié : le formatage. Une carte neuve livrée avec une système de fichiers incompatible, ou une carte réutilisée depuis un appareil photo, échouera à s'initialiser sans que la cause apparaisse dans le code. Utilisez un formatage en système de fichiers FAT32 avec une taille d'allocation par défaut, puis vérifiez l'opération en reliant la carte à l'ordinateur. Une carte qui se monte correctement sur l'ordinateur mais échoue dans la carte Arduino désigne presque toujours une incompatibilité de format ou un courant insuffisant au démarrage.
+
+```cpp
+#include <SPI.h>
+#include <SD.h>
+
+const int CS = 10;
+
+void setup() {
+  Serial.begin(115200);
+  if (!SD.begin(CS)) {
+    Serial.println("Carte SD absente ou non formatee");
+    return;
+  }
+  File fichier = SD.open("mesures.csv", FILE_WRITE);
+  if (fichier) {
+    fichier.println("horodatage,temperature");
+    fichier.println("1000,23.5");
+    fichier.close();
+  }
+}
+
+void loop() {
+}
+```
+
+L'initialisation prend un argument unique, la broche de sélection, et renvoie un booléen qu'il faut impérativement tester. Un test omis conduit à écrire dans le vide pendant des heures avant de découvrir qu'aucun fichier n'a été créé. L'écriture d'un fichier suit elle aussi un schéma rigoureux : ouverture, écriture, fermeture. La fermeture est l'étape à laquelle les données sont réellement transférées vers la carte, et l'omettre provoque la perte des dernières lignes. Elle coûte quelques dizaines de millisecondes, ce qui n'a aucune importance pour un enregistrement périodique, mais interdit de la placer dans une boucle serrée.
+
+Les deux erreurs de conception les plus fréquentes sur ce type de montage tiennent au partage du bus SPI et à la consommation. Le SPI, on l'a vu, utilise un fil de sélection par appareil : si vous ajoutez un écran à la carte mémoire, il faudra deux broches distinctes, une pour chacun, et veiller à ne sélectionner qu'un seul à la fois. Sinon, deux esclaves émettent simultanément sur la ligne MISO et se neutralisent. Du côté de l'alimentation, une carte SD peut puiser plusieurs dizaines de milliampères lors des écritures, avec des pics rapides. Alimentée par une source faible, elle provoque une chute de tension qui réinitialise la carte entière au moment précis de l'écriture. Un condensateur de cent microfarads placé aux bornes de la carte corrige ce défaut en tamponnant les pics.
+
+Un mot sur la manière d'organiser les données, parce qu'il conditionne tout usage ultérieur. Le format texte séparé par des virgules est la valeur sûre : il s'ouvre dans un tableur, il se traite avec n'importe quel langage, il reste lisible en cas de panne. Conservez un en-tête en première ligne, écrivez les valeurs avec un nombre fixe de décimales, et horodatez chaque mesure, soit avec millis pour un intervalle relatif, soit avec une horloge temps réel pour un calendrier réel. Enfin, écrivez par blocs plutôt qu'octet par octet : ouvrir, écrire cent lignes puis fermer est infiniment plus rapide qu'un aller-retour par ligne, et réduit d'autant le temps pendant lequel votre boucle principale est occupée.
+
+Il reste une pièce essentielle à ce chapitre : le port série. On pourrait le considérer comme un simple outil de débogage, et il l'est en effet, mais il constitue aussi un protocole de communication à part entière, celui que vos cartes utiliseront pour parler à un module Bluetooth, à un récepteur GPS, à un contrôleur de moteurs ou à un second microcontrôleur. Nous l'étudierons sous ses deux visages, puis nous comparerons l'ensemble des bus appris dans ce chapitre pour éclairer vos choix futurs. La leçon se terminera par un exemple guidé qui assemble écran, capteur, carte mémoire et moniteur, avant les sections de synthèse et les erreurs qui vous feront gagner du temps.
+
+## Le port série UART : la fenêtre sur le programme
+
+Le port série asynchrone, universellement appelé UART pour universal asynchronous receiver transmitter, est le plus ancien et le plus simple des protocoles que vous manipulerez. Il ne possède ni adresse ni horloge partagée : deux broches, une pour émettre et une pour recevoir, et une vitesse convenue à l'avance par les deux extrémités. Comme il n'y a pas d'horloge commune, chaque appareil décompte lui-même le temps à l'aide de sa propre horloge interne, ce qui impose que les deux fréquences soient suffisamment proches. Si l'une des deux parties croit devoir communiquer à neuf mille six cents bauds et l'autre à cent quinze mille deux cents, la réception produit des octets corrompus sans le moindre avertissement.
+
+```cpp
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Demarrage du programme");
+}
+
+void loop() {
+  if (Serial.available()) {
+    char c = Serial.read();
+    Serial.print("Recu : ");
+    Serial.println(c);
+  }
+}
+```
+
+La fonction begin fixe la vitesse en bauds, c'est-à-dire le nombre de symboles transmis par seconde. Pour les échanges avec l'ordinateur, la valeur cent mille deux cents est aujourd'hui la norme pratique : assez rapide pour afficher des volumes importants, assez lente pour rester fiable sur un simple fil de quelques dizaines de centimètres. Entre deux cartes, il suffit que les deux appels à begin reçoivent la même valeur. Pourquoi ce chiffre en particulier ? Parce que l'horloge interne des cartes les plus courantes le produit avec une erreur négligeable, alors que certaines vitesses anciennes, comme neuf mille six cents, deviennent imprécises sur des horloges rapides.
+
+Les deux fonctions qui structurent l'utilisation sont simple d'apparence et méritent d'être bien distinguées. Serial available renvoie le nombre d'octets réellement disponibles dans le tampon de réception, et Serial read en retire un. Tester available avant de lire est obligatoire : appelé alors que rien n'est arrivé, read renvoie une valeur négative que vous transformerez peut-être en un caractère absurde. Le tampon interne, typiquement de soixante-quatre octets, enregistre les données pendant que votre programme fait autre chose, ce qui permet de ne pas perdre un caractère entre deux passages de la boucle. En revanche, il n'est pas illimité : si votre boucle reste bloquée plusieurs dizaines de millisecondes, le tampon déborde et les octets les plus anciens sont perdus sans remède.
+
+L'impression elle-même connaît deux registres. Serial print convertit sa valeur en texte et l'envoie telle quelle, tandis que Serial println ajoute la fin de ligne, ce qui délimite les messages pour le moniteur. Dans un programme de débogage, la discipline la plus utile consiste à émettre une ligne unique et complète par événement plutôt que plusieurs fragments éparpillés : une ligne par mesure, une ligne par erreur, une ligne par changement d'état. Le moniteur série devient alors un journal filtrable. Ajoutez-y un préfixe par canal, par exemple le mot CARTE ou LCD au début du message, et vous pourrez suivre simultanément plusieurs sous-systèmes sans jamais vous perdre.
+
+Un avertissement de conception concerne les attentes bloquantes. Il est tentant d'écrire une pause de quelques secondes après un envoi, mais pendant ce temps le port série continue de recevoir ce que l'ordinateur lui envoie, et le tampon peut déborder. De même, une boucle d'attente de la forme tant que Serial available est égale à zéro, sans autre tâche, fige le programme pendant une durée indéterminée. La bonne méthode reste la même que pour l'afficheur : mémoriser un état, avancer dans la boucle, revenir à la lecture quand quelque chose est disponible. Votre programme reste alors réactif au clavier, aux capteurs et à l'horloge, sans jamais attendre.
+
+## Faire dialoguer deux cartes
+
+Brancher deux microcontrôleurs en port série obéit à une règle unique qu'on ne peut trahir : croiser les directions. La broche d'émission de l'un se relie à la broche de réception de l'autre, et inversement. S'y ajoute une masse commune, absolument indispensable, car les niveaux électriques se mesurent par rapport à cette référence commune. Sans masse partagée, les deux cartes n'ont aucun étalon de tension commun et la communication devient aléatoire, voire impossible même sur quelques centimètres de fil.
+
+```text
+   CARTE A                          CARTE B
+  +--------+                      +--------+
+  |     TX +----------------------> RX     |
+  |     RX <----------------------+ TX     |
+  |    GND +----------------------> GND    |
+  +--------+                      +--------+
+
+  Croisement obligatoire : TX d'un cote -> RX de l'autre.
+  Masse commune indispensable : reference des niveaux TTL.
+```
+
+Sur les cartes qui exposent plusieurs ports matériels, la question se pose de savoir lequel utiliser. L'Arduino Uno ne possède qu'un seul UART matériel, et celui-ci est partagé avec le port USB : dès que vous branchez l'ordinateur, Serial et le moniteur se disputent la même ligne, si bien qu'un échange avec une seconde carte devient impossible tant que le câble USB est connecté. La solution consiste alors soit à utiliser deux broches en émulation logicielle, avec une bibliothèque de type logiciel, soit à basculer vers une carte disposant de plusieurs ports matériels. L'ESP32 en compte trois, ce qui lui permet de parler simultanément à l'ordinateur sur une port, à un module externe sur une autre, et à un automate voisin sur la troisième.
+
+Le protocole que vous échangerez sur ce lien mérite d'être défini avant de coder. Deux familles s'offrent à vous. La première envoie du texte lisible, terminé par une fin de ligne : elle se débogue d'un coup d'œil dans le moniteur, elle se parseme facilement, mais elle impose des conversions et reste gourmande en octets. La seconde envoie des octets bruts dans un format compact, souvent un octet de tête, une charge utile puis un contrôle de somme : elle est rapide et économe, mais invisible à l'œil nu. Pour apprendre, commencez toujours par le texte. Passez au binaire seulement lorsque la bande passante devient réellement un problème, c'est-à-dire beaucoup plus tard que vous ne le pensez.
+
+Voici un émetteur minimal qui envoie une mesure toutes les secondes, et son correspondant qui affiche ce qu'il reçoit. Le format choisi est une ligne de texte contenant un identifiant suivi d'une valeur, séparés par une virgule, parce qu'il reste lisible tout en se parcourant facilement.
+
+```cpp
+// Emetteur : carte A
+void setup() {
+  Serial.begin(9600);
+}
+
+void loop() {
+  int mesure = analogRead(A0);
+  Serial.print("T,");
+  Serial.println(mesure);
+  delay(1000);
+}
+```
+
+Du côté récepteur, on lit ligne par ligne et on ne traite que les messages complets. L'accumulateur de caractères se remplit jusqu'à la fin de ligne, puis la ligne est examinée : si elle commence par le bon identifiant, la valeur est extraite et utilisée. Ce schéma, appelé protocole ligne par ligne, résiste aux fragments et aux réceptions coupées, car un message incomplet est simplement abandonné et la suivante reprend proprement. C'est la robustesse la plus importante à obtenir, et elle ne coûte que quelques lignes.
+
+La vitesse doit être identique des deux côtés, et la notion de vitesse vaut aussi pour la configuration du moniteur lorsque vous branchez une seule carte. Un moniteur réglé à neuf mille six cents bauds devant une carte émettant à cent quinze mille deux cents affiche des caractères illisibles, ce qui fait figure d'énigme pour qui ne pense pas à ce réglage. Cette particularité est le premier réflexe à avoir face à du texte brouillé. Le second concerne la ligne de fin : certains environnements envoient un simple retour chariot, d'autres un retour à la ligne, d'autres les deux. Un programme qui compare à une chaîne complète échouera silencieusement si le suffixe diffère.
+
+## Choisir le bon bus
+
+Vous disposez désormais de quatre outils : l'afficheur en parallèle, le bus I2C, le bus SPI et le port série. Aucun n'est supérieur aux autres, et le choix dépend de quatre critères qui reviennent toujours : le nombre de fils disponibles, le volume d'octets échangés, le nombre d'appareils à connecter et la nécessité ou non de réagir en temps réel. Le tableau ci-dessous résume les arbitrages auxquels vous serez confronté dans chacun de vos futurs projets.
+
+```table
+| Critère | Parallèle | I2C | SPI | Série UART |
+| --- | --- | --- | --- | --- |
+| Fils de signal | 6 | 2 | 4 plus 1 par esclave | 2 |
+| Nombre d'appareils | 1 | une dizaine | 1 par broche de sélection | 1 |
+| Vitesse typique | moyenne | 100 à 400 kHz | plusieurs MHz | 9 600 à 115 200 bauds |
+| Temps réel | non | correct | excellent | bon |
+| Usage dominant | écrans historiques | capteurs et horloges | mémoire et écrans graphiques | débogage et modules |
+```
+
+
+Pour un capteur unique qui prend une mesure par seconde, l'I2C est le choix évident : deux fils, une adresse, une bibliothèque. Pour alimenter un écran graphique en couleur avec une image complète, le SPI s'impose, car la différence de débit se compte en secondes d'affichage. Pour garder une trace de tout ce qui se passe sans ordinateur, la carte SD en SPI reste imbattable. Et pour observer ce que votre programme fait réellement à chaque étape, rien ne remplace le port série, y compris lorsque vous travaillez sur un objet qui devra fonctionner seul.
+
+Un projet réel combine presque toujours plusieurs de ces solutions en même temps, ce qui est la situation que l'exemple suivant met en œuvre. Le point de vigilance devient alors le partage des ressources : deux bibliothèques qui pilotent la même ligne d'horloge doivent se relâcher le bus entre chaque opération, deux périphériques sur le SPI doivent être sélectionnés l'un après l'autre, et deux sources de temporisation doivent coexister sans se gêner. Chaque bus possède son propre verrou de fonctionnement, et c'est en assemblant que l'on découvre le code qui l'oublie.
+
+## Exemple guidé : la station d'affichage
+
+L'exemple de synthèse assemble les trois briques du chapitre. Un écran I2C montre la dernière mesure et un compteur d'exécution, une carte SD en SPI archive une ligne par mesure, et le port série renvoie les mêmes données en texte pour observation. Les trois cadences sont indépendantes : l'écran se rafraîchit souvent, le fichier s'écrit à intervalle plus long, le port série émet à son propre rythme. Aucune de ces opérations ne doit bloquer la boucle.
+
+```cpp
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <SD.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+const int CS_SD = 10;
+
+unsigned long dernierAffichage = 0;
+unsigned long dernierFichier = 0;
+int compteur = 0;
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+  lcd.init();
+  lcd.backlight();
+  if (SD.begin(CS_SD)) {
+    File f = SD.open("j.csv", FILE_WRITE);
+    if (f) { f.println("t,n"); f.close(); }
+  }
+  lcd.setCursor(0, 0);
+  lcd.print("Station prete");
+}
+
+void loop() {
+  unsigned long maintenant = millis();
+
+  if (maintenant - dernierAffichage >= 500) {
+    dernierAffichage = maintenant;
+    compteur++;
+    lcd.setCursor(0, 1);
+    lcd.print(compteur);
+    lcd.print("      ");
+    Serial.print("m,");
+    Serial.println(compteur);
+  }
+
+  if (maintenant - dernierFichier >= 10000) {
+    dernierFichier = maintenant;
+    File f = SD.open("j.csv", FILE_WRITE);
+    if (f) {
+      f.print(maintenant);
+      f.print(",");
+      f.println(compteur);
+      f.close();
+    }
+  }
+}
+```
+
+Observez la structure de ce sketch, car elle vaut bien les lignes de code elles-mêmes. Les variables de temporisation sont déclarées en dehors des fonctions pour conserver leur valeur d'un passage à l'autre. Les deux comparaisons d'intervalle utilisent la soustraction de deux nombres non signés, ce qui survit au rebouclage du compteur de millis sans produit particulier. Chaque bloc de travail se termine par la mise à jour de sa propre date, si bien que les trois rythmes ne se contrarient jamais. Aucun appel à delay ne figure dans la boucle, donc le programme pourrait à tout moment recevoir une commande sur le port série ou lire un bouton sans manquer son cadencement.
+
+Pour améliorer cet exemple, la piste la plus fructueuse consiste à ajouter la gestion des erreurs, puisque la quasi-totalité des programmes d'apprentissage en sont dépourvus. Si la carte SD manque, affichez-le sur l'écran plutôt que de l'ignorer, et continuez malgré tout. Si l'écran ne répond pas au balayage, signalez-le sur le port série et poursuivez l'enregistrement fichier. Un système dont chaque sous-système peut échouer indépendamment reste utile quand l'un d'eux tombe en panne. C'est exactement le principe des systèmes industriels, et l'introduire dès l'apprentissage change radicalement la qualité du code que vous écrirez par la suite.
+
+Un second enrichissement consiste à rendre les messages plus riches. Au lieu d'un compteur seul, envoyez plusieurs valeurs séparées par des virgules, ajoutez un identifiant de version et un horodatage, puis écrivez la même chaîne à la fois sur l'écran et dans le fichier. Vous découvrirez ainsi combien la mise en forme d'un message est une décision de conception : elle conditionne la lisibilité dans le moniteur, la facilité d'analyse dans un tableur et la capacité à faire évoluer le protocole sans casser les anciens enregistrements. Gardez toujours une version en tête, et refusez d'envoyer des données dont la signification pourrait devenir ambiguë dans six mois.
+
+## À retenir
+
+- L'écran LCD 16x2 se pilote en parallèle avec six fils de données, ou en I2C avec deux fils grâce à un expandeur PCF8574.
+- Les adresses I2C les plus courantes d'un écran sont 0x27 et 0x3F, et elles se confirment toujours par un balayage du bus.
+- Le bus I2C se compose de deux lignes à niveau ouvert, SDA et SCL, qui exigent une résistance de rappel vers l'alimentation.
+- Un retour égal à zéro de endTransmission signifie qu'un appareil a acquitté l'adresse testée.
+- Le bus SPI utilise quatre signaux, MOSI, MISO, SCK et CS, et réserve une broche de sélection à chaque esclave.
+- Une carte SD s'initialise avec la broche de sélection, s'ouvre, s'écrit puis se ferme : la fermeture est le moment où les données partent réellement.
+- Le port série UART se croise, TX vers RX, et repose sur une masse commune ainsi qu'une vitesse identique aux deux extrémités.
+- Dans la boucle, on lit seulement quand Serial available le signale, et on n'attend jamais passivement une donnée.
+- Les trois cadences d'un programme se gèrent avec millis, jamais avec des appels bloquants.
+- Le bon bus se choisit selon le nombre de fils, le volume de données et le nombre d'appareils, pas selon la mode.
+
+## Erreurs fréquentes
+
+- Écran blanc alors que tout semble câblé : le contraste n'est pas réglé, tournez le potentiomètre du module avant de soupçonner le code.
+- Aucune adresse détectée lors du balayage : vérifiez l'alimentation du module, l'ordre de SDA et SCL, puis la présence des résistances de rappel.
+- Adresse incorrecte dans le programme alors que le balayage en trouve une autre : recopiez le relevé du scanner dans une constante nommée.
+- Écriture d'un caractère absurde à la place d'une icône : un motif personnalisé s'inscrit avec write et non avec print.
+- Texte brouillé dans le moniteur : la vitesse du moniteur et celle de la carte ne sont pas identiques.
+- Deux appareils qui ne répondent plus l'un après l'autre : une bibliothèque laisse le bus verrouillé, testez-les isolément puis ensemble.
+- Réinitialisation de la carte lors des écritures sur la carte SD : ajoutez un condensateur d'au moins cent microfarads aux bornes de l'alimentation.
+- Mesures farfelues sans aucun message d'erreur : le nombre d'octets lus ne correspond pas à la valeur attendue, contrôlez-le avant le calcul.
+- Perte des dernières lignes d'un fichier : la fermeture du fichier a été oubliée.
+- Deux esclaves SPI qui se neutralisent : leurs lignes de sélection sont toutes les deux actives en même temps.
+
+## Pour aller plus loin
+
+La documentation officielle de la référence Arduino reste la source la plus fiable pour les fonctions de base, et elle se trouve sur le site www.arduino.cc dans la section consacrée à la référence et aux bibliothèques. Le site du fabricant d'écrans et de modules, par exemple www.adafruit.com, publie des didacticiels détaillés accompagnés de schémas de câblage que vous pourrez comparer aux vôtres. Pour l'ESP32, la documentation technique publiée sur le site www.espressif.com détaille les multiplexeurs de broches qui rendent ce microcontrôleur si souple dans l'affectation des bus. Les fiches techniques des composants, appelées datasheets, se trouvent sur les sites des fabricants ; elles contiennent les tables de registres dont vous avez eu besoin pour décoder un appareil, et leur lecture est l'étape naturelle qui suit ce chapitre.
+
+Un exercice de consolidation particulièrement rentable consiste à réécrire l'exemple guidé en remplaçant l'écran par un afficheur OLED piloté en I2C, puis la carte SD par une mémoire flash du même bus. Vous constaterez alors que le nombre de broches utilisées ne change presque pas, alors que le nombre d'appareils augmente : c'est la promesse de l'I2C que vous venez de vérifier par vous-même. Une seconde piste consiste à ajouter un menu affiché sur l'écran et navigué par un bouton, ce qui vous forcera à appliquer les règles des machines à états que le chapitre suivant traite en détail.
+
+## Et maintenant : passez à la pratique
+
+Vous avez parcouru l'essentiel des moyens qu'un objet embarqué utilise pour montrer ses états et pour converser avec d'autres circuits. Le moment est venu de sortir le fer à souder : commencez par le plus simple, allumez un écran en I2C et affichez une phrase, puis faites répondre le bus avec un balayage. Une fois ces deux étapes stables, branchez un capteur sur le même bus et affichez sa mesure. Ajoutez ensuite la carte SD en SPI, puis le port série. Chaque étape isolée se vérifie en quelques minutes, et l'ensemble construit pas à pas vous donnera une station complète, identique à celle de l'exercice pratique qui suit cette leçon. C'est en assemblant ces briques, une par une, que vous transformerez des connaissances acquises en réflexes durables.

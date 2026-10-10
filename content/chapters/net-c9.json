@@ -1,0 +1,48 @@
+{
+  "exercise": "Vous administrez le réseau de la Maison Lavigne : environ 40 postes répartis sur deux segments (étage 1 et atelier) qui restent en 192.168.10.0/24, un serveur de fichiers, une passerelle, et un préfixe global 2001:db8:ac1::/48 fraîchement attribué. Concevez la migration IPv6 en trois parties. D'abord, présentez un tableau de découpage du /48 en préfixes /64, un par segment, en justifiant en une phrase le choix des bits de sous-réseau et en laissant de la place pour trois futurs sites. Ensuite, précisez pour chaque segment les préfixes à diffuser en Router Advertisement, les drapeaux A et L à activer ainsi que les durées de vie préférée et valides, en expliquant ce que chaque drapeau change pour les postes. Enfin, choisissez la stratégie de transition qui permet aux postes IPv4 existants de joindre le serveur de fichiers pendant la bascule, en écartant explicitement les deux autres solutions avec leur inconvénient. Complétez votre note par une vérification : le script de départ ci-dessous doit contrôler la configuration d'un poste et ressortir PASS ou FAIL.",
+  "resources": [
+    {
+      "label": "RFC 8200 — Internet Protocol, Version 6 (IPv6) Specification",
+      "url": "https://www.rfc-editor.org/rfc/rfc8200.html"
+    },
+    {
+      "label": "RFC 4861 — Neighbor Discovery for IP version 6 (NDP, voisinage et SLAAC)",
+      "url": "https://datatracker.ietf.org/doc/html/rfc4861"
+    },
+    {
+      "label": "RFC 4862 — IPv6 Stateless Address Autoconfiguration (SLAAC et DAD)",
+      "url": "https://www.rfc-editor.org/rfc/rfc4862.html"
+    },
+    {
+      "label": "Grafikart — Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns"
+    },
+    {
+      "label": "Grafikart — Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# Verification de la configuration IPv6 d'un hote — plan de la Maison Lavigne\n# Usage : ./verif-ipv6.sh <interface> <cible_globale>\nset -euo pipefail\n\nIFACE=\"${1:-}\"\nCIBLE=\"${2:-}\"\n\n# TODO 1 : refuser le lancement si IFACE ou CIBLE est vide ou si IFACE n'existe\n#         pas, avec un message d'usage sur la sortie d'erreur et un code 2\n\n# TODO 2 : verifier qu'une adresse globale (le prefixe fe80::/10 exclu) est\n#         configuree sur IFACE, l'afficher avec son /64, sinon signaler l'echec\n\n# TODO 3 : extraire de la table de routage la route par defaut IPv6 de IFACE et\n#         en noter le prochain saut ; signaler l'absence de route par defaut\n\n# TODO 4 : lister les prefixes appris par Router Advertisement sur IFACE\n#         (proto ra) et controler qu'au moins un prefixe du plan 2001:db8:ac1::/48\n#         y figure, le drapeau A (configuration autonome) etant actif\n\n# TODO 5 : controler l'etat DAD : aucune adresse en etat tentative ni dupliquee\n#         ne doit subsister sur l'interface\n\n# TODO 6 : resoudre dans le cache de voisinage l'adresse MAC du prochain saut,\n#         puis pinguer CIBLE en IPv6 avec 3 paquets via IFACE\n\n# TODO 7 : afficher un resume PASS ou FAIL selon le nombre d'anomalies et\n#         quitter avec 0 en cas de succes, 1 sinon\n",
+  "solution_code": "#!/usr/bin/env bash\n# Verification de la configuration IPv6 d'un hote — plan de la Maison Lavigne\nset -euo pipefail\n\nIFACE=\"${1:-}\"\nCIBLE=\"${2:-}\"\n\nif [ -z \"$IFACE\" ] || [ -z \"$CIBLE\" ]; then\n  echo \"usage : $0 <interface> <cible_globale>\" >&2\n  exit 2\nfi\nif [ ! -d \"/sys/class/net/$IFACE\" ]; then\n  echo \"erreur : interface $IFACE inconnue\" >&2\n  exit 2\nfi\n\nANOMALIES=0\nok() { echo \"  [ok]   $1\"; }\nko() { echo \"  [FAIL] $1\"; ANOMALIES=$((ANOMALIES + 1)); }\n\necho \"[1/7] adresses globales sur $IFACE\"\nGLOBALE=$(ip -6 addr show dev \"$IFACE\" scope global | awk '/inet6/ { print $2; exit }')\nif [ -n \"$GLOBALE\" ]; then\n  ok \"adresse globale $GLOBALE\"\nelse\n  ko \"aucune adresse globale configuree (fe80::/10 exclu)\"\nfi\n\necho \"[2/7] route par defaut IPv6\"\nPROCHAIN=$(ip -6 route show default dev \"$IFACE\" \\\n  | awk '/default/ { for (i = 1; i <= NF; i++) if ($i == \"via\") { print $(i + 1); exit } }')\nif [ -n \"$PROCHAIN\" ]; then\n  ok \"route par defaut via $PROCHAIN\"\nelse\n  ko \"aucune route par defaut IPv6 sur $IFACE\"\nfi\n\necho \"[3/7] prefixes appris par Router Advertisement\"\nPREFIXES=$(ip -6 route show dev \"$IFACE\" | awk '/proto ra/ { print $1 }')\nif [ -z \"$PREFIXES\" ]; then\n  ko \"aucun prefixe diffuse en RA (drapeau A inactif ou routeur absent)\"\nelse\n  echo \"$PREFIXES\" | sed 's/^/         /'\n  if echo \"$PREFIXES\" | grep -q '^2001:db8:ac1:'; then\n    ok \"au moins un prefixe du plan 2001:db8:ac1::/48 est present\"\n  else\n    ko \"aucun prefixe de 2001:db8:ac1::/48 sur ce lien\"\n  fi\nfi\n\necho \"[4/7] etat Duplicate Address Detection\"\nif ip -6 addr show dev \"$IFACE\" | grep -qE 'tentative|duplicated'; then\n  ko \"adresse encore tentative ou dupliquee : DAD en echec\"\nelse\n  ok \"DAD termine, aucune adresse en conflit\"\nfi\n\necho \"[5/7] cache de voisinage du prochain saut\"\nif [ -n \"$PROCHAIN\" ] && ip -6 neigh show dev \"$IFACE\" | grep -q \"^$PROCHAIN \"; then\n  LIGNE=$(ip -6 neigh show dev \"$IFACE\" | grep \"^$PROCHAIN \" | head -n 1)\n  echo \"         $LIGNE\"\n  ok \"entree presente pour $PROCHAIN\"\nelse\n  ko \"aucune entree de voisinage pour le prochain saut\"\nfi\n\necho \"[6/7] test de connectivite IPv6 vers $CIBLE\"\nif ping -6 -c 3 -I \"$IFACE\" \"$CIBLE\" > /dev/null 2>&1; then\n  ok \"3 echos recus de $CIBLE\"\nelse\n  ko \"pas de reponse de $CIBLE\"\nfi\n\necho \"[7/7] resume\"\nif [ \"$ANOMALIES\" -eq 0 ]; then\n  echo \"RESULTAT : PASS\"\n  exit 0\nfi\necho \"RESULTAT : FAIL ($ANOMALIES anomalie(s))\"\nexit 1\n",
+  "concepts": [
+    "Qu'est-un réseau (câbles, boîtiers, voyants)",
+    "Réseau local vs étendu",
+    "Commutateur, routeur, point d'accès",
+    "Adresses IP (IPv4/IPv6)",
+    "Méthode de diagnostic 5 étapes"
+  ],
+  "lecon": "net-c9.txt",
+  "videos": [
+    {
+      "title": "Réseau : TCP/IP, DNS, HTTP",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20tcp%20ip%20dns",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Configuration réseau Linux",
+      "url": "https://www.youtube.com/@grafikart/search?query=r%C3%A9seau%20linux%20configuration",
+      "channel": "Grafikart"
+    }
+  ]
+}

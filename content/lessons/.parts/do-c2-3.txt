@@ -1,0 +1,135 @@
+Les deux premières leçons de ce chapitre ont mis en place l'outil : Git pour l'historique, les branches pour l'organisation. Manque le lien qui transforme ces conventions en résultats mesurables. Une équipe peut adopter les plus belles stratégies de branches et livrer quand même une fois par mois, après une soirée de compilations manuelles et de correctifs de dernière minute. La différence entre cette équipe et une équipe performante tient presque toujours à un même dispositif : une chaîne d'intégration et de livraison continues, déclenchée à chaque changement, qui compile, teste et met en préproduction sans intervention humaine.
+
+Cette leçon présente ce dispositif dans ses trois dimensions. D'abord les principes : ce que l'intégration continue exige réellement, au-delà du slogan, et ce qu'elle apporte quand elle est installée pour de bon. Ensuite l'outil de référence du monde GitHub, les workflows décrits en YAML et exécutés par des contrôleurs hébergés. Puis les grandes familles de pipelines, selon ce qu'ils déclenchent et ce qu'ils produisent. Enfin la fondation sur laquelle tout repose : les tests automatisés, sans lesquels une intégration continue ne fait qu'accélérer la diffusion des régressions.
+
+La méthode reste celle des leçons précédentes, avec une montée en charge. Pour les commandes Git, un dépôt jetable suffisait ; ici, il vous faudra un compte sur une plateforme d'hébergement et un dépôt vide poussé en ligne, afin de voir vos premiers workflows s'exécuter. Prédisez avant chaque exécution : d'abord ce que la chaîne va faire, ensuite le temps qu'elle mettra, enfin l'issue. Quand votre prédiction est fausse, l'écart vous apprend davantage que le succès. Si vous ne voulez pas encore publier, prévoyez un dépôt public sans contenu sensible : la majorité des plateformes offre des minutes gratuites pour les dépôts publics.
+
+Un cadre enfin sur ce que la continuité n'est pas. Elle n'est pas une obligation de déployer en production à chaque commit, et cette confusion nuit gravement à son adoption : livrer souvent et publier à chaque instant sont deux décisions distinctes, la seconde relevant de la confiance dans les tests et dans les outils de retour arrière. Elle n'est pas non plus un produit que l'on achète : les serveurs d'exécution, les orchestrateurs et les tableaux de bord ne créent aucune valeur tant que la chaîne ne reflète pas des vérifications que votre équipe juge réellement bloquantes. Ce qu'elle demande, en revanche, c'est la discipline de garder la chaîne verte : une chaîne cassée depuis deux jours est déjà une chaîne morte.
+
+## L'intégration continue : principes et bénéfices
+
+L'intégration continue, née dans les ateliers de fabrication et importée dans le logiciel au début des années deux mille, repose sur une idée simple : le travail de chacun est intégré dans la ligne principale plusieurs fois par jour, et chaque intégration est validée par une exécution automatique complète. L'objectif n'est pas la vitesse, c'est la réduction du risque. Plus l'intervalle entre deux intégrations est court, plus l'anomalie détectée se trouve proche de sa cause, et plus la correction est facile. Une divergence de deux semaines signifie des milliers de lignes modifiées entre-temps : retrouver l'auteur d'une régression devient une enquête ; une divergence de deux heures se résout en lisant les trois derniers commits.
+
+Le premier principe à appliquer est la fréquence. Intégrez au moins une fois par jour, idéalement à chaque poussée. Cette règle force une conséquence utile : les tâches doivent être découpées en incréments qui compilent et passent les tests seuls. Une branche de trois semaines qui ne peut être fusionnée qu'en bloc est le symptôme d'un découpage raté, et l'intégration continue rend ce symptôme visible très tôt. Le second principe est l'automatisation totale de la validation : compilation, tests, analyse statique, vérification du format et construction des artefacts s'exécutent sans exception humaine, car toute étape manuelle devient, à force, une étape sautée.
+
+Le troisième principe est l'immédiateté du retour. Une chaîne qui répond en quarante minutes n'informe plus personne : le développeur a changé de tâche, a oublié ce qu'il a poussé, et le diagnostic se fait dans de mauvaises conditions. Visez moins de dix minutes pour le cœur de la chaîne, et poussez les vérifications longues, comme les tests d'intégration ou d'analyse de sécurité, dans un pipeline séparé qui répond en parallèle. Le quatrième principe est la visibilité : l'état de la dernière exécution doit être visible sur la page du dépôt, et une défaillance doit notifier l'équipe, non un individu. Une chaîne verte ignorée vaut moins qu'une chaîne rouge affichée.
+
+```bash
+# Boucle locale qui reproduit ce que fera la chaîne distante
+npm ci
+npm run lint
+npm run build
+npm test -- --coverage
+docker build -t mon-api:$(git rev-parse --short HEAD) .
+```
+
+Les bénéfices se mesurent sur des indicateurs concrets. Le temps de fusion se réduit, car les conflits sont petits et les validations déjà faites. Le nombre d'anomalies en production diminue, puisqu'une part importante des régressions est captée avant l'intégration. Le temps de retour arrière se raccourcit aussi : si chaque livraison est petite, une livraison fautive se répare en désactivant un drapeau ou en redéployant la version précédente, au lieu d'ouvrir une nuit d'astreinte. Enfin, la charge cognitive baisse : personne ne garde en tête la liste des vérifications à faire avant de pousser, parce que la chaîne les exécute et les rappelle.
+
+Un coût existe et doit être assumé. Installer et maintenir une chaîne demande du temps : des machines d'exécution, des secrets à renouveler, des dépendances à figer, des tests à fiabiliser. Les premières semaines sont souvent plus lentes qu'avant, car les défauts cachés du projet remontent en masse. C'est le signe que la chaîne travaille. Le retour sur investissement vient ensuite, et il est durable à une condition : que l'équipe traite une chaîne rouge comme une priorité absolue, au-dessus de toute nouvelle fonctionnalité en cours.
+
+## GitHub Actions : décrire un pipeline en YAML
+
+GitHub Actions est le système d'automatisation intégré à GitHub. Un workflow est un fichier YAML placé dans le répertoire .github/workflows du dépôt, décrivant un ou plusieurs jobs, leurs déclencheurs, l'environnement d'exécution et les étapes à enchaîner. Au plus un événement correspond un déclenchement : une poussée sur une branche, l'ouverture d'une demande de fusion, un calendrier, un événement externe ou une exécution manuelle. Chaque job tourne sur une machine fraîche, éphémère, lancée puis détruite, ce qui garantit que deux exécutions ne se contaminent pas.
+
+L'unité d'exécution est l'étape, command. Une étape reçoit le code, installe ce qui manque, exécute une commande, et cède la main à la suivante ; la moindre erreur interrompt le job. Entre les étapes, les fichiers persistent, mais rien ne subsiste d'un job à l'autre : si un premier job produit une application compilée, il faut l'enregistrer en artefact pour que le suivant la récupère. Ce modèle, simple et strict, impose de penser la chaîne comme une série d'étapes courtes et reproductibles, chacune capable de fournir un message d'erreur compréhensible.
+
+```yaml
+name: validation
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+  livraison:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/publish.sh
+        env:
+          CLE_API: ${{ secrets.CLE_API }}
+```
+
+Le premier déclencheur, push sur main, valide les intégrations. Le second, pull_request, ajoute une validation à chaque demande de fusion, y compris lorsqu'elle est mise à jour : c'est là que la revue de code trouve une compilation fiable. La clé needs établit une dépendance entre jobs, si bien que la livraison n'a lieu qu'après le succès des tests. La condition if limite la livraison à la branche principale, évitant qu'une branche expérimentale ne publie des artefacts. Chaque job tourne sur ubuntu-latest, une machine virtuelle préparée à la volée.
+
+Les secrets méritent une attention particulière. Une valeur telle que la clé d'API ne doit jamais figurer dans le fichier du workflow ni dans le dépôt : elle se déclare dans les réglages du dépôt, puis se réinjecte à l'exécution via l'expression indiquée ci-dessus. Le serveur d'exécution les masque dans les journaux, mais rien n'empêche un code malicieux de les exfiltrer. Restreignez donc leur disponibilité aux seuls jobs qui en ont besoin, évitez les secrets sur les déclencheurs issus de demandes de fusion ouvertes par des contributeurs externes, et faites-les tourner régulièrement.
+
+Trois pratiques améliorent nettement la maintenabilité. La réutilisation, avec le mot-clé uses, permet d'appeler des actions existantes ou les vôtres plutôt que de réécrire des suites d'étapes identiques partout. Les déclencheurs limités aux chemins modifiés évitent de lancer la chaîne complète quand seule la documentation change. Enfin, la mise en cache des dépendances, comme l'option cache de l'action de configuration de Node, fait gagner des minutes à chaque exécution, ce qui rapproche le retour du seuil des dix minutes recommandé plus haut.
+
+## Types de pipelines : construire, tester, livrer
+
+Un pipeline désigne l'ensemble ordonné des opérations automatiques qui transforment un commit en un artefact exploitable, puis en une mise à disposition. Les équipes emploient souvent le même mot pour des chaînes différentes, ce qui brouille les discussions. Il est utile de distinguer trois familles, non pas comme des catégories exclusives, mais comme des étages d'un même immeuble : la chaîne de validation, la chaîne de livraison et la chaîne de déploiement.
+
+La chaîne de validation répond à une question : ce commit est-il intégrable ? Elle compile, exécute les tests unitaires et d'intégration, vérifie le format, lance l'analyse statique et parfois une analyse de dépendances. Elle produit peu d'artefacts durables et doit être la plus rapide possible. C'est elle qui bloque ou autorise une fusion, c'est donc elle qui porte la garantie de qualité. Ses caractéristiques attendues : moins de dix minutes, exécution à chaque demande de fusion, et un diagnostic clair indiquant l'étape fautive, pour que l'auteur corrige sans deviner.
+
+La chaîne de livraison répond à une autre question : que produit ce commit ? Elle construit l'application, la conteneurise, génère la documentation, produit les paquets et les binaires, puis les range en tant qu'artefacts versionnés par l'identifiant du commit. Elle tourne typiquement une fois par intégration réussie sur la branche principale, et son résultat doit être strictement reproductible : deux exécutions du même commit doivent donner le même contenu, ce qui suppose des dépendances figées, une horloge et un environnement de construction maîtrisés. Sans reproductibilité, impossible de garantir que ce qui a été testé est ce qui sera livré.
+
+```yaml
+name: livraison-conteneur
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: |
+            ghcr.io/equipe/api:${{ github.ref_name }}
+            ghcr.io/equipe/api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+La chaîne de déploiement répond à la dernière question : où ce contenu devient-il utilisable ? Elle pousse l'artefact vers un environnement, exécute les migrations, redémarre les services et vérifie que l'application répond. Les modèles de mise à disposition se distinguent par le moment et la fréquence du passage : déploiement continu applique chaque intégration validée en préproduction ; déploiement par étapes progresse d'un pourcentage d'utilisateurs à la fois, avec arrêt automatique si les indicateurs se dégradent ; déploiement à la demande, qui reste déclenché par un humain sur un artefact déjà construit, modèle prudent pour les environnements réglementés.
+
+Un bon découpage ajoute un maillon souvent oublié : la validation post-déploiement. Une chaîne qui s'arrête après la mise en service ne sait pas si le service fonctionne réellement. Ajoutez une étape de vérification fumée, qui appelle quelques parcours critiques, et une étape de surveillance pendant une fenêtre de quelques minutes. Si ces contrôles échouent, le mécanisme de retour arrière se déclenche sans intervention. Ce dernier maillon transforme la chaîne d'un dispositif de construction en dispositif de confiance : c'est lui qui rend acceptable d'automatiser la décision de livrer.
+
+Pour choisir votre assemblage, partez de votre contrainte dominante. Une application web à déploiement fréquent gagnera une validation rapide, une livraison conteneurisée et un déploiement par étapes. Une bibliothèque publiée sur un registre n'a pas besoin de la dernière étape, mais exige une livraison reproductible et une gestion stricte des numéros de version. Un service embarqué ou soumis à audit préférera un déploiement à la demande, compensé par des validations particulièrement poussées. Le pipeline est un outil au service du produit, pas l'inverse.
+
+## Tests automatisés : la garde-fou de la livraison
+
+Tout ce qui précède repose sur un socle : des tests automatisés, exécutés à chaque passage, dont le résultat décide de la suite. Sans eux, la chaîne ne fait qu'accélérer la propagation des régressions, et l'équipe finit par désactiver ce qu'elle ne peut plus supporter. Les tests se rangent classiquement en une pyramide, qui est moins une obligation qu'un repère d'équilibre : de nombreux tests unitaires, rapides et ciblés ; un nombre moyen de tests d'intégration qui vérifient les frontières entre modules ; quelques tests de bout en bout, lents et fragiles, qui parcourent l'application comme un utilisateur.
+
+Le test unitaire vérifie la plus petite unité logique, une fonction ou une méthode, en isolant ses dépendances. Il doit tourner en millisecondes, sans base de données, sans réseau, sans disque, ce qui suppose de concevoir le code pour l'injectabilité : préférez recevoir une ressource en paramètre plutôt que de la créer à l'intérieur. Un bon test unitaire décrit un comportement, pas une implémentation : si le test casse à chaque refactoring interne alors que le comportement observable n'a pas changé, il est trop couplé. Visez la stabilité plutôt que le pourcentage de couverture, un chiffre élevé ne prouvant rien si les assertions sont vides.
+
+Le test d'intégration vérifie le montage de plusieurs pièces : un service avec sa base, un client avec son serveur, un parseur avec ses entrées réelles. Il capte les défauts que les tests unitaires ne peuvent pas voir, tels qu'une mauvaise requête, un type de champ incohérent ou une erreur de gestion de transaction. Il demande de l'environnement : conteneurs éphémères, jeu de données isolé, réinitialisation entre chaque exécution. Le piège classique est le partage d'état entre tests, source d'échecs aléatoires que l'on apprend à ignorer au lieu de les corriger ; un test d'intégration doit pouvoir être exécuté seul, dans n'importe quel ordre.
+
+Le test de bout en bout simifie un parcours utilisateur complet, du navigateur jusqu'à la base, en passant par l'interface. Il donne une sécurité très lisible, mais son coût est élevé : il est lent, dépend d'interfaces qui bougent, et rate tout ce qu'il ne couvre pas explicitement. Limitez-en le nombre à quelques parcours critiques, le paiement, la connexion, la publication d'un contenu, et exécutez-les sur un environnement de recette isolé. Enfin, n'oubliez pas les tests non fonctionnels, seuils de performance, vérifications d'accessibilité et analyses de dépendances : ils protègent des régressions que l'utilisateur ressent immédiatement et que la couverture de code ne détecte pas.
+
+```bash
+npm test -- --runInBand --coverage
+# puis seuils bloquants dans la chaîne
+npx nyc check-coverage --lines 80 --branches 70
+npx playwright test --reporter=dot
+```
+
+La maintenance des tests est un travail continu, à part entière. Un test qui échoue sans qu'on comprenne pourquoi est pire que pas de test : il habitue l'équipe à cliquer sur relancer, c'est-à-dire à ignorer la chaîne. Appliquez la même exigence aux tests qu'au code de production : nommez-les selon le comportement vérifié, supprimez les doublons, extrayez les utilitaires communs, et traitez tout échec flaky comme une anomalie bloquante avec une date de résolution. Inversement, refusez la course au chiffre : une couverture imposée par décret produit des tests qui vérifient des détails insignifiants, alors que de vraies assertions sur les cas limites protègent davantage avec moins de lignes.
+
+Un dernier principe fait le lien avec tout ce qui précède : les tests définissent l'état intégré. C'est leur réussite, et non l'absence de conflit à la fusion, qui dit qu'une branche est prête. Cette définition permet à l'équipe d'appliquer sereinement les stratégies de branches vues plus tôt, puisqu'une branche courte qui passe la chaîne est toujours fusionnable, et de fréquemment pousser sur la branche principale sans crainte. Les tests ne sont donc pas une charge ajoutée à l'intégration continue : ils en sont la condition d'existence, et leur qualité décide de la vitesse que votre équipe pourra réellement atteindre.

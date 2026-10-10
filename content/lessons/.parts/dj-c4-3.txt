@@ -1,0 +1,167 @@
+## CustomUser et managers : étendre le modèle utilisateur
+
+Le modèle User par défaut de Django couvre une large part des besoins, mais il possède un défaut organisationnel : il identifie les comptes par un nom d'utilisateur, alors que de nombreuses organisations, dont la Médiathèque, identifient leurs abonnés par leur courriel ou par un numéro de carte. Django répond à cette situation par le modèle utilisateur personnalisé, qui remplace le modèle par défaut tout en conservant toute la mécanique d'authentification et de permissions.
+
+La création d'un modèle personnalisé se fait dans l'application de comptes, typiquement nommée compte ou utilisateurs, et elle suit une structure fixe : un modèle qui hérite de AbstractUser, qui ajoute les champs spécifiques, et qui délègue la création à un manager dédié. La classe AbstractUser fournit tous les champs du modèle par défaut ; vous n'avez donc pas à redéfinir le mot de passe, le nom ou le courriel. Le manager, lui, est responsable de créer les utilisateurs et les superutilisateurs avec les bons champs requis.
+
+```python
+from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.db import models
+
+class CompteManager(BaseUserManager):
+    use_in_migrations = True
+
+    def _creer_compte(self, courriel, mot_de_passe, **champs):
+        if not courriel:
+            raise ValueError("Le courriel est obligatoire.")
+        courriel = self.normalize_email(courriel)
+        compte = self.model(courriel=courriel, **champs)
+        compte.set_password(mot_de_passe)
+        compte.save(using=self._db)
+        return compte
+
+    def create_user(self, courriel, mot_de_passe=None, **champs):
+        champs.setdefault("is_staff", False)
+        champs.setdefault("is_superuser", False)
+        return self._creer_compte(courriel, mot_de_passe, **champs)
+
+    def create_superuser(self, courriel, mot_de_passe=None, **champs):
+        champs.setdefault("is_staff", True)
+        champs.setdefault("is_superuser", True)
+        if champs.get("is_staff") is not True:
+            raise ValueError("Un superutilisateur doit avoir is_staff=True.")
+        if champs.get("is_superuser") is not True:
+            raise ValueError("Un superutilisateur doit avoir is_superuser=True.")
+        return self._creer_compte(courriel, mot_de_passe, **champs)
+
+class Compte(AbstractUser):
+    username = None
+    courriel = models.EmailField(unique=True)
+    numero_carte = models.CharField(max_length=20, unique=True)
+    USERNAME_FIELD = "courriel"
+    REQUIRED_FIELDS = ["numero_carte"]
+
+    objects = CompteManager()
+```
+
+Ce modèle remplace le champ username par le courriel, ajoute un numéro de carte, et déclare que le courriel sert d'identifiant de connexion. La classe BaseUserManager fournit les méthodes de création ; nous les surchargeons pour garantir que le courriel est toujours présent et normalisé, c'est-à-dire que sa partie domaine est mise en minuscules. Le numéro de carte est rendu obligatoire pour la création d'un compte, ce qui correspond au processus d'inscription de la Médiathèque, où chaque abonné reçoit une carte physique.
+
+La configuration du modèle personnalisé se fait dans le fichier settings par la variable AUTH_USER_MODEL, qui pointe vers le modèle au format etiquette_application.nom_modele. Cette variable doit être définie avant la première migration, car les clés étrangères qui réfèrent le modèle utilisateur — les sessions, les permissions, les groupes, les journaux d'administration — sont créées au moment des migrations initiales. Changer AUTH_USER_MODEL sur un projet existant exige une migration manuelle soigneuse, et c'est pourquoi Django recommande de définir cette variable dès le démarrage du projet, même si l'on utilise encore le modèle par défaut.
+
+```python
+# Dans settings.py
+AUTH_USER_MODEL = "compte.Compte"
+```
+
+Une fois le modèle personnalisé en place, tout le reste de Django continue de fonctionner : l'administration affiche le modèle, les permissions sont créées pour ce modèle, les vues de connexion l'utilisent. La fonction get_user_model, que nous avons utilisée dans la section précédente, renvoie toujours le modèle configuré par AUTH_USER_MODEL, et c'est la seule façon correcte de référencer le modèle utilisateur dans du code réutilisable. Ne référencez jamais directement le modèle User importé depuis django.contrib.auth.models, car vous risquez d'importer le mauvais modèle si le projet change de configuration.
+
+Le modèle personnalisé ouvre aussi la voie à des fonctionnalités métier riches. Vous pouvez ajouter un champ date_naissance pour offrir des tarifs jeunes, un champ adhesion_expire_le pour bloquer automatiquement les comptes dont l'adhésion est échue, ou un champ photo pour les cartes de médiathèque. Vous pouvez aussi définir des méthodes métier : un abonné peut-il emprunter, en vérifiant que son compte est actif, que son adhésion est valide et qu'il n'a pas dépassé son quota de prêts ; un bibliothécaire peut-il être responsable de section, en vérifiant son ancienneté.
+
+```python
+class Compte(AbstractUser):
+    # ... champs définis précédemment ...
+
+    def peut_emprunter(self):
+        if not self.is_active:
+            return False
+        if self.adhesion_expire_le and self.adhesion_expire_le < date.today():
+            return False
+        return self.prets.filter(rendu=False).count() < self.quota_prets
+```
+
+Cette méthode peut_emprunter est appelée dans les vues de prêt et dans les templates, ce qui garantit que la règle est appliquée de façon identique partout. Elle illustre la philosophie du modèle personnalisé : le compte n'est pas une table d'authentification, c'est un objet métier qui porte à la fois l'identité et les règles de l'organisation.
+
+## Login, logout, mots de passe et tokens de réinitialisation
+
+Avec un modèle utilisateur en place, il faut maintenant construire le cycle de vie complet de la connexion. Django fournit dans contrib.auth des vues et des formulaires prêts à l'emploi pour la connexion, la déconnexion, le changement de mot de passe et la réinitialisation, et ils couvrent l'intégralité des besoins courants. Nous allons les parcourir en détail, car chacun comporte des décisions de sécurité qu'il faut comprendre.
+
+La connexion se fait par la vue LoginView, qui affiche un formulaire et traite sa soumission. Le formulaire d'authentification vérifie les identifiants via le backend configuré, et la vue appelle login pour attacher l'utilisateur à la session. La session elle-même est stockée côté serveur, généralement dans la base de données ou dans un cache, et le navigateur ne reçoit qu'un identifiant de session opaque dans un cookie. C'est ce cookie qui est envoyé à chaque requête suivante, et qui permet à Django de retrouver l'utilisateur connecté.
+
+```python
+# Dans urls.py
+from django.contrib.auth import views as auth_views
+
+urlpatterns = [
+    path("connexion/", auth_views.LoginView.as_view(template_name="compte/connexion.html"), name="connexion"),
+    path("deconnexion/", auth_views.LogoutView.as_view(), name="deconnexion"),
+]
+```
+
+La déconnexion est plus simple encore : LogoutView supprime la session côté serveur et invalide le cookie. Il est important de comprendre que la déconnexion côté client — effacer le cookie du navigateur — ne supprime pas la session côté serveur, qui reste jusqu'à ce qu'elle expire. C'est pourquoi la vue LogoutView fait les deux : elle appelle la fonction logout, qui supprime les données de session, et elle répond avec un cookie expiré, qui force le navigateur à oublier l'identifiant.
+
+Le changement de mot de passe se fait par la vue PasswordChangeView, qui exige que l'utilisateur soit connecté et qu'il fournisse son ancien mot de passe. Cette double exigence est une protection contre le vol de session : si un attaquant a pris le contrôle d'un poste laissé ouvert, il ne peut pas changer le mot de passe sans connaître l'ancien. La vue met à jour le mot de passe et appelle update_session_auth_hash, qui régénère le haché de session pour éviter que le changement ne déconnecte les autres appareils de l'utilisateur — une commodité qui a un coût de sécurité, puisque la session volée reste valide.
+
+La réinitialisation de mot de passe est le mécanisme le plus délicat, car il doit permettre à un utilisateur qui a oublié son mot de passe de le réinitialiser sans qu'un attaitant puisse en profiter. Django implémente ce mécanisme par des jetons à usage unique, générés par la classe PasswordResetTokenGenerator. Le jeton contient l'identifiant de l'utilisateur, un horodatage et un haché dérivé du mot de passe, ce qui le rend invalide dès que le mot de passe change, et il expire après un délai configurable.
+
+```python
+# Dans settings.py
+PASSWORD_RESET_TIMEOUT = 3600  # durée de validité du jeton en secondes
+
+# Dans urls.py
+urlpatterns += [
+    path("mot-de-passe-oublie/", auth_views.PasswordResetView.as_view(), name="password_reset"),
+    path("mot-de-passe-oublie/envoye/", auth_views.PasswordResetDoneView.as_view(), name="password_reset_done"),
+    path("mot-de-passe-oublie/confirm/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(), name="password_reset_confirm"),
+    path("mot-de-passe-oublie/termine/", auth_views.PasswordResetCompleteView.as_view(), name="password_reset_complete"),
+]
+```
+
+Le jeton est envoyé par courriel à l'utilisateur, qui clique sur le lien et choisit un nouveau mot de passe. Le lien contient l'identifiant de l'utilisateur encodé en base 64 et le jeton, et la vue PasswordResetConfirmView vérifie que le jeton est valide et n'a pas expiré. Si le jeton est valide, le formulaire de nouveau mot de passe s'affiche ; sinon, la vue redirige vers une page d'erreur. Cette sécurité par jeton est la norme du secteur, et il est important de ne pas la contourner en envoyant le mot de passe en clair par courriel, pratique qui expose le mot de passe dans la boîte de réception.
+
+Un point de configuration important pour la production est celui de l'expiration des sessions. Par défaut, Django expire une session après deux semaines d'inactivité, mais ce délai est configurable, ainsi que le comportement à la fermeture du navigateur. Pour une application comme la Médiathèque, où les postes sont partagés entre les abonnés, une session qui expire à la fermeture du navigateur est une précaution minimale, et une durée d'inactivité courte réduit la fenêtre d'exploitation d'un poste oublié.
+
+```python
+# Dans settings.py
+SESSION_COOKIE_AGE = 1800        # session valide 30 minutes
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+```
+
+## Décorateurs et LoginRequiredMixin
+
+Nous avons vu les mixins pour les vues basées sur les classes ; il existe un équivalent pour les vues basées sur les fonctions, sous la forme de décorateurs. Les décorateurs login_required et permission_required appliquent les mêmes vérifications que les mixins, mais s'appliquent directement à la fonction de vue. La syntaxe est plus concise pour les vues simples, et c'est souvent le choix préféré quand la vue tient en quelques lignes.
+
+```python
+from django.contrib.auth.decorators import login_required, permission_required
+from django.shortcuts import render
+
+@login_required
+def tableau_de_bord(request):
+    return render(request, "compte/tableau_de_bord.html", {"compte": request.user})
+
+@login_required
+@permission_required("catalogue.change_ouvrage", raise_exception=True)
+def suspendre_abonne(request, pk):
+    # ... vue de suspension ...
+    pass
+```
+
+Le décorateur login_required redirige l'utilisateur non connecté vers la page de connexion, en conservant l'adresse de la page demandée pour y rediriger après la connexion. Le paramètre login_url permet de personnaliser l'adresse de redirection, et redirect_field_name permet de changer le nom du paramètre d'URL qui contient l'adresse de retour. Le décorateur permission_required vérifie une permission et, selon la valeur de raise_exception, redirige vers la page de connexion ou renvoie une erreur 403.
+
+```python
+# Dans settings.py
+LOGIN_URL = "connexion"
+LOGIN_REDIRECT_URL = "tableau_de_bord"
+LOGOUT_REDIRECT_URL = "accueil"
+```
+
+La combinaison des deux décorateurs est fréquente : login_required d'abord, pour exiger la connexion, puis permission_required, pour exiger le droit spécifique. L'ordre compte, car un utilisateur anonyme n'a aucune permission, et la vérification de permission sur un anonyme échouerait de toute façon. Les décorateurs s'appliquent de bas en haut, c'est-à-dire que le décorateur le plus proche de la fonction s'exécute en premier.
+
+Pour les vues basées sur les classes, LoginRequiredMixin joue le même rôle que login_required, et PermissionRequiredMixin joue celui de permission_required. Le choix entre les deux approches est une question de style, mais il y a une règle simple à suivre : si votre projet utilise majoritairement des vues basées sur les classes, utilisez les mixins ; s'il utilise des vues basées sur les fonctions, utilisez les décorateurs. Mélanger les deux sans raison rend le code plus difficile à suivre.
+
+Une question qui revient souvent est celle de la protection de l'ensemble des vues d'une application. Plutôt que d'ajouter le décorateur à chaque vue, on peut le placer sur une URL conf qui regroupe les chemins protégés. Cette approche est plus sûre, car une vue nouvelle créée dans l'application est automatiquement protégée, au risque d'oublier le décorateur. Elle est aussi plus facile à auditer, car la protection est visible d'un coup d'œil dans le fichier d'URL.
+
+```python
+from django.contrib.auth.decorators import login_required
+
+protected_patterns = [
+    path("catalogue/", include("catalogue.urls")),
+    path("prets/", include("prets.urls")),
+]
+
+urlpatterns = [
+    path("", include("public.urls")),
+    path("", login_required(include("catalogue.urls"))),
+]
+```
+
+Enfin, il faut mentionner le décorateur staff_member_required, qui exige que l'utilisateur possède le statut is_staff, et le décorateur superuser_passes_test, qui exige un superutilisateur. Ces décorateurs sont utiles pour les vues de supervision, comme le journal d'audit de la Médiathèque, qui ne doit être accessible qu'aux administrateurs techniques. Ils illustrent une règle générale de conception : la protection la plus simple qui convient est la meilleure, et une vue superutilisateur n'a pas besoin d'un dispositif complexe si son accès est déjà restreint aux comptes techniques.

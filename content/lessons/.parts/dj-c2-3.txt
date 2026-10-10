@@ -1,0 +1,88 @@
+## Construire des formulaires avec forms.Form
+
+Un formulaire web est une interface qui permet à l'utilisateur de saisir des données et de les envoyer au serveur. Django propose deux manières de les construire : `forms.Form`, une déclaration explicite des champs, et `forms.ModelForm`, qui génère automatiquement les champs à partir d'un modèle. `forms.Form` est le point de départ idéal pour comprendre le mécanisme, car chaque champ est écrit en Python, sans magie apparente.
+
+Un formulaire est une classe qui hérite de `forms.Form` et déclare ses champs comme attributs de classe. Chaque champ est un objet — `CharField`, `EmailField`, `IntegerField`, `BooleanField`, `ChoiceField` — qui connaît ses règles de validation, son libellé et son widget d'affichage. La classe `FormulaireContact` que vous pouvez définir dans `forms.py` contient un champ nom, un champ sujet, un champ message et un champ envoi de copie. Le formulaire peut ensuite être instancié dans une vue, validé, et ses données récupérées.
+
+La validation est le cœur du formulaire. Quand vous appelez `is_valid()`, Django nettoie chaque champ, vérifie les contraintes — présence d'une valeur, format d'une adresse e-mail, valeur minimale — et stocke les données nettoyées dans `cleaned_data`. Si une erreur est détectée, le champ concerné reçoit un message et le formulaire devient invalide. Vous pouvez ajouter des méthodes de validation personnalisées pour des règles spécifiques, comme vérifier qu'un nom ne contient que des lettres, ou une méthode de nettoyage globale pour des validations croisées entre plusieurs champs.
+
+Les widgets contrôlent la manière dont un champ est affiché dans le navigateur. Par défaut, un `CharField` produit une zone de texte simple. Avec `widget=forms.Textarea`, vous obtenez une zone de multiligne. Pour une liste déroulante, `ChoiceField` génère un élément `select`. Vous pouvez également passer des attributs HTML comme `placeholder`, `class` ou `rows` pour personnaliser l'apparence sans écrire de HTML à la main.
+
+Le rendu d'un formulaire dans un template peut se faire de plusieurs façons. `{{ form.as_p }}` affiche chaque champ dans un paragraphe, `{{ form.as_table }}` dans un tableau, `{{ form.as_ul }}` dans une liste. Pour un contrôle total, vous pouvez itérer sur les champs et les afficher un par un. Les messages d'erreur sont automatiquement associés à chaque champ, ce qui permet de les afficher juste à côté de la zone de saisie concernée.
+
+Un formulaire peut être lié ou non lié. Un formulaire non lié, `FormulaireContact()`, est vide et sert à afficher le formulaire initial. Un formulaire lié, `FormulaireContact(request.POST)`, contient les données soumises et peut être validé. Cette distinction est fondamentale : c'est elle qui permet d'afficher un formulaire vide en `GET` et de traiter les données en `POST` avec la même classe de formulaire.
+
+```python
+from django import forms
+
+class FormulaireContact(forms.Form):
+    nom = forms.CharField(max_length=100, label="Votre nom")
+    sujet = forms.CharField(max_length=200, label="Sujet")
+    message = forms.CharField(widget=forms.Textarea, label="Message")
+    envoyer_copie = forms.BooleanField(required=False)
+
+    def clean_message(self):
+        message = self.cleaned_data["message"]
+        if len(message) < 10:
+            raise forms.ValidationError("Le message est trop court.")
+        return message
+```
+
+Ce formulaire simple illustre les principaux concepts : des champs déclarés, un widget personnalisé, une validation personnalisée. La méthode `clean_message` intercepte le champ après sa validation de base, vérifie sa longueur et lève une exception si elle est insuffisante. Cette exception est capturée par Django et affichée sous forme de message d'erreur dans le template. Le formulaire reste ainsi entièrement autonome.
+
+## forms.ModelForm : générer un formulaire depuis un modèle
+
+Quand un formulaire sert à créer ou modifier un objet d'un modèle, `forms.ModelForm` vous fait gagner un temps précieux. Vous déclarez une classe qui hérite de `ModelForm` et vous indiquez dans une classe interne `Meta` le modèle concerné et les champs à inclure. Django génère automatiquement les champs du formulaire en fonction des types de champs du modèle : un `CharField` du modèle devient un `CharField` du formulaire, un `TextField` devient un `CharField` avec un widget `Textarea`, une clé étrangère devient un `ModelChoiceField`.
+
+La méthode `save` d'un `ModelForm` enregistre directement les données dans la base. Sans argument, elle crée un nouvel objet ; si le formulaire a été initialisé avec une instance existante, elle met à jour cet objet. Cette méthode accepte l'argument `commit=False` pour obtenir l'objet sans l'enregistrer immédiatement, ce qui permet d'effectuer des traitements supplémentaires avant la sauvegarde — par exemple renseigner le champ `auteur` avec l'utilisateur connecté.
+
+Les formulaires de modèle peuvent être personnalisés de la même manière que les formulaires simples. Vous pouvez surcharger un champ généré, ajouter des champs supplémentaires qui n'existent pas dans le modèle, modifier les widgets ou ajouter des validations. Cette flexibilité permet d'adapter le formulaire aux besoins de l'interface sans changer le modèle sous-jacent. Vous pouvez également exclure des champs avec `exclude` ou les rendre en lecture seule.
+
+La vue typique d'un formulaire de modèle suit un motif bien rodé. En `GET`, vous affichez un formulaire vide, ou un formulaire pré-rempli avec l'instance à modifier. En `POST`, vous validez, vous sauvegardez, et vous redirigez vers la page de détail ou de liste de l'objet. Ce pattern, présent dans la majorité des vues d'édition, est si récurrent que Django propose des vues génériques qui l'implémentent automatiquement. Écrire ce motif à la main au moins une fois est un excellent exercice pour bien le comprendre.
+
+Une attention particulière doit être portée aux champs omis. Si vous omettez un champ du formulaire, l'utilisateur ne peut pas le définir, et la valeur par défaut du modèle s'applique. Si le champ est requis et n'a pas de valeur par défaut, la sauvegarde échouera. Il est donc essentiel de vérifier la cohérence entre le modèle et le formulaire. Une pratique courante consiste à ne jamais utiliser `exclude` dans un projet sérieux, car l'ajout d'un champ au modèle pourrait créer une faille de sécurité en exposant involontairement ce champ dans le formulaire.
+
+```python
+from django import forms
+from .models import Article
+
+class ArticleForm(forms.ModelForm):
+    class Meta:
+        model = Article
+        fields = ["titre", "contenu", "categorie"]
+        widgets = {
+            "contenu": forms.Textarea(attrs={"rows": 10, "cols": 80}),
+        }
+```
+
+Ce `ArticleForm` génère un formulaire avec trois champs du modèle `Article`. Le widget du champ `contenu` est personnalisé pour offrir une zone de saisie plus grande. La méthode `save` héritée de `ModelForm` crée ou met à jour l'article dans la base. Ce genre de formulaire, concis et explicite, couvre la majorité des besoins d'édition.
+
+## CSRF, sécurité et protection des formulaires
+
+La faille CSRF, qui signifie Cross-Site Request Forgery, permet à un site malveillant de déclencher une action sur un site où l'utilisateur est authentifié, à son insu. Par exemple, un formulaire caché sur un site tiers peut envoyer une requête POST vers votre site de banque en utilisant les cookies de session de la victime. Django protège vos formulaires contre cette attaque avec un jeton CSRF, une valeur secrète et aléatoire incluse dans chaque formulaire et vérifiée par le serveur à chaque requête POST.
+
+La protection est activée par défaut dans tout projet Django généré avec `startproject`. Le middleware `CsrfViewMiddleware` vérifie chaque requête POST et rejette celles qui ne contiennent pas un jeton valide. Dans vos templates, la balise `{% csrf_token %}` insère un champ caché contenant ce jeton. Sans cette balise, la validation échoue et l'utilisateur reçoit une erreur 403. Cette protection, transparente mais indispensable, doit être activée sur tous les formulaires qui modifient des données.
+
+La protection CSRF ne concerne que les requêtes qui changent l'état du serveur : POST, PUT, PATCH, DELETE. Les requêtes GET, qui ne doivent jamais modifier de données, ne sont pas concernées. Cette règle de conception, fondamentale en HTTP, est rappelée par Django : une action qui modifie la base doit toujours utiliser une méthode non-GET. Cette discipline vous protège aussi contre les robots qui suivent les liens et déclenchent involontairement des actions.
+
+Au-delà du CSRF, plusieurs autres principes de sécurité sont à respecter. L'échappement automatique des variables dans les templates protège contre l'injection de code HTML ou JavaScript. L'utilisation de requêtes paramétrées via l'ORM évite les injections SQL. La vérification systématique des droits d'accès dans les vues empêche un utilisateur de consulter les données d'un autre. Ces protections, intégrées par défaut, font de Django un framework robuste pour les applications sensibles.
+
+Le framework de messages est un autre outil lié à l'expérience utilisateur. Il permet d'afficher des notifications éphémères après une action réussie : un message de confirmation après l'enregistrement d'un article, un avertissement après une suppression. Les messages sont stockés dans la session ou les cookies, puis affichés sur la page suivante. Ce mécanisme, simple à mettre en œuvre, améliore nettement le retour d'information donné à l'utilisateur.
+
+```html
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <button type="submit">Enregistrer</button>
+</form>
+```
+
+Ce fragment de template montre un formulaire complet avec la balise `csrf_token` indispensable. Le formulaire utilise la méthode `POST`, conformément aux bonnes pratiques. Les champs sont affichés avec `as_p`, et le bouton de soumission envoie les données à la vue. Cette structure minimale mais correcte est la base de tout formulaire Django.
+
+## À retenir
+
+Un formulaire Django se construit avec `forms.Form` ou `forms.ModelForm`. Le premier déclare explicitement ses champs ; le second les génère à partir d'un modèle. La validation s'effectue avec `is_valid()`, qui remplit `cleaned_data`. Les méthodes de nettoyage personnalisées permettent des validations spécifiques. Les widgets contrôlent l'affichage : `Textarea`, `Select`, attributs HTML. `ModelForm` enregistre les données directement avec `save()`, et `commit=False` permet de retarder la sauvegarde.
+
+La sécurité des formulaires repose sur le jeton CSRF, inséré par `{% csrf_token %}` et vérifié par le middleware. Les requêtes GET ne doivent jamais modifier de données. L'échappement automatique des variables protège contre les injections de code. Le framework de messages affiche des notifications éphémères après une action. La vue typique d'un formulaire suit le motif GET pour l'affichage, POST pour le traitement et la redirection.
+
+Les formulaires doivent rester simples et explicites. La logique complexe va dans les modèles ou les vues. Les champs omis d'un `ModelForm` n'éditent pas la valeur par défaut du modèle. La méthode `save` héritée de `ModelForm` crée ou met à jour l'objet. La protection CSRF est activée par défaut et doit être conservée. Ces principes garantissent des formulaires fiables et sécurisés.

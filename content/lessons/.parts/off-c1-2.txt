@@ -1,0 +1,88 @@
+## Sous-domaines : élargir la carte du périmètre
+
+Un domaine unique ne décrit jamais une organisation. Derrière example.com se cachent habituellement www pour le site public, mail pour la messagerie, vpn pour l'accès distant, intranet pour les outils internes, api pour les services consommés par les applications mobiles, recette ou staging pour les environnements de préproduction, et parfois un vieux portail oublié, toujours résolu depuis dix ans. Chaque sous-domaine découvert est un actif supplémentaire à inventorier, et surtout un actif qui possède son propre cycle de vie : il peut héberger une application non maintenue, un certificat expiré, un service oublié lors de la dernière migration. L'énumération des sous-domaines est donc la partie du footprinting qui change le plus vite, et celle où il est le plus facile de se noyer dans les doublons et les faux positifs.
+
+Il existe deux familles de méthodes, et la distinction correspond exactement à celle du premier chapitre de cette leçon. Les sources passives consultent des jeux de données déjà produits : les journaux de certification, les archives du Web, les anciennes résolutions DNS, les pages de bugs bounty, les offres d'emploi. Elles ne coûtent aucun bruit. Les méthodes actives, elles, posent la question directement au serveur de nom : soit en lançant une résolution pour chaque candidat issu d'un dictionnaire, soit en envoyant des requêtes vers le serveur lui-même. Ces dernières sont rapides et exhaustives sur les noms présents dans votre liste, mais aveugles face aux noms qu'elles n'ont pas dans le dictionnaire, et parfaitement visibles côté client.
+
+Le point de départ recommandé est la transparence des certificats. Depuis plusieurs années, chaque certificat émis publiquement est enregistré dans un journal consultable par tous : ces journaux listent non seulement le nom principal couvert, mais les noms alternatifs, c'est-à-dire précisément les sous-domaines. Interroger ces journaux est passif, gratuit et redoutablement complet pour les noms qui ont jamais été chiffrés. Le service crt.sh reste la référence pour sa simplicité d'interrogation.
+
+```bash
+curl -s "https://crt.sh/?q=%.example.com&output=json" | jq -r '.[].name_value' | sort -u
+```
+
+Vient ensuite le dictionnaire. Une liste de candidats, quelques milliers de noms courants, et une résolution en masse : c'est la méthode qui découvre les services jamais certifiés, les sous-domaines internes publiés par erreur, les hébergements de recette. Les outils modernes traitent des dizaines de milliers de requêtes par seconde et renvoient uniquement les noms qui répondent, ce qui rend l'opération rapide à exécuter et rapide à relire. Choisissez une cadence raisonnable : même si la requête d'un nom n'est pas anormale en soi, un dictionnaire complet envoyé en une minute ressemble à une attaque de force brute, et le système de détection n'a aucune raison de vous croire sur parole.
+
+```bash
+subfinder -d example.com -silent | sort -u > candidats.txt
+dnsx -l candidats.txt -resp -a | tee sous-domaines.txt
+```
+
+Pensez aux variantes, c'est là que se trouve la moitié des découvertes intéressantes. Une convention interne comme api-recette.example.com, un préfixe de client comme client-nom.example.com, une numérotation comme app01, app02, ou l'ajout d'un suffixe de région comme .eu ou .intl. Le dérivatif s'applique aussi aux noms historiques : une filiale absorbée conserve parfois son domaine d'origine, relié au nôtre par un simple lien ou une adresse IP commune. Notez que vous n'êtes pas tenu de tester chacun : vous listez, vous normalisez, vous datez.
+
+Trois pièges structurent le tri. Le DNS en étoile, détecté avec un nom absurde, fabrique des correspondances pour tout et n'importe quoi : filtrez-les avant de produire votre inventaire. Les doublons avec ou sans préfixe www, avec et sans point final, avec casse différente, doivent être fusionnés en une entrée unique avec leurs variantes notées à côté. Enfin, un nom résolu hier peut ne plus résoudre aujourd'hui : la révocation d'un sous-domaine est une information, pas un bruit, et elle appartient à votre rapport. Conservez la date à laquelle chaque nom a répondu, et vous pourrez distinguer le service disparu du service momentanément injoignable.
+
+Un cas réel illustre la valeur de cette étape. Dans la plupart des audits, la faille la plus grave n'est jamais sur le site vitrine soigneusement encadré, mais sur un outil de recette laissé ouvert, une instance de supervision exposée, ou un portail de sauvegarde relié au domaine principal depuis une migration vieille de plusieurs années. Aucun de ces services n'est linked depuis la page d'accueil, mais tous apparaissent dans un certificat émis il y a deux ans. Le coût de la découverte : une requête et un tri.
+
+Un avertissement s'impose avant de lancer quoi que ce soit. Une même adresse IP héberge fréquemment des dizaines de domaines distincts, et un certificat partagé couvre parfois un client, son hébergeur et un tiers qui n'a rien à voir avec votre mission. Tous les noms qui ressortent d'une recherche ne vous appartiennent pas : filtrez-les un par un, écartez ceux qui relèvent d'un fournisseur, d'un CDN ou d'un service mutualisé, et ne retenez que les hôtes explicitement compris dans votre autorisation. Si vous découvrez par ailleurs un domaine manifestement abandonné et non déclaré, notez-le comme observation à signaler, mais ne le sondez pas : l'absence de propriétaire visible n'est pas une autorisation.
+
+## Annuaires et moteurs de recherche : interroger ce qui est déjà public
+
+Les annuaires et les moteurs de recherche constituent le prolongement naturel du footprinting, et ils donnent souvent plus de résultats en une heure que trois jours de sondes. L'idée directrice est simple : une organisation communique, publie, recrute, archive, et tout ce qu'elle publie décrit involontairement son architecture. Votre travail consiste à formuler des questions précises à ces corpus plutôt qu'à consulter des pages au hasard. Un auditeur débutif tape le nom du client dans un moteur ; un auditeur formé construit une requête qui isole les documents techniques, les fichiers de configuration et les adresses oubliées.
+
+Les opérateurs avancés restent la base. Restreindre la recherche à un domaine, chercher un type de fichier précis, chercher une expression dans l'adresse ou dans le titre, exclure un site : chacun de ces gestes transforme une recherche en sonde ciblée. Les documents PDF, les feuilles de calcul et les présentations sont particulièrement riches, car ils conservent des noms de serveurs, des captures d'écran d'outils, des versions logicielles et parfois des noms d'utilisateurs dans leurs métadonnées. Une simple chaîne de requête vous donne la liste des PDF du client qui contiennent le mot serveur ou migration.
+
+```bash
+site:example.com filetype:pdf serveur
+site:example.com inurl:admin
+site:example.com intitle:"espace client" -www
+```
+
+À côté des moteurs généraux, les annuaires spécialisés indexent l'infrastructure mondiale. Ces services interrogeent en continu des millions de services exposés, enregistrent les bannières, les certificats et les technologies, et rendent ensuite ces résultats consultables. Les interroger est passif du point de vue de la cible : elle n'est pas contactée, vous lisez un relevé daté. La puissance de cette approche est qu'elle vous donne immédiatement le port ouvert, le logiciel annoncé, la version apparente et la date du dernier balayage. Sa limite est tout aussi importante : l'information peut avoir six mois, et l'absence de résultat ne prouve rien de l'état actuel.
+
+```table
+Source | Ce qu'elle livre | Nature du contact avec la cible
+Journaux de certification | Sous-domaines et noms alternatifs historiques | Aucune
+Archives du Web | Pages disparues, anciennes versions, annuaires oubliés | Aucune
+Moteurs de recherche | Documents publiés, fichiers techniques, mentions | Aucune
+Scanners d'Internet entier | Ports ouverts, bannières, versions, certificats | Aucune, lecture d'un relevé daté
+Dépôts de code publics | Fichiers de configuration, clés, URLs internes | Aucune
+Offres d'emploi | Technologies, outils, noms de poste, environnement | Aucune
+Forums et réseaux sociaux | Noms de collaborateurs, habitudes, supports utilisés | Aucune, mais données personnelles
+```
+
+Les dépôts de code méritent une place à part, parce qu'ils sont la source de secrets réellement trouvés. Un fichier d'environnement versionné puis retiré reste souvent dans l'historique, consultable publiquement. Un mot de passe de connexion de test, une URL d'administration, un identifiant de base de données, un jeton d'API : rien de tout cela n'a besoin d'être forcé, il suffit de chercher. Si vous découvrez une clé active dans un dépôt public, votre devoir est de la signaler au propriétaire, pas de l'utiliser. En France comme ailleurs, l'usage d'un identifiant trouvé, même sans malveillance, vous expose pénalement : la découverte est couverte par votre mission, l'exploitation ne l'est pas.
+
+Pensez aussi aux sources humaines, qui sont souvent les plus détaillées. Une offre d'emploi indique l'infrastructure en place, l'hébergeur, le système d'exploitation, les outils de supervision, les processus de sauvegarde. Une conference technique donnée par un ingénieur du client montre des captures d'écran avec des noms de machines. Un profil professionnel annonce les certifications obtenues et les technologies maîtrisées. Tout cela se collecte sans contact, et tout cela décrit la cible mieux que n'importe quelle sonde. Ne dépassez cependant pas la mesure : relevez les informations utiles à la mission, mentionnez leur source, et ne constituez pas un dossier sur les individus.
+
+Le dernier réflexe à acquérir est la recherche d'archives. Une page disparue depuis trois ans contient souvent exactement ce qui manque aujourd'hui : un annuaire de services, une carte réseau publiée par erreur, une adresse IP de recette, une ancienne version des mentions légales avec le nom de l'hébergeur. Comparez systématiquement la version actuelle et la version archivée d'une page technique : l'écart entre les deux est un révélateur d'évolution, et une évolution récente est toujours une piste à creuser dans la suite de la mission.
+
+Un dernier conseil d'organisation : conservez un carnet de requêtes. À mesure que vous avancez, vous accumulerez des formules qui fonctionnent, des opérateurs que vous oubliez, des exclusions que vous réécrivez à chaque mission. Notez la requête exacte, le moteur utilisé, la date et le nombre de résultats utiles, puis classez-les par type de source. Ce carnet devient en quelques mois votre principal atout, parce que la qualité d'une reconnaissance ne dépend presque plus de la puissance des outils, mais de la précision des questions que vous savez poser. Reprenez-le systématiquement au début d'une nouvelle mission, et complétez-le en fin de mission avec les requêtes qui auraient dû exister.
+
+## Technologies détectées : identifier ce qui répond
+
+Identifier les technologies en place, c'est le fingerprinting applicatif : déduire, à partir de signaux observables, quel logiciel, quelle version et quelle architecture servent la cible. Contrairement à ce qu'on imagine, la plupart des signaux ne sont pas volontairement cachés : un serveur web annonce son nom et sa version, un framework laisse des cookies caractéristiques, une application d'erreur affiche une page dont la structure trahit la pile, un certificat porte le nom de l'autorité de certification et parfois celui de l'outil qui l'a déployé. Le travail consiste à assembler ces fragments, puis à vérifier chacun plutôt qu'à conclure à la première coïncidence.
+
+Le réflexe le plus rapide reste la lecture de l'en-tête HTTP retourné par le serveur. Le premier échange avec l'application, envoyé depuis votre poste vers un service autorisé, suffit souvent à lever le voile : nom et version du serveur web, framework applicatif, bibliothèque de template, absence ou présence d'en-têtes de sécurité. On y revient toujours, parce que l'absence d'en-tête de sécurité est elle-même une information de configuration.
+
+```bash
+curl -sI https://www.example.com/ | head -n 20
+curl -s https://www.example.com/robots.txt
+curl -sI https://www.example.com/.well-known/security.txt
+printf '\x00' | openssl s_client -connect www.example.com:443 -servername www.example.com 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+```
+
+Deuxièmement, les ressources et les empreintes. Le favicon demandé par le navigateur possède souvent un empreinte numérique connue, qui relie instantanément le site à une application précise. Les fichiers statiques, les chemins d'assets, les identifiants de générateur de sites et les balises de version intégrées au code source constituent autant de signatures. Des outils automatisés comparent ces signatures à une base de référence et proposent une liste de technologies avec un niveau de confiance. Ils se trompent : une page 404 personnalisée peut ressembler à celle d'un framework voisin, un reverse proxy peut masquer complètement le serveur réel.
+
+```bash
+whatweb -a 2 https://www.example.com
+```
+
+Troisièmement, les certificats TLS et les services voisins. L'enveloppe d'un certificat indique l'autorité émettrice, la période de validité, les noms couverts et parfois l'agent de déploiement utilisé. Un certificat auto-signé ou émis pour une IP plutôt qu'un nom annonce un service interne exposé. Un certificat dont la validité court sur quatre-vingt-dix jours trahit un renouvellement automatisé, donc une chaîne d'outillage moderne. Une recherche sur les empreintes de certificats ou d'icônes vous ramène à la fois aux autres services de la même infrastructure et aux communautés qui les ont déjà documentés.
+
+Un principe méthodologique domine tout le reste : séparer l'observation de l'hypothèse. Notez ce que vous avez vu, enregistrez la sortie brute, puis écrivez à côté votre degré de confiance et la raison de ce niveau. Un serveur qui s'annonce comme Apache version 2.4.49 vous donne une information forte, encore faut-il vérifier qu'aucun proxy ne modifie l'en-tête. Une absence d'en-tête Server, à l'inverse, ne signifie pas l'absence de serveur : elle signifie simplement qu'il a été configuré pour se taire. Votre rapport doit refléter cette honnêteté intellectuelle.
+
+La chaîne qui suit l'identification est celle que tout débutant pressé veut enchaîner immédiatement : technologie, puis version, puis faille publiée, puis exploitation. Dans le cadre d'un premier audit éthique, vous vous arrêtez à l'identification, sauf consigne écrite contraire. Signaler qu'une version affichée est antérieure à la dernière mise à jour connue est utile et suffisant ; tenter l'exploitation transforme votre mission, engage votre responsabilité et déborde du périmètre autorisé. La reconnaissance produit un inventaire, pas une preuve d'intrusion.
+
+Il existe une variante entièrement passive de cette étape, que vous utiliserez dès que le périmètre s'interdit tout contact direct. Des services publics mettent à disposition l'historique des requêtes qu'ils ont eux-mêmes effectuées vers les sites du monde entier : en-têtes retournés, redirections suivies, technologies déduites, captures de pages, journaux de certificats. Vous y lisez exactement les mêmes signaux que votre curl, mais datés, comparables et sans aucun paquet envoyé de votre part. Utilisez cette approche pour préparer vos hypothèses, puis confirmez-les par une observation unique et ciblée lorsque l'autorisation le permet. Deux sources indépendantes qui s'accordent valent davantage qu'une sonde lancée dans l'urgence.
+
+Un cas réel rappelle pourquoi cette étape est centrale. En 2017, la fuite de données d'Equifax a débuté par l'exposition d'une faille connue depuis plusieurs mois sur une bibliothèque d'interrogation de fichiers, une technologie identifiable en quelques requêtes sur un portail laissé accessible depuis l'extérieur. Rien d'exotique : un composant courant, une version non corrigée, un service atteignable. C'est exactement le type de constat qu'une reconnaissance rigoureuse remonte avant qu'un incident n'ait lieu, et qu'un rapport doit porter sans jamais franchir la ligne de l'exploitation.

@@ -1,0 +1,429 @@
+Bienvenue dans le cinquième chapitre du parcours bases de données, celui où la base de données cesse d'être simplement correcte pour devenir rapide. Jusqu'ici, vous avez appris à décrire un domaine avec des tables, à relier ces tables avec des clés primaires et des clés étrangères, à les normaliser pour supprimer les redondances, puis à les interroger avec des filtres, des agrégations et des jointures. Toutes ces requêtes fonctionnent, et c'est l'essentiel. Sauf qu'un jour, sur une table de deux millions de lignes, la même requête met huit secondes au lieu de vingt millisecondes, et que personne, dans votre équipe, n'acceptera cette différence. Ce chapitre vous explique pourquoi ce goulet d'étranglement apparaît, quel mécanisme le résout le plus souvent, et surtout comment décider, preuves à l'appui, plutôt que d'ajouter des index au hasard.
+
+L'image la plus parlante reste celle du dictionnaire. Pour trouver la définition d'un mot dans un dictionnaire de dix mille pages, vous ne commencez pas à la page une : vous ouvrez au hasard vers le milieu, vous regardez où vous êtes, vous tranchez à nouveau, et en quatre ou cinq gestes vous êtes au bon endroit. Un index de base de données fonctionne exactement ainsi. Il s'agit d'une structure secondaire, rangée et compacte, qui contient les valeurs d'une colonne accompagnées d'une référence vers la ligne complète, et qui permet de localiser ces lignes sans parcourir la table de haut en bas. La table, elle, reste une pile d'enregistrements dont l'ordre physique ne correspond à rien de garanti ; l'index, lui, est trié, et c'est ce tri qui transforme une recherche linéaire en recherche par étapes.
+
+Prérequis : les quatre chapitres précédents. Vous devez savoir écrire une jointure, une agrégation et une contrainte, car nous allons conserver notre exemple fil rouge, la bibliothèque des Lilas, avec ses lecteurs, ses ouvrages, ses exemplaires et ses emprunts. Les exemples sont écrits en dialecte PostgreSQL, la syntaxe étant largement transposable vers MySQL, MariaDB, SQLite et SQL Server ; quand un comportement diffère réellement, nous le signalerons. Aucune connaissance préalable de l'intérieur d'un moteur n'est demandée : nous construirons l'intuition page après page, avec des comptes et des raisonnements, pas avec des formules.
+
+Une règle de méthode avant de commencer, et elle vaut pour toute votre carrière : on n'optimise pas ce qu'on n'a pas mesuré. Un index ajouté par intuition devient rapidement un poids mort qui ralentit les écritures, occupe du disque et fausse les estimations du planificateur. Nous commencerons donc chaque fois par observer, avec la commande EXPLAIN, puis nous changerons une seule chose à la fois, puis nous re-mesurerons. Ce chapitre vous donne les concepts et les gestes ; l'exercice de fin vous demandera de les appliquer sur un vrai schéma. Lisez-le comme un mode d'emploi d'un outil de précision, et non comme une liste de recettes à appliquer les yeux fermés.
+
+## L'intuition de la structure B-tree
+
+Une table stockée sur disque est découpée en pages, généralement de quelques kilo-octets chacune, numérotées et rangées les unes après les autres. Quand une requête doit retrouver les lignes qui satisfont une condition, le moteur a deux stratégies à sa disposition. La première consiste à ouvrir la première page, à examiner chaque ligne, puis à passer à la suivante, et ainsi de suite jusqu'à la dernière : c'est la recherche séquentielle, ou balayage complet de la table, techniquement nommé seq scan. Avec un million de lignes, cela représente des milliers de lectures de pages, et le coût croît linéairement : doubler la table double le temps. C'est ce mode de fonctionnement par défaut, et il est parfaitement adapté aux petites tables ou aux requêtes qui touchent une large fraction du contenu.
+
+La seconde stratégie repose sur l'index, organisé le plus souvent en arbre B-tree, un arbre équilibré dont le nom signifie arbre large, en anglais broad tree. L'idée est de ranger les valeurs de la colonne indexée dans un arbre dont chaque nœud contient plusieurs clés triées et plusieurs enfants. Contrairement à un arbre binaire classique, qui n'a que deux enfants par nœud et devient donc très haut, un nœud de B-tree peut contenir des dizaines ou des centaines de références : on parle de fan-out, ou facteur de branchement. Un arbre avec un facteur de branchement de cent et une hauteur de trois permet d'atteindre un million de valeurs en trois sauts seulement. La hauteur d'un B-tree reste très faible, souvent trois ou quatre niveaux même pour des tables de centaines de millions de lignes, et c'est exactement ce qui explique la différence de performance que vous observez.
+
+Pour visualiser les niveaux, imaginez la racine de l'arbre. Elle ne contient que des clés de séparation et des pointeurs vers des pages enfants. Le moteur y cherche la plage de valeurs qui contient la valeur recherchée, descend au niveau intermédiaire, y refait le même raisonnement, puis atteint une page de feuilles. Les feuilles contiennent les valeurs réelles, triées, chacune accompagnée de l'adresse de la ligne correspondante dans la table, une référence souvent appelée identifiant de ligne. Comme chaque niveau tient vraisemblablement en cache mémoire, le moteur ne descend généralement qu'une ou deux fois vers le disque, ce qui explique pourquoi une recherche par index peut être mille fois plus rapide qu'un balayage complet sur la même table.
+
+Les feuilles d'un B-tree sont en outre chaînées entre elles, de gauche à droite, dans l'ordre croissant des valeurs. Cette particularité a une conséquence majeure : l'index ne sert pas seulement à chercher une valeur exacte, il sert aussi à parcourir une plage. Les conditions de type BETWEEN, les comparaisons avec supérieur ou inférieur, les recherches par préfixe avec LIKE sans joker en tête, et même un tri ORDER BY sur la colonne indexée peuvent être satisfaits en suivant simplement les feuilles de gauche à droite, sans tri supplémentaire. Vous avez donc intérêt à indexer les colonnes sur lesquelles vous filtrez, bien sûr, mais aussi sur celles par lesquelles vous triez et sur celles dont vous extrayez des intervalles.
+
+Un point mérite d'être dit dès maintenant pour éviter un contresens : l'index n'est pas un raccourci magique qui supprime le travail. C'est une structure supplémentaire, écrite en parallèle de la table, et qui doit être maintenue. Quand vous insérez une ligne, le moteur doit insérer la valeur correspondante dans chaque index de la table, à la bonne position dans l'arbre, ce qui coûte du temps et de l'espace. Quand vous modifiez une colonne indexée, l'entrée doit être retirée puis réinsérée. Quand vous supprimez une ligne, chaque index doit se débarrasser de son entrée. Un tableau de mille colonnes et de vingt index serait donc terriblement lent à écrire. Le bon réflexe n'est pas d'indexer toutes les colonnes, mais d'indexer précisément celles que les requêtes utilisent réellement, en vérifiant ensuite que le plan d'exécution les emploie bien.
+
+```sql
+-- Recherche sans index : le moteur parcourt toutes les pages.
+SELECT *
+FROM lecteurs
+WHERE courriel = 'ada@lilas.fr';
+
+-- Recherche avec index sur courriel : trois ou quatre sauts dans l'arbre.
+CREATE INDEX idx_lecteurs_courriel ON lecteurs (courriel);
+
+SELECT *
+FROM lecteurs
+WHERE courriel = 'ada@lilas.fr';
+```
+
+Comparez les deux requêtes sur une table suffisamment grande, avec EXPLAIN, et vous verrez apparaître dans la seconde un nœud de type Index Scan au lieu d'un nœud de type Seq Scan, ainsi qu'une estimation de coût divisée par cent. Le résultat retourné est identique, à la différence près que l'index ne peut être utilisé que si la condition porte directement sur la colonne indexée, sans transformation qui l'opacifie. C'est précisément la limite que nous étudierons dans la troisième partie, avec les cas de sargabilité.
+
+## Créer un index avec CREATE INDEX
+
+La création d'un index est une opération de définition de schéma, au même titre que CREATE TABLE ou ALTER TABLE. La syntaxe de base tient en peu de mots : on indique CREATE INDEX, puis un nom d'index, puis la table, puis la ou les colonnes à indexer. Le nom que vous choisissez n'est pas anodin : dans six mois, quand un plan d'exécution affichera ce nom dans un rapport de performance, il devra dire d'où vient l'index et ce qu'il couvre. La convention la plus répandue suit le schéma idx_table_colonne, par exemple idx_emprunts_date_sortie ou idx_lecteurs_ville_id. Certaines équipes ajoutent un préfixe indiquant le type d'index, notamment pour les index uniques ou partiels.
+
+Au-delà de la syntaxe, comprenez ce que fait réellement CREATE INDEX. Le moteur lit l'intégralité de la table, trie les valeurs de la colonne choisie, construit l'arbre, puis range le résultat sur disque. Cette opération demande du temps, de la mémoire et, sur une grande table, peut bloquer les écritures pendant toute sa durée. Sur une table de cent millions de lignes, la création peut prendre plusieurs minutes, et pendant ce temps les utilisateurs ne peuvent pas insérer. PostgreSQL propose à cet égard CREATE INDEX CONCURRENTLY, qui construit l'index en deux phases sans figer les écritures ; MySQL dispose d'options équivalentes selon le moteur de stockage. La règle professionnelle est simple : on crée les index sur une table vide ou déjà en place, mais on ne les ajoute pas, à la légère, sur une table de production en pleine heure de trafic.
+
+Il existe des index que vous n'avez jamais à créer vous-même, parce que le moteur les fabrique automatiquement. Déclarer une clé primaire crée un index unique sur la colonne ou le groupe de colonnes concerné, puisque l'unicité doit être vérifiée à chaque écriture et que vérifier une unicité sans index reviendrait à comparer chaque nouvelle ligne à toutes les autres. Déclarer une contrainte UNIQUE produit exactement le même effet. Créez la table lecteurs avec une clé primaire identifiant et une contrainte d'unicité sur courriel, et vous possédez déjà deux index sans avoir écrit un seul CREATE INDEX. C'est un point crucial à retenir : avant d'ajouter un index, vérifiez ceux qui existent déjà, sous peine d'en créer un redondant qui alourdit inutilement chaque écriture.
+
+Examiner les index existants fait partie du geste quotidien. En PostgreSQL, la table système pg_indexes liste les index de la base, et la commande \d suivie du nom d'une table les affiche pour celle-ci. En MySQL et MariaDB, la commande SHOW INDEX FROM nom_table remplit le même rôle. SQLite propose la commande .schema et la commande pragma index_list. Prenez l'habitude de les consulter avant toute création : vous y découvrirez parfois des index oubliés, hérités d'une ancienne version de l'application, ou au contraire des colonnes filtrées en permanence par les requêtes et pourtant dépourvues de tout index. Dans PostgreSQL, la vue pg_stat_user_indexes indique même combien de fois chaque index a été lu, ce qui permet d'identifier précisément les index morts.
+
+```sql
+-- Index simple sur une colonne fréquemment filtrée.
+CREATE INDEX idx_emprunts_date_sortie ON emprunts (date_sortie);
+
+-- Index composite : colonnes dans l'ordre des besoins de la requête.
+CREATE INDEX idx_emprunts_lecteur_date
+  ON emprunts (lecteur_id, date_sortie);
+
+-- Index unique : contrainte d'unicité et structure de recherche à la fois.
+CREATE UNIQUE INDEX idx_lecteurs_courriel_unique ON lecteurs (courriel);
+
+-- Retirer un index dont l'analyse a montré qu'il n'était jamais utilisé.
+DROP INDEX idx_emprunts_date_sortie;
+```
+
+Les commandes DROP INDEX ne détruisent aucune donnée : elles suppriment uniquement la structure secondaire. La table reste intacte, et les requêtes continuent de fonctionner, éventuellement un peu plus lentement. C'est d'ailleurs le bon moyen de vérifier qu'un index était bien inutile : on le supprime, on relance les mesures, et si rien ne se dégrade, il n'avait pas de raison d'exister. Une bonne pratique consiste à noter, dans un fichier de migration versionné, chaque index créé avec la requête qui motivait sa création. Ce petit carnet de bord vaut des heures de diagnostic ultérieur, parce que l'histoire d'une optimisation se lit rarement dans le schéma seul.
+
+## Index simples, index composites, index uniques
+
+Un index simple porte sur une seule colonne. C'est le cas le plus fréquent et le plus facile à raisonner : index sur le courriel d'un lecteur, sur la date de sortie d'un emprunt, sur la cote d'un exemplaire. Il répond à une question unique, chercher ou parcourir les valeurs d'un seul attribut. Un index simple convient quand vos requêtes filtrent sur cette colonne seule, ou sur elle combinée à d'autres conditions qui pourront être filtrées ensuite, ligne à ligne, sans que cela coûte cher. C'est le premier réflexe à avoir, et dans la majorité des bases de données d'entreprise, la plus grande part du gain vient d'index simples bien choisis.
+
+Un index composite porte sur plusieurs colonnes, et l'ordre dans lequel vous les listez est déterminant. Prenons un index sur les colonnes lecteur_id puis date_sortie de la table des emprunts. Cet index est trié d'abord par lecteur_id, et à l'intérieur de chaque lecteur, par date. Il répond donc parfaitement à une requête qui filtre sur lecteur_id, et aussi à une requête qui filtre sur lecteur_id et sur une plage de dates. En revanche, il ne sert à rien pour une requête qui ne filtre que sur date_sortie, car chercher une date dans un arbre trié d'abord par lecteur revient à chercher une aiguille dans une paille. Cette règle porte un nom : le préfixe de gauche. Un index composite n'est utilisable que par ses colonnes de gauche, celles qui constituent le préfixe, et les colonnes suivantes ne sont utiles qu'en complément.
+
+Pour bien choisir l'ordre, posez-vous la question de la sélectivité et de la fréquence. On place en premier la colonne qui filtre le plus, ou celle qui élimine le plus de lignes ; on place en dernier la colonne qui sert surtout à trier ou à affiner. Si une requête filtre toujours sur la ville et parfois sur la date d'inscription, l'ordre ville_id puis date_inscription est le bon. Si une autre requête filtre uniquement sur la date, elle aura besoin d'un index séparé, car aucun préfixe de gauche ne la servira. Un index composite n'est pas un substitut à deux index simples : il optimise une combinaison précise de conditions, et c'est sa force comme sa limite.
+
+Un index unique combine deux rôles : il fait le travail de recherche d'un index classique et impose en plus l'unicité des valeurs. Il se déclare avec la clause UNIQUE, soit directement dans CREATE UNIQUE INDEX, soit dans une contrainte UNIQUE ou dans la clé primaire. Son intérêt dépasse la garantie d'intégrité : parce qu'il sait que chaque valeur n'existe qu'une fois, le moteur peut s'arrêter dès la première correspondance, et certaines optimisations de jointure deviennent possibles. Attention toutefois à un détail de langage : les valeurs nulles sont généralement exclues de la vérification d'unicité, plusieurs lignes pouvant porter NULL dans une colonne unique, ce qui correspond à la sémantique SQL où l'inconnu n'est égal à rien, pas même à lui-même.
+
+Il existe enfin des formes plus ciblées que nous n'utiliserons pas tout de suite mais qu'il est bon de connaître. Un index partiel, ou index conditionnel, ne couvre qu'une partie des lignes, celles qui satisfont une condition donnée : par exemple les emprunts dont la date de retour est nulle, donc les prêts en cours. Comme ils sont beaucoup plus petits, ces index sont rapides à construire et à maintenir. Un index sur expression porte sur le résultat d'une formule plutôt que sur une colonne brute, ce qui résout un cas que nous verrons en détail plus loin. Un index en couverture, enfin, contient suffisamment de colonnes pour répondre à une requête sans jamais retourner à la table. Toutes ces variantes reposent sur le même B-tree et sur les mêmes principes : tri, hauteur faible, recherche par préfixe.
+
+```sql
+-- Un index composite répond aux deux requêtes suivantes, dans cet ordre.
+CREATE INDEX idx_emprunts_lecteur_date ON emprunts (lecteur_id, date_sortie);
+
+-- Utilisable : préfixe de gauche lecteur_id.
+SELECT * FROM emprunts WHERE lecteur_id = 42;
+
+-- Utilisable : préfixe de gauche plus plage sur la deuxième colonne.
+SELECT *
+FROM emprunts
+WHERE lecteur_id = 42
+  AND date_sortie BETWEEN '2026-01-01' AND '2026-06-30';
+
+-- Non utilisable : la colonne de gauche est absente de la condition.
+SELECT * FROM emprunts WHERE date_sortie = '2026-03-15';
+```
+
+Prenez le réflexe de lire vos propres index comme le ferait le moteur : de gauche à droite, en vous demandant à chaque colonne si la condition de la requête la concerne. Si la réponse est non dès la première colonne, tout l'index est hors jeu. Si la réponse est oui pour la première et non pour la seconde, l'index sert partiellement et le reste de la condition sera appliqué après coup, sur les lignes retournées. Ce petit exercice de lecture, répété sur vos requêtes lentes, vous évitera la moitié des index inutiles dont nous parlerons dans la partie suivante.
+
+## Les autres structures d'index et leurs usages
+
+Le B-tree domine si largement le paysage qu'un débutant pourrait croire qu'il est le seul outil disponible. Il n'en est rien, et les autres structures ont chacune un domaine où elles surpassent largement l'arbre classique. Connaître leur existence vous évitera de vous épuiser à faire faire au B-tree une tâche pour laquelle il n'est pas fait, et vous évitera surtout d'entendre un collègue répéter qu'il faut un index sur n'importe quoi. La première alternative est l'index de hachage, qui transforme la valeur en un emplacement calculé par une fonction et retrouve la ligne en un seul pas. Il répond remarquablement bien à l'égalité stricte, mais il ignore tout de l'ordre : aucune plage, aucun tri, aucun préfixe. PostgreSQL le propose depuis longtemps, MySQL l'utilisait par défaut avant de généraliser InnoDB et son B-tree, et dans la pratique on y recourt rarement aujourd'hui.
+
+Pour les types de données complexes, les moteurs fournissent des index spécialisés. Un index de type GIN, dans PostgreSQL, est conçu pour les valeurs composées : listes, tableaux, documents JSON, textes découpés en mots. Plutôt que de chercher une valeur, il indexe pour chaque élément la liste des lignes qui la contiennent, ce qui convient parfaitement à une requête cherchant toutes les lignes dont un champ contient un mot donné. L'index GiST, lui, sert aux données géométriques et aux recherches par similarité ou par proximité. Un index de type BRIN, enfin, ne range pas les valeurs mais enregistre les minima et maxima par bloc de pages : il devient extraordinairement compact quand la table est naturellement triée, par exemple une colonne de date d'insertion croissante, et permet de filtrer d'immenses tables pour une fraction de l'espace disque d'un B-tree.
+
+Le plein texte mérite une mention à part, car il traite un besoin très répandu : retrouver des documents contenant certains mots, avec des variations de pluriel, des synonymes ou une approximation orthographique. Un WHERE colonne LIKE '%mot%' classique ne peut pas servir d'index, nous le verrons, alors que le plein texte construit une structure adaptée, souvent sur le modèle des arbres préfixés, et répond à des requêtes autrement plus riches. SQLite, PostgreSQL, MySQL et SQL Server embarquent tous une forme de recherche pleine texte. Le signal à retenir est le suivant : avant de subir une requête lente de type texte libre, vérifiez si votre moteur ne propose pas déjà l'index adéquat, plutôt que de tenter de plier un B-tree à une tâche qu'il refuse.
+
+Toutes ces structures ont un coût commun : elles vivent à côté de la table et doivent la suivre à chaque écriture. Choisir d'indexer, c'est donc arbitrer entre lecture et écriture. Une table de catalogue produit, massivement lue et rarement modifiée, supporte un grand nombre d'index sans dommage. Une table de journalisation, écrite en permanence et presque jamais relue, doit en avoir le moins possible. Un bon repère, à vérifier toujours par la mesure, consiste à regarder le ratio entre lectures et écritures, la taille de la table, et la sélectivité des conditions utilisées. Si une colonne ne prend que deux ou trois valeurs distinctes sur un million de lignes, comme un drapeau binaire ou un sexe, l'index apportera bien peu, car le moteur préférera de loin lire la table plutôt que remonter un arbre pour y collecter la moitié des lignes. Cette notion de sélectivité est si centrale que nous lui consacrons une section entière dans la partie qui suit.
+
+La première règle de l'optimisation tient en une phrase : on ne devine pas, on mesure. Un développeur qui déclare qu'une requête est lente parce qu'elle semble lourde fait de la fiction ; un développeur qui exécute la requête et lit son plan d'exécution fait de l'ingénierie. Les moteurs relationnels embarquent pour cela un outil universel nommé EXPLAIN, que vous trouverez dans PostgreSQL, MySQL, MariaDB, SQLite et, sous une forme légèrement différente, dans SQL Server. Ce chapitre vous apprend à l'utiliser, à comprendre ce qu'il produit, et à en tirer une décision : ajouter un index, réécrire une condition, ou conclure que la requête est déjà aussi rapide qu'elle peut l'être.
+
+Le point délicat est que EXPLAIN et EXPLAIN ANALYZE ne disent pas la même chose. Le premier affiche une prévision, calculée à partir des statistiques que le moteur possède sur vos données ; le second exécute réellement la requête et affiche ce qui s'est passé. L'un est gratuit et ment parfois, l'autre a un coût et ne ment jamais sur l'exécution, mais il a fallu faire le travail pour obtenir le résultat. Savoir alterner entre les deux, et plus précisément savoir dans quel ordre les utiliser, fait toute la différence entre une optimisation fondée et une série de changements au jugé.
+
+Ensuite viendra la lecture, qui est un exercice d'interprétation bien plus que de syntaxe. Un plan d'exécution se lit de l'intérieur vers l'extérieur et de bas en haut : les opérations les plus profondes s'exécutent en premier, et leurs résultats remontent vers l'opération parente. Chaque ligne porte des coûts, des estimations de cardinalité, parfois des tailles de tampon et des temps réels. Certains chiffres rassurent, d'autres alarment, et l'essentiel est de savoir lesquels regarder d'abord. Enfin, la notion de sélectivité viendra expliquer la quasi-totalité des décisions du planificateur : c'est elle qui détermine si votre index sera utilisé ou ignoré, et comprendre sa définition revient à comprendre la moitié de l'optimisation.
+
+Prenons un exemple concret et restons-en là pour l'instant : la bibliothèque des Lilas doit afficher les emprunts en retard. La requête filtre sur une date et joint une table de lecteurs. Est-elle lente ? De combien ? Un index sur la date résoudrait-il le problème, ou le jointureur est-il le vrai coupable ? Répondre à ces questions au doigt mouillé, c'est prendre le risque d'ajouter un index sur la colonne la moins coupable et de laisser le véritable goulet d'étranglement intact. Mesurons d'abord. Nous mesurerons ensuite. Et nous comparerons, parce qu'une optimisation qui ne se mesure pas avant et après n'est qu'une opinion.
+
+## Mesurer avant d'optimiser : EXPLAIN et EXPLAIN ANALYZE
+
+EXPLAIN est la commande qui interroge le planificateur : elle lui demande quel plan il comptait employer pour exécuter votre requête, sans exécuter cette requête. Dans PostgreSQL, on l'écrit devant une requête SELECT, UPDATE ou DELETE ; dans MySQL, on l'écrit devant un SELECT et l'on dispose en supplément de EXPLAIN FORMAT = JSON, particulièrement lisible ; dans SQLite, la variante s'écrit EXPLAIN QUERY PLAN et renvoie un plan synthétique. Quel que soit le moteur, l'idée est la même : vous soumettez une intention, on vous répond par une stratégie. Cette distinction est fondamentale, car la stratégie que vous voyez est une prévision, construite à partir des statistiques collectées sur les valeurs de vos colonnes.
+
+Le coût affiché par PostgreSQL, deux nombres séparés par une virgule, s'interprète ainsi : le premier est le coût de démarrage, c'est-à-dire le temps nécessaire avant de pouvoir renvoyer la première ligne ; le second est le coût total, jusqu'à la dernière ligne. Une requête affichant un coût total de trois mille n'a aucun sens en soi : ce chiffre est une unité abstraite, proportionnelle aux pages lues et au temps processeur, et il ne se convertit pas en millisecondes. Il n'en reste utile que par comparaison. Si deux plans traitent la même requête, celui dont le coût total est le plus faible est, statistiques à jour, le meilleur choix. Si vous comparez des coûts de plans différents pour des requêtes différentes, vous comparez des choses sans rapport.
+
+Voici la distinction la plus importante entre les deux commandes : EXPLAIN ne lance rien, EXPLAIN ANALYZE exécute. Cette exécution réelle produit un plan enrichi, où chaque nœud affiche un temps écoulé, parfois décomposé en temps d'attente, temps CPU et lecture d'entrée. Le plan affiché après ANALYZE n'est plus forcément celui qui a été prévu : si les estimations de la prévision étaient mauvaises, le moteur a pu choisir un autre chemin en cours de route, ou encore exécuter un nœud de manière différente de ce que la structure suggérait. Un plan réel est donc la vérité, mais une vérité du passé : il vous dit ce qui s'est passé pour cette exécution, pas forcément ce qui se passera demain avec des données différentes.
+
+La conséquence pratique tient en trois précautions. Premièrement, ANALYZE exécute la requête : si elle modifie des données, les modifications ont lieu ; si elle est très lente, vous attendrez. Utilisez-le sur des requêtes SELECT, ou dans une transaction que vous annulez ensuite. Deuxièmement, faites varier les valeurs de paramètres : une requête peut être rapide avec un identifiant fréquent et catastrophique avec un identifiant rare, car le plan n'est pas le même. Troisièmement, rafraîchissez les statistiques avant de juger, avec ANALYZE en PostgreSQL ou OPTIMIZE TABLE en MySQL : un plan calculé sur des statistiques d'il y a six mois est un plan calculé sur un souvenir.
+
+```sql
+-- 1. Prévision seule, sans exécuter la requête.
+EXPLAIN
+SELECT l.nom, l.prenom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.date_retour IS NULL;
+
+-- 2. Exécution réelle, avec les temps de chaque étape.
+EXPLAIN ANALYZE
+SELECT l.nom, l.prenom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.date_retour IS NULL;
+```
+
+Le rythme de travail à adopter est le suivant. Vous capturez d'abord le plan actuel, en le copiant dans votre fichier de notes ou de migration, parce que le plan d'avant est aussi précieux que le plan d'après. Vous formulez ensuite une hypothèse explicite, du type : ajouter un index sur emprunts(date_retour) devrait remplacer le balayage séquentiel par une recherche par index et diviser le coût par dix. Vous appliquez une seule modification. Vous relancez la mesure. Puis vous acceptez ou vous rejetez l'hypothèse, sur la base des chiffres. Ce cycle, répété, est exactement la méthode des équipes qui maintiennent des bases performantes sur la durée, et il vous protège de l'erreur la plus coûteuse de toutes : l'optimisation qui améliore une requête et en dégrade trois autres.
+
+## Lire un plan d'exécution ligne par ligne
+
+Un plan ressemble à une arborescence dont les lignes imbriquées décrivent des opérations. En PostgreSQL, la lecture commence par l'opérateur le plus à droite et le plus profond, celui dont les flèches ne viennent de nulle part : c'est généralement l'accès initial à une table ou à un index. Les résultats remontent ensuite vers l'opérateur qui les consomme, jusqu'à la racine, qui produit les lignes rendues à l'utilisateur. En MySQL, la lecture se fait à l'envers, de la ligne de résultat vers les sources. Dans les deux cas, la règle demeure : identifier d'où viennent les données, et quel traitement leur est appliqué en chemin.
+
+Les opérateurs d'accès sont les plus simples à reconnaître. Seq Scan, ou Table Access Full dans MySQL, signifie balayage complet : toutes les lignes sont lues. Index Scan signifie que l'index est utilisé pour localiser les lignes, puis que chacune est récupérée dans la table. Index Only Scan, ou Covering Index, signifie que l'index seul suffit, la table n'est jamais ouverte : c'est le meilleur des cas, celui de la couverture d'index que nous étudierons dans la partie suivante. Bitmap Heap Scan, dans PostgreSQL, signifie que l'index a d'abord produit une carte des pages à lire, que ces pages ont été triées pour éviter les allers-retours inutiles, puis que les lignes ont été extraites : c'est la stratégie choisie quand l'index retient une fraction notable mais pas majoritaire de la table.
+
+Les opérateurs de traitement font ce que le nom suggère. Nest Loop parcourt la table externe ligne à ligne et, pour chaque ligne, recherche la correspondance dans la table interne, idéalement via un index. Hash Join construit d'abord une table de hachage en mémoire à partir d'une des tables, puis balaie l'autre en la comparant à cette table : il est excellent pour les jointures sans index, mais demande assez de mémoire pour tenir l'une des deux tables. Merge Join suppose que les deux entrées sont triées, et il redevient très efficace si cette tri est gratuit, c'est-à-dire si un index fournit déjà l'ordre. Sort, Aggregate, Filter et Materialize décrivent respectivement un tri, une agrégation, un filtre appliqué en mémoire et la mise en cache intermédiaire des résultats.
+
+À côté du nom de l'opération, deux colonnes retiennent l'attention. Le coût, rappelons-le, est une estimation sans unité, utile pour comparer. La cardinalité, notée rows, est le nombre de lignes que le moteur estime devoir manipuler à cette étape, et c'est ici que se cachent la plupart des problèmes. Comparez la valeur estimée avec la valeur réellement traitée, affichée entre parenthèses par EXPLAIN ANALYZE. Si le moteur prédit dix lignes et en traite cent mille, son estimation était fausse, et un mauvais plan peut découler de cette erreur : statistiques périmées, distribution très irrégulière de valeurs, condition complexe que le moteur sait mal modéliser. Corriger l'estimation, souvent par un rafraîchissement de statistiques ou en augmentant l'échantillonnage, rétablit un plan correct sans écrire une ligne d'index.
+
+Le plan suivant, obtenu après EXPLAIN ANALYZE, illustre les trois niveaux de lecture. La racine est un hash join entre deux entrées. La première entrée balaie la table des emprunts et applique un filtre sur la date de retour nulle ; la seconde construit une table de hachage à partir des lecteurs, en balayage séquentiel également. Aucun index n'est utilisé, et les temps réels confirment que le balayage des emprunts domine le coût total.
+
+```
+Hash Join  (cost=185.00..412.00 rows=842 width=24) (actual time=4.12..6.90 rows=837 loops=1)
+  Hash Cond: (e.lecteur_id = l.identifiant)
+  ->  Seq Scan on emprunts e  (cost=0.00..198.00 rows=842 width=12)
+        Filter: (date_retour IS NULL)
+        Rows Removed by Filter: 9163
+        Actual Rows: 837  Actual Loops: 1
+  ->  Hash  (cost=112.00..112.00 rows=5000 width=16)
+        ->  Seq Scan on lecteurs l  (actual rows=5000 loops=1)
+Planning Time: 0.18 ms
+Execution Time: 7.45 ms
+```
+
+Lisez ce plan dans l'ordre. Le filtre sur date_retour est appliqué pendant le balayage, et le moteur indique qu'il a écarté neuf mille cent soixante-treize lignes pour n'en garder que huit cent trente-sept : la condition est sélective, puisqu'elle retient à peine huit pour cent des emprunts. Pourtant, le moteur a choisi de balayer toute la table, parce que le planificateur juge, à raison dans ce cas précis, que le coût d'un aller-retour par index dépasserait le coût d'une lecture séquentielle. La ligne Execution Time vous donne le vrai chiffre, sept virgule quatre cinq millisecondes, et c'est ce chiffre que vous comparerez après toute modification. Sans lui, tout le reste n'est que théorie.
+
+## Sélectivité : combien de lignes votre condition garde-t-elle ?
+
+La sélectivité d'une condition est la fraction de lignes de la table qu'elle laisse passer. Une condition qui ne conserve qu'une ligne sur un million est hautement sélective ; une condition qui conserve la moitié des lignes ne l'est pas du tout. Cette simple proportion commande presque toutes les décisions du planificateur. Si la condition est très sélective, il vaut mieux payer le prix d'une recherche dans l'index et d'un aller-retour par ligne correspondante, car ces aller-retours seront rares. Si la condition conserve une large part de la table, il vaut mieux tout lire une fois : un balayage séquentiel lit chaque page une seule fois, alors qu'une série d'accès aléatoires par index relirait les mêmes pages de nombreuses fois.
+
+Pour estimer la sélectivité avant même d'exécuter, deux méthodes suffisent. La première est statistique : comptez les lignes totales, puis les lignes satisfaisant la condition, avec deux requêtes distinctes. Le rapport vous donne un pourcentage. La seconde utilise les statistiques du moteur, qui enregistrent notamment le nombre de valeurs distinctes d'une colonne, la fameuse cardinalité. Si la colonne porteur possède mille valeurs distinctes pour mille lignes, chaque valeur correspond à une ligne, et l'égalité est maximale. Si la colonne sexe n'en a que deux pour un million de lignes, une égalité retient statistiquement cinq cent mille lignes : un index sur cette colonne n'apportera rien, nous y reviendrons.
+
+Le planificateur passe de la sélectivité au nombre de lignes en multipliant. Il suppose souvent que les valeurs sont réparties de manière uniforme, et c'est précisément là que l'hypothèse peut échouer. Une colonne date de naissance, une colonne code postal, une colonne date d'inscription ont des distributions très irrégulières : certaines valeurs sont extrêmement fréquentes, d'autres extrêmement rares. Si l'estimation part du principe qu'une valeur vaut une part uniforme, elle se trompera de plusieurs ordres de grandeur sur les valeurs rares, et le plan choisi sera mauvais pour ces valeurs. Ce phénomène explique bon nombre de requêtes qui sont rapides pour certains paramètres et lentes pour d'autres, avec exactement le même plan.
+
+Quelques ordres de grandeur servent de repères, à confirmer toujours par la mesure. En dessous de un pour cent, la plupart des moteurs préfèrent l'index. Entre un et dix pour cent, l'arbitrage dépend du coût d'accès à la table et du nombre de colonnes demandées. Au-delà d'un tiers, le balayage complet gagne presque toujours, car lire une fraction importante de la table coûte moins cher que des accès dispersés. Ces seuils ne sont pas des lois : ils varient selon le moteur, la taille des pages, la mémoire disponible et la fraîcheur des statistiques. Ils n'en donnent pas moins un réflexe de lecture : devant un plan inattendu, vérifiez d'abord la sélectivité de la condition, avant de soupçonner le moteur d'erreur.
+
+```sql
+-- Estimer la sélectivité d'une condition, sans optimiser à l'aveugle.
+SELECT count(*) AS total FROM emprunts;
+
+SELECT count(*) AS en_retard
+FROM emprunts
+WHERE date_retour IS NULL
+  AND date_sortie < CURRENT_DATE - INTERVAL '30 days';
+
+-- Consulter le nombre de valeurs distinctes, base de l'estimation du moteur.
+SELECT count(DISTINCT date_sortie) AS dates_diverses, count(*) AS total
+FROM emprunts;
+```
+
+Retenez enfin que la sélectivité n'est pas une propriété de la colonne, mais de la condition. La colonne date_sortie peut être hautement sélective quand on cherche une journée précise, et parfaitement non sélective quand on cherche un mois entier, pourtant la même colonne et le même index. C'est pourquoi une requête lente ne se juge jamais à son apparence, mais à la distribution réelle des données à l'instant de l'exécution. Demandez-vous toujours quel pourcentage de la table la condition conserve, et vous saurez immédiatement si le moteur raisonne juste, et si un index aurait une chance d'être utile.
+
+## Les index inutiles : reconnaître et supprimer le poids mort
+
+Un index inutile n'est jamais neutre. Il ralentit chaque insertion, chaque mise à jour et chaque suppression, puisque ces opérations doivent maintenir une structure qui ne sert à personne. Il occupe de l'espace disque, parfois plus que la table elle-même quand il porte sur une colonne large. Il rallonge les sauvegardes et les temps de restauration. Et il multiplie les pistes entre lesquelles le planificateur doit choisir, ce qui augmente le temps passé à planifier et, parfois, le conduit à choisir mal. Le poids mort n'est pas une métaphore : c'est un coût réel, payé à chaque écriture, pour aucun bénéfice.
+
+Le premier réflexe consiste à consulter les statistiques d'utilisation des index. Dans PostgreSQL, la vue pg_stat_user_indexes compte les lectures effectuées sur chaque index, et la vue pg_stat_user_indexes croisée avec pg_stat_user_tables permet d'identifier ceux qui n'ont jamais été ouverts. MySQL propose des informations équivalentes dans le schéma performance_schema, avec les compteurs par index. SQLite affiche l'utilisation des index dans le plan et permet d'inspecter leur structure. Un index qui affiche zéro lecture depuis des semaines, sur une base active, est un candidat immédiat à la suppression, après une vérification que les requêtes les plus rares, par exemple les traitements mensuels, ne s'en servent pas.
+
+Le second réflexe est de regarder le plan de vos requêtes les plus fréquentes et de relever les index qui y apparaissent. Faites cet inventaire : un index présent dans tous les plans est vital, un index absent de tous les plans est suspect. Attention toutefois à ne pas supprimer un index utilisé par une contrainte : les index derrière une clé primaire ou une contrainte d'unicité ne sont pas des index de performance, ce sont des index d'intégrité, et leur suppression ferait échouer les écritures. De même, un index référencé par une clé étrangère dans certains moteurs n'est pas un candidat à la suppression. Distinguez toujours les index de contrainte, que la base exige, et les index de performance, que vous avez ajoutés et que vous pouvez retirer.
+
+Le troisième réflexe est de soupçoner les colonnes à faible cardinalité, ce piège déjà évoqué et que la pratique confirme sans cesse. Indexer un drapeau booléen, un champ sexe, un statut à trois valeurs ou un code pays sur une table de gros volume revient à construire un annuaire téléphonique classé par prénom : la structure est en ordre, mais chaque recherche vous rend la moitié du répertoire, et vous auriez mieux fait de le parcourir. Ces colonnes ne deviennent utiles que combinées, dans un index composite, avec une colonne sélective, ou bien quand elles servent une contrainte d'unicité ou un index partiel ciblant une fraction rare des lignes.
+
+Enfin, il faut accepter qu'un index devienne obsolète avec le temps. Les usages changent, les écrans évoluent, les requêtes sont réécrites, et un index qui optimisait une fonctionnalité disparue reste dans le schéma pendant des années. La bonne pratique consiste à tenir un registre : chaque index du schéma correspond à une entrée dans le fichier de migration, avec la date, la requête motivante et l'auteur. Tout index sans entrée au registre est, par définition, suspect. Ce discipline légère transforme l'optimisation d'une accumulation soudaine et angoissante en un entretien régulier et serein, où l'on retire autant que l'on ajoute, et où chaque suppression se mesure comme chaque ajout.
+
+```sql
+-- Repérer les index jamais lus, dans PostgreSQL.
+SELECT s.indexrelname AS index,
+       s.idx_scan AS lectures,
+       pg_size_pretty(pg_relation_size(s.indexrelid)) AS taille
+FROM pg_stat_user_indexes s
+WHERE s.idx_scan = 0
+ORDER BY pg_relation_size(s.indexrelid) DESC;
+
+-- Supprimer sans risque un index de performance devenu inutile.
+DROP INDEX idx_emprunts_date_sortie;
+```
+
+La boucle que vous venez de parcourir est complète : mesurer avec EXPLAIN et EXPLAIN ANALYZE, lire le plan ligne à ligne, évaluer la sélectivité de la condition, puis agir sur les index, en en ajoutant quand la preuve est là et en retirant ceux qui ne servent plus. La partie suivante traite du cas le plus fréquent de blocage : la condition écrite de telle sorte que l'index ne peut pas être employé, même s'il existe, même s'il est parfait. Savoir repérer ces conditions vous évitera de conclure à tort que vos index sont inefficaces, alors qu'ils sont simplement ignorés.
+
+Vous avez créé le bon index, sur la bonne colonne, dans le bon ordre. Vous lancez la requête, et le plan affiche toujours un balayage complet. L'index existe, il est sain, il a même déjà servi une fois, mais votre requête l'ignore. Dans la grande majorité des cas, la faute n'est ni du moteur ni de l'index : elle est dans la formulation de la condition. Il existe un mot pour décrire cette qualité d'une requête, sa capacité à tirer parti d'un index, et ce mot vient de SARG, une ancienne abréviation technique signifiant accès à la table selon un prédicat. Une condition sargeable est une condition que le moteur sait transformer en une recherche dans l'index ; une condition non sargeable lui impose de comparer chaque ligne, ce qui rend l'index inutilisable.
+
+Cette partie est la plus utile du chapitre, parce qu'elle traite d'erreurs que l'on voit partout et que l'on corrige en quelques minutes, une fois le mécanisme compris. Elle enchaîne trois idées. D'abord, la sargabilité, avec ses formes et ses limites, notamment le cas fameux du joker en tête de motif. Ensuite, l'ennemi le plus fréquent : la fonction appliquée à la colonne, qui transforme silencieusement une colonne indexable en colonne opaque. Puis la couverture d'index, qui est l'autre versant du problème : non seulement la condition utilise l'index, mais les colonnes demandées s'y trouvent déjà, ce qui supprime tout retour à la table. Enfin, une section d'exemples opposera des requêtes réelles, leur version lente et leur version rapide, avec le plan qui justifie chaque verdict.
+
+Le fil conducteur est simple : un index stocke les valeurs de la colonne telles qu'elles sont, triées, dans l'arbre. Toute opération qui modifie ces valeurs avant la comparaison empêche le moteur de les reconnaître. Si vous stockez des dates en colonne et que vous comparez à la suite de caractères obtenue en formatant la date, les valeurs rangées et la valeur cherchée n'appartiennent pas au même monde. Le moteur ne peut pas ranger l'arbre dans l'ordre des formats affichés, il ignore quelle fonction vous appliquerez demain. Sa seule sécurité est de renoncer à l'index et de comparer ligne à ligne. Comprendre cette règle, c'est comprendre à la fois pourquoi vos index échouent et comment réécrire vos requêtes pour qu'ils réussissent.
+
+Gardons notre bibliothèque des Lilas. Les requêtes typiques cherchent un lecteur par courriel, les emprunts d'un lecteur sur une période, les ouvrages disponibles selon leur cote, les prêts en retard. Toutes ces recherches sont a priori parfaitement sargeables : ce sont des égalités, des inégalités, des plages de dates. Si elles deviennent lentes, c'est presque toujours parce qu'une expression a été glissée entre la colonne et l'opérateur, parce qu'un joker a été placé en tête de motif, ou parce que la requête demande des colonnes absentes de l'index et multiplie ainsi les accès. Chacun de ces trois cas possède un diagnostic immédiat et un remède court.
+
+## Sargability : écrire des conditions que l'index peut utiliser
+
+Une condition est sargeable quand elle compare directement la colonne indexée à une valeur, ou à une plage de valeurs, sans transformation intermédiaire. Les formes classiques sont l'égalité, les inégalités, l'opérateur BETWEEN, les listes de valeurs avec IN, l'opérateur IS NULL quand l'index le prend en charge, et les jointures sur des clés. Toutes ces formes laissent la colonne intacte à gauche de l'opérateur : le moteur peut donc comparer une valeur rangée dans l'arbre à une valeur cherchée, et descendre l'arbre comme prévu. Plus la condition conserve l'ordre naturel des valeurs, plus elle offre au planificateur des possibilités, et un index sur une colonne de dates devient alors capable à la fois de filtrer et de trier.
+
+L'opérateur LIKE mérite une attention spéciale parce qu'il donne l'illusion d'être toujours utilisable. Quand le motif commence par des caractères fixes, comme LIKE 'ada%', la recherche ressemble à une recherche par préfixe : les valeurs correspondantes sont regroupées dans une plage contiguë de l'index, et l'index fonctionne parfaitement. C'est le cas de la recherche de livre par les premières lettres de son titre, ou d'un pays identifié par son code. Le joker pour cent, employé en tête de motif, détruit cet avantage : LIKE '%rard' ou LIKE '%a%' ne désigne aucune plage, car le moteur ignore où se trouvent les valeurs correspondantes dans l'ordre alphabétique. Une valeur peut commencer par n'importe quoi et finir par la recherche : rien ne la rattache à une position dans l'arbre, et le moteur est contraint de comparer chaque ligne.
+
+Le remède classique au joker en tête est de redéfinir la donnée pour que la recherche porte sur un préfixe. Si vous cherchez systématiquement les titres contenant un mot, la bonne solution n'est pas un index sur le titre, mais un index de plein texte, qui découpe le texte en unités et les range dans une structure adaptée. Si vous cherchez un suffixe, vous pouvez stocker une colonne supplémentaire contenant le texte inversé, sur laquelle un préfixe recherche fonctionnera, mais cette astuce se lit rarement bien dans le code et se justifie seulement dans les cas extrêmes. En pratique, la règle tient en une phrase : un LIKE avec joker en tête est une opération de balayage, et il faut l'accepter comme telle ou changer d'approche.
+
+Les opérations arithmétiques et logiques suivent le même principe. Une condition de la forme montant * quantite > 100 ne peut pas utiliser un index sur montant, car le produit n'est pas stocké ; le moteur doit calculer pour chaque ligne. De même, l'opérateur de reste, souvent noté % dans SQL, n'est pas un joker : il calcule une division et ne correspond à rien dans l'arbre. Les fonctions d'agrégation, les comparaisons entre deux colonnes, comme prix > cout * 1.2, sont également non sargeables, puisqu'une colonne indexée est comparée à une expression calculée à partir d'une autre colonne. Certaines de ces situations se résolvent par un index sur expression, d'autres par une colonne matérialisée à l'écriture, d'autres enfin seulement par un balayage assumé.
+
+Un dernier point sur NULL, qui surprend souvent. Un index standard contient les valeurs nulles, mais leur traitement dépend du moteur et de la forme de la condition. IS NULL peut être satisfait par un index dans la plupart des moteurs modernes, alors que = NULL ne l'est jamais, parce que cette comparaison ne vaut rien en SQL : l'inconnu n'est égal à rien, il faut écrire IS NULL. De même, NOT IN et NOT EXISTS, ainsi que les négations, poussent parfois le moteur à renoncer à l'index, car la recherche des lignes ne correspondant pas à un critère se formule moins directement dans un arbre. Testez toujours avec EXPLAIN, car ces comportements varient d'un moteur à l'autre et changent d'une version à l'autre.
+
+```sql
+-- Sargeable : le préfixe du motif est fixe, l'index sur titre sert.
+SELECT titre FROM ouvrages WHERE titre LIKE 'Les %';
+
+-- Non sargeable : le joker en tête interdit toute plage dans l'arbre.
+SELECT titre FROM ouvrages WHERE titre LIKE '%nuit%';
+
+-- Sargeable : plage de dates sur une colonne gauche.
+SELECT * FROM emprunts
+WHERE date_sortie BETWEEN '2026-01-01' AND '2026-03-31';
+
+-- Non sargeable : la colonne est transformée avant la comparaison.
+SELECT * FROM emprunts
+WHERE EXTRACT(YEAR FROM date_sortie) = 2026;
+```
+
+Pour vérifier la sargabilité d'une requête, aucun outil ne remplace le plan. Écrivez la condition, lancez EXPLAIN, regardez si un nœud d'index apparaît au-dessous de la ligne de filtre. Si le plan ne mentionne aucun index, la condition n'est pas sargeable ou la sélectivité est trop faible pour que l'index en vaille la peine. Corrigez alors la formulation, puis relancez. Ce réflexe, pris en quelques jours, vous évite des heures de perplexité devant des index qui semblent ne rien valoir.
+
+## Une fonction enveloppée autour de la colonne annule l'index
+
+C'est le piège le plus courant, et le plus trompeur, parce qu'il ne provoque aucune erreur. La requête s'exécute, elle renvoie exactement les bonnes lignes, et pourtant le plan balaie tout. La cause est mécanique : l'index range les valeurs de la colonne telles qu'elles ont été écrites dans la table, tandis que la requête demande au moteur de comparer la colonne après lui avoir appliqué une fonction. Le résultat de cette fonction n'existe nulle part dans l'arbre, car l'arbre a été construit avant, sur les valeurs brutes. Puisque rien ne correspond, le moteur renonce et compare chaque ligne, une par une, à la valeur calculée. Aucun avertissement ne vous est adressé : seul le plan révèle l'abandon.
+
+Les fonctions les plus fréquentes sont celles qui transforment du texte en une autre casse. Une condition écrit LOWER(courriel) = 'ada@lilas.fr' alors que la colonne courriel est indexée. L'index contient 'Ada@Lilas.fr' et toutes les variantes, rangées par ordre alphabétique où les majuscules précèdent les minuscules ; la condition cherche 'ada@lilas.fr' en minuscules. Même si le moteur décide d'appliquer LOWER au filtre, il ne peut pas retrouver une valeur dans un arbre trié selon une autre règle. La solution élégante est d'indexer l'expression elle-même, avec un index sur LOWER(courriel), que la plupart des moteurs modernes acceptent. L'alternative plus universelle consiste à imposer la casse à l'écriture, en stockant toujours le courriel en minuscules, ce qui rend la colonne elle-même sargeable sans expression.
+
+Les conversions de type appartiennent à la même famille. Comparer une colonne de type date à une chaîne de caractères peut fonctionner grâce à la conversion implicite, mais l'index n'est plus utilisable, car le moteur doit convertir chaque valeur de la colonne avant de la comparer. Comparer une colonne numérique stockée en texte à un nombre produit exactement le même effet. Le remède est de comparer des valeurs de même nature : écrire la constante sous la forme attendue par le type de la colonne, ou convertir la constante plutôt que la colonne. Une conversion appliquée à la droite de l'opérateur, sur la constante, ne nuit pas à l'index ; une conversion appliquée à la gauche, sur la colonne, le détruit.
+
+Il en va de même pour les calculs. Condition WHERE prix_ttc > 100 alors que seule la colonne prix_ht est indexée oblige à calculer le prix TTC ligne à ligne. WHERE annee = annee_de_publication - 1 compare deux colonnes, ce qui ne peut pas se résoudre par un seul accès à un arbre trié. WHERE id % 10 = 0 divise chaque identifiant. Toutes ces écritures sont légitimes et certaines sont indispensables, mais elles signifient, à une exception près, que l'index sur la colonne de gauche ne servira pas. L'exception, c'est l'index sur expression, qui construit un arbre sur le résultat de la fonction : il coûte de l'espace et se met à jour à chaque écriture, mais il rend la requête sargeable sans rien changer au schéma de la table.
+
+Le diagnostic est toujours le même, et il tient en une seconde : regardez si une fonction, une conversion ou un calcul enveloppe la colonne à gauche de l'opérateur. Si oui, l'index standard est hors course. Vérifiez-le avec EXPLAIN, puis choisissez parmi trois issues : réécrire la condition pour laisser la colonne intacte, créer un index sur expression, ou modifier la façon dont la donnée est stockée pour qu'elle corresponde naturellement aux requêtes. La troisième option est la plus durable, car elle règle le problème pour toutes les requêtes à venir, et non seulement pour celle du jour.
+
+```sql
+-- L'index sur courriel est ignoré : la fonction enveloppe la colonne.
+SELECT * FROM lecteurs WHERE LOWER(courriel) = 'ada@lilas.fr';
+
+-- Index sur expression : la structure range désormais le résultat.
+CREATE INDEX idx_lecteurs_courriel_min ON lecteurs (LOWER(courriel));
+
+-- Alternative : imposer la casse à l'écriture et comparer directement.
+-- Le même SELECT fonctionne alors avec l'index simple du chapitre 1.
+SELECT * FROM lecteurs WHERE courriel = 'ada@lilas.fr';
+```
+
+Un cas particulier mérite d'être signalé, celui du tri. Si vous demandez ORDER BY sur une colonne, le moteur peut éviter un tri coûteux quand un index fournit déjà l'ordre. Mais un ORDER BY sur LOWER(courriel) ne profitera pas d'un index sur courriel, pour exactement la même raison : l'ordre alphabétique des valeurs brutes n'est pas celui des valeurs transformées. Là encore, un index sur expression rétablit l'ordre demandé. Retenez que la règle de la colonne à gauche vaut pour le filtre comme pour le tri, et que toute transformation, même anodine en apparence, introduit une différence d'ordre.
+
+## La couverture d'index : répondre sans jamais toucher la table
+
+Jusqu'ici, nous avons supposé que l'index servait à retrouver des lignes, puis que le moteur allait chercher dans la table les colonnes demandées. Ce retour à la table a un coût : pour chaque ligne trouvée dans l'index, une lecture supplémentaire, souvent aléatoire, doit être payée. La couverture d'index supprime cette étape. Elle se produit quand l'index contient non seulement la colonne de la condition, mais aussi toutes les colonnes demandées par la requête. Le moteur peut alors répondre entièrement à partir de l'index, sans jamais ouvrir la table, et le plan affiche un nœud d'index only scan. C'est le type d'accès le plus rapide qu'un moteur puisse produire.
+
+Le mécanisme s'explique simplement. L'index contient la clé, c'est-à-dire la valeur indexée, et le lien vers la ligne. Si la requête demande une colonne qui figure dans l'index, le moteur lit la valeur à l'endroit où il se trouve déjà, sans suivre le lien. Si elle demande une colonne absente, il doit suivre le lien, retrouver la ligne et lire la colonne : c'est un index scan ordinaire. Certains moteurs vont plus loin et conservent, dans les pages d'index, les colonnes non indexées des lignes visibles, ce qui augmente la probabilité de couverture sans que vous fassiez rien. Dans tous les cas, la règle reste la même : moins la requête demande de colonnes, plus l'index a de chances de suffire.
+
+Construire un index couvrant revient à inclure dans la définition les colonnes accessoires. Un index sur la table des emprunts contenant lecteur_id, date_sortie et date_retour permet de répondre à une requête qui compte les prêts d'un lecteur sur une période, sans toucher la table. L'ordre conserve son importance : les colonnes de condition en premier, les colonnes d'affichage ensuite. Attention à ne pas déborder : ajouter des colonnes augmente la taille de l'index, ralentit ses mises à jour et peut le faire déborder de la mémoire tampon, au point que l'index devienne plus lent à parcourir. Un index couvrant est un compromis entre la profondeur de la réponse apportée et le coût d'entretien de la structure.
+
+Le mot clé SELECT mérite ici une mise en garde. Demander toutes les colonnes d'une table garantit qu'aucun index ne pourra couvrir la requête, puisque la table elle-même a nécessairement plus de colonnes que l'index. Une requête d'affichage qui a besoin réellement de tout reste légitime, mais une requête d'agrégation qui ne compte que des lignes, ou qui n'utilise que deux colonnes, gagne à les nommer. Le passage de SELECT étoile à une liste de colonnes est souvent le premier changement à tenter, précisément parce qu'il ouvre la porte à la couverture. Pensez-y aussi pour les requêtes d'existence, du type existe-t-il un emprunt pour ce lecteur, où un simple index sur la clé suffit amplement.
+
+```sql
+-- Index couvrant pour la requête de disponibilité par cote.
+CREATE INDEX idx_exemplaires_cote_etat
+  ON exemplaires (cote, etat);
+
+-- Le moteur peut répondre à partir de l'index seul.
+SELECT cote, etat FROM exemplaires WHERE cote LIKE 'LIL-%';
+
+-- Trop large : le SELECT étoile impose un retour à la table.
+SELECT * FROM exemplaires WHERE cote LIKE 'LIL-%';
+```
+
+La couverture se vérifie, comme tout le reste, dans le plan. Cherchez le nœud d'index only scan, ou son équivalent, et vérifiez qu'aucun accès à la table n'apparaît en dessous. Si le plan affiche malgré tout un accès à la table, c'est qu'une colonne demandée manque dans l'index, ou que des colonnes supplémentaires ont été ajoutées par le moteur, par exemple pour satisfaire une contrainte d'ordre ou une jointure. Ajoutez la colonne manquante à l'index, relancez, et observez disparaître le dernier accès à la table. Cette recherche du plan minimal, où l'index seul répond, est l'un des exercices les plus féconds pour comprendre l'optimisation.
+
+Un mot sur les jointures, qui se comportent comme la couverture. Quand une jointure relie deux tables, le moteur a besoin des clés des deux côtés, et parfois d'autres colonnes. Si les index des deux tables contiennent les colonnes nécessaires, la jointure se résout dans les index, sans lecture de table. C'est ce qui explique le choix fréquent d'indexer les clés étrangères : non seulement elles filtrent, mais elles servent de source à la jointure. Un schéma où les clés sont indexées des deux côtés permet à une requête à plusieurs jointures de ne jamais ouvrir les tables, ce qui change radicalement le profil de performance.
+
+## Exemples SQL commentés : du mauvais au bon
+
+Le meilleur moyen de fixer ces règles est de les opposer, cas par cas, avec la version lente, la version rapide et la raison du gain. Voici une première paire, portant sur la recherche d'un lecteur par courriel. La version incorrecte enveloppe la colonne d'une fonction de casse, ce qui rend l'index inutilisable ; la version corrigée laisse la colonne intacte. Si votre base contient déjà des courriers en majuscules, corrigez les données ou indexez l'expression, mais ne laissez pas la fonction dans la condition sans l'avoir mesuré.
+
+```sql
+-- Mauvais : la fonction autour de la colonne interdit l'index.
+SELECT identifiant, nom
+FROM lecteurs
+WHERE LOWER(courriel) = 'ada@lilas.fr';
+
+-- Correct : colonne comparée telle quelle, index simple utilisable.
+SELECT identifiant, nom
+FROM lecteurs
+WHERE courriel = 'ada@lilas.fr';
+```
+
+Deuxième paire, portant sur les titres d'ouvrages. La recherche cherche un mot au milieu du titre, et la forme LIKE ne peut pas y aider. La bonne réponse n'est pas un index supplémentaire sur la colonne, mais un index de plein texte, ou l'acceptation du balayage si la table est petite. Troisième paire, portant sur les emprunts de l'année en cours : la condition transforme la date avec une fonction d'extraction, alors qu'une plage de dates exprimée avec deux bornes reste parfaitement sargeable et exploite le même index que celui qui sert au tri.
+
+```sql
+-- Mauvais : le joker en tête impose un balayage complet.
+SELECT titre, auteur FROM ouvrages WHERE titre LIKE '%guerre%';
+
+-- Correct : un index de plein texte répond à la recherche de mot.
+CREATE INDEX idx_ouvrages_titre_texte
+  ON ouvrages USING GIN (to_tsvector('french', titre));
+
+SELECT titre, auteur
+FROM ouvrages
+WHERE to_tsvector('french', titre) @@ plainto_tsquery('french', 'guerre');
+```
+
+```sql
+-- Mauvais : la fonction annule l'index sur date_sortie.
+SELECT count(*) FROM emprunts
+WHERE EXTRACT(YEAR FROM date_sortie) = 2026;
+
+-- Correct : une plage exploite l'index et donne le même résultat.
+SELECT count(*) FROM emprunts
+WHERE date_sortie >= '2026-01-01'
+  AND date_sortie <  '2027-01-01';
+```
+
+Quatrième paire, sur la couverture. Compter les emprunts en retard d'un lecteur ne demande que trois colonnes : les nommer dans l'index suffit à éviter tout retour à la table, alors que le même filtre avec SELECT étoile impose des lectures supplémentaires pour chaque ligne correspondante. Cinquième paire, sur la faible cardinalité : filtrer sur un drapeau booléen n'obtient rien d'un index seul, mais combiné à la date, il devient l'élément de gauche d'un index composite dont la sélectivité totale est excellente. Cette combinaison est la réponse classique au problème des colonnes à faible cardinalité.
+
+```sql
+-- Faible cardinalité seule : l'index est ignoré, la sélectivité est mauvaise.
+SELECT * FROM emprunts WHERE est_en_retour = TRUE;
+
+-- Combiné : l'index composite (est_en_retour, date_sortie) devient utile.
+CREATE INDEX idx_emprunts_retard_date
+  ON emprunts (est_en_retour, date_sortie);
+
+SELECT identifiant, date_sortie
+FROM emprunts
+WHERE est_en_retour = TRUE
+  AND date_sortie < '2026-09-01';
+```
+
+Enfin, une paire qui résume la méthode. Plutôt que d'ajouter un index au hasard sur une requête lente, on commence par lire le plan, on repère l'opération dominante, on évalue la sélectivité de la condition, on vérifie que la condition est sargeable, puis on change une seule chose et on relance la mesure. Si le plan ne bouge pas, l'hypothèse était fausse et il faut en formuler une autre. Si le plan change mais que le temps réel ne s'améliore pas, le coût ailleurs, dans la jointure ou dans le tri. Cette discipline est le vrai sujet de ce chapitre ; les commandes que vous venez d'apprendre n'en sont que les outils.
+
+```sql
+-- Le réflexe complet, à appliquer dans cet ordre.
+EXPLAIN ANALYZE
+SELECT e.identifiant, l.nom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.est_en_retour = TRUE
+  AND e.date_sortie < '2026-09-01';
+```
+
+Avant d'entrer dans la liste des points à retenir, rappelons la ligne qui a guidé tout ce chapitre. Nous sommes partis d'une table ordinaire, empilée sur disque, et d'une question simple : comment retrouver une ligne sans tout lire. Nous avons découvert l'index, cette structure secondaire triée qui transforme un parcours de millions de lignes en trois ou quatre sauts dans un arbre B-tree. Nous avons vu comment le créer, comment le nommer, comment il se décline en index simple, composite ou unique, et pourquoi il se paie à chaque écriture. Puis nous avons changé de perspective : plutôt que de raisonner en structures, nous avons appris à raisonner en mesures, avec EXPLAIN et EXPLAIN ANALYZE, la lecture d'un plan ligne à ligne et la notion de sélectivité qui commande presque toutes les décisions du planificateur.
+
+La dernière partie a refermé la boucle sur ce que vous écrivez. Un index n'est utile que si la condition l'utilise, et la sargabilité décrit précisément cette qualité : laisser la colonne intacte, ne pas l'envelopper d'une fonction, ne pas plaquer un joker en tête de motif. Elle a montré que la couverture d'index, qui dispense de retourner à la table, naît d'un simple choix dans la liste des colonnes, et qu'une colonne à faible cardinalité n'a d'utilité qu'une fois combinée. Partout, la même discipline est revenue : une hypothèse, un changement, une mesure. C'est cette discipline, plus que la connaissance de tel ou tel opérateur, qui sépare une optimisation d'une simple accumulation d'index.
+
+## À retenir
+
+- Un index est une structure secondaire triée qui remplace un balayage complet de la table par quelques accès directs.
+- La structure B-tree reste très courte, trois ou quatre niveaux le plus souvent, grâce à un fort facteur de branchement.
+- Les feuilles sont triées et chaînées, ce qui rend possibles les plages, les tris et les recherches par préfixe.
+- Un index coûte à l'écriture : chaque insertion, modification et suppression doit maintenir toutes les structures de la table.
+- CREATE INDEX parcourt la table pour construire l'arbre : sur une grosse table en production, l'opération se planifie.
+- Les clés primaires et les contraintes UNIQUE créent déjà des index : consultez-les avant d'en ajouter un autre.
+- Un index composite ne fonctionne que si ses colonnes de gauche figurent dans la condition, c'est la règle du préfixe.
+- Un index unique combine recherche et contrôle d'unicité, et permet de s'arrêter à la première correspondance.
+- Le B-tree n'est pas seul : hachage pour l'égalité, GIN pour les listes et le texte, BRIN pour les colonnes triées, plein texte pour les mots.
+- EXPLAIN affiche la prévision, EXPLAIN ANALYZE affiche le réel : seul le temps d'exécution décide d'une optimisation.
+- Une condition sélective favorise l'index ; au-delà d'environ un tiers de la table, le balayage complet gagne presque toujours.
+- Une fonction, une conversion ou un calcul autour de la colonne rend l'index standard inutilisable.
+- LIKE avec un préfixe fixe exploite l'index, LIKE avec un joker en tête impose un balayage complet.
+- La couverture d'index apparaît quand toutes les colonnes demandées sont déjà présentes dans l'index.
+- Un index inutile coûte à chaque écriture sans rapporter rien : mesurez ses lectures et supprimez le poids mort.
+
+## Erreurs fréquentes
+
+L'erreur la plus répandue reste d'ajouter des index sans jamais mesurer. On empile les CREATE INDEX au fil des correctifs, on double les écritures, on alourdit le disque, et surtout on multiplie les pistes entre lesquelles le planificateur doit choisir. Face à une requête lente, commencez toujours par le plan : quel opérateur domine, combien de lignes sont réellement traitées, quelle est la sélectivité de la condition. Si vous ne pouvez pas nommer la requête qui justifie un index, ne le créez pas. La mesure précède l'action, elle la justifie, et elle seule permet de constater que l'action a réussi.
+
+La deuxième erreur est de conclure qu'un index ne fonctionne pas alors qu'il est simplement ignoré. Le plan balaie la table, on soupçonne le moteur, on recrée l'index différemment, et rien ne change. La cause est presque toujours dans la condition : une fonction autour de la colonne, une conversion implicite, un calcul, un joker en tête de motif, ou encore un index composite dont l'ordre ne correspond pas aux conditions écrites. Lisez la condition de gauche à droite, cherchez toute transformation de la colonne indexée, puis vérifiez la règle du préfixe. La correction est souvent une réécriture d'une ligne, et non une migration de schéma.
+
+La troisième erreur est d'indexer des colonnes à faible cardinalité par réflexe. Un drapeau binaire, un statut à trois valeurs, un champ sexe sur un million de lignes : filtrer sur ces colonnes conserve une part énorme de la table, et le moteur préfère de loin tout lire. L'index est alors construit, entretenu, jamais ouvert. Rappelez-vous le test du nombre de valeurs distinctes rapporté au volume : si chaque valeur concerne des dizaines de milliers de lignes, un index seul ne servira rien. Combinez cette colonne avec une colonne sélective dans un index composite, ou laissez le balayage faire son travail quand la table est petite.
+
+La quatrième erreur porte sur la lecture du plan. On s'arrête au premier nœud d'index apparu, on déclare la requête optimisée, alors qu'un tri ou une jointure consomme l'essentiel du temps. Un plan se lit en entier, de la source la plus profonde jusqu'à la racine, en comparant à chaque étape la cardinalité estimée et la cardinalité réelle. Une estimation fausse signale des statistiques périmées ou une distribution très irrégulière, et se corrige souvent sans toucher aux index, par un simple rafraîchissement des statistiques. Ne cherchez pas un coupable là où il n'y a qu'un chiffre désuet.
+
+La cinquième erreur est de n'enlever jamais rien. Un schéma qui ne connaît que des ajouts accumule des structures devenues inutiles après l'évolution des écrans et des requêtes. Pourtant, supprimer un index mesuré comme inutile est une opération réversible : recréez-le en quelques minutes si un plan se dégrade. Tenez un registre qui associe chaque index à la requête motivante et à la date de sa création ; tout index sans entrée au registre est suspect. Enfin, ne confondez pas index de contrainte et index de performance : les premiers, liés aux clés primaires et aux unicités, ne se suppriment pas, les seconds sont de pleines responsabilités.
+
+## Pour aller plus loin
+
+Pour ancrer durablement ces acquis, rien ne vaut le contact avec vos propres requêtes. Prenez l'application sur laquelle vous travaillez, ou installez PostgreSQL avec la base de la bibliothèque et un jeu d'au moins cinq cent mille lignes, puis relancez les trois requêtes les plus sollicitées avec EXPLAIN ANALYZE. Consignez le temps réel, le plan, la sélectivité de chaque condition et les index existants. Formulez ensuite une hypothèse écrite, modifiez une seule chose, et relevez à nouveau les chiffres. Répétez jusqu'à ce que le gain soit mesurable, ou jusqu'à ce que vous puissiez expliquer pourquoi aucun gain n'est possible. Ce carnet de bord devient, en quelques semaines, la meilleure des références.
+
+Les documentations officielles détaillent, moteur par moteur, la liste des opérateurs et des fonctions qui conservent l'utilisabilité d'un index, ainsi que le comportement des différentes structures. Lisez ces tableaux à côté d'une base ouverte, en reproduisant chaque cas avec un plan sous les yeux. Complétez par les pages consacrées aux statistiques et au planificateur : comprendre d'où viennent les estimations de cardinalité éclaire une grande partie des comportements surprenants. Les blogs d'ingénieurs qui racontent des optimisations réelles, avec la mesure avant, le changement et la mesure après, valent aussi beaucoup, parce qu'ils vous apprennent le raisonnement plutôt que la recette.
+
+Les sujets voisins attendent à présent. L'analyse de performances à l'échelle d'une base, où l'on repère les requêtes qui coûtent le plus cher sur une période donnée, prolonge naturellement ce chapitre. Viennent ensuite les transactions et la concurrence, qui montrent qu'un index se comporte différemment quand dix utilisateurs écrivent en même temps, puis la conception à grande échelle, où le découpage des tables devient parfois la seule solution. Prenez le temps de maîtriser chaque étage avant de monter : les réflexes acquis ici, mesurer avant d'agir, lire un plan jusqu'au bout, soupçonner une transformation de colonne, vous serviront dans tous les suivants.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice final de ce chapitre vous demande de mener un audit complet du schéma de la bibliothèque des Lilas. Vous partez du script de création fourni dans la fiche de pratique, qui contient quelques index déjà en place, dont certains parfaitement utiles et d'autres visiblement hérités d'une version antérieure. Vous disposez en outre de six requêtes réelles, avec leurs fréquences d'appel et leurs temps d'exécution mesurés. Votre mission consiste à produire, pour chacune, un diagnostic argumenté : condition sargeable ou non, sélectivité estimée, index disponibles, plan obtenu, colonnes qui manquent pour une couverture, et proposition de changement motivée.
+
+Traitez ce travail comme un rapport d'audit destiné à un collègue exigeant. Chaque recommandation doit être accompagnée de la mesure d'avant, de la mesure d'après et d'une phrase expliquant le mécanisme en jeu. Si vous décidez de ne rien changer à une requête, défendez ce choix avec des chiffres : une table petite, une condition intrinsèquement non sargeable, un temps déjà largement suffisant sont des arguments tout aussi valables qu'un gain. Si vous découvrez un index jamais lu, proposez sa suppression et vérifiez que rien ne se dégrade. Si une requête enveloppe sa colonne dans une fonction, réécrivez-la ou créez l'index approprié, puis comparez les plans.
+
+Une fois ce rapport rédigé et vos scripts de migration écrits, poursuivez avec le chapitre suivant du parcours, qui élargit le champ du diagnostic : analyser une base entière, repérer les requêtes les plus coûteuses, comprendre ce que coûtent les écritures multipliées et décider, à l'échelle du système, entre index, découpage ou réécriture. Le terrain de jeu est à vous. Le réflexe à emporter tient en une phrase : avant toute modification, mesurez ; après toute modification, mesurez encore ; et gardez les deux chiffres, car c'est la comparaison qui fait la preuve, jamais l'intuition.

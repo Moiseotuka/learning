@@ -1,0 +1,150 @@
+## Normaliser : un langage commun pour tous les équipements
+
+Le centre reçoit des constructeurs, des versions et des langages différents. Le même fait — une connexion refusée — s'écrit Security 4625 dans un annuaire, AUTH_FAIL sur une passerelle d'accès distant, denypkt sur un pare-feu et une ligne libre dans un journal applicatif. Si chaque règle doit connaître la syntaxe de chaque source, votre effort croît comme le produit des deux, et une seule règle devient dix écritures à maintenir. La normalisation consiste à traduire chaque source vers un vocabulaire interne unique, pour que la question « quelles tentatives d'connexion a connues ce compte hier » se pose une seule fois et s'exécute partout.
+
+Le principe tient en une phrase : un concept, un champ, quel que soit l'équipement d'origine. Vous définissez un schéma interne — celui de votre plateforme, ou une norme publique comme le schéma commun utilisé par les outils d'exploration — et vous y rangez l'instant de l'événement en temps universel, l'adresse source, le compte, la machine cible, l'action tentée, le résultat et l'observateur qui a produit l'événement. Chaque source possède alors sa table de mapping, écrite une fois, testée à chaque mise à jour du fournisseur. Les valeurs figées y ont leur place : quand une source nomme mal une action, la table corrige le nom plutôt que de propager la maladresse dans toutes les règles.
+
+La normalisation n'est pas de l'esthétique, c'est ce qui rend possible trois opérations. La recherche transverse, puisqu'une seule expression trouve les événements dans toutes les sources. La corrélation, puisqu'on ne peut agréger que des champs qui portent le même sens — c'est le sujet central de ce chapitre, et il repose entièrement sur ce travail préalable. Et la statistique, puisqu'un taux d'échecs calculé sur des formats hétérogènes n'est pas comparable, donc pas exploitable pour fixer un seuil. Sans schéma, vous écrivez dix règles fragiles ; avec schéma, vous écrivez une règle qui survit à l'arrivée d'un nouvel équipement.
+
+```yaml
+# Table de mapping pour la source vpn01 (extrait commenté)
+# Un champ du schéma interne, un chemin dans la source brute.
+champs:
+  "@timestamp":    "$.time"           # converti en temps universel, fuseau conservé
+  "source.ip":     "$.peer"           # champ d'origine : peer
+  "user.name":     "$.user"           # champ d'origine : user
+  "host.name":     "$.device"         # nom logique de l'équipement émetteur
+  "event.action":  "authentication_failure"   # valeur figée : la source nomme mal l'action
+  "event.outcome": "failure"                  # dérivé de l'action ci-dessus
+  "observer.vendor": "acme-vpn"                # figé, pour les recherches par éditeur
+
+controles:
+  - si "source.ip" est vide sur plus de 1 % des evenements de la source -> alerte de collecte
+  - si l'horodatage recule ou avance de plus de 5 minutes -> alerte d'horloge
+  - si le compte ne porte pas de domaine -> normaliser en compte local, jamais inventer de domaine
+```
+
+Les pièges sont connus, et il faut les écrire avant d'écrire les règles. Le fuseau horaire d'abord : on stocke en temps universel et on affiche dans l'heure locale de l'utilisateur, sans jamais faire reposer une comparaison de fenêtre sur une heure locale ambiguë. Les adresses ensuite : une adresse IPv6, une adresse privée traduite en adresse publique par le réadressage de port et une adresse de sortie de proxy doivent être distinguées, sinon vous accuserez le mauvais système. Les identités ensuite : un compte local et un compte de domaine portant le même nom sont deux entités différentes, et un compte de service ressemble à un utilisateur jusqu'à ce que vous le marquiez comme tel. Le message libre enfin : beaucoup de sources n'ont qu'une phrase non structurée ; la parser est un pis-aller coûteux et sujet à échouer, à réserver aux sources que vous ne pouvez pas autrement acquérir.
+
+Un contrôle mérite d'être installé dès le début, avant toute règle : l'alerte sur la santé de la collecte. Si une source cesse d'envoyer, si le volume d'événements chute de moitié, si le taux d'événements sans adresse IP ou sans compte dépasse un seuil, le centre doit le savoir le jour même. Une détection qui repose sur des données manquantes produit des faux négatifs silencieux, c'est-à-dire le type d'échec le plus difficile à constater, puisque rien ne sonne. Vous ne verrez jamais l'incident que vos journaux ne contiennent pas ; vous ne pouvez donc pas vous permettre d'apprendre la perte de collecte par hasard.
+
+| Champ du schéma interne | Noms rencontrés dans les sources | Usage direct |
+| --- | --- | --- |
+| @timestamp | time, EventTime, Timestamp, @ingest_time | Fenêtres de corrélation et chronologie |
+| source.ip | peer, srcip, SourceAddress, caller_address | Pivot d'attaque et listes de blocage |
+| user.name | user, Account Name, username, principal | Compte visé, propriétaire à prévenir |
+| host.name | device, Computer, host, endpoint | Poste ou serveur concerné |
+| event.action | reason, Event ID, action, operation | Nature du fait observé |
+| event.outcome | result, status, success, error_code | Réussite ou échec, pour les seuils |
+
+Vous avez maintenant la chaîne complète de l'entrée du signal : une source choisie pour une raison, un format protégé et horodaté, une traduction vers un vocabulaire unique. Tout ce qui suit — règles, corrélation, playbooks, indicateurs — n'est qu'une exploitation de ce socle. Vérifiez-le sur trois points avant d'aller plus loin : vos sources envoient-elles toutes, vos horloges sont-elles alignées, vos champs pivot sont-ils remplis. Trois questions, dix minutes de contrôle, et vous saurez si le terrain est prêt.
+
+## Écrire une règle de détection : la méthode Sigma
+
+Une règle de détection est un ensemble de conditions posées sur des événements normalisés : si ce patron se produit, un analyste doit regarder. Le premier obstacle, dans un parc hétérogène, est que chaque plateforme possède son propre langage de recherche. Réécrire la même intention pour quatre moteurs, c'est quatre fois plus de travail, quatre fois plus de bugs et quatre versions qui divergent à la première modification. Le format Sigma répond à cela : il s'agit d'une règle écrite en YAML, volontairement neutre, qui décrit l'intention et que l'on convertit vers la syntaxe de la plateforme cible avec un outil de conversion. Vous écrivez une fois, vous déployez partout, et votre règle reste lisible par un humain dans cinq ans.
+
+Une règle se lit comme une recette, dans un ordre fixe. L'en-tête donne le titre, une description en français qui dit ce qu'on cherche, un statut, des références et des étiquettes. Le bloc d'origine indique la source logique, c'est-à-dire le produit, le service ou la catégorie de journal à interroger. Le bloc de détection contient les sélections — des jeux de valeurs attendues sur des champs — et une condition qui dit lesquelles combiner. S'y ajoutent les faux positifs attendus, écrits avant même le premier déclenchement, et la liste des champs à afficher à l'analyste pour qu'il n'ait pas à chercher. Une règle sans faux positifs annoncés est une règle dont personne n'a réfléchi au terrain.
+
+La méthode d'écriture tient en six étapes, et l'ordre n'est pas décoratif. Partez d'un comportement réellement observé ou réellement documenté, jamais d'une envie abstraite de couvrir un sigle. Identifiez la source qui l'enregistre et les champs que cette source fournit réellement — un champ inexistant vous mènera à une règle qui ne tombe jamais. Écrivez la sélection, puis soustrayez le normal : script de sauvegarde, poste de maintenance, fenêtre d'exploitation connue. Rejouez la règle sur sept à trente jours d'historique et comptez les déclenchements. Enfin, attribuez un statut et un niveau, puis déployez en mode observation avant toute alerte réelle.
+
+```yaml
+title: Rate d'echecs de connexion anormal sur un compte de l'annuaire
+id: 7f2a1c4e-9b3d-4c6a-8e51-2d7f0a9b4c11
+status: test
+description: >-
+  Plusieurs echecs de connexion sur un meme compte en peu de temps,
+  phenomene typique d'un essai de mots de passe ou d'un spray de mots de passe.
+date: 2026/11/04
+references:
+  - https://attack.mitre.org/techniques/T1110/
+author: centre operationnel de la Metropole
+tags:
+  - attack.credential_access
+  - attack.t1110.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+    TargetUserName|endswith:
+      - '@metropole.fr'
+      - '.LILAS'
+  filter_sauvegarde:
+    WorkstationName: 'SRV-BKP*'
+  condition: selection and not filter_sauvegarde
+falsepositifs:
+  - utilisateur oubliant son mot de passe a trois reprises le matin
+  - poste de maintenance qui reconnecte un compte de service
+fields:
+  - TargetUserName
+  - SourceNetworkAddress
+  - WorkstationName
+  - TimeCreated
+level: medium
+```
+
+Le test sur historique est l'étape que tout le monde saute et qui fait toute la qualité d'une règle. Deux vérifications suffisent. Première : combien de fois la règle sonne-t-elle sur la période, et sur quels événements ? Si elle sonne deux cents fois, elle partira en production telle quelle et sera filtrée par les analystes en trois jours. Deuxième : tombe-t-elle sur un incident avéré dont vous détenez les journaux ? C'est le test de non-régression : si une règle que vous croyez utile reste muette devant un compromission réelle, elle ne détecte rien de ce qui compte. Cette vérification se fait le plus souvent depuis une ligne de commande, en appliquant la conversion puis en comptant les résultats sur un extrait de journal.
+
+```image
+linux-terminal
+| Terminal Linux : la règle convertie et rejouée sur un extrait de journaux permet de compter les déclenchements avant la mise en production.
+```
+
+Le statut et le niveau protègent du reste. Le statut dit où en est la règle : expérimentale, c'est-à-dire en cours d'écriture ; testée, c'est-à-dire vérifiée sur historique ; stable, c'est-à-dire suivie dans la durée avec un taux de pertinence mesuré. Le niveau dit ce qu'elle exige de l'analyste : faible ou moyen pour une règle traitée dans le flux courant, élevé ou critique pour une règle qui déclenche une procédure d'urgence et une notification. Une règle critique sans procédure attachée est un défaut de conception ; une règle stable sans date de revue est de la dette. Relisez une règle que vous héritez en cherchant trois choses : sa justification, son niveau et son dernier test.
+
+- Écrivez la règle dans un format neutre, convertissez-la vers votre plateforme.
+- Une règle contient toujours : intention, source, sélection, condition, faux positifs attendus, niveau.
+- Soustrayez le normal avant d'écrire le niveau, jamais après.
+- Rejouez sur sept à trente jours et vérifiez que la règle tombe sur un incident connu.
+- Un statut et un niveau sans date de revue ne valent rien.
+
+## Une règle sans faux positifs : filtres, exceptions et statut
+
+Objectif posons-nous franchement : une règle sans aucun faux positif n'existe pas, et courir après zéro fausse alerte conduit à élargir les conditions jusqu'à ne plus détecter. Ce qui est atteignable, c'est une règle sans faux positif inutile, c'est-à-dire une alerte que l'analyste peut traiter en appliquant une procédure sans douter une seconde de sa légitimité. La différence est de taille. Le coût d'un faux positif n'est pas la minute perdue à le classer : c'est la confiance érodée dans toutes les alertes de la même règle, puis dans celles des règles voisines. Une règle qui crie trois fois pour rien ne sera plus lue la quatrième fois, alors qu'elle annoncera peut-être une réelle compromission.
+
+Trois origines produisent l'essentiel des fausses alertes. Le normal non soustrait : le script de sauvegarde qui modifie massivement des fichiers, le scan d'infrastructure autorisé du lundi matin, l'administrateur qui tape trois fois un mot de passe oublié, la migration de données planifiée. Le seuil mal calibré : dix échecs en dix minutes sur un service qui en produit cent par jour sans qu'aucun humain n'y touche. Et l'entité mal identifiée : un compte de service, une imprimante, un agent de supervision traités comme des utilisateurs, alors que leur comportement est par nature inhabituel. Chacune de ces origines appelle un remède différent, et confondre les trois conduit à supprimer la règle plutôt que à la corriger.
+
+Le premier remède est l'exception documentée, posée sur la bonne entité. On exclut un compte de service précis, pas tous les comptes ; on exclut une fenêtre de 22 h à 23 h 30 du dimanche, pas toute la nuit ; on exclut un hôte de supervision dédié, pas un sous-réseau entier. L'écrit compte autant que la technique : chaque exception porte un motif, un auteur, une date et une condition de suppression, sinon elle survivra trois ans après être devenue obsolète. Le deuxième remède est le seuil doublé d'une fenêtre, la borne de quantité et la borne de temps toujours ensemble. Le troisième est le groupement : au lieu de lever dix alertes sur dix comptes visés, on en lève une par adresse source et par fenêtre, et l'analyste voit l'ampleur d'un coup d'œil.
+
+```text
+# Pseudo-code — évaluation d'une règle sur l'historique avant mise en production
+ENTRÉE : règle R, journaux normalisés sur 30 jours, incidents avérés connus
+SORTIE : nombre de déclenchements, taux de pertinence, verdict
+
+événements ← appliquer(R.sélection, R.condition, journaux)
+groupes ← regrouper(événements, par : R.entité, fenêtre : R.fenêtre)
+
+pour chaque groupe :
+    si groupe correspond à une exception documentée : marquer "attendu", continuer
+    sinon : compter comme alerte potentielle
+
+pertinents ← alertes pouvant être reliées à un incident avéré ou à un fait métier confirmé
+taux ← pertinents / total des alertes potentielles
+
+VERDICT :
+    taux ≥ 0,75 et alertes ≤ 5 par jour   -> déployer en production
+    taux ≥ 0,75 et alertes > 5 par jour   -> resserrer la fenêtre ou l'entité
+    taux < 0,25                           -> la sélection est trop large, réécrire
+    aucun incident connu couvert          -> la règle ne sert à rien, réécrire
+```
+
+La mesure tranche les discussions interminables. Comptez chaque mois le nombre d'alertes levées et le nombre de celles qui ont conduit à une action réelle : un compte désactivé, un poste isolé, un propriétaire prévenu, un incident ouvert. Ce taux de pertinence est l'indicateur de santé de la règle. Autour des trois quarts, elle est bien réglée. En dessous d'un quart, elle consomme du temps sans produire de la sécurité. Au-dessus, surveillez l'inverse : une règle trop étroite peut passer à zéro alerte parce qu'elle ne détecte plus rien, et ce silence ressemble à de la tranquillité. Un bon centre regarde donc les deux extrémités du compteur.
+
+| Origine du faux positif | Exception correcte | Risque d'une exception mal rédigée |
+| --- | --- | --- |
+| Script de sauvegarde nocturne | Compte de service nommé et fenêtre de 22 h à 23 h 30 | Exclure tout le service des sauvegardes masque un chiffrement |
+| Scan d'infrastructure | Plage de l'outil de scan et fenêtre de maintenance | Exclure un sous-réseau entier crée un angle mort pour l'attaquant qui s'y installe |
+| Compte de service | Marquage explicite de l'entité comme service | Traiter un service comme un utilisateur fausse tous les taux |
+| Administrateur récidiviste | Seuil élevé sur son compte, avec alerte douce | Exclure l'administration, c'est exclure l'élévation de privilèges |
+| Adresse IP changeante | Blocage sur la séquence, pas sur l'adresse | Exclure une adresse publique, l'attaquant en change à la prochaine vague |
+
+Les anti-patterns sont à connaître de mémoire, parce qu'ils sont toujours séduisants le vendredi soir. Supprimer la règle après un déclenchement inutile : on gagne du silence, on perd la détection. Exclure une plage entière plutôt qu'une entité : on déplace l'angle mort sans le réduire. Abaisser le niveau au lieu de corriger la sélection : l'alerte continue d'arriver, mais plus personne ne la traite. Ne jamais revoir une règle : dans deux ans, les exceptions posées sur un poste remplacé seront de la fiction. Et enfin, attendre la perfection avant de déployer : une règle testée, en observation, avec un taux mesuré à soixante pour cent, vaut mieux qu'une règle parfaite encore dans un brouillon.
+
+Le dernier levier, que nous explorerons dans la section suivante, est la corrélation. Beaucoup de faux positifs disparaissent d'un coup quand on cesse d'isoler les événements : un échec de connexion n'est rien, un échec sur trente comptes depuis une même adresse en quatre minutes est une campagne, et c'est cet agrégat, non la ligne isolée, qui doit remonter. Vous réduisez alors le volume d'alertes tout en augmentant ce que vous détectez, ce qui est exactement l'inverse du réflexe qui consiste à élargir les conditions pour faire taire la console.
+
+- Visez l'absence de faux positif inutile, pas le zéro absolu.
+- Exception posée sur une entité précise, avec motif, auteur, date et condition de fin.
+- Seuil et fenêtre vont toujours ensemble ; le groupement remplace l'alerte isolée.
+- Mesurez le taux de pertinence chaque mois et agissez aux deux extrémités.
+- Ne supprimez jamais une règle : corrigez-la, remettez-la en observation, puis décidez.

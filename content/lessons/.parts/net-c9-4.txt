@@ -1,0 +1,165 @@
+## Cohabiter avec l'IPv4 : pile double, tunnels et translation
+
+Aucune entreprise ne coupe l'IPv4 le jour de son déploiement IPv6 : les deux protocoles vont cohabiter des années, sur les mêmes liens et souvent sur les mêmes machines. Trois stratégies dominent, sans s'exclure. La pile double parle des deux protocoles en parallèle ; les tunnels encapsulent des paquets IPv6 dans de l'IPv4 pour franchir un réseau qui n'accepte que l'ancien protocole ; la translation convertit un protocole en l'autre pour qu'un réseau IPv6 seul atteigne des serveurs encore en IPv4. Choisir la mauvaise, c'est accepter une dette technique que l'on paiera plus tard en dépannage.
+
+La pile double est la stratégie la plus répandue : chaque hôte, routeur et serveur configure une adresse des deux familles, et le trafic choisit son chemin selon la résolution de nom. Si le serveur distant publie un enregistrement AAAA, le client utilise l'IPv6 ; s'il ne publie que l'A, le client bascule en IPv4. C'est la méthode à retenir par défaut, car elle préserve l'investissement existant. Son coût est double : deux plans d'adressage, deux jeux de règles à auditer, et le risque qu'une faille corrigée d'un côté oublie l'autre, cause fréquente d'incidents lors des premières migrations.
+
+```text
+Pile double        client ──IPv4──▶ serveur        et  client ──IPv6──▶ serveur
+
+Tunnel             client ──IPv6──▶ [ passeur ] ──IPv4──▶ site distant
+                              encap. protocole 41
+
+Translation        client IPv6-only ──▶ NAT64 ──▶ serveur IPv4
+                   DNS64 fabrique le AAAA à partir de l'A
+```
+
+Les tunnels servent à franchir un obstacle, pas à le contourner définitivement. Le tunnel configuré relie deux réseaux par un lien IPv6 logique à travers un transport IPv4 existant, avec des adresses fixes et un MTU réduit ; le mode 6in4 encapsule les paquets IPv6 dans des paquets IPv4 de protocole 41. Les tunnels automatiques comme Teredo ou 6to4, conçus pour les clients nomades derrière un NAT, reposent sur des relais publics dont la disponibilité s'est dégradée : ils sont déconseillés en production. Un tunnel est une solution de passage, avec une date de fin.
+
+La translation intervient lorsqu'un réseau est résolument IPv6-only et doit atteindre des services encore en IPv4. Le couple NAT64 et DNS64 répond à ce besoin : le serveur de noms fabrique, à la demande du client, un enregistrement AAAA factice pointant vers le préfixe 64:ff9b::/96 suivi de l'adresse IPv4 convertie ; le client émet en IPv6, le translateur réécrit l'en-tête en IPv4. La limite tient aux applications qui embarquent une adresse IPv4 en clair dans leur charge utile, d'où l'extension 464XLAT. La traduction reste un filet utile, jamais une architecture cible.
+
+| Situation rencontrée | Stratégie | Point de vigilance |
+|---|---|---|
+| Serveurs et postes joignables par les deux mondes | Pile double | Deux ACL, deux plans, deux supervisions |
+| Deux sites à relier sur un transport IPv4 existant | Tunnel configuré | MTU, journalisation, date de fin |
+| Client IPv6 seul vers un service IPv4 | NAT64 plus DNS64 | Adresses IPv4 écrites en clair |
+
+Vérifier la cohabitation tient en trois gestes : interroger le nom de domaine pour un enregistrement AAAA, comparer les chemins avec traceroute -4 et traceroute -6, puis mesurer, l'IPv6 étant statistiquement plus rapide sur les chemins courts. Partez du besoin exprimé par le métier, jamais de la technique disponible.
+
+```bash
+# Les deux familles d'enregistrements pour un même nom
+dig AAAA www.example.com +short
+dig A   www.example.com +short
+
+# Comparer les chemins réellement empruntés
+traceroute -4 -n www.example.com
+traceroute -6 -n www.example.com
+
+# Vérifier une translation NAT64 depuis un client IPv6 seul
+ping -c 3 64:ff9b::192.0.2.10
+```
+
+## Cas concret : migrer la Maison Lavigne sans casser l'existant
+
+Appliquons tout ceci au réseau de notre entreprise de quarante postes : un réseau 192.168.10.0/24 unique, NAT sur la box opérateur, serveur de fichiers en adresse fixe, douze objets et deux caméras sur un VLAN séparé en 192.168.20.0/24, et un comptable externe connecté par VPN IPv4. Le prêt de l'opérateur fournit un préfixe global 2001:db8:ac1::/48. La contrainte est sans appel : aucun arrêt, aucune coupure du poste de caisse, aucune régression sur le VPN.
+
+La première étape est l'inventaire, et elle conditionne tout le reste : listez chaque segment, chaque objet et chaque service, avec son adresse IPv4 actuelle et la durée depuis laquelle elle est figée. Vous découvrirez des configurations inattendues : une caméra hors plan, un pont Wi-Fi en DHCP là où tout le reste est fixe, un serveur dont le pare-feu n'autorise qu'une plage précise. Cette liste devient le tableau du plan d'adressage IPv6, où chaque ligne reçoit un préfixe et une méthode.
+
+| Segment | Préfixe IPv6 attribué | Méthode | Joignabilité voulue |
+|---|---|---|---|
+| Postes de l'atelier | 2001:db8:ac1:1::/64 | SLAAC, annonces RDNSS | Sortante uniquement, filtrée |
+| Magasin et caisse | 2001:db8:ac1:2::/64 | SLAAC | Sortante, caisse contrôlée |
+| Objets et caméras | 2001:db8:ac1:5::/64 | Adresses fixes | Ni entrante ni Internet |
+| Infrastructure réseau | 2001:db8:ac1:4::/64 | Adresses fixes | Gestion en lien local |
+| Serveur de fichiers | 2001:db8:ac1:1::10 | Adresse fixe | Entrante depuis l'interne |
+| Réseau invité | 2001:db8:ac1:6::/64 | SLAAC | Sortante, cloisonné |
+| Interconnexion routeurs | 2001:db8:ac1:ff::/127 | Manuelle | Lien point à point |
+
+La deuxième étape rend l'IPv6 présent au bord sans ouvrir la maison : on pose les règles de filtrage d'abord, on autorise ensuite l'annonce des préfixes. Cette inversion est la leçon principale du cas : en IPv4, on configurait d'abord et on sécurisait ensuite ; en IPv6, la machine joignable par l'Internet mondial existe avant la première règle. Le pare-feu accepte les messages ICMPv6 nécessaires à la découverte, refuse les annonces venues des postes et n'ouvre aucun service vers l'extérieur sans décision explicite.
+
+```bash
+# Extrait de règles : autoriser la découverte, refuser les annonces des postes
+ip6tables -A INPUT -p icmpv6 --icmpv6-type router-advertisement -i eth0 -j DROP
+ip6tables -A INPUT -p icmpv6 --icmpv6-type router-advertisement -i eth1 -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbour-solicitation -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbour-advertisement -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type packet-too-big -j ACCEPT
+ip6tables -A INPUT -j DROP
+
+# Activer le routage et la réception des annonces côté passerelle
+sudo sysctl -w net.ipv6.conf.all.forwarding=1
+sudo sysctl -w net.ipv6.conf.eth0.accept_ra=1
+```
+
+La troisième étape installe l'autoconfiguration sur les liens d'hôtes : le fichier radvd annonce les préfixes 1 et 6, et le serveur de noms est diffusé par l'extension RDNSS, ce qui évite d'installer un serveur DHCPv6 pour un réseau de cette taille. Les caméras reçoivent une adresse fixe, leur préfixe est annoncé sans drapeau A, si bien qu'aucun objet ne prétend à une adresse de ce lien sans intervention. Le serveur de fichiers reste en pile double : sa partie IPv4 est inchangée, sa partie IPv6 reçoit une adresse fixe du sous-réseau 1.
+
+La quatrième étape est la vérification, menée segment par segment dans un ordre fixe : lien local, annonce reçue, adresse globale, route par défaut, voisin joignable, enregistrement AAAA résolu, accès au service. Scriptez cette séquence et rejouez-la à chaque changement : elle transforme l'avis « ça ne marche pas » en une indication précise sur l'étape qui échoue. La cinquième étape est la documentation : préfixe, méthode, durée de vie, règle associée, date, tenue à jour.
+
+## Durcir l'IPv6 : filtrage et bonnes pratiques
+
+L'IPv6 n'est pas intrinsèquement moins sûr que l'IPv4, mais il change la nature des risques. L'absence de NAT supprime le masquage gratuit : avec un préfixe global et un pare-feu permissif, chaque poste devient atteignable depuis l'Internet mondial. L'absence de broadcast réduit le bruit des scanners, sans les empêcher, puisqu'un ping vers ff02::1 révèle les hôtes répondeurs d'un lien. Et NDP, protocole sans authentification, accepte des annonces falsifiées. Trois familles de mesures répondent : filtrer le trafic, contrôler les annonces, réduire la surface exposée.
+
+Le filtrage s'écrit avec les mêmes outils qu'en IPv4, mais les règles IPv6 sont nommées, le masque en inversion de bits cède la place à la longueur de préfixe, et la notion de session établie n'existe plus. Posez une politique de refus par défaut et n'autorisez que ce dont vous avez besoin. Ne bloquez jamais ICMPv6 en entier : la découverte de taille de paquet fait partie du fonctionnement normal. Filtrez les adresses sources contre le spoofing et restreignez la gestion au lien local ou à la zone unique.
+
+Mention spéciale pour la couche 3 : une règle de pare-feu rédigée pour l'IPv4 n'a aucun effet sur le trafic IPv6, qui voyage avec ses propres en-têtes. Le pare-feu traite les deux familles séparément, et une bonne part des incidents observés après une migration vient d'une règle restrictive dupliquée d'un côté mais oubliée de l'autre. Inversement, certaines solutions anciennes laissent passer tout le trafic IPv6 par défaut : vérifiez la politique réellement appliquée avant d'activer le protocole.
+
+```bash
+# Surface réduite : n'activer que ce dont le poste a besoin
+sudo sysctl -w net.ipv6.conf.all.accept_ra=1
+sudo sysctl -w net.ipv6.conf.all.forwarding=0
+
+# Interdire les transitions obsolètes sur les postes Windows
+netsh interface teredo set state disabled
+netsh interface 6to4 set state disabled
+
+# Contrôler le filtre réellement en place
+sudo ip6tables -L -n -v | head -30
+```
+
+Sur les commutateurs d'accès, deux mécanismes valent de l'or. Le garde de routeur, dit RA Guard, interdit à un port d'hôte d'émettre des annonces de routeur et neutralise l'attaque par fausse passerelle, en distinguant les routeurs authentifiés des postes ; le contrôle des annonces DHCPv6 joue le même rôle pour la configuration. Complétez par la désactivation des interfaces inutiles et par la surveillance des changements de table de voisinage. La couche de gestion suit les mêmes règles qu'en IPv4 : SSH seul, adresses en zone unique, journaux horodatés corrélés avec la supervision.
+
+Quant à l'authentification propre du voisinage, la RFC 3971 décrit NDP sécurisé, qui signe annonces et réponses au moyen de certificats. Ce mécanisme reste rarement déployé, faute de support homogène chez les constructeurs, et l'on compense par des mesures plus simples : garde de routeur, cloisonnement en VLAN, port sécurisé, surveillance de la table de voisinage. L'essentiel est de ne jamais laisser un poste d'hôte émettre une annonce de routeur, car c'est ce point précis qui ouvre le réseau.
+
+## Superviser et dépanner l'IPv6
+
+La supervision repose sur les mêmes réflexes qu'en IPv4, à cette réserve près qu'il faut vérifier davantage d'étages, la configuration venant du routeur et non d'un serveur. Votre boîte à outils tient en trois commandes et deux utilitaires : ip -6 addr pour l'adresse obtenue, ip -6 route pour le chemin, ip -6 neigh pour l'état du voisin, radvdump pour les annonces reçues, et tcpdump avec le filtre icmp6 pour les échanges de découverte. Sous Windows, netsh interface ipv6 show address, show route et show neighbors couvrent le même besoin.
+
+```bash
+# Séquence de diagnostic en cinq vérifications
+ip -6 addr show dev eth0 scope global   # 1. ai-je une adresse globale ?
+ip -6 route show default                # 2. ai-je une route par défaut ?
+ip -6 neigh show                        # 3. mon voisin est-il reachable ?
+ping -c 3 fe80::1%eth0                  # 4. le routeur répond-il sur le lien ?
+ping -c 3 2001:db8::1                   # 5. le monde extérieur répond-il ?
+
+# Écoute fine et annonces
+sudo tcpdump -i eth0 -n icmp6
+radvdump
+
+# Équivalents historiques ping6 et traceroute-6
+ping -6 -c 3 www.example.com
+traceroute -6 -n www.example.com
+mtr -6 -rw www.example.com
+```
+
+Vos outils de supervision existants savent parler IPv6, à condition de les y inviter : ajoutez des suivis sur les adresses IPv6 de vos services critiques et vérifiez que les captures sont bien filtrées sur la famille voulue, tcpdump réclamant ici le prédicat icmp6 ou ip6. Pensez aussi à journaliser les changements de table de voisinage et les annonces reçues : un pic d'annonces ou un voisin inattendu est souvent le premier signe d'une mauvaise configuration, ou d'un poste qui se prend pour un routeur.
+
+Un test interne ne prouve rien sur l'atteignabilité publique : un pare-feu ou une route manquante peut bloquer tout le trafic entrant alors que l'intérieur fonctionne. Testez donc depuis l'extérieur, avec un chemin IPv6 natif, au moins une fois par segment exposé, et comparez avec le résultat obtenu de l'intérieur : la différence vous indique où se situe le filtre.
+
+L'interprétation suit une logique immuable. Si l'étape 1 échoue, le routeur n'annonce pas, annonce un préfixe sans drapeau A, ou votre hôte refuse les annonces : regardez radvdump et accept_ra. Si l'étape 2 échoue alors que l'adresse est là, l'annonce ne porte pas de route par défaut, ou la machine est configurée en routeur. Si l'étape 3 reste incomplete, le voisin est éteint, hors du lien, ou le pare-feu bloque ICMPv6. Sinon, déplacez le raisonnement vers le DNS, les AAAA, les règles ou l'application.
+
+Pour la surveillance continue, ajoutez à votre outil un test périodique d'atteignabilité d'une adresse IPv6 de référence, une vérification de l'enregistrement AAAA de vos services publics, une alerte sur la disparition de la route par défaut d'un poste critique et le suivi du délai avant expiration des préfixes annoncés. Deux alertes se révèlent utiles lors des migrations : un serveur dont l'AAAA a disparu après une réinitialisation, et un routeur dont la durée de vie préférée approche, signe qu'un changement de préfixe se prépare.
+
+## À retenir
+
+L'IPv6 est un protocole de couche 3 comme l'IPv4, avec les mêmes responsabilités d'acheminement, mais une architecture d'adressage et de découverte différente. Retenez la structure de l'adresse : 128 bits, huit groupes hexadécimaux, un préfixe de routage que l'on vous confie, un identifiant de sous-réseau que vous choisissez, un identifiant d'interface que la machine produit, et une écriture canonique qui supprime les zéros de tête et contracte une seule suite de groupes nuls. Retenez les familles : global, lien local, zone unique, multicast, aucune diffusion.
+
+Retenez surtout le mécanisme qui fait vivre tout cela : NDP, exécuté par ICMPv6, résout les adresses par sollicitation vers un groupe ciblé, découvre le routeur par des annonces portant préfixes et drapeaux et vérifie les doublons avant toute utilisation. SLAAC construit sur ces annonces une adresse automatique, à condition qu'un /64 soit annoncé, et laisse DHCPv6 distribuer ce que SLAAC ne produit pas : baux traçables, options, serveur de noms. La cohabitation avec l'IPv4 se règle par la pile double, des tunnels temporaires ou NAT64 avec DNS64, et la sécurité se joue en amont.
+
+| Notion | Ce qu'il faut retenir |
+|---|---|
+| Notation | Huit groupes hexadécimaux, contraction unique, minuscules |
+| Lien d'hôtes | Toujours un /64, condition de SLAAC |
+| Lien local | fe80::/10, jamais routée, indice de zone obligatoire |
+| Découverte | NDP sur ICMPv6 : 133, 134, 135, 136, 137, Hop Limit à 255 |
+| Configuration | SLAAC par défaut, DHCPv6 pour baux et options |
+| Transition | Pile double en production, tunnels de passage, NAT64 en filet |
+| Sécurité | RA Guard, refus par défaut, ICMPv6 maintenu partiellement |
+
+## Erreurs fréquentes
+
+La première erreur consiste à conserver un préfixe plus court que 64 bits sur un lien d'hôtes, par habitude du /24 : SLAAC cesse de fonctionner, les adresses ne se forment plus, et l'on cherche la panne dans le routeur alors qu'elle est dans le plan d'adressage. La seconde est de supprimer ICMPv6 au motif de la sécurité, ce qui casse la découverte de taille de paquet et produit des communications qui marchent pour les petits paquets et échouent pour les gros, bogues d'autant plus coriace qu'il semble aléatoire.
+
+La troisième est d'utiliser une adresse de lien local sans indice de zone : la commande échoue avec un message obscur et l'on conclut à une panne réseau alors que la syntaxe est incomplète. La quatrième annonce les drapeaux M ou O sans serveur DHCPv6 correspondant, laissant les postes sans DNS. La cinquième active IPv6 avant de poser les règles, exposant des hôtes mondialement joignables pendant le chantier. La sixième oublie la pile double : une règle corrigée d'un côté et absente de l'autre laisse une brèche.
+
+## Pour aller plus loin
+
+La référence primaire reste la RFC 8200, qui spécifie l'en-tête IPv6, complétée par la RFC 4291 sur l'adressage et la RFC 4861 sur NDP ; la RFC 4862 décrit SLAAC, la RFC 8415 DHCPv6, les RFC 6146 et 6147 le couple NAT64 et DNS64. Ces six documents couvrent l'essentiel du chapitre et se lisent bien une fois les bases acquises.
+
+En pratique, rien ne remplace un laboratoire : deux machines virtuelles et un routeur, radvd activé, annonces observées avec radvdump, drapeau A cassé puis rétabli, durées de vie mesurées, puis raccordement à l'Internet réel par le tunnel broker d'Hurricane Electric, qui fournit gratuitement un /48 et vous oblige à manipuler le routage pour de vrai. Complétez par les documents francophones de l'association IPv6 France et par la documentation Microsoft sur la configuration IPv6 de Windows.
+
+## Et maintenant : passez à la vidéo puis à l'exercice de migration
+
+La vidéo du chapitre reprend visuellement les quatre temps de SLAAC, l'annonce du routeur et la lecture d'une table de voisinage, avec les sorties de commandes projetées à l'écran. Regardez-la après avoir exécuté vous-même les blocs de cette leçon : vous y reconnaîtrez les messages observés, et les écarts avec vos sorties deviendront un point de discussion utile.
+
+L'exercice pratique qui suit vous demande de migrer un petit réseau réel, plan d'adressage et configurations à l'appui, en conservant l'IPv4 opérationnel. Il mobilise tout le chapitre : découpage des préfixes, choix des méthodes, règles de filtrage, séquence de vérification et documentation. Prenez le temps de produire le tableau avant d'écrire la moindre ligne de configuration : c'est cette discipline, plus que la connaissance des commandes, qui distingue une migration réussie d'un chantier qu'il faudra refaire.

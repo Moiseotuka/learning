@@ -1,0 +1,210 @@
+## La qualité des données en production
+
+La qualité des données n'est pas la validation de schéma, même si les deux se confondent souvent. Le contrôle de schéma vérifie que la forme est bonne : colonnes, types, cardinalité. La qualité interroge l'aptitude de la donnée à répondre à la question posée : les revenus sont-ils renseignés, les dates sont-elles cohérentes, le fichier de la nuit est-il complet ou tronqué ? Un fichier parfaitement conforme en colonnes peut être totalement impropre à l'entraînement.
+
+La première étape consiste donc à écrire un contrat, un document versionné qui décrit ce que la source promet : colonnes et types, plages admises, règles de dépendance entre champs, taux de remplissage minimal, fréquence d'arrivée. Il se place dans le dépôt, à côté du code, et se teste à chaque extraction. Il devient le point de négociation entre qui produit les données et qui les consomme : on ne discute plus de ressenti, mais d'une ligne de contrat passée au rouge.
+
+Six familles de contrôles couvrent l'essentiel, chacune avec sa réaction propre. La complétude compte les valeurs absentes par colonne, la validité vérifie les bornes et les formats, l'unicité repère les doublons, la fraîcheur mesure l'écart entre la date la plus récente et l'extraction, le volume compare le nombre de lignes à la moyenne des périodes précédentes. La distribution, enfin, est l'objet même de ce chapitre : elle relie la qualité des données à la surveillance de dérive.
+
+| Contrôle | Question posée | Exemple au crédit | Sévérité |
+|---|---|---|---|
+| Complétude | Les champs obligatoires sont-ils remplis ? | Revenu renseigné dans plus de 99 % des dossiers | Bloquante en dessous de 95 % |
+| Validité | Les valeurs sont-elles dans les bornes ? | Taux entre 0 et 1, âge entre 18 et 95 | Bloquante |
+| Unicité | Le dossier est-il déjà présent ? | Identifiant de dossier en double | Bloquante |
+| Fraîcheur | Le flux arrive-t-il à l'heure ? | Dernier dossier daté de moins de 26 heures | Bloquante après un retard |
+| Volume | Le débit est-il normal ? | Entre 80 % et 120 % du volume médian | Avertissement |
+| Distribution | La population est-elle la même qu'avant ? | PSI des variables critiques inférieur à 0,20 | Avertissement, puis alerte |
+
+La réaction à un contrôle en échec est une décision de conception, pas un détail d'implémentation. On peut tout rejeter, ce qui protège le modèle mais arrête la chaîne ; isoler les lignes fautives dans une quarantaine, ce qui perd du volume en silence ; ou laisser passer et signaler, ce qui expose le modèle à des entrées douteuses. Le bon choix dépend de la nature de la faute : un champ vide sur une variable non critique se quarantaine, une colonne entière absente arrête tout, et une incohérence de format systématique se traite en amont, pas en aval.
+
+```python
+CONTRAT = {
+    "revenu":        {"type": "nombre", "min": 0,      "max": 500000, "rempli": 0.99},
+    "anciennete":    {"type": "nombre", "min": 0,      "max": 40,     "rempli": 0.99},
+    "dette":         {"type": "nombre", "min": 0,      "max": 1,      "rempli": 0.97},
+    "historique":    {"type": "nombre", "min": 0,      "max": 1,      "rempli": 0.99},
+    "date_dossier":  {"type": "date",   "max_jours": 2},
+}
+
+def controler(lignes, contrat=CONTRAT):
+    """Renvoie (rapport, bloquant). Chaque colonne est jugee par le contrat."""
+    rapport, bloquant = [], False
+    total = max(len(lignes), 1)
+    for colonne, regle in contrat.items():
+        valeurs = [l.get(colonne) for l in lignes]
+        renseignees = [v for v in valeurs if v is not None and v != ""]
+        taux = len(renseignees) / total
+        if taux < regle.get("rempli", 1.0):
+            rapport.append((colonne, "remplissage", round(taux, 4)))
+            bloquant = True
+        if regle["type"] == "nombre":
+            hors_bornes = 0
+            for v in renseignees:
+                try:
+                    x = float(v)
+                except (TypeError, ValueError):
+                    hors_bornes += 1
+                    continue
+                if not (regle["min"] <= x <= regle["max"]):
+                    hors_bornes += 1
+            if hors_bornes:
+                rapport.append((colonne, "valeurs hors bornes", hors_bornes))
+                bloquant = True
+    return rapport, bloquant
+```
+
+Un point souvent oublié : la qualité s'apprécie aussi par rapport à l'entraînement, pas seulement en valeur absolue. On appelle écart entraînement-service le cas où le service reçoit des données préparées autrement que celles qui ont servi à apprendre — unités différentes, codage différent de la variable catégorielle, ordre des colonnes permuté. Le contrôle le plus économique consiste à faire passer, à chaque déploiement, le même dossier de référence par la chaîne d'entraînement puis par le service, et à exiger des sorties identiques à la décimale.
+
+Enfin, la qualité des données a un propriétaire : un contrôle dont personne ne reçoit l'alerte n'existe pas, et un contrôle qui alerte sans indiquer à qui écrire produit de la résignation. Associez chaque famille à un canal, à un nom et à un délai de prise en charge, puis publiez ce tableau avec le contrat : la donnée est un service comme un autre.
+
+## L'intégration et la livraison continues pour le machine learning
+
+L'intégration continue classique exécute des tests à chaque fusion de branche, construit un livrable, le teste et le prépare à la livraison. Le machine learning n'abandonne rien de cette discipline, mais il y ajoute trois complications qui changent la mise en œuvre : les artefacts sont multiples — code, données, modèle, image — ; une partie des tests est statistique et donc intrinsèquement seuillée ; et une exécution complète demande parfois des heures, ce qui interdit de tout placer devant la fusion d'une branche.
+
+On décrit couramment trois lettres. L'intégration continue vérifie le code et les données : analyse de style, tests unitaires, contrôles de contrat, et un entraînement échantillon rapide qui prouve que la chaîne tient debout. La livraison continue construit et publie : image du service, modèle inscrit au registre en état de préparation, puis déploiement sur l'environnement de recette avec des tests de bout en bout. La formation continue est la nouveauté : elle répète, sur un calendrier ou sur événement de données, l'entraînement et l'évaluation, puis propose un modèle sans que quiconque touche au code.
+
+La question de la vitesse se règle par la hiérarchie des tests. Ce qui doit répondre en quelques minutes — style, unitaires, contrat de données sur un échantillon — bloque la fusion. Ce qui prend du temps — entraînement complet, évaluation par coupe, test de latence réelle — s'exécute la nuit et bloque la publication, pas l'écriture : le développeur garde un retour rapide, la mise en production reste protégée par l'examen complet.
+
+```yaml
+name: pipeline-credit
+on:
+  push: {branches: [main]}
+  schedule: [{cron: "0 5 * * 1"}]   # entrainement hebdomadaire, lundi 05h
+
+jobs:
+  verifications:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environnement fige
+        run: uv pip install -r requirements.lock
+      - name: Analyse et tests unitaires
+        run: pytest tests/unit -q
+      - name: Contrat de donnees
+        run: python src/validate.py data/raw/credit.csv --contract contracts/credit.yaml
+
+  entrainement:
+    needs: verifications
+    runs-on: ubuntu-latest
+    steps:
+      - name: Entraine, evalue, enregistre
+        run: python src/train.py --seed 42 && python src/evaluate.py --baseline 0.81
+      - name: Publication en preparation
+        if: success()
+        run: python src/register.py --stage staging
+
+  recette:
+    needs: entrainement
+    runs-on: ubuntu-latest
+    environment: recette
+    steps:
+      - name: Tests de bout en bout sur le service
+        run: pytest tests/e2e -q
+      - name: Verification de la latence et du schema
+        run: python src/slo_check.py --url http://credit-api.recette
+
+  production:
+    needs: recette
+    runs-on: ubuntu-latest
+    environment: production   # validation humaine exigee par la plateforme
+    steps:
+      - name: Deploiement canary 5 %
+        run: python src/deploy.py --canary 5 --gate reports/evaluation.json
+```
+
+Cette déclaration contient les trois garnitures qui séparent un pipeline fiable d'un script fragile : les dépendances entre emplois imposent l'ordre sans intervention humaine ; l'environnement nommé production exige un clic de quelqu'un, ce qui n'est pas de la méfiance mais de la responsabilité ; le verrou d'environnement figure parmi les entrées, si bien qu'une modification de dépendance repasse tous les examens.
+
+Les secrets méritent une règle absolue : aucune clé d'accès n'est écrite dans le dépôt ni dans les journaux. Elle est injectée à l'exécution, depuis le coffre à secrets de la plateforme, avec une durée de vie courte et un périmètre réduit à l'emploi concerné. Une clé fuitée dans un journal d'intégration est un incident de sécurité, et il se traite comme tel.
+
+| Sujet | Intégration continue classique | Intégration continue pour le machine learning |
+|---|---|---|
+| Artefact principal | Paquet logiciel ou image | Image, modèle et jeu de données |
+| Tests de référence | Assertions exactes | Seuils sur métriques statistiques |
+| Déclencheur | Chaque fusion de branche | Fusion, calendrier, arrivée de données |
+| Durée typique | Quelques minutes | Minutes pour les tests, heures pour l'entraînement |
+| Validation humaine | Rare | Systématique avant la production |
+| Échec le plus fréquent | Code cassé | Métrique sous le seuil ou contrat de données |
+| Retour arrière | Redéploiement du paquet | Repointage de l'alias du registre |
+
+Mesurez enfin l'équipe elle-même : fréquence de publication des modèles, délai entre une modification de code et sa présence en production, temps moyen de retour à un état fonctionnel après incident. Sans ces trois nombres, vous ignorez où vous en êtes, quel que soit le nombre d'outils installés.
+
+## Le cas concret : un crédit remis en production chaque semaine
+
+Réunissons maintenant tout ce que ce chapitre a posé, sur le modèle de crédit qui nous sert de fil rouge. La semaine suit un rythme fixe, et c'est précisément ce rythme qui constitue l'industrialisation : plus personne ne décide le matin même de réentraîner, plus personne ne cherche l'adresse du fichier du mois dernier, plus personne n'improvise le seuil d'alerte.
+
+| Moment | Activité | Responsable | Porte de sortie |
+|---|---|---|---|
+| Lundi 05h | Extraction et contrôle de contrat | Automate | Contrat vert ou alerte |
+| Lundi 06h | Entraînement avec graine fixe | Automate | Empreinte et métriques |
+| Lundi 07h | Évaluation contre le modèle en service | Automate | Seuil atteint ou publication refusée |
+| Lundi 08h | Inscription au registre, état de préparation | Automate | Entrée consultable |
+| Lundi 09h | Revue du rapport, validation humaine | Responsable modèle | Passage en production |
+| Mardi 09h | Mode silencieux terminé, canari à 5 % | Automate | Palier vert ou retour arrière |
+| Mercredi | Passage à cent pour cent | Automate | Ancienne version archivée |
+| Vendredi | Rapport hebdomadaire de dérive et de qualité | Équipe | Décisions pour la semaine suivante |
+
+Le bloc suivant est un extrait de journal : chaque ligne nomme l'étape, son verdict et la référence qui la rend vérifiable, relisible un an plus tard sans explication orale.
+
+```text
+2026-10-05 05:00:12 extract    OK    lignes=18422 empreinte=9f2c41a7 dates=2026-09-28..2026-10-04
+2026-10-05 05:00:41 validate   OK    contrat=credit.yaml v3 rejetes=14 remplissage_min=0.973
+2026-10-05 05:01:02 quarantine WARN  colonne=anciennete_revenu valeurs_illisibles=6
+2026-10-05 05:07:55 train      OK    graine=42 environnement=3f81 auc=0.8432 duree=412s
+2026-10-05 05:09:10 evaluate   OK    auc=0.8432 seuil=0.8100 ecart=+0.0332 coupes=4/4 vertes
+2026-10-05 05:09:12 register   OK    version=12 stage=staging auteur=pipeline hebdo
+2026-10-05 09:14:31 approve    OK    version=12 stage=production valide_par=martin.revy
+2026-10-06 09:00:05 canary     OK    palier=5pct latence_p95=41ms erreurs=0.0002
+2026-10-06 09:00:07 drift      OK    psi_max=0.061 (revenu) ks_max=0.048 (dette)
+2026-10-07 09:00:03 rollout    OK    palier=100pct version_11=archivee retour_arriere_teste=8s
+```
+
+Le vendredi, l'équipe passe en revue deux rapports : celui de la dérive, variable par variable, et celui de la qualité, contrôle par contrôle. C'est aussi le moment où l'on traite les cas qui demandent un jugement. Reprenons l'incident que la surveillance est faite pour attraper : le partenaire qui fournit les dossiers bascule une colonne de revenu mensuel vers un revenu annuel, sans prévenir, un jeudi matin.
+
+La chaîne réagit en séquence, et chacun des maillons a été prévu. Le contrôle de contrat ne bascule pas — le type reste numérique — mais la distribution explose : PSI de 0,31 sur le revenu, KS de 0,44, volume inchangé. L'alerte part au canal de l'équipe, pas à une boîte générique. La personne d'astreinte ouvre le rapport, compare dix dossiers bruts et constate le facteur douze. La décision est immédiate : on coupe la source, on rejoue la période depuis la dernière extraction saine, on corrige le contrat pour exiger l'unité dans le nom de colonne, et on relance la chaîne. Aucun modèle n'a été réentraîné, parce que le problème n'était pas dans le modèle.
+
+Cette histoire illustre la distinction la plus utile du chapitre : la surveillance de dérive est un détecteur de causes, pas un bouton de réentraînement. Automatiser l'alerte, oui ; automatiser la décision, seulement quand la cause est connue et répétitive.
+
+Un défi propre au crédit vient compliquer l'évaluation : l'étiquette arrive tard. Le défaut se constature soixante-dix à quatre-vingt-dix jours après la décision, si bien que tout modèle est toujours jugé sur ce qu'il faisait il y a trois mois. On compense par trois pratiques : un jeu de référence figé pour comparer deux modèles dans les mêmes conditions, des indicateurs de substitution observables le jour même — calibrage, part d'accord entre modèles, stabilité du taux d'approbation — et le modèle précédent conservé en mode silencieux, de sorte que la comparaison soit déjà écrite quand les étiquettes finissent par arriver.
+
+Enfin, l'industrialisation se jauge à ce que l'équipe ne fait plus : personne ne reprend un fichier Excel pour vérifier un chiffre, personne ne cherche le bon modèle puisque l'alias du registre répond en une requête, personne ne redoute le vendredi après-midi puisque le retour arrière a été testé et prend huit secondes. C'est à cette liste négative, et non au nombre d'outils installés, que l'on reconnaît une chaîne devenue une usine.
+
+## À retenir
+
+- Un modèle qui ne se reproduit pas n'est pas un modèle, c'est un coup de chance ; la reproductibilité combine graine, environnement verrouillé et données versionnées.
+- La graine se pose avant l'import des bibliothèques, sur chaque estimateur, et l'entraînement séquentiel évite les divergences liées au parallélisme ; deux empreintes identiques prouvent le déterminisme, jamais la qualité.
+- Git versionne le texte, un outil de versionnage de données place les gros fichiers en stockage distant et n'en garde qu'un pointeur.
+- Le découpage entraînement, validation, test doit être une fonction déterministe de la clé d'observation, sinon les métriques ne sont jamais comparables.
+- Un pipeline se juge à son déterminisme, à son idempotence et à son observabilité ; il s'arrête de lui-même quand une étape échoue.
+- Le registre relie modèle, signature, métriques, empreinte des données, commit et responsable ; l'alias de production rend le retour arrière instantané.
+- Trois familles de tests précèdent toute publication : données, code, modèle — avec des seuils décidés avant l'observation.
+- Le mode silencieux valide la chaîne, le canary valide le métier ; aucun des deux ne remplace une fenêtre d'observation et des critères écrits à l'avance.
+- La dérive de données se répare par un réentraînement, la dérive de concept exige une réflexion sur le problème ; agir dans le mauvais sens coûte des semaines.
+- Un PSI inférieur à 0,10 se surveille, entre 0,10 et 0,25 il s'observe, au-delà de 0,20 sur une variable critique il déclenche l'alerte.
+- Une alerte ouvre une investigation : le réentraînement automatique n'est qu'une issue parmi plusieurs, jamais la réponse par défaut.
+
+## Erreurs fréquentes
+
+- Enregistrer une graine sans figer les versions des bibliothèques, et croire la reproductibilité acquise.
+- Comparer deux métriques obtenues sur deux découpages différents du même jeu, et conclure à un progrès.
+- Mettre les données dans Git « pour aller vite », jusqu'au dépôt devenu ingérable ou à la fuite d'informations personnelles.
+- Écraser le fichier du modèle à chaque entraînement, ce qui rend tout retour arrière impossible au moment où on en a besoin.
+- Publier en remplaçant l'ancienne version d'un bloc, sans mode silencieux, sans palier et sans critère de repli.
+- Fixer les seuils d'alerte après avoir regardé les courbes, jusqu'à ce que plus rien ne se déclenche.
+- Alimenter la surveillance en comparant la production au jeu d'entraînement brut, ce qui fabrique une dérive permanente artificielle.
+- Déclencher un réentraînement dès la première alerte, alors que la cause est le plus souvent une erreur de format ou d'unité en amont.
+- Oublier de tester le retour arrière, qui échoue précisément lorsqu'on en a besoin un vendredi soir.
+- Laisser une alerte sans destinataire nommé ni délai de prise en charge, ce qui revient à ne pas surveiller du tout.
+
+## Pour aller plus loin
+
+Trois ressources suffisent à ancrer ce chapitre dans la pratique. La documentation de MLflow, sur mlflow.org, décrit le registre de modèles, la signature des entrées, les transitions d'état et le suivi d'expériences : c'est la référence la plus directe pour transformer un dossier de fichiers en un catalogue consultable. Le guide d'Evidently, sur docs.evidentlyai.com, montre la construction de rapports de dérive et de qualité, avec les formules des indices et des modèles de rapports prêts à l'emploi ; il est idéal pour passer de la formule de cette leçon à un rapport hebdomadaire automatique. Enfin, le parcours MLOps d'AWS, sur aws.amazon.com/sagemaker/mlops, décrit une chaîne complète de bout en bout — pipeline, registre, déploiement, surveillance — dans un environnement managé, ce qui aide à situer les pièces que vous avez montées à la main.
+
+Au-delà de ces trois lectures, deux habitudes valent mieux que dix outils supplémentaires. Écrivez, avant tout déploiement, la réponse exacte à trois questions : quelle version tourne, sur quelles données a-t-elle été apprise, en combien de temps peut-on revenir en arrière. Si l'une des trois demande plus de quelques minutes à trouver, votre chaîne a un trou, quel que soit son niveau d'automatisation. Rejouez ensuite, une fois par trimestre, un incident fictif — une source qui cesse d'arriver, un format qui change, une métrique qui chute — et chronométrez la réaction : ce que l'on n'a jamais exercé ne fonctionne pas le jour où c'est grave.
+
+## Et maintenant : mettez votre chaîne à l'épreuve
+
+Vous avez les pièces ; il reste à les assembler sur votre propre terrain. Prenez le modèle que vous avez déployé au chapitre 7, ou un entraînement que vous connaissez bien, et écrivez la chaîne minimale qui vous donne les trois certitudes de la section précédente : un verrou de dépendances commité, un script d'entraînement qui lit ses données par empreinte et écrit ses métriques dans un rapport, et un manifeste qui relie le tout. Exécutez-le deux fois de suite et comparez les empreintes des modèles produits : si elles diffèrent, vous venez de localiser votre première source de non-reproductibilité.
+
+Ensuite, ajoutez la surveillance. Mesurez le PSI et le KS de chaque variable entre une fenêtre de référence que vous figez aujourd'hui et les données récentes, puis observez une période sans changement pour connaître le bruit de fond de vos propres mesures : c'est cette valeur, et non un seuil recopié dans un tableau, qui doit décider de votre premier seuil d'alerte. Puis déclenchez-le volontairement, en modifiant une variable de quelques dizaines de pourcents, et vérifiez que l'alerte arrive au bon endroit, avec le bon nom.
+
+Terminez par la partie que tout le monde repousse : le retour arrière. Écrivez la commande qui remet la version précédente, exécutez-la, mesurez le temps, puis consignez-le dans le pipeline. Vous n'avez plus un modèle en production : vous avez un service, c'est-à-dire un modèle que l'on peut changer sans trembler. C'est la dernière compétence du parcours, et la première d'un métier.

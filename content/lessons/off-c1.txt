@@ -1,0 +1,339 @@
+Avant de tester quoi que ce soit, on regarde. Dans un audit de sécurité éthique, la phase de reconnaissance est celle où vous ne touchez encore rien : vous observez, vous collectez, vous classez. Elle dure souvent plus longtemps que toutes les phases suivantes réunies, et c'est précisément elle qui décide si votre intervention sera utile ou bruyante, cadrée ou improvisée. Un auditeur pressé qui saute cette étape part au hasard ; un auditeur rigoureux sait déjà, avant d'envoyer le moindre paquet, quels noms de domaine appartiennent réellement au client, quels serveurs sont exposés vers l'extérieur, quelles technologies tournent derrière, et surtout ce qui lui est interdit de toucher. La reconnaissance n'est donc pas une salle d'attente : c'est le premier livrable de la mission, celui à partir duquel tout le reste se construit.
+
+À la fin de cette leçon, vous saurez distinguer le renseignement passif du renseignement actif et choisir l'un ou l'autre en fonction du bruit que vous acceptez de produire ; interroger un nom de domaine, son historique et son DNS ; énumérer des sous-domaines sans vous noyer dans les doublons ; tirer parti des annuaires, des archives et des moteurs de recherche pour lire ce que l'organisation publie elle-même ; reconnaître les technologies derrière un service ; conduire une première reconnaissance active dans un périmètre strictement autorisé ; transformer un ensemble de relevés en une cartographie exploitable ; et enfin cadrer légalement votre mission, budgéter votre temps et journaliser chaque action. Chaque commande citée est donnée telle qu'elle s'écrit dans un terminal : vous pouvez la recopier telle quelle.
+
+Nous utiliserons une cible d'exemple volontairement inoffensive : le domaine example.com, réservé à la documentation par la norme RFC 2606, avec ses sous-domaines de démonstration comme www.example.com et mail.example.com. Aucune de vos pratiques ne doit viser un domaine qui ne vous appartient pas ou qui n'est pas écrit noir sur blanc dans votre autorisation. C'est la règle qui traverse tout le chapitre : la technique est simple, la discipline ne l'est pas. Nous supposons que vous savez déjà ouvrir un terminal, vous déplacer dans l'arborescence avec cd, lister des fichiers avec ls, lancer un programme et interrompre un processus avec Ctrl+C. Le reste s'apprend ici.
+
+## Renseignement passif : rester dans le silence
+
+Le renseignement passif consiste à collecter des informations sur une cible sans jamais émettre un seul paquet vers elle. Vous consultez des sources qui existent déjà indépendamment de vous : les bases WHOIS, les journaux des résolveurs DNS publics, les archives du Web, les certificats émis publiquement, les moteurs de recherche, les dépôts de code, les offres d'emploi, les rapports d'incidents. Rien de tout cela n'atteint les serveurs du client, rien n'apparaît dans ses journaux, et son équipe de sécurité ne peut pas vous voir venir. Dans la pratique, cette asymétrie est décisive : vous pouvez passer deux jours entiers à préparer votre mission sans que la moindre alerte se déclenche chez la cible.
+
+Le renseignement actif, à l'inverse, c'est le moment où vous adressez des requêtes à l'infrastructure : un ping, une résolution DNS faite depuis votre machine, une sonde de ports, une connexion HTTP. Chaque geste laisse une trace chez quelqu'un : le pare-feu, l'équipement de détection d'intrusion, l'application web, l'hébergeur partagé, parfois un honeypot. Cette trace n'est pas forcément un problème, mais elle vous coûte trois choses. Elle prévient la cible que vous êtes en préparation, elle vous range potentiellement dans la catégorie des flux indésirables, et elle vous oblige à une autorisation explicite. D'où la hiérarchie que nous appliquerons tout au long du parcours : épuiser d'abord les sources passives, puis passer à l'actif seulement lorsqu'une question précise ne peut pas être résolue autrement.
+
+Une idée fausse circule dès le premier jour : puisque les données sont publiques, leur collecte est anodine. Deux nuances s'imposent. La première est pratique : une donnée publie n'est pas nécessairement une donnée à jour, et une accumulation de fragments exacts peut décrire une organisation bien plus précisément que ce qu'elle affiche volontairement. La deuxième est juridique : la collecte massive d'informations personnelles restant soumise au RGPD, même une phase strictement passive doit rester proportionnée, limitée aux besoins de la mission et aux personnes morales concernées. Vous releverez le nom du directeur des systèmes d'information sur la page « équipe » du site du client, parce que c'est utile pour votre rapport ; vous ne constituerez pas un fichier sur les collaborateurs en téléchargeant tous leurs profils professionnels.
+
+Prenons un exemple concret de ce que la seule phase passive peut livrer. En 2019, un ensemble de milliards d'identifiants, baptisé Collection #1, a été découvert parce qu'il avait été déposé sur un service de stockage accessible sans authentification ; aucun scanner n'avait besoin de frapper quoi que ce soit pour le trouver, il suffisait de regarder. Côté entreprise, le raisonnement est le même : un dépôt Git rendu public contenant un fichier de configuration, une clé d'API oubliée dans une variable d'environnement, un serveur de recette référencé dans les métadonnées d'un PDF, un sous-domaine oublié dans un certificat périmé : tout cela se lit sans jamais interpeller le client. La reconnaissance passive n'est pas une version timide de la reconnaissance active, c'est une phase à part entière, souvent la plus riche.
+
+Le budget de bruit se mesure aussi en termes d'outils. Certains services, comme les scanners d'Internet entier, ont déjà balayé la cible avant vous : les interroger est passif au regard de la cible, puisque vous consultez un résultat historisé. D'autres, comme un brute-force de sous-domaines lancé depuis votre poste, émettent des milliers de requêtes vers les serveurs de nom du client : c'est du bruit actif, même si vos requêtes semblent banales. Entre les deux, les journaux publics de résolution, les requêtes vers des services tiers qui retiennent vos interrogations, ou encore les CDN qui mettent en cache et journalisent : le passage de témoin est progressif. Posez-vous toujours la question : qui va voir ce que je fais, à quel moment, et que va-t-il en penser ?
+
+```table
+Critère | Renseignement passif | Renseignement actif
+Trace laissée chez la cible | Aucune | Oui, dans les journaux réseau et applicatifs
+Autorisation formelle | Recommandée, souvent couverte par la convention | Impérative, écrite et datée
+Sources typiques | WHOIS, DNS public, archives, moteurs de recherche, dépôts publics | Ping, sondes de ports, requêtes HTTP, énumération DNS directe
+Volume de données | Élevé mais dispersé | Ciblé et précis
+Risque principal | Informations périmées ou faux positifs | Détection précoce, saturation, hors périmètre
+Place dans la mission | Première, majoritairement | Seulement si une question reste ouverte
+```
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/d/d2/Internet_map_1024.jpg/960px-Internet_map_1024.jpg
+| Vue en nœuds de l'Internet mondial : chaque point visible ici correspond à une infrastructure dont une partie des informations circule déjà dans des bases publiques.
+```
+
+## Le nom de domaine comme point de départ
+
+Le footprinting, littéralement l'empreintage, désigne le relevé méthodique des traces numériques laissées par une organisation. Son point d'entrée presque universel est le nom de domaine, parce que le domaine est la clé qui ouvre tout le reste : il donne accès au site, aux sous-domaines, aux adresses de courriel, aux certificats, aux enregistrements DNS, aux historiques d'hébergement. Une organisation peut changer d'hébergeur, de pare-feu ou de plateforme ; elle conserve rarement le même nom de domaine pendant quinze ans. Commencez donc toujours par le domaine, et ne commencez jamais par scanner.
+
+La commande whois interroge la base d'enregistrement du domaine : le registrar, la date de création, la date d'expiration, les serveurs de nom, les contacts administratifs et techniques. Dans la pratique, la sortie varie selon l'extension : le .fr est géré par l'Afnic, les grands generic Top-Level Domain suivent le format ICANN, et de nombreux registres ont aligné leurs réponses sur RDAP, le protocole de remplacement de WHOIS qui répond en JSON et se prête mieux à l'automatisation. Prenez l'habitude des deux formes : whois pour la lecture humaine rapide, RDAP pour extraire des champs exploitables dans un script.
+
+```bash
+whois example.com
+dig +short NS example.com
+curl -s https://rdap.org/domain/example.com | head -n 40
+```
+
+Trois informations de cette sortie méritent votre attention avant toute autre. Les serveurs de nom indiquent qui tient l'infrastructure DNS : un service managé chez un grand fournisseur vous renseigne sur la pile en place et sur l'ampleur probable du domaine. La date de création révèle l'ancienneté : un domaine déposé en 2005 appartient souvent à une organisation mature, avec des conventions de nommage anciennes, tandis qu'un domaine déposé le mois dernier est suspect dans deux cas de figure, soit une nouvelle entité à découvrir, soit une infrastructure montée exprès pour l'occasion. Les dates d'expiration, elles, inquiètent toujours le client : un domaine à renouveler dans quinze jours est un risque opérationnel que votre rapport peut signaler, sans que vous ayez besoin de tester quoi que ce soit.
+
+Un écueil revient systématiquement : les coordonnées personnelles sont masquées depuis l'entrée en vigueur du RGPD, et les services de protection de contact ajoutent une couche supplémentaire. Ne concluez donc jamais à l'absence d'un responsable à partir d'un whois vide. Cherchez plutôt dans les sources qui, elles, ne sont pas masquées : les mentions légales du site, qui doivent nommer l'éditeur en France, la page de politique de confidentialité, les fichiers d'entreprise des annuaires professionnels, ou encore les mentions techniques des certificats. Le whois vous donne un point de départ fiable sur l'infrastructure, pas une carte d'identité.
+
+Il existe enfin une manœuvre que vous devez connaître parce qu'elle fausse tout votre raisonnement : la rotation des noms de domaine. Une même organisation peut opérer plusieurs domaines, dont l'un sert au site vitrine, un autre à l'intranet, un troisième à une campagne marketing abandonnée. Établissez systématiquement la liste des domaines liés, par la similitude des noms, par les certificats partagés, par les adresses IP communes relevées plus tard, et par les liens entrants entre les sites. Un domaine isolé dans votre inventaire est un domaine dont vous n'avez pas encore compris le rôle, et vous devez l'écrire tel quel dans votre journal plutôt que de le classer à la hâte.
+
+Un dernier conseil de méthode : conservez la sortie brute de chaque commande, avec son horodatage. Le registre évolue, un serveur de nom change, un domaine expire entre deux missions, et votre rapport devra pouvoir justifier chaque affirmation par une pièce à l'appui. Un simple fichier par source, nommé avec la date, vous évitera de relancer trois semaines plus tard une interrogation qui n'affichera plus la même réponse.
+
+## DNS : lire l'annuaire d'internet
+
+Le Domain Name System est l'annuaire qui traduit un nom de domaine en adresse réseau et inversement, mais il est bien plus riche que sa fonction de répertoire : il porte des métadonnées sur l'organisation, sur sa messagerie, sur ses politiques de sécurité et sur ses outils. Comprendre la chaîne de résolution vous évite des heures de doute. Lorsque vous tapez un nom dans votre terminal, votre résolveur interroge d'abord les serveurs racine, puis la zone du domaine de premier niveau, puis les serveurs de nom du domaine, qui renvoient enfin l'enregistrement demandé ; si la réponse est déjà en cache, la chaîne s'interrompt à l'étape la plus haute atteinte. Retenez que votre résolveur voit vos questions, pas la cible : la distinction entre requête locale et requête vers les serveurs de nom du client est exactement la frontière entre passif et actif.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Example_of_an_iterative_DNS_resolver.svg/960px-Example_of_an_iterative_DNS_resolver.svg.png
+| Principe de la résolution itérative : le résolveur interroge successivement les serveurs racine, la zone du domaine de premier niveau et les serveurs de nom du domaine cible jusqu'à obtenir la réponse finale.
+```
+
+Les enregistrements A et AAAA donnent respectivement les adresses IPv4 et IPv6 d'un hôte ; CNAME pointe un nom vers un autre et révèle souvent des chaînes de services tiers ; MX liste les serveurs de courriel et vous apprend qui héberge la messagerie ; TXT porte des informations libres, dont les politiques SPF et DMARC, mais aussi les jetons de vérification posés par un fournisseur cloud. NS désigne les serveurs autoritaires, SOA décrit la zone elle-même, CAA restreint les autorités de certification habilitées à émettre des certificats, et SRV annonce des services comme la messagerie instantanée ou la découverte de protocoles.
+
+```table
+Type | Ce qu'il décide | Ce qu'il apporte à la reconnaissance
+A | Adresse IPv4 d'un nom | Cible réseau directe
+AAAA | Adresse IPv6 d'un nom | Parfois un hébergement distinct, sous-estimé
+CNAME | Alias vers un autre nom | Fournisseur tiers et chaîne de dépendance
+MX | Serveurs de courriel | Hébergeur de messagerie
+TXT | Texte libre | SPF, DMARC, preuves de propriété cloud
+NS | Serveurs autoritaires | Infrastructures DNS managées
+CAA | Autorités de certification habilitées | Politique de chiffrement en place
+```
+
+La commande dig est votre outil de lecture. Elle permet d'interroger un type précis, d'afficher uniquement la réponse courte, de forcer un serveur de nom donné, ou encore de remonter la chaîne complète avec le drapeau +trace. Notez que le simple appel `dig example.com` interroge le résolveur de votre machine : la cible n'en voit rien, mais vous non plus, puisque vous lisez un cache. Pour obtenir la réponse autoritaire, interrogez directement le serveur de nom annoncé par le domaine, et votre requête devient active.
+
+```bash
+dig A www.example.com +short
+dig TXT example.com
+dig NS example.com +short
+dig A www.example.com @ns1.example.com +norecurse
+dig example.com +trace
+```
+
+Il existe une vérification que tout auditeur tente un jour, et qui illustre parfaitement l'écart entre théorie et pratique : le transfert de zone. Si un serveur de nom accepte une requête AXFR depuis n'importe quelle adresse, vous récupérez la zone complète en une seconde, c'est-à-dire l'intégralité des noms de l'organisation. C'est une erreur de configuration classique, encore observée sur des infrastructures vieilles de quinze ans, et sa présence dans votre rapport a toujours une valeur élevée. Exécutez-la uniquement sur un domaine dont la convention vous l'autorise explicitement, et testez-la d'abord sur votre propre domaine de laboratoire.
+
+```bash
+dig AXFR example.com @ns1.example.com
+```
+
+Deux pièges viennent fausser l'interprétation. Le premier est le DNS en étoile : lorsqu'un nom inconnu renvoie la même adresse que le domaine principal, vos énumérations de sous-domaines produiront des centaines de faux positifs. Détectez-le dès le début en interrogeant un nom absurde, comme inexistante-8f3k.example.com, et comparant la réponse. Le second est la TTL : un enregistrement modifié il y a dix minutes peut encore circuler en cache pendant une heure, si bien que deux relevés consécutifs divergent sans que personne n'ait rien changé. Notez toujours la TTL et l'heure du relevé, faute de quoi vos contradictions de prochain chapitre seront inexpliquables.
+
+## Sous-domaines : élargir la carte du périmètre
+
+Un domaine unique ne décrit jamais une organisation. Derrière example.com se cachent habituellement www pour le site public, mail pour la messagerie, vpn pour l'accès distant, intranet pour les outils internes, api pour les services consommés par les applications mobiles, recette ou staging pour les environnements de préproduction, et parfois un vieux portail oublié, toujours résolu depuis dix ans. Chaque sous-domaine découvert est un actif supplémentaire à inventorier, et surtout un actif qui possède son propre cycle de vie : il peut héberger une application non maintenue, un certificat expiré, un service oublié lors de la dernière migration. L'énumération des sous-domaines est donc la partie du footprinting qui change le plus vite, et celle où il est le plus facile de se noyer dans les doublons et les faux positifs.
+
+Il existe deux familles de méthodes, et la distinction correspond exactement à celle du premier chapitre de cette leçon. Les sources passives consultent des jeux de données déjà produits : les journaux de certification, les archives du Web, les anciennes résolutions DNS, les pages de bugs bounty, les offres d'emploi. Elles ne coûtent aucun bruit. Les méthodes actives, elles, posent la question directement au serveur de nom : soit en lançant une résolution pour chaque candidat issu d'un dictionnaire, soit en envoyant des requêtes vers le serveur lui-même. Ces dernières sont rapides et exhaustives sur les noms présents dans votre liste, mais aveugles face aux noms qu'elles n'ont pas dans le dictionnaire, et parfaitement visibles côté client.
+
+Le point de départ recommandé est la transparence des certificats. Depuis plusieurs années, chaque certificat émis publiquement est enregistré dans un journal consultable par tous : ces journaux listent non seulement le nom principal couvert, mais les noms alternatifs, c'est-à-dire précisément les sous-domaines. Interroger ces journaux est passif, gratuit et redoutablement complet pour les noms qui ont jamais été chiffrés. Le service crt.sh reste la référence pour sa simplicité d'interrogation.
+
+```bash
+curl -s "https://crt.sh/?q=%.example.com&output=json" | jq -r '.[].name_value' | sort -u
+```
+
+Vient ensuite le dictionnaire. Une liste de candidats, quelques milliers de noms courants, et une résolution en masse : c'est la méthode qui découvre les services jamais certifiés, les sous-domaines internes publiés par erreur, les hébergements de recette. Les outils modernes traitent des dizaines de milliers de requêtes par seconde et renvoient uniquement les noms qui répondent, ce qui rend l'opération rapide à exécuter et rapide à relire. Choisissez une cadence raisonnable : même si la requête d'un nom n'est pas anormale en soi, un dictionnaire complet envoyé en une minute ressemble à une attaque de force brute, et le système de détection n'a aucune raison de vous croire sur parole.
+
+```bash
+subfinder -d example.com -silent | sort -u > candidats.txt
+dnsx -l candidats.txt -resp -a | tee sous-domaines.txt
+```
+
+Pensez aux variantes, c'est là que se trouve la moitié des découvertes intéressantes. Une convention interne comme api-recette.example.com, un préfixe de client comme client-nom.example.com, une numérotation comme app01, app02, ou l'ajout d'un suffixe de région comme .eu ou .intl. Le dérivatif s'applique aussi aux noms historiques : une filiale absorbée conserve parfois son domaine d'origine, relié au nôtre par un simple lien ou une adresse IP commune. Notez que vous n'êtes pas tenu de tester chacun : vous listez, vous normalisez, vous datez.
+
+Trois pièges structurent le tri. Le DNS en étoile, détecté avec un nom absurde, fabrique des correspondances pour tout et n'importe quoi : filtrez-les avant de produire votre inventaire. Les doublons avec ou sans préfixe www, avec et sans point final, avec casse différente, doivent être fusionnés en une entrée unique avec leurs variantes notées à côté. Enfin, un nom résolu hier peut ne plus résoudre aujourd'hui : la révocation d'un sous-domaine est une information, pas un bruit, et elle appartient à votre rapport. Conservez la date à laquelle chaque nom a répondu, et vous pourrez distinguer le service disparu du service momentanément injoignable.
+
+Un cas réel illustre la valeur de cette étape. Dans la plupart des audits, la faille la plus grave n'est jamais sur le site vitrine soigneusement encadré, mais sur un outil de recette laissé ouvert, une instance de supervision exposée, ou un portail de sauvegarde relié au domaine principal depuis une migration vieille de plusieurs années. Aucun de ces services n'est linked depuis la page d'accueil, mais tous apparaissent dans un certificat émis il y a deux ans. Le coût de la découverte : une requête et un tri.
+
+Un avertissement s'impose avant de lancer quoi que ce soit. Une même adresse IP héberge fréquemment des dizaines de domaines distincts, et un certificat partagé couvre parfois un client, son hébergeur et un tiers qui n'a rien à voir avec votre mission. Tous les noms qui ressortent d'une recherche ne vous appartiennent pas : filtrez-les un par un, écartez ceux qui relèvent d'un fournisseur, d'un CDN ou d'un service mutualisé, et ne retenez que les hôtes explicitement compris dans votre autorisation. Si vous découvrez par ailleurs un domaine manifestement abandonné et non déclaré, notez-le comme observation à signaler, mais ne le sondez pas : l'absence de propriétaire visible n'est pas une autorisation.
+
+## Annuaires et moteurs de recherche : interroger ce qui est déjà public
+
+Les annuaires et les moteurs de recherche constituent le prolongement naturel du footprinting, et ils donnent souvent plus de résultats en une heure que trois jours de sondes. L'idée directrice est simple : une organisation communique, publie, recrute, archive, et tout ce qu'elle publie décrit involontairement son architecture. Votre travail consiste à formuler des questions précises à ces corpus plutôt qu'à consulter des pages au hasard. Un auditeur débutif tape le nom du client dans un moteur ; un auditeur formé construit une requête qui isole les documents techniques, les fichiers de configuration et les adresses oubliées.
+
+Les opérateurs avancés restent la base. Restreindre la recherche à un domaine, chercher un type de fichier précis, chercher une expression dans l'adresse ou dans le titre, exclure un site : chacun de ces gestes transforme une recherche en sonde ciblée. Les documents PDF, les feuilles de calcul et les présentations sont particulièrement riches, car ils conservent des noms de serveurs, des captures d'écran d'outils, des versions logicielles et parfois des noms d'utilisateurs dans leurs métadonnées. Une simple chaîne de requête vous donne la liste des PDF du client qui contiennent le mot serveur ou migration.
+
+```bash
+site:example.com filetype:pdf serveur
+site:example.com inurl:admin
+site:example.com intitle:"espace client" -www
+```
+
+À côté des moteurs généraux, les annuaires spécialisés indexent l'infrastructure mondiale. Ces services interrogeent en continu des millions de services exposés, enregistrent les bannières, les certificats et les technologies, et rendent ensuite ces résultats consultables. Les interroger est passif du point de vue de la cible : elle n'est pas contactée, vous lisez un relevé daté. La puissance de cette approche est qu'elle vous donne immédiatement le port ouvert, le logiciel annoncé, la version apparente et la date du dernier balayage. Sa limite est tout aussi importante : l'information peut avoir six mois, et l'absence de résultat ne prouve rien de l'état actuel.
+
+```table
+Source | Ce qu'elle livre | Nature du contact avec la cible
+Journaux de certification | Sous-domaines et noms alternatifs historiques | Aucune
+Archives du Web | Pages disparues, anciennes versions, annuaires oubliés | Aucune
+Moteurs de recherche | Documents publiés, fichiers techniques, mentions | Aucune
+Scanners d'Internet entier | Ports ouverts, bannières, versions, certificats | Aucune, lecture d'un relevé daté
+Dépôts de code publics | Fichiers de configuration, clés, URLs internes | Aucune
+Offres d'emploi | Technologies, outils, noms de poste, environnement | Aucune
+Forums et réseaux sociaux | Noms de collaborateurs, habitudes, supports utilisés | Aucune, mais données personnelles
+```
+
+Les dépôts de code méritent une place à part, parce qu'ils sont la source de secrets réellement trouvés. Un fichier d'environnement versionné puis retiré reste souvent dans l'historique, consultable publiquement. Un mot de passe de connexion de test, une URL d'administration, un identifiant de base de données, un jeton d'API : rien de tout cela n'a besoin d'être forcé, il suffit de chercher. Si vous découvrez une clé active dans un dépôt public, votre devoir est de la signaler au propriétaire, pas de l'utiliser. En France comme ailleurs, l'usage d'un identifiant trouvé, même sans malveillance, vous expose pénalement : la découverte est couverte par votre mission, l'exploitation ne l'est pas.
+
+Pensez aussi aux sources humaines, qui sont souvent les plus détaillées. Une offre d'emploi indique l'infrastructure en place, l'hébergeur, le système d'exploitation, les outils de supervision, les processus de sauvegarde. Une conference technique donnée par un ingénieur du client montre des captures d'écran avec des noms de machines. Un profil professionnel annonce les certifications obtenues et les technologies maîtrisées. Tout cela se collecte sans contact, et tout cela décrit la cible mieux que n'importe quelle sonde. Ne dépassez cependant pas la mesure : relevez les informations utiles à la mission, mentionnez leur source, et ne constituez pas un dossier sur les individus.
+
+Le dernier réflexe à acquérir est la recherche d'archives. Une page disparue depuis trois ans contient souvent exactement ce qui manque aujourd'hui : un annuaire de services, une carte réseau publiée par erreur, une adresse IP de recette, une ancienne version des mentions légales avec le nom de l'hébergeur. Comparez systématiquement la version actuelle et la version archivée d'une page technique : l'écart entre les deux est un révélateur d'évolution, et une évolution récente est toujours une piste à creuser dans la suite de la mission.
+
+Un dernier conseil d'organisation : conservez un carnet de requêtes. À mesure que vous avancez, vous accumulerez des formules qui fonctionnent, des opérateurs que vous oubliez, des exclusions que vous réécrivez à chaque mission. Notez la requête exacte, le moteur utilisé, la date et le nombre de résultats utiles, puis classez-les par type de source. Ce carnet devient en quelques mois votre principal atout, parce que la qualité d'une reconnaissance ne dépend presque plus de la puissance des outils, mais de la précision des questions que vous savez poser. Reprenez-le systématiquement au début d'une nouvelle mission, et complétez-le en fin de mission avec les requêtes qui auraient dû exister.
+
+## Technologies détectées : identifier ce qui répond
+
+Identifier les technologies en place, c'est le fingerprinting applicatif : déduire, à partir de signaux observables, quel logiciel, quelle version et quelle architecture servent la cible. Contrairement à ce qu'on imagine, la plupart des signaux ne sont pas volontairement cachés : un serveur web annonce son nom et sa version, un framework laisse des cookies caractéristiques, une application d'erreur affiche une page dont la structure trahit la pile, un certificat porte le nom de l'autorité de certification et parfois celui de l'outil qui l'a déployé. Le travail consiste à assembler ces fragments, puis à vérifier chacun plutôt qu'à conclure à la première coïncidence.
+
+Le réflexe le plus rapide reste la lecture de l'en-tête HTTP retourné par le serveur. Le premier échange avec l'application, envoyé depuis votre poste vers un service autorisé, suffit souvent à lever le voile : nom et version du serveur web, framework applicatif, bibliothèque de template, absence ou présence d'en-têtes de sécurité. On y revient toujours, parce que l'absence d'en-tête de sécurité est elle-même une information de configuration.
+
+```bash
+curl -sI https://www.example.com/ | head -n 20
+curl -s https://www.example.com/robots.txt
+curl -sI https://www.example.com/.well-known/security.txt
+printf '\x00' | openssl s_client -connect www.example.com:443 -servername www.example.com 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+```
+
+Deuxièmement, les ressources et les empreintes. Le favicon demandé par le navigateur possède souvent un empreinte numérique connue, qui relie instantanément le site à une application précise. Les fichiers statiques, les chemins d'assets, les identifiants de générateur de sites et les balises de version intégrées au code source constituent autant de signatures. Des outils automatisés comparent ces signatures à une base de référence et proposent une liste de technologies avec un niveau de confiance. Ils se trompent : une page 404 personnalisée peut ressembler à celle d'un framework voisin, un reverse proxy peut masquer complètement le serveur réel.
+
+```bash
+whatweb -a 2 https://www.example.com
+```
+
+Troisièmement, les certificats TLS et les services voisins. L'enveloppe d'un certificat indique l'autorité émettrice, la période de validité, les noms couverts et parfois l'agent de déploiement utilisé. Un certificat auto-signé ou émis pour une IP plutôt qu'un nom annonce un service interne exposé. Un certificat dont la validité court sur quatre-vingt-dix jours trahit un renouvellement automatisé, donc une chaîne d'outillage moderne. Une recherche sur les empreintes de certificats ou d'icônes vous ramène à la fois aux autres services de la même infrastructure et aux communautés qui les ont déjà documentés.
+
+Un principe méthodologique domine tout le reste : séparer l'observation de l'hypothèse. Notez ce que vous avez vu, enregistrez la sortie brute, puis écrivez à côté votre degré de confiance et la raison de ce niveau. Un serveur qui s'annonce comme Apache version 2.4.49 vous donne une information forte, encore faut-il vérifier qu'aucun proxy ne modifie l'en-tête. Une absence d'en-tête Server, à l'inverse, ne signifie pas l'absence de serveur : elle signifie simplement qu'il a été configuré pour se taire. Votre rapport doit refléter cette honnêteté intellectuelle.
+
+La chaîne qui suit l'identification est celle que tout débutant pressé veut enchaîner immédiatement : technologie, puis version, puis faille publiée, puis exploitation. Dans le cadre d'un premier audit éthique, vous vous arrêtez à l'identification, sauf consigne écrite contraire. Signaler qu'une version affichée est antérieure à la dernière mise à jour connue est utile et suffisant ; tenter l'exploitation transforme votre mission, engage votre responsabilité et déborde du périmètre autorisé. La reconnaissance produit un inventaire, pas une preuve d'intrusion.
+
+Il existe une variante entièrement passive de cette étape, que vous utiliserez dès que le périmètre s'interdit tout contact direct. Des services publics mettent à disposition l'historique des requêtes qu'ils ont eux-mêmes effectuées vers les sites du monde entier : en-têtes retournés, redirections suivies, technologies déduites, captures de pages, journaux de certificats. Vous y lisez exactement les mêmes signaux que votre curl, mais datés, comparables et sans aucun paquet envoyé de votre part. Utilisez cette approche pour préparer vos hypothèses, puis confirmez-les par une observation unique et ciblée lorsque l'autorisation le permet. Deux sources indépendantes qui s'accordent valent davantage qu'une sonde lancée dans l'urgence.
+
+Un cas réel rappelle pourquoi cette étape est centrale. En 2017, la fuite de données d'Equifax a débuté par l'exposition d'une faille connue depuis plusieurs mois sur une bibliothèque d'interrogation de fichiers, une technologie identifiable en quelques requêtes sur un portail laissé accessible depuis l'extérieur. Rien d'exotique : un composant courant, une version non corrigée, un service atteignable. C'est exactement le type de constat qu'une reconnaissance rigoureuse remonte avant qu'un incident n'ait lieu, et qu'un rapport doit porter sans jamais franchir la ligne de l'exploitation.
+
+## Renseignement actif : quand vous frappez à la porte
+
+Le renseignement actif commence au premier paquet que vous adressez à l'infrastructure, et il change de nature à ce moment-là. Vous n'êtes plus un lecteur, vous devenez un interlocuteur : quelqu'un reçoit vos requêtes, les journalise, les compte, les agrège avec celles des autres. Avant d'enclencher la moindre sonde, trois questions doivent avoir une réponse écrite : l'autorisation couvre-t-elle cette adresse précise, cette action est-elle listée dans les techniques autorisées, et ai-je un moyen de joindre la personne responsable si quelque chose se dérègle ? Si l'une des trois reste sans réponse, vous ne lancez pas la commande, vous la notez pour la réunion de cadrage.
+
+La première distinction concerne les protocoles de sondage. Un simple ping, qui vérifie qu'une machine répond, est rarement concluant : de nombreux pare-feux ignorent les requêtes ICMP, et un silence ne prouve pas une absence. Une sonde de ports TCP, elle, ouvre de véritables connexions et obtient des réponses exploitables même lorsque l'ICMP est bloqué. Le mode de connexion intégrale est le plus simple et le plus honnête : il réalise la poignée de main complète, donc il est visible et propre dans les journaux. Le mode de connexion à poignée de main incomplète, lui, interrompt la connexion avant son achèvement pour rester discret ; il est utile sur des réseaux sensibles, mais il s'apparente davantage à une technique d'évitement de détection qu'à une simple lecture, et son usage doit figurer dans l'autorisation.
+
+Pour une première mission, restez sur des valeurs d'exécution conservatrices. Limitez la liste des ports testés, choisissez un profil de temporisation modéré, et préférez la précision à la vitesse : un scan sur les mille ports les plus courants répond à la grande majorité des questions de reconnaissance, tandis qu'un balayage exhaustif de soixante-cinq mille ports sur un réseau protégé ressemble à une attaque et déclenche à coup sûr une alerte. Faites toujours vos essais sur une machine de laboratoire que vous contrôlez, afin de voir ce que produit votre propre outil du point de vue du défenseur, avant de l'orienter vers la cible.
+
+```bash
+nmap -Pn -T3 --top-ports 1000 -sV -oA example_reco www.example.com
+nmap -Pn -T2 -sT -p 80,443,8080,8443 www.example.com
+```
+
+L'option d'identification de version transforme un simple état ouvert ou fermé en une hypothèse sur le logiciel qui répond. Elle est précieuse, car c'est elle qui relie votre inventaire à une mise à jour connue, mais elle multiplie aussi le nombre d'échanges envoyés au service et allonge nettement la durée de l'opération. Un bon réflexe consiste à séparer les étapes : relever d'abord les ports ouverts rapidement, puis interroger uniquement ceux-ci pour leur version. Vous réduisez d'autant le volume de trafic et le temps passé.
+
+Le volet applicatif vient ensuite. Un service web se laisse examiner avec bien plus de finesse qu'un simple port : l'en-tête HTTP, la page d'accueil, les erreurs provoquées par une URL inexistante, le certificat présenté, les redirections suivies. Ces requêtes ciblées, envoyées vers un nombre restreint d'adresses, produisent la quasi-totalité du renseignement utile et restent faciles à justifier dans un journal. C'est généralement à ce stade que vous découvrirez un outil de supervision accessible sans authentification, un espace d'administration exposé ou un service de sauvegarde relié au domaine principal.
+
+```bash
+curl -sI -m 10 https://www.example.com/admin/ | head -n 5
+curl -s -m 10 -o /dev/null -w "%{http_code} %{redirect_url}\n" https://www.example.com/recette/
+```
+
+Les erreurs classiques du premier actif sont presque toujours les mêmes. Un balayage lancé sans limite de débit sature un petit serveur partagé et provoque une coupure de service : vous venez alors de créer l'incident que vous étiez mandaté pour prévenir. Un scan lancé depuis une adresse sortie qui héberge d'autres missions attire des suspensions d'accès. Une sonde laissée tourner pendant la nuit oublie son périmètre et atteint une adresse voisine. Préparez vos cibles dans un fichier, refusez de lancer une commande dont vous ne pouvez pas nommer chaque destination, et arrêtez systématiquement vos processus en fin de séance. Enfin, conservez les sorties brutes : un fichier par cible, horodaté, avec la version exacte de l'outil utilisé.
+
+Il est utile, une fois, de regarder l'autre côté. Installez sur une machine de test un outil d'alerte ou un pare-feu avec journalisation, lancez votre sonde dessus, puis lisez ce qui a été écrit : vous verrez apparaître en quelques secondes une ligne par connexion, une alerte sur un volume anormal de requêtes, et éventuellement un blocage automatique. Cette expérience change votre manière de travailler. Vous comprenez alors que la discrétion n'est pas un luxe, mais la condition pour que votre mission puisse aller au bout sans interruption, et vous savez quels journaux votre rapport devra mentionner lorsque vous présenterez vos constats à l'équipe en place. Dans certaines missions accompagnées, vous êtes d'ailleurs annoncé à l'avance aux équipes de surveillance : profitez-en, vos essais en deviennent plus sûrs et leurs lectures plus justes.
+
+## Cartographier le périmètre : du relevé au schéma
+
+Une reconnaissance n'a de valeur que si elle aboutit à une carte, c'est-à-dire à une représentation structurée de ce qui existe, de la manière dont c'est relié et du degré de certitude que vous accordez à chaque affirmation. Entre la sortie brute d'un outil et le livrable remis au client, il y a tout le travail d'analyse : dédoublonner, rapprocher, dater, hiérarchiser et formater. Un auditeur qui produit trois cents lignes de journaux sans les relier n'a pas cartographié, il a amassé. La cartographie consiste précisément à transformer ces lignes en relations.
+
+Commencez par un inventaire plat, un actif par ligne, avec un ensemble de colonnes que vous ne changerez plus en cours de mission : nom, adresse, nature du service, technologies observées, port ouvert, date du relevé, source de l'information et niveau de confiance. Cette dernière colonne est indispensable. Une technologie devinée depuis un favicon a un statut très différent d'un en-tête de serveur retourné par la machine elle-même ; une adresse découverte dans un certificat émis il y a trois ans n'a pas le même poids qu'une réponse DNS obtenue ce matin. Sans niveau de confiance, votre client ne pourra pas arbitrer entre un fait et une supposition.
+
+```table
+Colonne | Ce qu'on y écrit | Piège à éviter
+Nom | Domaine ou hôte complet, sans doublon | Mélanger www et le domaine apex dans deux lignes
+Adresse | IPv4 ou IPv6 effectivement résolue | Conserver une adresse périmée sans le noter
+Service | Port, protocole et rôle présumé | Confondre le rôle affiché et le rôle vérifié
+Technologies | Logiciel et version, avec la source | Présenter une déduction comme un fait
+Date | Jour et heure du relevé | Oublier la date et rendre la carte périmée aussitôt
+Confiance | Élevée, moyenne, faible, avec la raison | Attribuer la même valeur à toutes les lignes
+```
+
+Passez ensuite aux relations. Un domaine renvoie une adresse ; cette adresse héberge plusieurs hôtes virtuels ; l'un d'eux expose une application ; cette application communique avec un service interne non joignable depuis l'extérieur, mais dont le nom apparaît dans une redirection ou un message d'erreur. Ces liens, matérialisés par des flèches ou par une simple colonne « dépend de », sont ce qui permettra au lecteur de comprendre le périmètre en trente secondes. Choisissez ensuite une représentation visuelle cohérente : la topologie en bus, en étoile ou en maillon convient à des réseaux très différents, et votre schéma doit rester lisible sans légende compliquée.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/NetworkTopologies.svg/960px-NetworkTopologies.svg.png
+| Les principales topologies de réseau : le choix de la représentation dépend de la manière dont les actifs sont réellement reliés entre eux.
+```
+
+La carte vit ensuite. Une reconnaissance datée devient fausse dès qu'une migration a lieu, et un audit de six mois contient presque toujours au moins un actif qui a changé de main. Indiquez la date de dernière mise à jour en tête de document, prévoyez une procédure de rafraîchissement, et notez explicitement ce que vous n'avez pas pu vérifier. Les angles morts assumés valent mieux que des zones laissées en blanc que le lecteur interprétera comme maîtrisées. Un périmètre cartographié avec ses trous est un outil de travail ; un périmètre qui se prétend complet est un danger.
+
+Pensez également au format de stockage. Un tableau plat, exportable depuis un tableur, reste la forme la plus universelle : tout le monde sait l'ouvrir, trier et filtrer. Gardez à côté un fichier texte par observation brute, organisé par date et par cible, afin de pouvoir reprendre le fil exact d'un relevé six mois plus tard. Si vous gérez plusieurs missions, adoptez une convention de nommage fixe dès le départ : identifiant de mission, date, type de source, numéro de séquence. Cette rigueur vous paraîtra excessive au début, puis deviendra un réflexe le jour où l'on vous demandera de justifier une affirmation précise du rapport en moins de deux minutes. La traçabilité n'est jamais acquise, elle se construit pendant qu'on travaille.
+
+Le livrable final se décline en général en trois artefacts : un tableau d'inventaire exploitable, un schéma synthétique sur une page, et un journal détaillé qui justifie chaque ligne. Ces trois documents se répondent, et chacun sert un public différent : l'inventaire pour l'équipe technique, le schéma pour la direction, le journal pour la reprise de mission l'an prochain. Tenez-les à jour ensemble, sous contrôle de version, et vous garderez la mémoire de ce que vous avez observé bien après la fin de la mission.
+
+## Cadre légal et périmètre d'autorisation
+
+La technique de reconnaissance est volontairement simple ; la responsabilité qui l'accompagne ne l'est pas. Dans la plupart des pays européens, et en France notamment, accéder à un système d'information en contournant ses mesures de protection, ou y persister de manière non autorisée, est un délit, même sans dommage, même sans prélèvement de données, et même si votre intention était de rendre service. La bonne foi n'est pas une excuse recevable : c'est l'écrit qui protège. Une convention signée, datée, précisant les parties et les limites, constitue votre unique filet, et vous devez en disposer avant la première commande, pas après.
+
+Un document d'autorisation digne de ce nom contient un ensemble de mentions que vous allez désormais reconnaître d'un coup d'œil. Les parties et leurs coordonnées, la période de validité avec les dates de début et de fin, le périmètre exact : noms de domaine, adresses et sous-réseaux autorisés, et parfois la mention explicite de ce qui est exclu. Les techniques autorisées, souvent exprimées sous forme de liste : renseignement passif, énumération de sous-domaines, sondage de ports, test d'authentification, selon les cas. Les moyens de contact de jour, une personne nommée et joignable en continu, puis un contact de recours en cas d'incident. Les règles de confidentialité, la durée de conservation des données collectées, les conditions de notification en cas de découverte critique, et la date de restitution du rapport.
+
+```text
+Périmètre autorisé : example.com, *.example.com, 203.0.113.0/24
+Période : du 2026-10-05 09:00 au 2026-10-09 18:00 (UTC+2)
+Techniques autorisées : passif, énumération DNS, sondage TCP sur ports 80, 443, 22
+Techniques interdites : ingénierie sociale, déni de service, accès aux comptes réels
+Contact de jour : Nadia Chevalier, 06 XX XX XX XX
+Contact d'astreinte : SOC, alerte@example.com
+```
+
+Le périmètre technique mérite une mise en garde spécifique : il ne s'arrête pas aux noms de domaine. Derrière un site se cachent des services mutualisés, un CDN, un hébergeur cloud, une plateforme de messagerie, un outil de ticketing hébergé par un tiers. Ces infrastructures ne vous appartiennent pas, même si elles servent votre client. Scanner systématiquement l'adresse IP qui répond derrière un domaine revient à sonder la plateforme partagée, et donc à toucher des centaines d'autres clients. Restez sur les noms déclarés, référencez les dépendances tierces comme observables externes, et signalez-les : elles sont utiles au client sans que vous ayez besoin de les tester.
+
+Un autre point concerne les données personnelles que vous croiserez inévitablement. Une messagerie exposée, un fichier d'annuaire interne, une base de test contenant de vrais noms : vous devez les traiter comme des données à caractère personnel, les minimiser, ne pas les copier hors des canaux prévus, ne pas les mentionner dans un rapport diffusé largement, et suivre la procédure de notification convenue avec le client. Votre mission vous autorise à constater, pas à constituer une copie de leurs fichiers. Une trouvaille de ce type se signale de vive voix, se décrit sans son contenu, et ne se conserve que si le client l'exige par écrit.
+
+Enfin, cadrez votre mission dans le temps et dans les exigences de niveau. Un audit débutant se limite à la surface visible, sans tentative d'exploitation, sans test d'authentification robuste, sans manipulation de données réelles. Les référentiels publics de test d'intrusion, notamment ceux de l'ANSSI et du consortium OWASP, décrivent des méthodes structurées que vous devrez suivre au fur et à mesure du parcours : vous n'avez pas besoin de les connaître tous dès aujourd'hui, mais vous devez déjà savoir qu'ils existent et qu'on vous demandera de vous y référer. La règle à retenir tient en une phrase : si le doute persiste sur une action, elle ne se fait pas, elle se demande.
+
+Un mot sur les situations d'apprentissage, parce qu'elles posent un problème particulier. Travailler sur une machine que vous possédez, sur un laboratoire virtuel constitué pour l'occasion ou sur le domaine de démonstration réservé à la documentation ne pose aucun problème : vous êtes à la fois le testeur et le testé. En revanche, appliquer les mêmes gestes au réseau de votre employeur, de votre association ou de votre école, parce que vous avez l'intention de rendre service, reste un dépassement de mission tant que personne n'a écrit son accord. Demandez un mandat, aussi court soit-il, et vous protégez à la fois l'organisation et vous-même. À l'inverse, lorsque vous découvrez par inadvertance une exposition grave chez un tiers sans mandat, la seule conduite correcte consiste à signaler par un canal officiel, sans détailler l'accès, sans persister, et sans chercher à démontrer quoi que ce soit.
+
+## Budget de temps et journalisation
+
+La reconnaissance n'a jamais de fin naturelle : on pourrait lister des sous-domaines pendant des semaines et trouver toujours un de plus. C'est précisément pour cela que vous la budgétez. Un budget de temps n'est pas une contrainte administrative, c'est la garantie de produire un livrable complet plutôt qu'une collection d'observations partielles. Pour une mission d'introduction d'une semaine, une répartition éprouvée consiste à consacrer deux jours au renseignement passif et à l'énumération, un jour à la reconnaissance active, un demi-jour à la cartographie et au nettoyage, et un demi-jour à la rédaction. Le reste du temps constitue la marge nécessaire pour traiter les surprises, sans laquelle votre planning s'écroulera dès le premier imprévu.
+
+Chaque bloc doit être fermé par un arrêt explicite, pas par une envie de continuer. Posez une question précise avant de commencer : quels sont les sous-domaines du périmètre ? Dès que la réponse est fournie avec une source datée, vous arrêtez, même si l'envie de tester trois variantes supplémentaires persiste. Cette discipline produit deux effets immédiats. Elle empêche la phase d'exploration de dévorer le temps réservé aux phases suivantes, et elle vous oblige à formuler des objectifs vérifiables, ce qui est exactement ce que lira le client dans votre rapport. Les retours décroissants sont réels : la dixième source ajoutée apporte rarement plus que les neuf précédentes réunies.
+
+Le journal est l'autre moitié du travail. Il ne sert pas à raconter votre journée, mais à permettre à un tiers de refaire ce que vous avez fait, ou au moins d'en vérifier la solidité. Chaque ligne répond aux mêmes questions : quand, quelle action, avec quel outil et quelle version, contre quelle cible, quoi obtenu, quelle confiance, quelle suite. Écrivez-le au fil de l'eau et non en fin de mission, parce que la mémoire d'une commande tentée puis abandonnée disparaît en quelques heures. Dans la pratique, le journal le plus fiable est celui qui se remplit pendant les pauses, pas celui que l'on reconstitue le vendredi soir.
+
+```text
+2026-10-05T09:12+02:00 | passif | whois 5.4.1 | example.com | registrar, NS, dates 2004-2011 | confiance haute | suite : dig NS
+2026-10-05T09:40+02:00 | passif | crt.sh 1.0 | %.example.com | 42 noms uniques après tri | confiance moyenne | suite : résolution DNS
+2026-10-05T14:05+02:00 | actif | dnsx 1.2 | 318 candidats | 27 noms résolus, 3 hors périmètre écartés | confiance haute | suite : cartographie
+```
+
+```table
+Champ | Exemple | Pourquoi il est obligatoire
+Horodatage | 2026-10-05T09:12+02:00 | Replacer l'action dans le temps et interpréter les écarts
+Action | Résolution DNS, sondage TCP | Distinguer le passif de l'actif dans le rapport
+Outil et version | dig, version du système | Permettre la reproductibilité
+Cible exacte | domaine, sous-domaine, adresse | Prouver le respect du périmètre
+Résultat | ce qui a été observé, sans interprétation | Séparer le fait de l'hypothèse
+Confiance | haute, moyenne, faible, avec motif | Aider le lecteur à arbitrer
+Suite prévue | la prochaine question à poser | Éviter de repartir de zéro demain
+```
+
+La sauvegarde des sorties brutes accompagne le journal. Redirigez chaque commande vers un fichier, nommez-le avec la date et la cible, puis calculez son empreinte si votre mission l'exige. Vous obtenez ainsi une chaîne de preuves simple : le rapport affirme, le journal localise, le fichier brut prouve. Cette méthode vous sauvera lors d'une contradiction, par exemple lorsque le client affirme qu'un service n'a jamais existé et que votre fichier, horodaté et signé, montre la réponse retournée ce jour-là. Conservez également la sortie de vos échecs : un domaine qui ne répond pas, un transfert de zone refusé, une résolution vide, autant d'observations qui ont leur place dans l'inventaire.
+
+N'hésitez pas à automatiser les étapes répétitives, à condition d'y mettre des limites. Une petite chaîne qui enregistre une commande, sa sortie et son horodatage dans le même dossier vous fait gagner un temps considérable et supprime l'erreur de copie. Un script qui relance à intervalle fixe vos relevés principaux vous donne gratuitement l'historique nécessaire à la détection des changements. En revanche, ne confiez jamais à un script le soin d'interpréter : il sait écrire qu'un nom a résolu, pas que ce nom appartient au client. Gardez l'analyse humaine, rejouez périodiquement vos chaînes pour vérifier qu'elles n'ont pas vieilli, et notez dans le journal que telle ligne provient d'une exécution automatisée, afin que le lecteur sache quel niveau de relecture appliquer.
+
+Un dernier point concerne la fin de mission. Prévoyez explicitement ce qui advient de vos données : destruction à une date donnée, restitution intégrale au client, conservation agrégée et anonymisée. Les informations collectées décrivent une organisation, parfois des personnes, et votre obligation ne s'arrête pas à l'envoi du rapport. Une fois le périmètre clos, relancez les commandes de vérification principales une dernière fois, marquez les résultats comme définitifs, et figez le jeu de fichiers qui constitue votre livrable. Le jour où la mission reprendra, ce sera ce dossier, et lui seul, qui servira de point de départ.
+
+## À retenir
+
+La reconnaissance est une phase de collecte structurée, et non une simple préparation nerveuse avant l'action. Elle se divise en deux temps : le renseignement passif, qui consulte des sources existantes sans jamais interpeller la cible, et le renseignement actif, qui lui adresse des requêtes et laisse donc des traces. Vous avez vu que cette frontière n'est pas toujours tranchée : interroger un service tiers qui a déjà scanné le monde reste passif, tandis qu'un dictionnaire de sous-domaines résolu depuis votre poste est déjà actif. Le choix entre les deux dépend du bruit acceptable, écrit dans l'autorisation, et de la question précise à laquelle il faut répondre.
+
+Vous savez maintenant partir d'un nom de domaine et en tirer un maximum d'information : registrar et dates via WHOIS ou RDAP, serveurs de nom, enregistrements DNS, noms alternatifs révélés par les journaux de certification, variantes issues d'un dictionnaire. Vous savez lire un enregistrement, distinguer une réponse cache d'une réponse autoritaire, et vous méfiez du DNS en étoile comme des doublons. Vous savez aussi qu'une information publique n'est pas une information neutre : sa collecte reste encadrée, limitée et datée.
+
+Trois habitudes feront la différence entre un premier essai et un travail professionnel. La première est de séparer ce que vous avez observé de ce que vous déduisez, en notant un niveau de confiance et son motif. La deuxième est de journaliser au fil de l'eau, avec un horodatage, l'outil et sa version, la cible exacte et la suite prévue. La troisième est de traiter chaque ligne du périmètre comme une limite contractuelle : un service non listé ne se sonde pas, même s'il est tentant, même s'il semble abandonné.
+
+Le dernier enseignement est d'ordre méthodologique : la reconnaissance se termine par un budget, pas par l'épuisement des sources. Posez des questions, attribuez-leur un temps, clôturez chaque bloc par un résultat daté, puis passez au suivant. Un inventaire court, vérifié et lisible vaut davantage qu'un monceau de sorties brutes que personne ne relira. C'est cette discipline qui vous permettra d'enchaîner, dans les chapitres suivants, avec les phases de test proprement dites sans perdre le fil de ce que vous avez déjà établi.
+
+## Erreurs fréquentes
+
+L'erreur la plus fréquente consiste à scanner avant d'avoir vérifié le périmètre. Un nom de domaine qui vous a été donné de mémoire, une adresse IP relevée dans un ancien rapport, un sous-domaine découvert par hasard : chacun peut se trouver hors autorisation, et la conséquence est la même quelle que soit votre intention. Vérifiez chaque cible dans le document signé avant de lancer la moindre commande, et écrivez dans le journal la référence exacte de la ligne qui la couvre. Cette seconde de vérification coûte moins cher qu'un appel du prestataire le lendemain matin.
+
+La deuxième erreur est de confondre absence et inexistence. Un port qui ne répond pas peut être filtré, une résolution vide peut provenir d'un cache, une page peut afficher une erreur parce que votre requête manque un en-tête attendu. Vous écrivez alors dans votre rapport qu'un service n'existe pas, alors que vous avez seulement constaté qu'il n'a pas répondu depuis votre point d'observation. Formulez toujours vos conclusions à partir de ce qui a été observé : n'a pas répondu, n'a pas résolu, n'a pas été retrouvé dans telle source. La nuance paraît verbale, elle décide de la crédibilité de tout votre document.
+
+La troisième erreur est le volume mal calibré. Balayer soixante-cinq mille ports sur une petite infrastructure en quelques minutes, résoudre un dictionnaire de millions d'entrées, déclencher des milliers de requêtes vers un hébergeur mutualisé : autant de comportements qui saturent, déclenchent des alertes et peuvent provoquer une interruption de service. Adaptez la cadence à la taille de la cible, commencez par les ports les plus courants, et augmentez l'intensité seulement si une question précise l'exige.
+
+La quatrième erreur est de ne pas distinguer les tiers du périmètre. Un CDN, un hébergeur cloud, un service de messagerie externalisé partagent leurs infrastructures avec des milliers d'autres clients. Les tester revient à toucher à des systèmes que votre convention ne couvre pas, et les résultats que vous obtenez ne décrivent même pas le client, mais le fournisseur. Signalez ces dépendances comme observables externes, sans jamais les sonder pour elles-mêmes.
+
+La cinquième erreur est de repartir de zéro à chaque mission parce que rien n'a été conservé. Sans sorties brutes, sans journal, sans convention de nommage, vous ne pouvez ni justifier un constat ni comparer deux relevés séparés par six mois. Inversement, un dossier propre permet de répondre en quelques secondes à la question qui tue : d'où vient cette information, et à quelle date ? Écrivez toujours en pensant au lecteur qui ouvrira votre dossier sans vous.
+
+Enfin, ne cédez pas à la tentation de l'exploitation. Identifier une version obsolète appartient à la reconnaissance ; tenter de l'utiliser n'en fait plus partie, engage votre responsabilité personnelle et peut dégrader une mission légitime en incident. Si une découverte vous semble grave, signalez-la immédiatement par le canal prévu, arrêtez l'action en cours et laissez le client décider de la suite. Savoir s'arrêter est la compétence la plus difficile à acquérir, et la plus rentable à long terme.
+
+## Pour aller plus loin
+
+La meilleure suite reste la lecture des référentiels officiels, qui décrivent la reconnaissance telle qu'elle est pratiquée dans des missions encadrées. Le guide de test de la sécurité web d'OWASP détaille les méthodes d'information et de cartographie applicative, avec des cas d'usage concrets et une attention constante portée au périmètre. Les documents publiés par l'ANSSI, agence nationale française, déclinent les mêmes principes du point de vue du défenseur et vous apprendront à lire vos propres actions depuis l'autre côté du mur. Wikipédia reste, pour sa part, un point d'entrée commode pour consolider le vocabulaire : domaines, enregistrements DNS, renseignement d'origine sources ouvertes, cycle d'attaque.
+
+```text
+https://fr.wikipedia.org/wiki/Footprinting
+https://fr.wikipedia.org/wiki/Domain_Name_System
+https://fr.wikipedia.org/wiki/Renseignement_d%27origine_sources_ouvertes
+https://owasp.org/www-project-web-security-testing-guide/
+```
+
+Côté pratique, rien ne remplace un laboratoire personnel. Enregistrez un domaine à votre nom, publiez-y un petit site, hébergez deux sous-domaines, un de recette et un d'application, puis lancez sur cet ensemble toutes les commandes de la leçon. Vous verrez apparaître exactement les traces que vous cherchez chez les autres, y compris celles que vous n'auriez pas soupçonnées, comme un certificat qui couvre un hôte oublié ou un enregistrement de recette resté en place. Ce dispositif vous donne enfin le droit de vous tromper : cassez votre propre environnement, mesurez le bruit de vos propres outils, et revenez ensuite vers une cible réelle avec une intuition calibrée.
+
+Un exercice de lecture est utile dès maintenant : prenez un service que vous utilisez quotidiennement, un journal en ligne, une plateforme de contenus, et reconstituez sa surface visible uniquement à partir de sources passives, en vous interdisant toute requête vers lui. Limitez-vous à vingt minutes, notez chaque source consultée et chaque déduction tirée, puis classez vos affirmations en trois colonnes : vérifié, probable, inconnu. Vous découvrirez à quel point la frontière entre observation et supposition est facile à franchir, et c'est exactement la leçon que ce chapitre veut vous laisser.
+
+## Et maintenant : votre première reconnaissance guidée
+
+Vous avez toutes les pièces pour conduire une première reconnaissance complète, et le plus simple est de le faire immédiatement sur un périmètre que vous maîtrisez. Choisissez un domaine qui vous appartient, ou le domaine de démonstration réservé à la documentation, et fixez-vous une durée : quatre heures, pas davantage. Préparez un dossier de travail, un fichier de journal, une liste des questions à traiter, puis avancez en respectant l'ordre que vous venez d'étudier : d'abord les sources passives, puis l'énumération, ensuite l'actif si nécessaire, enfin la cartographie. Si vous vous surprenez à chercher sans question posée, revenez à votre liste.
+
+Chaque bloc doit se terminer par un livrable daté. Une liste de domaines liés, un tableau des enregistrements DNS avec leurs réponses, un inventaire de sous-domaines avec niveau de confiance, une capture des en-têtes HTTP, un schéma sur une page. Nommez ces fichiers avec la date, gardez les sorties brutes à côté, et écrivez en fin de session ce que vous n'avez pas pu établir ainsi que la question suivante. Vous obtiendrez en quatre heures quelque chose de bien plus précieux qu'un empilement de commandes : une base de départ vérifiable, directement réutilisable au chapitre suivant.
+
+Le critère de réussite n'est pas le nombre d'actifs trouvés, mais la traçabilité de chacun d'eux. Si vous pouvez ouvrir n'importe quelle ligne de votre inventaire, remonter à la commande qui l'a produite, lire la sortie brute et retrouver la date exacte, votre travail est bon. Si une ligne repose sur une intuition, elle doit le dire. C'est cette exigence, bien plus que la maîtrise des outils, qui distingue un auditeur reconnu d'un simple curieux : la technique s'apprend en quelques semaines, la rigueur se construit projet après projet.
+
+Pour la suite, vous allez transformer cette carte en plan de test : choisir les services à examiner, hiérarchiser les cibles, définir ce qui sera vérifié et ce qui restera hors champ. Tout repose sur ce que vous venez de produire, ce qui signifie qu'une reconnaissance bâclée condamne la mission entière, tandis qu'une reconnaissance solide rend le reste presque mécanique. Prenez le temps de bien faire cette première étape, gardez votre journal ouvert, et rendez-vous au chapitre suivant avec vos fichiers sous le bras.

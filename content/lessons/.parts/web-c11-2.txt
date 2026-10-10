@@ -1,0 +1,147 @@
+## INP : rendre la page réactive
+
+La réactivité est l'indicateur le plus proche du ressenti, parce qu'il mesure ce que le visiteur fait réellement : il appuie, il attend, il regarde. Quand l'attente dépasse deux cents millisecondes, le geste paraît mou ; quand elle dépasse cinq cents, le visiteur réappuie, déclenchant parfois deux inscriptions au lieu d'une. Traiter cet indicateur suppose de savoir ce qui se passe pendant cette attente, et l'attente se divise toujours en trois morceaux. Le premier est le délai d'entrée : le temps entre l'appui et le démarrage de votre gestionnaire d'événements ; il est souvent occupé par une autre tâche en cours, un défilement qui déclenche des calculs, un gabarit qui se réévalue. Le second est la durée de traitement : votre propre code, du premier octet exécuté jusqu'au dernier. Le troisième est le délai de présentation, entre la fin de votre code et l'affichage qui montre le résultat, le navigateur devant alors recalculer les styles, la disposition et la peinture.
+
+Le diagnostic commence dans l'inspecteur, sur l'onglet Performance. Enregistrez la capture, effectuez le geste qui pose problème, puis repérez la barre correspondant à l'interaction : elle affiche le total, décomposé en phases. Si la part de traitement domine, le coupable est votre code ; si le délai d'entrée est long, une tâche concurrente retarde le démarrage ; si le délai de présentation explose, c'est qu'une modification de mise en page coûte cher à redessiner. Repérez également les tâches longues, ces blocs d'exécution continue au-delà de cinquante millisecondes : elles fractionnent toutes les interactions qui les frôlent et constituent l'indice le plus fiable d'un travail mal réparti. L'outil de laboratoire fournit un indicateur de substitution, le temps de blocage total, qui vous permet de comparer deux versions sans attendre de vrais visiteurs.
+
+Les remèdes se rangent dans l'ordre de rentabilité décroissante. Le premier consiste à ne rien faire d'inutile : dans un gestionnaire, testez d'abord si le travail s'impose réellement, sortez prématurément si l'état n'a pas changé, et évitez de reconstruire une liste entière pour une seule case cochée. Le deuxième consiste à fractionner : dès que le traitement dépasse quelques millisecondes, rendez la main au navigateur entre deux morceaux, puis reprenez ; le rendu intermédiaire reste donc possible et le visiteur voit un retour d'activité au lieu d'un gel. Le troisième consiste à déporter : un calcul lourd, une analyse de texte ou la mise en forme d'un tableau volumineux peuvent vivre dans un exécutant de tâches séparé, qui ne bloque jamais le fil principal.
+
+```js
+// Avant : un traitement long qui gèle la page pendant la saisie
+function filtrerSessions(evenement) {
+  const recherche = evenement.target.value.toLowerCase();
+  const resultats = SESSIONS.map((session) => {
+    return { ...session, score: calculerScore(session, recherche) };
+  });
+  const triees = resultats.sort((a, b) => b.score - a.score);
+  document.querySelector("#liste").innerHTML = gabarit(triees);
+}
+
+// Après : le travail se répartit, le rendu reste fluide
+async function filtrerSessions(evenement) {
+  const recherche = evenement.target.value.toLowerCase();
+  const liste = document.querySelector("#liste");
+  const morceaux = decouper(SESSIONS, 25);
+
+  for (const morceau of morceaux) {
+    const affichables = morceau
+      .map((session) => ({ ...session, score: calculerScore(session, recherche) }))
+      .filter((session) => session.score > 0);
+
+    if (affichables.length > 0) {
+      liste.insertAdjacentHTML("beforeend", gabarit(affichables));
+    }
+    if (typeof scheduler !== "undefined" && scheduler.yield) {
+      await scheduler.yield();
+    } else {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+}
+```
+
+Le quatrième remède est structurel : réduire la quantité de code exécutée au chargement. Une interface reconstruite en bibliothèque d'interface paye un droit d'entrée au moment de l'hydratation, et ce droit d'entrée se paie aussi à chaque interaction suivante si la bibliothèque doit recalculer la disposition. Chargez par itinéraire ce qui ne sert qu'à un itinéraire, importez à la demande la fonction qui ouvre un calendrier ou qui exporte un document, et laissez au navigateur la charge d'interpréter uniquement ce qui est présent. Mesurez la taille du paquet avant et après : chaque kilo-octet retiré est un milliseconde de traitement en moins sur un téléphone modeste.
+
+Le cinquième remède concerne le style. Lire une propriété de disposition juste après avoir modifié une autre force le navigateur à recalculer immédiatement, ce qui transforme un travail d'une milliseconde en plusieurs dizaines. Regroupez toutes les lectures, puis toutes les anciennes écritures, et préférez les propriétés qui ne sollicitent que le compositeur, telles que la transformation et la transparence, pour les animations. Un gestionnaire de défilement ou de redimensionnement doit être passif, c'est-à-dire ne jamais promettre d'empêcher le défilement, et son travail doit être limité à un rafraîchissement différé plutôt qu'à un recalcul à chaque image.
+
+Enfin, un réflexe de conception vaut mieux que toutes les optimisations : afficher le retour d'activité en retard et le travail réel en fractionné. Un bouton qui passe immédiatement en état d'attente donne l'impression d'une réponse instantanée, même si le calcul dure quatre cents millisecondes ; l'animation de chargement peut démarrer à deux cents millisecondes seulement, pour ne pas clignoter lors des traitements rapides. Cette astuce ne réduit pas la durée totale, elle réduit la durée perçue, et les deux comptent dans la perception qu'a le visiteur du site.
+
+## CLS : stabiliser la mise en page
+
+Un décalage de mise en page se produit lorsque un élément change d'emplacement entre deux affichages sans intervention du visiteur. Le plus fréquent est aussi le plus bénin : la photographie de tête arrive, le texte qu'elle devait précéder glisse vers le bas. Le plus coûteux est celui qui se produit au moment où le visiteur vise : le bandeau de consentement s'insère au-dessus du contenu, le visiteur appuie, et son doigt atterrit sur un lien qu'il n'avait pas l'intention d'ouvrir. La mesure n'est pas une simple somme de déplacements : elle multiplie la part de la zone visible qui bouge par la distance parcourue, si bien qu'un petit mouvement généralisé peut valoir pire qu'un grand mouvement isolé dans un coin.
+
+Les causes se classent en huit familles, et la moitié d'entre elles disparaissent avec une ligne de déclaration. La première concerne les images, les cadres et les vidéos dont les dimensions ne sont pas déclarées : le navigateur ignore l'espace qu'elles occuperont et les insère à la taille zéro, puis les place une fois connues. La seconde concerne les publicités, les encarts et les cadres intégrés réservés à une taille future. La troisième concerne le contenu injecté au-dessus de la zone existante : messages d'information, rappels de session, compteur de places restantes. La quatrième concerne les polices, dont l'arrivée tardive modifie la largeur des lignes et fait respirer tout le bloc. La cinquième concerne les barres de consentement et les fenêtres flottantes qui repoussent le contenu au lieu de le recouvrir. La sixième concerne l'apparition d'une barre de défilement. La septième concerne les animations qui sollicitent des propriétés de disposition plutôt que le compositeur. La huitième concerne le réordonnancement du document au chargement, lorsqu'un script réécrit la liste des éléments avant même que le visiteur l'ait vue.
+
+La grille de correction tient en un tableau, que vous pouvez appliquer ligne à ligne sur n'importe quelle page du site.
+
+| Source du décalage | Symptôme observé | Correction |
+|---|---|---|
+| Image ou cadre sans dimensions | Le texte saute quand le média arrive | Déclarez la largeur et la hauteur, ou réservez un rapport de proportionnalité en style |
+| Polices chargées en fin de parcours | Les lignes se réorganisent brièvement | Chargez sans blocage et alignez les métriques de repli sur la police de secours |
+| Contenu injecté au-dessus | Le haut de page descend à l'arrivée d'un message | Insérez le message sous la zone visible ou recouvrez sans déplacement |
+| Barre de consentement | Le contenu est repoussé en bas d'écran | Positionnez la barre en superposition et réservez son espace à l'avance |
+| Animation de mise en page | Sauts pendant les transitions | Animez la transformation et la transparence, jamais les dimensions |
+| Script réordonnant le document | Réorganisation après le premier affichage | Laissez l'ordre du document faire foi ou déplacez avant le premier affichage |
+
+```css
+/* L'image occupe son espace avant même d'être téléchargée */
+.visuel-atelier {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #e8eaf0;
+}
+
+/* La police de secours épouse les mesures de la police principale */
+@font-face {
+  font-family: "Ateliers";
+  src: url("/fonts/ateliers.woff2") format("woff2");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Ateliers repli";
+  src: local("Arial");
+  size-adjust: 97%;
+  ascent-override: 92%;
+  descent-override: 24%;
+}
+
+.corps { font-family: "Ateliers", "Ateliers repli", system-ui, sans-serif; }
+```
+
+La première correction est donc systématique et n'attend aucune mesure : déclarez les dimensions de tout média, comme le faisait déjà la checklist du chapitre 8, et ajoutez là où il manque un rapport de proportionnalité pour les éléments dont la hauteur dépend de la largeur. Pour les cadres intégrés, réservez l'espace complet dès le rendu initial, quitte à afficher une mention d'attente à l'intérieur du bloc réservé. Ce faisant, vous réglez deux fois le même problème : plus de décalage, et une impression de page immédiatement stable.
+
+La correction des polices mérite une attention particulière parce qu'elle se règle dans la feuille de style. Chargée sans blocage, la police principale permet au texte de s'afficher immédiatement avec un jeu de caractères de substitution, puis d'être remplacée ; c'est l'approche la plus courante, à condition que les métriques de la substitution soient proches de celles de la cible, sinon les lignes se réorganisent en grand. L'approche conservatrice consiste à attendre la fin du téléchargement avant d'afficher le texte, au prix d'un délai d'apparition plus long mais d'une mise en page définitivement fixe. Choisissez en connaissance de cause : la première sert une page à fort volume textuel, la seconde une page de marque à typographie imposée.
+
+Le contenu dynamique, lui, obéit à une règle simple : on n'insère jamais au-dessus de ce qui est déjà lu. Si votre page affiche un message, une alerte de places restantes ou une bannière promotionnelle, placez-le en dessous de la zone visible, ou fixez-le par-dessus le contenu sans modifier la disposition, ou réservez-lui son espace dès le départ. Les scripts de compteur d'audience et les gestionnaires de consentement transgressent souvent cette règle sans prévenir : vérifiez leur comportement dans l'inspecteur, en activant la superposition des zones de décalage, qui teinte en bleu chaque surface déplacée pendant le chargement.
+
+Un mot sur l'exception du calcul : les déplacements provoqués par le visiteur lui-même dans la demi-seconde qui suit son geste sont ignorés. Cette exclusion ne punit pas les changements voulus, comme l'ouverture d'un menu qui repousse le contenu. En revanche, un décalage produit six cents millisecondes après l'appui, parce qu'une requête vient de répondre, entre pleinement dans le calcul. Vérifiez-le dans la zone d'expérience de l'inspecteur : les décalages y sont listés un par un, avec la part de la page touchée, la distance et les éléments responsables.
+
+La stabilité visuelle est l'indicateur le plus gratifiant : il se corrige rarement par une refonte, le plus souvent trois déclarations suffisent. Sur une page dont la valeur avoisinait déjà deux dixièmes, il n'est pas rare de descendre sous le seuil en une seule séance de travail.
+
+## Poids, bundle et budget de performance
+
+Un site web moderne n'est pas une page : c'est un ensemble de fichiers que le navigateur doit découvrir, télécharger, interpréter et exécuter. Le poids compte, mais la répartition compte davantage. Une feuille de style de cent kilo-octets se télécharge en parallèle et se compile sans bloquer longtemps ; un même poids de code source, lui, doit être téléchargé, analysé, compilé puis exécuté, le tout sur le fil principal qui occupe déjà l'affichage. C'est pourquoi la quantité de script est l'indicateur le plus prédictif de la réactivité sur un téléphone modeste, et pourquoi la première question à se poser n'est pas combien la page pèse, mais combien de script elle fait exécuter avant que le visiteur puisse agir.
+
+Un budget de performance donne une limite chiffrée à ces quantités, exactement comme un budget financier donne une limite à une dépense. Sans budget, l'optimisation n'a pas de fin et n'a pas de critère d'arrêt : on continue de rogner jusqu'à l'usure, ou on cesse dès le premier progrès. Avec un budget, la décision est mécanique. La page dépasse la limite, la correction est obligatoire ; elle reste en deçà, le travail peut passer au sujet suivant. Un budget se formule sur deux plans : les métriques d'expérience, avec un plafond pour chacun des trois indicateurs, et les ressources, avec un plafond de poids par catégorie.
+
+```json
+{
+  "path": "/*",
+  "options": {
+    "browsers": "chrome >= 110, firefox >= 115, safari >= 16"
+  },
+  "timings": [
+    { "metric": "first-contentful-paint", "budget": 1800 },
+    { "metric": "largest-contentful-paint", "budget": 2500 },
+    { "metric": "cumulative-layout-shift", "budget": 0.1 },
+    { "metric": "total-blocking-time", "budget": 200 },
+    { "metric": "speed-index", "budget": 3000 }
+  ],
+  "resourceSizes": [
+    { "resourceType": "document", "budget": 30 },
+    { "resourceType": "script", "budget": 150 },
+    { "resourceType": "stylesheet", "budget": 60 },
+    { "resourceType": "image", "budget": 500 },
+    { "resourceType": "font", "budget": 120 },
+    { "resourceType": "total", "budget": 900 }
+  ],
+  "resourceCount": { "resourceType": "total", "budget": 40 }
+}
+```
+
+Les leviers d'allègement sont bien connus, et leur ordre d'application n'est pas indifférent. Commencez par ce que la page n'utilise jamais : l'analyse de couverture de l'inspecteur liste, octet par octet, les portions de script et de style réellement exécutées lors du chargement ; sur la plupart des projets, une part significative n'est jamais appelée. Supprimez ensuite les doublons : deux versions d'une même bibliothèque, une utilitaire importée en entier pour une seule fonction, un jeu de caractères complet pour afficher un titre. Puis découpez : le code propre à un itinéraire ne doit se charger qu'à cet itinéraire, et la fonction qui n'intervient qu'au clic sur un bouton doit être importée à ce moment-là.
+
+```image
+chrome-logo
+| Le logo Google Chrome et son anticône : dans ce navigateur s'ouvrent l'inspecteur, l'analyse de couverture et la simulation d'un réseau bridé.
+```
+
+Les images et les polices composent l'essentiel du poids perçu par le visiteur, et ils se traitent différemment. Pour les images, la méthode du chapitre 8 reste la bonne : format moderne, compression agressive, dimension servie adaptée au terminal, chargement différé sous la ligne de flottaison, et format de repli pour les navigateurs anciens. Pour les polices, réduisez la feuille au jeu de caractères réellement employé, servez un format compressé, préconnectez l'origine et limitez le nombre de graisses : trois graisses variées pèsent souvent le double d'une seule, sans effet visible sur la lecture. Pour les deux, déclarez les dimensions afin de préserver également la stabilité visuelle.
+
+Les services tiers méritent un budget à eux seuls, parce qu'ils échappent au contrôle direct du projet et croissent silencieusement. Un gestionnaire de bannière, un outil de statistiques, une fenêtre de discussion, un lecteur vidéo intégré et un script de suivi de campagne peuvent additionner plusieurs centaines de kilo-octets de script exécuté au chargement, sans que rien ne change à l'apparence du site. Tenez un inventaire nommé, datez chaque ajout, mesurez son temps de blocage, retirez ce qui ne rapporte rien : on n'ajoute pas un service parce qu'il existe, mais parce qu'il sert un besoin explicite.
+
+La compression et la mise en cache achèvent le travail. Servez les réponses compressées, de préférence par un algorithme moderne, ce qui réduit fortement le temps de transfert du texte. Exploitez la connexion multiplexée, qui permet de faire transiter de nombreuses ressources sur un même canal plutôt que d'en négocier plusieurs concurrentes. Conservez longtemps les fichiers dont l'adresse contient une empreinte de version : ils ne changent jamais, donc le visiteur ne les retélécharge pas. Enfin, traitez le premier temps de réponse comme une ressource : une page servie depuis le cache intermédiaire gagne aussi le délai serveur.
+
+Pour piloter l'ensemble, trois outils suffisent. L'analyse de couverture dit ce qui n'est pas utilisé. L'analyse de composition du paquet dit où le poids se trouve, fichier par fichier, et révèle souvent qu'un module tiers pèse plus que tout le reste du projet. L'outil de laboratoire, muni du fichier de budget, transforme alors la vérification en verdict : au-delà de la limite, l'audit échoue. C'est exactement le mécanisme que vous installerez en intégration continue à la fin de ce chapitre, où un déploiement ne pourra plus se faire sur une page qui dépasse son budget.

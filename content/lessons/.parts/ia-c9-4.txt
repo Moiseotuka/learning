@@ -1,0 +1,155 @@
+## Transfer learning : emprunter ce que d'autres ont appris
+
+Le transfert d'apprentissage repose sur une observation empirique, vérifiée des milliers de fois : un réseau entraîné sur un million d'images apprend des caractéristiques qui ne lui sont pas propres. Ses premières couches reconnaissent des bords, des textures, des dégradés et des formes élémentaires ; ses couches intermédiaires combinent ces éléments en motifs valables pour presque tout sujet photographié. Ces briques, vous pouvez les récupérer sans les réapprendre. C'est ce qui change radicalement la donne sur un petit jeu de données : là où un réseau initialisé au hasard doit découvrir la notion de contour à partir de six cents images, un modèle préentraîné la connaît déjà depuis longtemps et ne doit apprendre que ce qui est spécifique à votre tâche.
+
+L'opération se déroule en deux temps distincts. Premier temps : on charge un modèle entraîné sur ImageNet, on remplace sa couche de sortie — mille neurones, adaptés à mille catégories sans rapport avec votre problème — par une couche adaptée à vos classes, puis on fige l'ensemble du corps du modèle et on n'entraîne que la nouvelle couche. Le réseau ne modifie aucun poids des couches convolutives : il se contente de produire des vecteurs de caractéristiques, et votre couche dense apprend à les séparer. Deuxième temps, facultatif : on débloque les dernières couches du corps et on relance un entraînement avec un taux d'apprentissage très bas, afin d'ajuster légèrement les caractéristiques au vocabulaire visuel de votre domaine. On appelle cela le réglage fin, ou fine-tuning.
+
+Le tableau suivant vous aidera à choisir entre les deux positions.
+
+| Critère | Corps figé, extraction de caractéristiques | Réglage fin des dernières couches |
+|---|---|---|
+| Paramètres entraînés | Nouvelle couche de sortie seule | Sortie plus une partie du corps |
+| Jeu de données requis | Quelques centaines d'images suffisent | Préférable au-delà d'un millier |
+| Taux d'apprentissage | 0,001 acceptable | Dix fois plus bas, souvent 0,0001 |
+| Durée et coût | Très courts, sur CPU | Plus longs, GPU conseillé |
+| Risque de surapprentissage | Faible | Réel si le jeu est petit |
+| Moment d'emploi | Première ligne de base, référence | Quand la base plafonne trop haut |
+
+Trois détails techniques décident du succès. Le premier est le prétraitement : chaque modèle préentraîné attend une normalisation précise, souvent celle d'ImageNet, parfois une mise à l'échelle entre −1 et 1. Employer la normalisation de l'un avec les poids de l'autre coûte plusieurs points de performance, sans le moindre message d'erreur. Le deuxième est le mode de la normalisation par lot : une couche figée reste en mode inférence et garde les statistiques enregistrées à l'entraînement, ce qui est exactement ce que l'on veut tant qu'on ne l'entraîne pas ; dès que l'on débloque, il faut décider si l'on met à jour ces statistiques ou si on les fige. Le troisième est le taux d'apprentissage : réapprendre des poids déjà bons avec le taux d'un modèle vierge les détruit en quelques itérations.
+
+Le bloc suivant montre les deux temps, en Keras, avec les deux compilations correspondantes. La première phase est volontairement rapide : elle vous donne une baseline en quelques minutes, souvent très au-dessus de ce qu'un petit réseau from scratch obtient en une heure.
+
+```python
+import tensorflow as tf
+
+corps = tf.keras.applications.MobileNetV2(
+    input_shape=(224, 224, 3),
+    include_top=False,
+    weights="imagenet",
+)
+corps.trainable = False
+
+entree = tf.keras.layers.Input(shape=(224, 224, 3))
+x = tf.keras.applications.mobilenet_v2.preprocess_input(entree)
+x = corps(x, training=False)
+x = tf.keras.layers.GlobalAveragePooling2D()(x)
+x = tf.keras.layers.Dropout(0.2)(x)
+sortie = tf.keras.layers.Dense(2, activation="softmax")(x)
+transfert = tf.keras.Model(entree, sortie)
+
+transfert.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+transfert.fit(jeu, validation_data=validation, epochs=5)
+
+# phase 2 : deblocage progressif des dernieres couches
+corps.trainable = True
+for couche in corps.layers[:-40]:
+    couche.trainable = False
+
+transfert.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-4),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+transfert.fit(jeu, validation_data=validation, epochs=10)
+```
+
+Deux remarques sur ce script. Les couches débloquées sont les dernières uniquement : les premières restent figées parce qu'elles portent les briques les plus génériques, dont la réécriture n'apporterait rien sur un petit jeu. Et la recompilation entre les deux phases n'est pas une coquetterie : en Keras, la liste des variables entraînables est figée à la compilation, si bien qu'oublier de recompiler laisse l'optimiseur ignorer les couches que vous venez d'exposer.
+
+Le gain mesuré dépend de la distance entre votre domaine et ImageNet. Sur des objets photographiés en lumière naturelle — animaux, aliments, pièces industrielles, symptômes cutanés —, la ressemblance est forte et l'écart avec un entraînement depuis zéro atteint facilement vingt points d'exactitude sur quelques centaines d'images. Sur des données très éloignées, comme des spectres ou des images pseudo-colorées de radiographies, les premières couches restent utiles mais les couches profondes doivent beaucoup se réapprendre : le réglage fin devient alors indispensable, et la comparaison honnête exige les deux expériences, pas la seule qui vous arrange.
+
+## Interpréter les cartes de caractéristiques et les décisions
+
+Un classifieur qui affiche 94 % d'exactitude n'a pas encore prouvé qu'il regarde ce que vous croyez. Il peut atteindre ce score en observant le numéro d'inventaire imprimé sur le fond, la couleur du tapis transporteur ou le reflet d'une diode, et s'effondrer le jour où l'éclairage change. L'interprétation n'est donc pas un supplément décoratif : c'est le contrôle qui vérifie que la décision repose sur l'objet, et non sur un raccourci contingent. Deux familles d'outils servent à ce contrôle, l'une regardant ce que le réseau produit, l'autre ce qu'il consulte pour produire.
+
+Le premier outil est la visualisation des cartes de caractéristiques intermédiaires. On construit un modèle intermédiaire qui s'arrête à la couche voulue, on y fait passer une image et on affiche les cartes obtenues comme une planche d'images. Sur les premières couches, vous verrez des contours dans toutes les orientations, des dégradés et des textures ; sur les couches intermédiaires, des motifs plus structurés, souvent répétitifs ; sur les couches profondes, des cartes quasiment binaires, où seule une zone reste active. Des cartes entièrement noires signalent des filtres morts, une activité uniforme signale des entrées mal normalisées, et des cartes qui réagissent au fond plutôt qu'à l'objet vous alertent avant la défaillance en production.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+intermediaire = tf.keras.Model(
+    inputs=modele.inputs,
+    outputs=[couche.output for couche in modele.layers[:6]],
+)
+exemple = np.expand_dims(image_test / 255.0, axis=0)
+cartes = intermediaire.predict(exemple)
+
+fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+for axe, carte in zip(axes.flat, cartes[0][:8]):
+    axe.imshow(carte[:, :, 0], cmap="viridis")
+    axe.axis("off")
+plt.show()
+```
+
+Le second outil répond à une autre question : quelle zone de l'image a réellement pesé dans la décision ? La méthode Grad-CAM utilise les gradients de la probabilité de la classe prédite par rapport aux cartes de la dernière couche convolutive, les moyenne pour obtenir un poids par carte, puis compose une carte de chaleur superposée à l'image. Là où la chaleur est forte, le réseau a puisé son information ; là où elle est absente, la zone n'a pas influencé le résultat. Dans notre usine, cette carte dira en une seconde si la décision porte sur la rayure ou sur le bord du tapis.
+
+Appliquée à un cas concret, l'interprétation devient un outil de correction. Une carte de chaleur qui entoure systématiquement le numéro d'inventaire imprimé à côté de la pièce signale que le réseau exploite un raccourci de prises de vue ; la correction n'est pas de rajouter des couches, mais de recadrer les images, de varier le fond ou d'ajouter des photographies où le numéro est absent. Une carte qui reste diffuse sur toute la surface signale un modèle qui n'a pas trouvé de critère stable : il manque de la donnée ou de la résolution. L'interprétation transforme ainsi un constat d'échec en consigne de collecte, ce qu'aucun pourcentage ne fait.
+
+Gardez pourtant la juste défiance. Une carte de chaleur montre une corrélation entre une zone et une décision, pas une preuve de raisonnement ; elle peut être bruitée et changer d'une image à l'autre pour un même modèle. Elle ne remplace ni l'analyse des erreurs, qui révèle les cas systématiquement ratés, ni le test d'occlusion, qui masque une zone puis mesure la variation de la probabilité. Employez ces trois lectures ensemble, puis validez à la main sur un échantillon : l'œil humain reste le meilleur juge de la cohérence d'un modèle de vision.
+
+## Du prototype à la ligne de production
+
+Passer du notebook à la ligne suppose de figer un contrat. Le modèle n'est jamais seul : il est accompagné de son prétraitement, de l'ordre des classes, de la taille d'entrée et du seuil de décision. La première étape d'industrialisation consiste donc à empaqueter ces quatre éléments ensemble, dans un format standard — le modèle sauvegardé de TensorFlow, un fichier ONNX ou un script TorchScript —, puis à le versionner comme vous versionneriez du code. Un modèle sans numéro de version et sans fiche de prétraitement est un modèle injoignable : personne ne pourra reproduire son comportement six mois plus tard.
+
+Le chemin d'inférence doit rejouer exactement l'entraînement : même redimensionnement, même normalisation, même ordre des classes. Mesurez ensuite ce qui compte réellement — latence par image, débit en images par seconde, mémoire occupée. Un modèle qui répond en 40 millisecondes sur GPU et en 900 sur processeur n'est pas le même produit. Quand le gabarit est trop lourd, trois leviers se présentent dans cet ordre : réduire la résolution d'entrée, employer une architecture conçue pour l'embarquement comme celles du tableau du deuxième bloc, puis appliquer une quantification en virgule sur huit bits, qui divise par quatre la mémoire au prix de quelques dixièmes de point.
+
+Une fois déployé, le modèle doit être surveillé, car son environnement bouge sans lui : l'ampoule de la caméra vieillit, la peinture du tapis s'use, un fournisseur change la teinte de la pièce. Faites relabeler périodiquement une petite partie du flux et recalculez la matrice de confusion sur cette fenêtre : une baisse du rappel de la classe défectueuse déclenche une nouvelle collecte. Prévoyez enfin un seuil de confiance sous lequel la décision est refusée et l'image part en revue humaine ; mieux vaut un avis « je ne sais pas » qu'une erreur silencieuse sur une pièce dangereuse.
+
+Le tableau suivant condense la chaîne complète, du fichier brut à la décision, avec le livrable et le contrôle de chaque étape.
+
+| Étape | Livrable | Contrôle exigé |
+|---|---|---|
+| Collecte et découpage | Trois répertoires d'images | Aucun objet commun aux ensembles |
+| Augmentation | Couches appliquées à l'entraînement | Validation et test intacts |
+| Entraînement | Poids et courbes datés | Écart des deux pertes maîtrisé |
+| Évaluation | Matrice de confusion et métriques par classe | Rappel de la classe critique atteint |
+| Interprétation | Planche de cartes et cartes de chaleur | Décision portant sur l'objet |
+| Mise en production | Modèle versionné et fiche de prétraitement | Latence et métriques surveillées |
+
+Cette chaîne est exactement celle que vous écrirez seul dans l'exercice du chapitre, sur des photographies de pièces défectueuses. Les sections précédentes vous ont donné chaque maillon ; il reste à les assembler dans le bon ordre, à documenter chaque décision, puis à défendre le résultat devant quelqu'un qui vous demandera pourquoi vous avez choisi ce seuil plutôt qu'un autre.
+
+## À retenir
+
+- Une image est un tenseur à quatre dimensions ; la forme, la plage de valeurs et la normalisation se contrôlent avant toute ligne de modèle.
+- Le perceptron aplati gaspille les paramètres et ignore le voisinage : il perd sur les deux plans à la fois.
+- La convolution applique un même filtre partout : partage des poids et localité, d'où la faiblesse du nombre de paramètres.
+- La taille de sortie vaut entrée moins filtre, plus deux fois la marge, divisée par le pas, le tout augmenté de un.
+- Le pooling réduit la résolution sans aucun paramètre et apporte une tolérance aux micros-décalages ; trop de pooling détruit les petits défauts.
+- Une activité non linéaire entre deux convolutions est indispensable, sinon la profondeur ne sert à rien.
+- Le global average pooling remplace les gigantesques couches denses de sortie et fait s'effondrer le nombre de paramètres.
+- Les paramètres d'une couche convolutive dépendent du noyau, des canaux et du nombre de filtres, jamais de la taille de l'image.
+- La perte de validation est la métrique qui décide ; l'exactitude ne sert qu'à communiquer.
+- En multiclasse, la matrice de confusion précède toujours le pourcentage, et le rappel de la classe critique prime sur le global.
+- Le surapprentissage en vision se lit en deux courbes qui divergent, souvent dès la quatrième époque.
+- L'augmentation crée une variété infinie d'exemples distincts mais correctement étiquetés ; elle agit sur les données, pas sur le modèle.
+- On découpe d'abord, on augmente ensuite : l'inverse fabrique des jumeaux répartis de part et d'autre de la coupe.
+- La force d'augmentation est un hyperparamètre qui se règle en validation, pas une valeur sacrée.
+- Le transfert d'apprentissage part d'un modèle préentraîné : corps figé d'abord, réglage fin facultatif ensuite.
+- Débloquer des couches impose un taux d'apprentissage dix fois plus bas et une recompilation explicite.
+- Les cartes de caractéristiques et les cartes de chaleur vérifient que la décision porte sur l'objet, pas sur le fond.
+- Un modèle de production emporte son prétraitement, l'ordre des classes, son numéro de version et son seuil de refus.
+
+## Erreurs fréquentes
+
+- Aplatir une image et la passer dans des couches denses, puis s'étonner d'un score d'entraînement parfait et d'un test médiocre.
+- Oublier de diviser par 255 ou d'appliquer la normalisation attendue par le modèle préentraîné : aucune erreur n'est levée, seul le score chute.
+- Générer les variantes augmentées avant le découpage, ce qui place des jumeaux de la même photographie dans deux ensembles.
+- Évaluer sur un jeu de validation qui subit lui aussi les transformations, et conclure sur un chiffre qui ne mesure plus la réalité.
+- Empiler trois ou quatre couches de pooling sur une image à basse résolution, et perdre le défaut que la mission demandait de trouver.
+- Utiliser un retournement vertical ou une rotation à 90 degrés sur une classe pour laquelle l'orientation porte sens.
+- Se contenter de l'exactitude globale sur des classes déséquilibrées, et déclarer bon un modèle qui ignore la classe rare.
+- Choisir entre corps figé et réglage fin au hasard, ou débloquer tout le corps avec le taux d'apprentissage de l'entraînement initial.
+- Oublier de recompiler après avoir rendu des couches entraînables, et constater que rien ne bouge.
+- Interpréter une carte de chaleur comme une preuve, au lieu de la croiser avec l'analyse des erreurs et un échantillon relu à la main.
+- Déployer sans fiche de prétraitement ni numéro de version, et ne plus jamais pouvoir reproduire le comportement observé.
+- Ne jamais réévaluer le modèle une fois en service, alors que l'éclairage et le matériel changent en silence.
+
+## Pour aller plus loin
+
+Les trois adresses qui suivent accompagnent directement les sections de cette leçon et se lisent avec le code sous les yeux. https://keras.io/examples/vision/image_classification_from_scratch/ déroule un pipeline complet en Keras, du chargement par répertoires à l'entraînement augmenté, avec les bonnes pratiques de prétraitement. https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html montre les deux phases du transfert d'apprentissage en PyTorch, gel du corps puis réglage fin, en insistant sur la mise à jour ou la gelée des normalisations par lot. https://docs.pytorch.org/vision/main/models.html référence les architectures préentraînées disponibles dans torchvision, avec leurs poids, leurs tailles d'entrée et les transformations de prétraitement associées.
+
+Pour aller au-delà du cadre de ce chapitre, trois pistes méritent votre temps. La documentation d'Albumentations, bibliothèque d'augmentations alignées sur les tâches de détection et de segmentation, vous montrera des transformations que Keras n'intègre pas encore. Les articles fondateurs sur Grad-CAM et ses successeurs détaillent le calcul des cartes de chaleur et leurs limites expérimentales. Enfin, les guides d'évaluation de modèles de vision insistent tous sur un point que nous avons souligné : la constitution d'un jeu de test représentatif, tenu à l'écart jusqu'à la dernière ligne du projet, est le facteur qui sépare un prototype flatteur d'un modèle défendable.
+
+## Et maintenant : passez du schéma à la ligne de contrôle
+
+La vidéo du chapitre reprend la même progression en la montrant s'écrire : convolution et pooling posés à la main, construction du réseau couche par couche, lecture des deux courbes de perte, mise en place des couches d'augmentation, puis deux phases du transfert d'apprentissage avec le changement de taux d'apprentissage entre elles. Regardez-la avec votre éditeur ouvert et rejouez chaque bloc en modifiant une seule valeur à la fois, de préférence la taille du jeu de validation, pour mesurer combien vos conclusions dépendent du découpage. Ensuite, prenez l'exercice : vous construirez seul le classifieur de pièces défectueuses, du découpage par session de prise de vue jusqu'à la matrice de confusion en passant par l'augmentation et le modèle préentraîné. Le quiz de quatre questions vérifiera les points qu'on confond le plus souvent : le rôle réel du pooling, l'ordre entre découpage et augmentation, la différence entre corps figé et réglage fin, et la lecture d'une matrice de confusion.

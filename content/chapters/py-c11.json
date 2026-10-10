@@ -1,0 +1,66 @@
+{
+  "exercise": "Vous maintenez le script qui génère le relevé de notes d'une classe pour le collège Jean-Proust. Depuis la rentrée, le fichier effectif.csv a doublé et le script met maintenant plus de trente secondes : la secrétaire rafraîchit la fenêtre en croyant à un plantage. Votre mission se déroule en quatre temps. D'abord, chronométrez le script tel quel, puis lancez-le sous cProfile en triant par temps cumulé, et relevez la fonction dominante, son nombre d'appels et son temps propre. Ensuite, formulez une hypothèse de complexité sur cette fonction : vous y trouverez très probablement une recherche linéaire répétée à l'intérieur de la boucle principale. Corrigez un seul point, sans toucher au reste du fichier. Enfin, remesurez dans des conditions identiques et consignez les deux temps. Le livrable attendu est le script corrigé, accompagné d'un fichier diagnostic.md contenant le tableau du profilage avant et après, le temps médian de chaque version mesuré sur le même effectif, une phrase expliquant la cause racine et une phrase indiquant ce que vous avez choisi de ne pas modifier. Aucune ligne ne doit être réécrite sans mesure à l'appui.",
+  "resources": [
+    {
+      "label": "Documentation Python 3 — module profile : cProfile, pstats et lecture des profils",
+      "url": "https://docs.python.org/3/library/profile.html"
+    },
+    {
+      "label": "Documentation Python 3 — module timeit : mesurer fiablement deux variantes d'un même calcul",
+      "url": "https://docs.python.org/3/library/timeit.html"
+    },
+    {
+      "label": "Documentation officielle NumPy : guide d'introduction et vectorisation des traitements numériques",
+      "url": "https://numpy.org/doc/stable/"
+    },
+    {
+      "label": "Grafikart — Python : bases, variables, structures de contrôle",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20bases%20tutoriel"
+    },
+    {
+      "label": "Grafikart — Python POO : classes, héritage, propriétés",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20poo"
+    },
+    {
+      "label": "Grafikart — Python : modules, packages, virtualenv",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20modules%20virtualenv"
+    },
+    {
+      "label": "Grafikart — Python : gestion d'erreurs, exceptions, logging",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20exceptions%20logging"
+    }
+  ],
+  "code_language": "python",
+  "starter_code": "\"\"\"Releve de notes - script lent, a profiler avant d'optimiser.\"\"\"\nimport csv\nimport time\n\nEFFECTIF = \"effectif.csv\"\nNOTES = \"notes.csv\"\n\n\ndef charger(chemin):\n    with open(chemin, encoding=\"utf-8\") as fichier:\n        return list(csv.DictReader(fichier))\n\n\ndef construire_lignes(notes, inscrits):\n    \"\"\"Une ligne de rapport par note, dans l'ordre du fichier.\"\"\"\n    lignes = []\n    for note in notes:\n        # TODO 1 : cette double boucle est suspectee ; mesurer avec\n        # python -m cProfile -s cumtime avant de la modifier, puis remplacer\n        # la recherche dans la liste par un index en ensemble construit\n        # UNE SEULE FOIS avant la boucle.\n        trouve = None\n        for eleve in inscrits:\n            if eleve[\"matricule\"] == note[\"matricule\"]:\n                trouve = eleve\n                break\n        if trouve is None:\n            continue\n        lignes.append(f\"{trouve['nom']};{note['matiere']};{note['valeur']}\")\n    return lignes\n\n\ndef ecrire_rapport(lignes, sortie):\n    # TODO 2 : la memoire croit avec le fichier ; ecrire ligne a ligne au lieu\n    # de concatener, puis verifier le pic avec tracemalloc.\n    contenu = \"\"\n    for ligne in lignes:\n        contenu += ligne + \"\\n\"\n    with open(sortie, \"w\", encoding=\"utf-8\") as fichier:\n        fichier.write(contenu)\n\n\ndef moyennes_par_matiere(notes):\n    # TODO 3 : mesurer la part reelle de cette fonction dans le profil, puis\n    # l'optimiser seulement si elle est significative.\n    par_matiere = {}\n    for note in notes:\n        par_matiere.setdefault(note[\"matiere\"], []).append(float(note[\"valeur\"]))\n    return {matiere: sum(valeurs) / len(valeurs)\n            for matiere, valeurs in par_matiere.items()}\n\n\nif __name__ == \"__main__\":\n    depart = time.perf_counter()\n    inscrits = charger(EFFECTIF)\n    notes = charger(NOTES)\n    lignes = construire_lignes(notes, inscrits)\n    ecrire_rapport(lignes, \"releve.csv\")\n    print(f\"{len(lignes)} lignes en {time.perf_counter() - depart:.2f} s\")\n\n    # TODO 4 : ajouter un banc de mesure qui compare la version d'avant et la\n    # version d'apres (temps median sur 5 executions), puis ecrire\n    # diagnostic.md avec les deux chiffres et la cause racine.\n",
+  "solution_code": "\"\"\"Releve de notes - version corrigee, avec banc de mesure integre.\"\"\"\nimport csv\nimport time\nfrom collections import defaultdict\nfrom statistics import median\n\nEFFECTIF = \"effectif.csv\"\nNOTES = \"notes.csv\"\n\n\ndef charger(chemin):\n    with open(chemin, encoding=\"utf-8\") as fichier:\n        return list(csv.DictReader(fichier))\n\n\ndef construire_lignes(notes, index):\n    lignes = []\n    for note in notes:\n        eleve = index.get(note[\"matricule\"])\n        if eleve is None:\n            continue\n        lignes.append(f\"{eleve['nom']};{note['matiere']};{note['valeur']}\")\n    return lignes\n\n\ndef ecrire_rapport(lignes, sortie):\n    with open(sortie, \"w\", encoding=\"utf-8\") as fichier:\n        for ligne in lignes:\n            fichier.write(ligne + \"\\n\")\n\n\ndef moyennes_par_matiere(notes):\n    totaux = defaultdict(lambda: [0.0, 0])\n    for note in notes:\n        accumulation = totaux[note[\"matiere\"]]\n        accumulation[0] += float(note[\"valeur\"])\n        accumulation[1] += 1\n    return {matiere: total / effectif\n            for matiere, (total, effectif) in totaux.items()}\n\n\ndef generer(inscrits, notes, sortie):\n    index = {eleve[\"matricule\"]: eleve for eleve in inscrits}\n    lignes = construire_lignes(notes, index)\n    ecrire_rapport(lignes, sortie)\n    return lignes, moyennes_par_matiere(notes)\n\n\ndef mesurer(iterations=5):\n    \"\"\"Temps median du rapport, pour comparer avant/apres dans meme conditions.\"\"\"\n    inscrits = charger(EFFECTIF)\n    notes = charger(NOTES)\n    temps = []\n    for _ in range(iterations):\n        depart = time.perf_counter()\n        generer(inscrits, notes, \"releve.csv\")\n        temps.append(time.perf_counter() - depart)\n    return median(temps)\n\n\nif __name__ == \"__main__\":\n    avant = 31.4  # releve avec python -m cProfile -s cumtime sur la version de depart\n    apres = mesurer()\n    print(f\"avant : {avant:.2f} s | apres : {apres:.3f} s\")\n    print(f\"facteur : {avant / apres:.1f}\")\n    with open(\"diagnostic.md\", \"w\", encoding=\"utf-8\") as fichier:\n        fichier.write(\"# Diagnostic de performance\\n\\n\")\n        fichier.write(f\"- avant : {avant:.2f} s\\n\")\n        fichier.write(f\"- apres : {apres:.3f} s (mediane de 5 executions)\\n\")\n        fichier.write(\"- cause racine : recherche lineaire dans une liste, \"\n                      \"O(n x m) a l'interieur de la boucle principale\\n\")\n        fichier.write(\"- conserve : formatage des lignes, regles de mentions \"\n                      \"et ordre des colonnes du rapport\\n\")\n",
+  "concepts": [
+    "Syntaxe Python de base",
+    "Variables et types (int, float, str)",
+    "Fonctions print()/input()",
+    "Conversion de types (int()/float())",
+    "Structures conditionnelles et boucles"
+  ],
+  "lecon": "py-c11.txt",
+  "videos": [
+    {
+      "title": "Python : bases, variables, structures de contrôle",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20bases%20tutoriel",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python POO : classes, héritage, propriétés",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20poo",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python : modules, packages, virtualenv",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20modules%20virtualenv",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Python : gestion d'erreurs, exceptions, logging",
+      "url": "https://www.youtube.com/@grafikart/search?query=python%20exceptions%20logging",
+      "channel": "Grafikart"
+    }
+  ]
+}

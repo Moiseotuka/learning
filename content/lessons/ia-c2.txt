@@ -1,0 +1,636 @@
+Bienvenue dans ce chapitre consacré à la statistique pour l'apprentissage automatique. Si vous avez déjà entraîné un modèle et obtenu un score dont vous ne saviez pas trop que faire, vous êtes exactement au bon endroit. Ce chapitre ne vous apprendra pas à coder un réseau de neurones : il vous apprendra quelque chose de plus utile et de plus rare, à savoir lire un jeu de données avant de le confier à un algorithme, comprendre ce que ses chiffres racontent réellement, repérer ceux qui mentent et construire une chaîne d'évaluation à l'épreuve de la production. Nous le ferons sans aucune bibliothèque externe : uniquement les modules statistics, math, csv, json et random de la bibliothèque standard Python, si bien que chaque exemple s'exécute tel quel dans un navigateur, dans un carnet ou sur votre machine, sans la moindre installation. Les quatre grandes questions que nous allons traiter sont les distributions, la corrélation, les pièges de mesure et les fuites de données.
+
+À la fin de cette leçon, vous saurez faire six choses concrètes, et vous les aurez déjà écrites en code. Premièrement, vous calculerez et interpréterez les mesures qui résument un échantillon : moyenne, médiane, écart-type, quartiles et amplitude interquartile. Deuxièmement, vous lirez la forme d'une distribution et vous saurez dire pourquoi une moyenne peut être un mauvais résumé d'un revenu, d'une durée de session ou d'un nombre de clics. Troisièmement, vous mesurerez l'association entre deux variables avec la corrélation de Pearson et celle de Spearman, et vous saurez pourquoi un coefficient proche de zéro ne prouve pas l'absence de relation. Quatrièmement, vous identifierez les pièges de mesure classiques : biais de sélection, échantillon trop petit, variables tronquées, valeurs manquantes non neutres et agrégats qui comparent ce qui n'est pas comparable. Cinquièmement, vous reconnaîtrez les quatre familles de fuites de données qui gonflent artificiellement les scores en validation. Sixièmement, vous enchaînerez le tout dans une procédure honnête : découper d'abord, ajuster les transformations sur l'entraînement seulement, puis évaluer.
+
+Un mot sur la manière d'aborder ce cours. La statistique s'apprend comme la cuisine : en goûtant à chaque étape. Chaque bloc de code de cette leçon est court, autonome et volontairement dépourvu de dépendance : vous pouvez le copier dans un fichier .py, le lancer, puis changer une valeur pour observer ce que deviennent les chiffres affichés. Faites-le systématiquement. Une moyenne qu'on a calculée soi-même sur dix nombres retenu ne ressemble plus jamais, ensuite, à un chiffre abstrait lu dans un rapport. Alternez donc lecture attentive et expérimentation, gardez à portée de main un petit jeu de données personnel, et n'avancez pas à la section suivante tant que vous n'avez pas reproduit le calcul du bloc précédent. Le fil rouge de la leçon sera un fichier de mesures de sessions clients, avec une colonne cible de désabonnement, sur lequel nous reviendrons régulièrement comme sur un cas d'école.
+
+## Pourquoi la statistique précède le modèle
+
+Un modèle d'apprentissage automatique ne fait qu'une seule chose : comprimer des données en une règle compacte qu'il pourra rejeter sur des exemples inédits. Cette compression est fidèle à ce qu'on lui a donné, ni plus ni moins. Si les données sont biaisées, le modèle apprendra le biais ; si une colonne contient une information qui ne sera pas disponible au moment de la prédiction, le modèle apprendra à tricher ; si l'échantillon est trop petit, le modèle mémorisera du bruit. La conséquence pratique est simple et souvent dérangeante : la quasi-totalité de la valeur d'un projet de modélisation se joue avant la première ligne d'entraînement, dans le choix des variables, la compréhension de leur mesure et la vérification de leur provenance. C'est précisément le travail que décrit ce chapitre, et c'est un travail que l'on peut faire avec un tableur, un crayon et un interpréteur Python.
+
+Prenons un exemple qui reviendra tout au long de la leçon. Vous disposez de dix mille lignes de clients, dont quatre-vingt-dix-neuf pour cent n'ont pas résilié. Vous entraînez un classifieur qui prédit toujours la classe majoritaire, sans regarder une seule variable, et vous obtenez quatre-vingt-dix-neuf pour cent de bonnes prédictions. Le chiffre est trompeur : le modèle n'a rien appris, il a seulement reproduit la fréquence de la classe. Pour savoir s'il a appris quelque chose, il faut changer de mesure, regarder le rappel et la précision sur la classe rare, et construire une matrice de confusion. Ce détour statistique n'est pas un raffinement : sans lui, vous valideriez un modèle inutilisable. Le même raisonnement vaut pour la corrélation, pour la comparaison de deux périodes et pour toute décision fondée sur un résumé chiffré.
+
+La statistique descriptive remplit donc trois rôles distincts dans un projet, et il est utile de les distinguer pour ne pas les confondre. Le premier rôle est décrire : résumer chaque colonne par quelques nombres qui donnent une idée de son niveau et de sa dispersion, afin de savoir si vos variables ressemblent à ce que vous croyiez. Le deuxième rôle est comparer : confronter deux groupes, deux périodes ou deux segments pour décider si la différence observée mérite qu'on s'y intéresse. Le troisième rôle, le plus important et le plus souvent négligé, est valider : vérifier que la donnée mesurée correspond bien à la réalité que l'on prétend décrire, que la colonne est remplie avant l'événement à prédire et que la méthode d'échantillonnage ne fabrique pas l'effet que l'on cherche à mesurer. Un projet qui se contente du premier rôle produit un beau rapport ; un projet qui maîtrise les trois produit un modèle déployable.
+
+- Décrire : moyenne, médiane, dispersion, forme pour chaque colonne.
+- Comparer : groupes, périodes, segments, avec une mesure d'écart explicite.
+- Valider : chronologie de la mesure, méthode d'échantillonnage, cohérence des unités.
+- Documenter : d'où vient la donnée, qui l'a produite, à quel moment.
+- Découper : séparer entraînement et évaluation avant tout calcul ajusté sur les données.
+- Se méfier : d'un chiffre trop beau, d'une corrélation trop forte et d'un échantillon trop petit.
+
+## Les mesures qui résument un échantillon
+
+La moyenne arithmétique est la plus connue des statistiques et la plus surestimée. Elle s'obtient en additionnant toutes les valeurs puis en divisant par leur nombre, ce qui en fait un résumé complet au sens où chaque observation y participe. Sa contrepartie est bien connue : une seule valeur extrême peut la déplacer considérablement. Imaginez dix salariés dont les revenus vont de mille huitille à trois mille euros, et un onzezième propriétaire de l'entreprise qui en gagne quatre-vingt-mille : la moyenne du groupe dépasse huit mille euros alors que personne, hormis le onzième, ne s'en approche. La médiane, elle, ignore les valeurs extrêmes : elle ne dépend que de l'ordre des observations. Elle se place au milieu de la série triée, si bien qu'une valeur hors norme, aussi lointaine soit-elle, ne peut pas la faire basculer. Dans une distribution fortement asymétrique, revenus, durées, prix, tailles d'événements, la médiane décrit donc mieux la valeur typique.
+
+L'écart-type mesure ce que la moyenne ne dit pas : à quel point les valeurs s'écartent les unes des autres. On calcule d'abord la variance, moyenne des carrés des écarts à la moyenne, puis on en tire la racine carrée pour revenir à l'unité d'origine. Un écart-type de zéro signifie que toutes les valeurs sont identiques ; un écart-type grand par rapport à la moyenne signifie un échantillon très hétérogène. Un détail qui revient souvent en pratique : la division se fait par le nombre d'observations moins un quand on résume un échantillon, car cette correction, dite non biaisée, compense le fait que la moyenne utilisée dans le calcul est elle-même estimée sur le même échantillon. Avec dix valeurs, la différence est minime ; avec trois, elle devient sensible. La bibliothèque standard applique cette règle pour vous, à condition de ne pas confondre les fonctions prévues pour un échantillon et celles prévues pour une population entière.
+
+Les quartiles prolongent la médiane en découpant la série triée en quatre parts égales. Le premier quartile marque le point sous lequel tombent un quart des observations, le troisième le point sous lequel en tombent trois quarts, et l'amplitude interquartile, notée IQR, est la distance entre les deux. L'IQR a une propriété précieuse : il ne dépend que de la moitié centrale des données, il ignore donc complètement les extrêmes, ce qui en fait l'outil de référence pour repérer les valeurs aberrantes. La règle usuelle consiste à déclarer suspecte toute valeur située plus d'une fois et demie l'IQR sous le premier quartile ou au-dessus du troisième. Cette convention n'a rien de magique, mais elle fournit un seuil reproductible et discutable d'un projet à l'autre, ce qu'un œil exercé ne garantit jamais.
+
+Le choix entre ces mesures n'est pas une question de goût, il se décide à partir de la forme de la distribution. Lorsque la série est à peu près symétrique, moyenne et médiane se confondent et l'on peut sans risque présenter la moyenne, accompagnée de l'écart-type. Lorsque la série est étirée vers la droite, ce qui arrive dès qu'une colonne contient des durées, des montants ou des nombres de clics, la moyenne dépasse la médiane et il devient trompeur de l'utiliser seule : on présente alors la médiane et l'IQR. Le tableau suivant résume ces arbitrages pour les quatre situations que vous rencontrerez le plus souvent.
+
+```table
+| Situation typique | Mesure de tendance centrale | Mesure de dispersion | Pourquoi |
+| --- | --- | --- | --- |
+| Distribution symétrique, sans extrême | Moyenne | Écart-type | Exploite toutes les valeurs et se prête aux calculs |
+| Distribution étirée à droite | Médiane | IQR | Insensible aux valeurs extrêmes de la queue |
+| Variable à deux valeurs possibles | Proportion | Intervalle de confiance | La moyenne d'un oui/non est déjà une probabilité |
+| Échantillon très petit | Médiane et valeurs brutes | Étendue complète | Aucun résumé n'est fiable, mieux vaut montrer tout |
+```
+
+
+La bibliothèque statistics concentre l'essentiel de ces calculs en quelques fonctions d'un nom explicite. L'exemple suivant les utilise sur une colonne de durées de session, puis affiche les quartiles et l'IQR calculés avec la fonction dédiée. Tapez-le et modifiez une valeur de la liste pour observer lequel des résumés bouge, et de combien : c'est la meilleure façon de sentir la différence de robustesse entre moyenne et médiane.
+
+```python
+import statistics as st
+
+durees = [4.5, 6.0, 5.2, 7.1, 4.9, 5.5, 42.0, 6.3, 5.8, 5.1]
+
+print("moyenne      ", round(st.mean(durees), 2))
+print("mediane      ", round(st.median(durees), 2))
+print("ecart-type   ", round(st.stdev(durees), 2))
+print("amplitude    ", max(durees) - min(durees))
+print("Q1, Q2, Q3   ", st.quantiles(durees, n=4))
+```
+
+Le résultat mérite d'être commenté plutôt que seulement lu. La moyenne avale la valeur quarante-deux et grimpe au-dessus de neuf, alors que la médiane reste collée à environ cinq virgule cinq, c'est-à-dire au cœur de ce que font réellement les usagers. L'écart-type, lui, explose et devient plus grand que la moyenne, signe qu'un résumé par moyenne et écart-type raconte une histoire absurde sur ce jeu. Si vous supprimez la valeur quarante-deux, la moyenne retombe près de la médiane et l'écart-type devient modeste : la conclusion n'était donc pas fausse, elle dépendait entièrement d'une observation. Ce petit exercice illustre la discipline mentale à acquérir : jamais interpréter un résumé chiffré sans avoir regardé au moins une fois les données brutes qui le produisent.
+
+Une remarque sur la dispersion relative. L'écart-type s'exprime dans l'unité de la variable, ce qui le rend impossible à comparer entre une colonne de durée en minutes et une colonne de montant en euros. Le coefficient de variation, rapport de l'écart-type à la moyenne, permet cette comparaison puisqu'il devient sans dimension. Un coefficient de vingt pour cent signifie que l'écart-type vaut un cinquième de la moyenne, que l'on mesure des euros ou des secondes. Attention toutefois à ne pas l'appliquer à une variable dont la moyenne est proche de zéro ou de signe variable : le rapport devient alors instable et peut dépasser tout sens. Pour détecter des valeurs aberrantes, on préfère travailler directement avec l'IQR, qui reste dans l'unité d'origine et ne dépend pas du centre de la distribution.
+
+```python
+import math
+import statistics as st
+
+
+def quartile(valeurs, position):
+    tri = sorted(valeurs)
+    index = (len(tri) - 1) * position
+    bas, haut = math.floor(index), math.ceil(index)
+    if bas == haut:
+        return tri[bas]
+    return tri[bas] + (tri[haut] - tri[bas]) * (index - bas)
+
+
+def aberrantes(valeurs):
+    q1 = quartile(valeurs, 0.25)
+    q3 = quartile(valeurs, 0.75)
+    iqr = q3 - q1
+    borne_basse = q1 - 1.5 * iqr
+    borne_haute = q3 + 1.5 * iqr
+    return [v for v in valeurs if v < borne_basse or v > borne_haute]
+
+
+clics = [3, 5, 4, 6, 4, 5, 3, 44, 5, 6, 4, 5]
+print("aberrantes :", aberrantes(clics))
+```
+
+Les valeurs manquantes méritent une attention particulière parce qu'elles orientent directement le choix entre moyenne et médiane. Lorsqu'une colonne est incomplète, la moyenne calculée sur les seules valeurs présentes suppose implicitement que les valeurs manquantes ressemblent à celles qu'on observe : cette hypothèse est rarement vérifiée et presque jamais énoncée. La médiane souffre moins de ce problème, mais elle ne le résout pas. Avant de remplir quoi que ce soit, la question à poser est pourquoi la donnée manque : a-t-elle été omise au hasard, dépend-elle d'une autre colonne, ou résulte-t-elle d'un comportement, par exemple un utilisateur qui n'a jamais ouvert la fonction qui génère la mesure ? La troisième situation est la plus fréquente et la plus dangereuse, car l'absence porte alors une information que l'imputation effacerait. Un indicateur de valeur manquante, ajouté à côté de la colonne, conserve souvent cette information à faible coût.
+
+Un dernier conseil sur les valeurs aberrantes, que l'on a trop tendance à supprimer par réflexe. Une valeur extrême n'est pas nécessairement une erreur : elle peut être un client de très grande taille, une panne rare ou un événement légitime dont la rareté fait justement toute l'importance. Le réflexe correct se décompose en trois temps. On identifie l'observation avec la règle des quartiles, on regarde sa source pour comprendre ce qu'elle représente, puis on décide en connaissance de cause : correction s'il s'agit d'une faute de saisie, conservation avec transformation si la valeur est réelle mais dominante, suppression seulement si elle sort du périmètre étudié. La règle détecte, elle ne condamne pas.
+
+- Vérifier d'abord l'unité et le sens de chaque colonne avant tout calcul.
+- Afficher les quelques valeurs extrêmes et remonter à leur origine.
+- Présenter la médiane et l'IQR dès que la distribution est étirée.
+- Accompagner toujours la tendance centrale d'une mesure de dispersion.
+- Traiter la valeur manquante comme une information à comprendre, pas comme un trou à boucher.
+- Noter le nombre d'observations : un résumé sur quatre lignes n'a aucune autorité.
+
+Ces mesures décrivent une colonne isolée. Or un modèle ne vit pas de colonnes isolées : il vit de relations entre elles, et c'est la forme de la distribution qui détermine si ces relations seront bien décrites ou travesties. La section suivante vous apprendra à reconnaître les grandes familles de distributions, à distinguer une queue lourde d'une simple valeur atypique, et à préparer le terrain à la corrélation.
+
+## Lire une distribution : formes, queues et lois
+
+Une distribution, c'est la manière dont les valeurs d'une variable se répartissent. La décrire revient à répondre à trois questions : où se trouve le centre, à quel point les valeurs s'étalent, et quelle forme prend l'ensemble. La première question appelle la moyenne ou la médiane, la seconde l'écart-type ou l'IQR, la troisième une description qualitative que vous devez apprendre à nommer, car c'est elle qui décide des calculs autorisés par la suite. Un histogramme est l'outil le plus direct pour poser cette troisième question : on découpe l'axe des valeurs en intervalles réguliers, dits classes ou bacs, puis on compte les observations qui tombent dans chacun. Le résultat ressemble à une ville vue de loin, avec son centre, ses quartiers discrets et ses tours isolées. Le schéma suivant montre les deux profils que vous rencontrerez le plus souvent.
+
+```text
+symetrique (durees de session)          etire a droite (revenus)
+
+     *                                       *
+    ***                                     ***
+   *****                                   *****
+  *******                                 *******
+ *********                              ***********
+*************                        *****************
+--------------------------------    --------------------
+      0    5   10   15   20             0   10   20   30+
+```
+
+La distribution symétrique en cloche, dite gaussienne, a une propriété commode : son centre correspond à la fois à la moyenne et à la médiane, et la moitié des observations se trouve à moins d'un écart-type du centre. C'est la situation où résumer par moyenne et écart-type est parfaitement honnête, et c'est aussi la situation que beaucoup de variables ne respectent pas. La distribution étirée à droite, dite asymétrique positive, se reconnaît à sa longue queue : quelques observations très grandes tirent la moyenne vers elle, si bien qu'elle dépasse la médiane. La lecture pratique est simple : dès que la moyenne est nettement supérieure à la médiane, vous avez affaire à une queue à droite, et tout résumé fondé sur la moyenne surévaluera le niveau typique. L'inverse, queue à gauche, se rencontre sur des variables plafonnées par nature, comme un score de satisfaction que personne ne met au-dessus de quatre sur cinq.
+
+Le mot queue renvoie à une notion plus grave que l'asymétrie : les données lourdes. Certaines variables admettent des extrêmes si lointains qu'ils ne sont pas des accidents mais une caractéristique du phénomène. Les durées d'attente, les montants de transaction, les tailles de fichiers et le nombre de followers suivent ce régime, où un cas sur mille peut valoir cent fois la médiane. Dans ces distributions, l'écart-type devient lui-même instable puisqu'il dépend de carrés, et la moyenne change de valeur de manière significative dès qu'on ajoute ou retire un gros cas. La conséquence méthodologique est directe : on travaille en médiane et IQR, on présente des quantiles plutôt que des moyennes, et l'on se méfie des scores agrégés qui supposent implicitement des écarts bornés. Pour trancher, calculez les deux écarts à la moyenne et à la médiane : un écart important signale une queue qui domine le résumé.
+
+La forme se décrit aussi par des nombres, dits moments. Le premier moment est la moyenne, le second l'écart-type, le troisième l'asymétrie et le quatrième l'aplatissement. L'asymétrie vaut zéro pour une distribution symétrique, est positive quand la queue est à droite et négative quand elle est à gauche. Son interprétation par paliers est plus prudente que les seuils rigides qu'on lit parfois : ce qui compte, c'est le signe et l'ordre de grandeur par rapport à un. L'aplatissement compare la lourdeur des queues à celle d'une gaussienne. Ces deux mesures se calculent sans difficulté avec les modules statistics et math, et l'exemple ci-dessous les produit pour trois colonnes d'un même fichier, ce qui vous donne immédiatement un verdict sur la mesure appropriée à chacune.
+
+```python
+import math
+import statistics as st
+
+
+def forme(valeurs):
+    n = len(valeurs)
+    moyenne = st.mean(valeurs)
+    ecart = st.pstdev(valeurs) or 1e-9
+    asymetrie = sum(((v - moyenne) / ecart) ** 3 for v in valeurs) / n
+    aplatissement = sum(((v - moyenne) / ecart) ** 4 for v in valeurs) / n - 3
+    ecart_moyenne = moyenne - st.median(valeurs)
+    mesure = "mediane" if abs(ecart_moyenne) > 0.1 * ecart else "moyenne"
+    return {
+        "moyenne": round(moyenne, 2),
+        "mediane": round(st.median(valeurs), 2),
+        "ecart_type": round(ecart, 2),
+        "asymetrie": round(asymetrie, 2),
+        "aplatissement": round(aplatissement, 2),
+        "mesure_retenue": mesure,
+    }
+
+
+durees = [4, 5, 6, 5, 7, 6, 8, 5, 44, 6]
+clics = [2, 3, 5, 4, 3, 6, 4, 5, 3, 4]
+revenus = [1800, 1950, 2100, 2400, 2600, 3100, 4200, 9800]
+
+for nom, serie in [("durees", durees), ("clics", clics), ("revenus", revenus)]:
+    print(nom, forme(serie))
+```
+
+Exécuté, ce bloc vous montre que les trois colonnes n'obéissent pas aux mêmes règles. Les clics, bornés entre deux et six, donnent une asymétrie proche de zéro et autorisent la moyenne. Les durées, dominées par une unique session anormalement longue, affichent une asymétrie forte et imposent la médiane. Les revenus, avec un cas à neuf mille huit cents, produisent un aplatissement élevé : dans cette colonne, la moyenne ne dira rien de l'usuel, et une comparaison de moyennes entre deux périodes sera déterminée par un seul client. Retirez mentalement l'observation extrême et observez comme le verdict s'inverse : la forme n'est pas une propriété abstraite de la variable, elle dépend des observations que vous avez collectées.
+
+La normalisation est l'autre opération que l'on effectue souvent sur une distribution, et elle recèle un piège d'échantillonnage. Le score en écarts-types, dit score z, remplace chaque valeur par le nombre d'écart-types qui la sépare du centre ; il remet toutes les variables sur une échelle comparable et facilite la détection des extrêmes. La transformation min-max, elle, ramène tout entre zéro et un. Le piège tient à un point unique : les paramètres de la transformation, moyenne et écart-type d'un côté, minimum et maximum de l'autre, sont estimés sur des données. Si vous les calculez sur l'ensemble du fichier avant de découper entraînement et test, la partie test a déjà influencé la forme de la partie entraînement. L'ajustement doit donc se faire sur l'entraînement seulement, puis s'appliquer tel quel à tout le reste. Cette règle reviendra dans la section sur les fuites, mais elle se découvre ici naturellement.
+
+```python
+import math
+import random
+import statistics as st
+
+
+def normaliser(valeurs):
+    moyenne = st.mean(valeurs)
+    ecart = st.stdev(valeurs)
+    return [(v - moyenne) / ecart for v in valeurs]
+
+
+def intervalle_confiance(valeurs, confiance=0.95):
+    n = len(valeurs)
+    moyenne = st.mean(valeurs)
+    erreur = 1.96 * st.stdev(valeurs) / math.sqrt(n)
+    return moyenne - erreur, moyenne + erreur
+
+
+def bootstrap(valeurs, tirages=1000):
+    random.seed(0)
+    tailles = []
+    for _ in range(tirages):
+        echantillon = random.choices(valeurs, k=len(valeurs))
+        tailles.append(st.mean(echantillon))
+    tailles.sort()
+    return tailles[len(tailles) // 20], tailles[-len(tailles) // 20]
+
+
+mesures = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5, 12.1, 15.0, 12.7, 13.3]
+print("z-scores    ", [round(v, 2) for v in normaliser(mesures)])
+print("IC 95%      ", [round(v, 2) for v in intervalle_confiance(mesures)])
+print("bootstrap   ", [round(v, 2) for v in bootstrap(mesures)])
+```
+
+L'intervalle de confiance et le tirage par remise, dit bootstrap, répondent à la même question sous deux angles : à quel point mon résumé changerait si j'avais eu un autre échantillon. L'approche analytique suppose une forme proche de la gaussienne et divise l'écart-type par la racine carrée de l'effectif ; l'approche par bootstrap ne suppose rien et rejoue mécaniquement le tirage avec vos propres observations. Toutes deux partagent une leçon essentielle : l'incertitude décroît avec la racine carrée de l'effectif, si bien que doubler le nombre de mesures ne diminue l'erreur que d'environ trente pour cent. Quand un échantillon compte quatre observations, aucun intervalle ne le sauvera ; il faut mesurer davantage, et c'est souvent le vrai correctif à apporter à un résultat fiable.
+
+Passons à la deuxième grande famille de formes, celle des variables discrètes et de proportions. Une variable binaire, dont deux issues seulement sont possibles, se résume par une proportion et non par une moyenne au sens usuel, même si le calcul est identique : compter les succès puis diviser par l'effectif. La dispersion d'une telle variable est liée à la proportion elle-même, ce qui explique qu'un taux proche de cinquante pour cent soit bien plus volatile qu'un taux proche de un pour cent. Lorsque les événements sont rares et indépendants, le nombre d'occurrences suit une loi de Poisson ; lorsqu'on répète un essai binaire un certain nombre de fois, c'est une loi binomiale. Ces lois ne sont pas de la théorie décorative : elles vous donnent le nombre d'observations minimal pour qu'un taux soit parlant, et elles vous évitent de conclure à une tendance à partir de trois événements sur dix.
+
+```table
+| Type de distribution | Exemple concret | Résumé honnête | Erreur classique |
+| --- | --- | --- | --- |
+| Symétrique | Taille, mesures répétées, erreurs | Moyenne et écart-type | Chercher des extrêmes inexistants |
+| Asymétrique à droite | Revenus, durées, prix | Médiane et IQR | Comparer deux moyennes |
+| Binaire | Churn, clic, ouverture | Proportion et intervalle | Parler d'écart-type |
+| Multimodale | Deux populations mélangées | Médiane par sous-groupe | Un seul résumé pour tout |
+```
+
+
+La distribution multimodale mérite une mention particulière car elle signale presque toujours un mélange. Deux pics dans un histogramme de durée de session indiquent généralement deux usages distincts, par exemple une consultation rapide et une session de travail prolongée. Résumer l'ensemble par une seule moyenne revient à décrire un animal imaginaire mi-chat mi-chien : le chiffre est correct mais ne désigne aucun cas réel. La parade consiste à retrouver la variable qui sépare les sous-populations, souvent une catégorie d'utilisateur, un appareil ou une période, puis à résumer chaque groupe séparément. Dans un projet de modélisation, une telle découverte est une information précieuse : elle suggère une variable d'interaction ou un modèle par segment, là où un résumé global aurait seulement produit une moyenne illisible.
+
+## Corrélation : mesurer un lien sans conclure trop vite
+
+La corrélation répond à une question précise : lorsque l'une des deux variables augmente, que fait l'autre ? La mesure la plus répandue est le coefficient de corrélation de Pearson, qui combine la covariance, c'est-à-dire la mesure conjointe des écarts à la moyenne, et les écarts-types des deux séries. Sa valeur se situe entre moins un et un. Un coefficient positif signifie que les variables tendent à augmenter ensemble, un coefficient négatif que l'une monte quand l'autre descend, et un coefficient proche de zéro indique l'absence de lien linéaire. Sa construction explique sa principale limite : elle suppose que la relation est à peu près droite et que les écarts sont comparables d'un point à l'autre.
+
+Le tableau ci-dessous vous donne des ordres de grandeur de lecture, sans jamais transformer ces paliers en vérité. Une corrélation de zéro virgule deux peut être absolument décisive sur dix millions d'observations et parfaitement insignifiante sur vingt ; une corrélation de zéro virgule neuf peut n'être qu'un reflet d'une troisième variable commune. Retenez plutôt la question à poser devant chaque coefficient : quelle est la taille de l'échantillon, quelle est la nature supposée de la relation, et que se passerait-il si je retirais les quelques points extrêmes qui tirent la droite ?
+
+```table
+| Valeur absolue de r | Lecture usuelle | Ce qu'il faut vérifier |
+| --- | --- | --- |
+| Inférieur à 0.2 | Lien linéaire négligeable | Une relation non linéaire est-elle cachée ? |
+| De 0.2 à 0.5 | Lien faible mais réel | Suffisamment d'observations pour en parler ? |
+| De 0.5 à 0.8 | Lien net | Une variable commune explique-t-elle tout ? |
+| Supérieur à 0.8 | Lien très fort | Fuite de données ou doublon de mesure ? |
+```
+
+
+Le danger le plus fréquent consiste à interpréter un coefficient proche de zéro comme une absence de relation. Or seules les relations droites sont concernées. Une parfaite relation en cloche, où la variable dépendante croît puis décroît, donne exactement un coefficient nul : la droite de régression la plus idéale est horizontale, et pourtant chaque point est parfaitement déterminé. Le schéma suivant rappelle ces deux situations, que la valeur seule ne distingue pas.
+
+```text
+r proche de +1                r proche de 0 mais relation parfaite
+
+    *                               *                 *
+   * *                             *   *           *   *
+  *   *                           *     *       *       *
+ *     *                         *       *   *           *
+*       *                       *         *               *
+---------------------------------    --------------------------------
+  relation lineaire                   relation en cloche
+```
+
+La parade standard consiste à regarder le nuage de points avant tout calcul, puis à compléter Pearson par une seconde mesure, le coefficient de corrélation de Spearman. Celui-ci remplace chaque valeur par son rang dans la série triée, puis calcule Pearson sur ces rangs. Il détecte donc toute relation monotone, croissante ou décroissante sans être droite, et il est beaucoup moins sensible aux valeurs extrêmes puisque les rangs d'un extrême restent des rangs. En pratique, un écart important entre les deux coefficients est un signal : relation non linéaire, valeur aberrante dominante, ou codage particulier de l'une des variables.
+
+```python
+import statistics as st
+
+
+def pearson(xs, ys):
+    n = len(xs)
+    moy_x, moy_y = st.mean(xs), st.mean(ys)
+    covariance = sum((x - moy_x) * (y - moy_y) for x, y in zip(xs, ys)) / n
+    ecart_x = (sum((x - moy_x) ** 2 for x in xs) / n) ** 0.5
+    ecart_y = (sum((y - moy_y) ** 2 for y in ys) / n) ** 0.5
+    if ecart_x == 0 or ecart_y == 0:
+        return 0.0
+    return covariance / (ecart_x * ecart_y)
+
+
+def rangs(valeurs):
+    tries = sorted((v, i) for i, v in enumerate(valeurs))
+    positions = [0] * len(valeurs)
+    for rang, (_, index) in enumerate(tries, start=1):
+        positions[index] = rang
+    return positions
+
+
+def spearman(xs, ys):
+    return pearson(rangs(xs), rangs(ys))
+
+
+clics = [2, 5, 3, 8, 4, 9, 6, 7, 1, 10]
+duree = [3, 12, 5, 40, 7, 45, 15, 30, 2, 50]
+aberrant = [2, 5, 3, 8, 4, 9, 6, 7, 1, 400]
+
+print("pearson     ", round(pearson(clics, duree), 3))
+print("spearman    ", round(spearman(clics, duree), 3))
+print("pearson ext ", round(pearson(clics, aberrant), 3))
+print("spearman ext", round(spearman(clics, aberrant), 3))
+```
+
+L'exécution montre trois comportements typiques. Sur des données propres et monotones, les deux coefficients sont voisins et vous pouvez citer l'un ou l'autre avec confiance. Quand la relation est fortement régulière sans être strictement droite, Spearman dépasse Pearson et signale ainsi un lien que la droite sous-estime. Quand une seule observation vaut quatre cents, Pearson s'effondre ou s'envole selon les cas, tandis que Spearman ne bouge presque pas puisque cette observation ne modifie qu'un rang. Voilà pourquoi les deux valeurs se rapportent systématiquement : l'une vous dit si la droite est juste, l'autre si l'ordre est conservé.
+
+Corrélation ne rime pas toujours avec causalité, et l'adage mérite d'être compris plutôt que répété. Pour qu'une corrélation traduise un effet direct, il faut exclure au moins trois explications alternatives. La première est le hasard, surtout sur un petit échantillon, où n'importe quelle paire peut paraître liée. La deuxième est l'inverse de la causalité : c'est parce que les clients restent longtemps qu'ils achètent davantage, ou l'inverse, et la corrélation seule ne tranche pas. La troisième, la plus fréquente en données réelles, est la variable commune : la saisonnalité fait monter ensemble la température et les ventes de glace sans que l'une n'explique l'autre, et un facteur tiers, ici la saison, produit les deux. Le schéma ASCII suivant résume les trois configurations à distinguer.
+
+```text
+hasard              variable commune            effet direct
+
+ A   ?               S ------> A                 A ------> B
+    x                    \                          ^
+                          v                          |
+                       B                             ?
+
+ A et B bougent          A et B bougent             changer A
+ sans raison             ensemble via S             change B
+```
+
+Dans la pratique, la variable commune se cherche avec méthode plutôt qu'avec intuition. On liste les éléments qui pourraient influencer les deux colonnes observées, souvent le temps, la taille de l'utilisateur ou la période de l'année, puis on recalcule la corrélation au sein de chaque strate. Si le coefficient s'effondre une fois la saison contrôlée, le lien initial était un artefact. Cette technique, dite contrôle par stratification, se fait sans bibliothèque : on découpe les données en groupes, on calcule un coefficient par groupe, puis on compare. Un coefficient qui disparaît en strate mais qui reste fort en global vous dit précisément où se trouve l'explication, et évite de déployer un modèle qui ne reproduirait qu'un effet de calendrier.
+
+La corrélation joue aussi un rôle défensif : détecter deux colonnes qui portent la même information. Lorsque deux variables dépassent un coefficient absolu de zéro virgule neuf, elles sont le plus souvent deux mesures d'une même réalité, par exemple un montant en euros et le même montant converti. Les garder toutes les deux n'apporte rien, alourdit le modèle et, pour les méthodes fondées sur des distances ou des gradients, déforme la géométrie de l'espace des variables. La règle d'usage consiste à repérer les paires suspectes dans une matrice complète, à en conserver une par paire et à documenter le choix. Notez enfin que la multicolinéarité parfaite rend certains modèles tout simplement impossible à estimer : quand une colonne se déduit exactement d'une combinaison des autres, l'information devient redondante au point de rendre l'inversion numérique instable.
+
+- Regarder le nuage de points avant de citer un coefficient.
+- Rapporter Pearson et Spearman ensemble dès que la relation est douteuse.
+- Se demander si une troisième variable explique les deux colonnes.
+- Recalculer en strate pour voir si le lien survit au contrôle.
+- Retirer un à un les extrêmes et observer la sensibilité du coefficient.
+- Ne jamais transformer une corrélation forte en justification de cause.
+
+Vous savez désormais résumer une colonne et décrire le lien entre deux colonnes. Il reste une catégorie de problèmes plus insidieuse, puisque les chiffres restent exacts alors qu'ils décrivent mal la réalité : les pièges de mesure. C'est le sujet de la section suivante, où nous verrons comment un échantillon mal choisi, une colonne tronquée ou un agrégat mal construit peuvent produire des conclusions justes en apparence et fausses en pratique.
+
+## Pièges de mesure : quand les chiffres décrivent mal la réalité
+
+Toutes les difficultés précédentes portaient sur la façon de résumer des données correctement mesurées. Cette section traite d'un problème antérieur et plus grave : la donnée elle-même peut ne pas dire ce que l'on croit qu'elle dit. Les nombres restent exacts au sens arithmétique, les moyennes sont bien calculées, les tableaux se tiennent, et pourtant la conclusion est fausse parce que la mesure a été produite dans des conditions qui biaisent la représentation. C'est la situation la plus coûteuse en projet, précisément parce qu'elle ne se voit pas dans un contrôle de cohérence : il faut comprendre comment la donnée a été fabriquée. Nous parcourons ici les sept familles de pièges que l'on rencontre le plus souvent : l'échantillon mal choisi, l'effectif insuffisant, la fenêtre d'observation variable, la troncature, l'échelle inadaptée, l'agrégat trompeur et l'étiquette bruitée.
+
+Le premier piège est le biais d'échantillonnage, et il prend des formes très concrètes. Si vous recueillez des avis de clients par formulaire ouvert, seuls ceux qui ont un avis très positif ou très négatif répondent : la moyenne obtenue décrit les gens qui ont choisi de parler, pas la clientèle. Si vous collectez des données uniquement sur les utilisateurs de l'application mobile, vous ignorez ceux qui n'ont jamais installé l'application mais comptent peut-être davantage pour le chiffre d'affaires. Ce type de sélection, dite non aléatoire, ne se corrige pas par un meilleur calcul : elle se corrige en comprenant le mécanisme de sélection, puis en pondérant ou en restreignant explicitement le périmètre. La question à poser avant tout résumé est la suivante : qui a pu apparaître dans ce fichier, et qui en a été structurellement exclu ?
+
+Le biais de sélection existe aussi à l'intérieur d'un fichier apparemment complet, et c'est ainsi qu'il trompe le plus souvent. Un historique de commandes ne contient que les clients qui ont commandé ; un journal de satisfaction ne contient que les parcours arrivés à leur terme ; un jeu de données de recrutement ne contient que les candidatures reçues, pas les postes jamais pourvus. Le modèle apprend alors sur la population observée et déploie sur la population cible, qui diffère. Dans le jargon, cela s'appelle un biais de déploiement : la performance en validation reflète le passé du produit, pas son avenir. Le remède tient en deux gestes, modestes mais décisifs : documenter la population réellement représentée dans le fichier, puis comparer ses caractéristiques, quand c'est possible, à celles de la population sur laquelle le modèle sera utilisé.
+
+Une variante bien connue de ce biais porte un nom évocateur : le biais du survivant. Il se produit chaque fois que le fichier ne contient que les cas qui ont réussi un filtre invisible. Si vous analysez les projets qui ont abouti pour en dégager les facteurs de réussite, vous ignorez tous ceux qui ont suivi exactement la même méthode et ont échoué ; vos conclusions attribuent alors au hasard le mérite des survivants. Le même mécanisme agit sur les comptes qui résilient, les joueurs qui restent, les articles qui sont cités. La détection tient à une question simple : ai-je aussi les cas qui ont disparu ? Lorsque la réponse est non, il faut formuler explicitement la limite dans le rapport, plutôt que de laisser le lecteur croire à une régularité du monde.
+
+L'effectif insuffisant est le deuxième piège, et il se déguise en résultat solide. L'intuition clé tient en une formule sans symbole : l'erreur sur une moyenne diminue comme la racine carrée de l'effectif. Passer de cent à quatre cents observations ne réduit l'erreur que de moitié ; pour diviser l'erreur par dix, il faut multiplier l'effectif par cent. Sur un échantillon de vingt mesures, une différence de quelques pour cent entre deux groupes relève ordinairement du bruit, si bien que conclure à une amélioration sur ce fond revient à deviner en regardant les nuages. Le code suivant calcule l'intervalle de confiance d'une moyenne et le nombre d'observations nécessaires pour réduire l'erreur à un niveau donné, ce qui transforme une intuition en décision chiffrée.
+
+```python
+import math
+import statistics as st
+
+
+def erreur_moyenne(valeurs):
+    return 1.96 * st.stdev(valeurs) / math.sqrt(len(valeurs))
+
+
+def observations_pour(precision, ecart_type):
+    return math.ceil((1.96 * ecart_type / precision) ** 2)
+
+
+mesures_a = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5]
+mesures_b = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5, 12.1, 15.0, 12.7, 13.3,
+             12.8, 14.1, 11.9, 13.7, 12.2, 13.9, 12.5, 14.4, 13.0, 12.6]
+
+for nom, serie in [("petit", mesures_a), ("grand", mesures_b)]:
+    marge = erreur_moyenne(serie)
+    print(nom, "moyenne", round(st.mean(serie), 2),
+          "+/-", round(marge, 2))
+print("obs pour +/- 0.5 :", observations_pour(0.5, 2.0))
+```
+
+La leçon est d'une portée pratique immédiate : une marge qui recouvre l'autre groupe ne justifie aucune décision, et la collecte supplémentaire a un coût qu'il faut comparer au gain de précision. Une erreur fréquente consiste d'ailleurs à confondre significance statistique et utilité pratique. Deux moyennes très proches peuvent différer de manière statistiquement nette sur un très grand échantillon, sans que la différence vaille la peine d'un changement de produit ; à l'inverse, un écart substantiel sur peu d'observations peut être réel mais indémontrable. La bonne formulation combine les trois éléments : l'ampleur de l'écart, l'incertitude qui l'entoure et le seuil à partir duquel l'écart changerait une décision. Rapporter un écart sans incertitude, c'est rapporter une vitesse sans distance.
+
+La fenêtre d'observation variable constitue le troisième piège, et il est endémique dans les données comportementales. Une colonne comptant les clics d'un utilisateur n'a de sens que rapportée à la durée pendant laquelle on l'a observé : un compte dont la session a duré deux minutes et un compte suivi pendant trois mois ne sont pas comparables, alors que la colonne le laisse croire. Le même défaut touche le nombre de tickets, de commandes ou d'erreurs. Le correctif est mécanique : diviser le compteur par la fenêtre, ou n'inclure que les comptes dont la fenêtre est complète. Ce point mérite d'être tranché avant toute analyse, car il change l'ordre de grandeur des colonnes et donc toutes les comparaisons qui suivent.
+
+```python
+import statistics as st
+
+
+def taux_par_minute(comptes, durees):
+    if any(d <= 0 for d in durees):
+        raise ValueError("duree nulle ou negative")
+    return [c / d for c, d in zip(comptes, durees)]
+
+
+comptes = [4, 18, 6, 30, 9]
+durees = [2.0, 30.0, 5.0, 120.0, 4.0]
+
+brut = st.mean(comptes)
+ajuste = st.mean(taux_par_minute(comptes, durees))
+print("moyenne des compteurs   :", round(brut, 2))
+print("moyenne des taux/minute :", round(ajuste, 2))
+print("compteurs correles aux durees :",
+      round(st.correlation(comptes, durees), 3))
+```
+
+Le résultat montre le mécanisme dans sa forme la plus pure : la corrélation entre les compteurs et les durées d'observation est presque parfaite, ce qui signifie que la colonne mesure d'abord la durée de suivi et seulement ensuite le comportement. Un modèle qui utiliserait le compteur brut apprendrait à prédire l'ancienneté du compte, pas son activité. En transformant le compteur en taux, on retire le facteur de nuisance et on rapproche la variable de ce qu'elle prétend mesurer. Ce réflexe, appliqué dès la phase d'exploration, vous fera gagner les erreurs les plus coûteuses, celles qui ne se révèlent qu'une fois le modèle en production.
+
+Le quatrième piège est la troncature, qui intervient quand la mesure ne peut pas dépasser un seuil. Une colonne de durée plafonnée à soixante signale probablement un enregistrement qui s'arrête à l'heure pleine ; une colonne de montant à quatre chiffres tronque les grosses transactions ; un score arrondi à dix ne permet plus de distinguer les valeurs fines. La troncature se repère mécaniquement : si une proportion anormale de valeurs vaut exactement le maximum ou le minimum possible, la mesure est butée. Contrairement à la valeur aberrante, qui est une observation rare, la troncature est une propriété du dispositif de mesure, et elle fausse la moyenne, l'écart-type et la corrélation dans le même sens. Il faut alors soit corriger la collecte, soit analyser en connaissant la limite, soit exclure la colonne des comparaisons sensibles.
+
+```python
+import statistics as st
+
+
+def detecter_troncature(valeurs, plancher=None, plafond=None):
+    n = len(valeurs)
+    bas = sum(1 for v in valeurs if plancher is not None and v == plancher)
+    haut = sum(1 for v in valeurs if plafond is not None and v == plafond)
+    return {
+        "au_plancher": round(bas / n, 3),
+        "au_plafond": round(haut / n, 3),
+        "dans_la_limites": bas / n + haut / n > 0.15,
+    }
+
+
+durees = [12, 30, 60, 60, 45, 60, 60, 20, 60, 35]
+print(detecter_troncature(durees, plancher=0, plafond=60))
+print("mediane", st.median(durees), "moyenne", round(st.mean(durees), 2))
+```
+
+Le cinquième piège concerne les échelles et les codages. Traiter une échelle d'ordre comme une échelle de mesure introduit une arithmétique discutable : la distance entre les niveaux un et deux d'une satisfaction en cinq points n'est pas nécessairement égale à celle entre trois et quatre, et additionner ces niveaux suppose implicitement qu'elle l'est. De même, comparer des moyennes exprimées dans des unités différentes, euros et pourcentages, revient à comparer des longueurs en mètres et en pieds sans conversion. Un cas subtil mérite d'être signalé, celui de deux colonnes parfaitement liées par une transformation linéaire : elles ont alors une corrélation de un, mais l'une ne contient aucune information que l'autre n'ait déjà. Le choix d'échelle n'est donc jamais cosmétique : il détermine les calculs admissibles, les écarts interprétables et la pondération des variables dans un modèle.
+
+Le sixième piège est l'agrégat trompeur, et son exemple le plus célèbre s'appelle le paradoxe de Simpson. Il se produit lorsqu'une tendance observée dans chaque sous-groupe s'inverse quand on mélange les groupes, ou l'inverse. Une différence de moyennes globales peut alors raconter exactement l'opposé de ce que fait chaque groupe pris séparément. Le phénomène n'a rien d'exotique : il apparaît dès que les groupes ont des tailles inégales et des niveaux différents. Le remède consiste à toujours calculer l'agrégat global et les agrégats par groupe, puis à vérifier qu'ils racontent la même histoire avant de publier l'un ou l'autre.
+
+Un autre piège d'agrégation, très fréquent en reporting, consiste à comparer des périodes qui ne se ressemblent pas. Une semaine complète se compare à une semaine, pas à cinq jours ouvrés ; un mois de décembre se compare à un décembre, pas à la moyenne de l'année, quand l'activité est marquée par le calendrier. Comparer un mois à un mois précédent sans tenir compte du nombre de jours ouvrés produit un surcroît artificiel que le lecteur interprétera comme une croissance. La correction est à la portée de tous : rapporter chaque total au nombre de jours, d'utilisateurs ou de transactions disponibles, puis comparer des taux plutôt que des volumes. Gardez en tête que l'inverse existe aussi, et qu'un taux peut devenir instable quand son dénominateur est petit : trois ventes sur quatre donnent soixante-quinze pour cent, ce qui ne promet rien pour la suite. Présentez toujours le taux avec son effectif de départ.
+
+```python
+import statistics as st
+
+
+def moyenne_groupe(lignes, cle_groupe, valeur):
+    groupes = {}
+    for ligne in lignes:
+        groupes.setdefault(ligne[cle_groupe], []).append(ligne[valeur])
+    return {g: round(st.mean(v), 2) for g, v in groupes.items()}
+
+
+lignes = []
+lignes += [{"groupe": "A", "score": s} for s in [70, 72, 68, 74, 71, 69]]
+lignes += [{"groupe": "B", "score": s} for s in [95, 92, 96, 94, 93, 97]]
+lignes += [{"groupe": "C", "score": s} for s in [55, 58, 52, 57, 54, 56]]
+lignes += [{"groupe": "D", "score": s} for s in [80, 78, 82, 79, 81, 77]]
+
+print("par groupe   :", moyenne_groupe(lignes, "groupe", "score"))
+print("global       :", round(st.mean([l["score"] for l in lignes]), 2))
+traitement = [l for l in lignes if l["groupe"] in ("A", "B")]
+print("AB sans trait:", round(st.mean([l["score"] for l in traitement]), 2))
+```
+
+Les valeurs manquantes forment le septième piège, et elles se classent selon leur origine. L'absence est dite aléatoire quand elle ne dépend de rien, dépendante quand elle s'explique par une autre colonne observée, et informative quand elle dépend de la valeur manquante elle-même : un utilisateur qui ne renseigne pas son revenu n'en a probablement pas le même rapport qu'un autre. Le troisième cas est le plus fréquent et le plus dangereux, car remplir la valeur à la médiane efface exactement le signal porté par l'absence. La correction raisonnable consiste à conserver un indicateur de disponibilité à côté de la colonne remplie, à documenter la méthode retenue et à appliquer le même traitement, paramètres compris, aux données d'entraînement et de future production. Notez que l'imputation ajustée sur l'ensemble du fichier constitue déjà une fuite légère, au sens de la section suivante.
+
+Un huitième point, à la frontière entre mesure et qualité, concerne les étiquettes elles-mêmes. Une cible construite par annotation humaine porte du bruit : deux annotateurs désaccordent, les règles changent avec le temps, les cas limites sont tranchés au fil de l'eau. Mesurer cet accord n'a rien de décoratif, puisque un modèle ne peut pas dépasser la cohérence de ceux qui ont produit les étiquettes. Un accord brut, proportion des cas où deux avis coïncident, suffit pour commencer ; lorsqu'une classe est très fréquente, il faut le comparer à l'accord attendu au hasard, sinon deux annotateurs qui disent tous oui à tout paraissent d'un accord remarquable. Si l'accord est faible, améliorez les consignes d'annotation avant d'améliorer le modèle.
+
+```table
+| Piège de mesure | Symptôme observable | Correction possible |
+| --- | --- | --- |
+| Échantillon biaisé | Population du fichier différente de la cible | Restreindre le périmètre ou pondérer |
+| Effectif trop faible | Résultats qui disparaissent à l'ajout de données | Collecter davantage, borner la conclusion |
+| Fenêtre variable | Compteur corrélé à la durée de suivi | Diviser par la fenêtre observée |
+| Troncature | Pic exact au maximum ou minimum | Corriger la collecte ou exclure la colonne |
+| Échelle inadaptée | Écarts sans unité interprétable | Convertir, ordonner ou dichotomiser |
+| Agrégat trompeur | Tendance globale inverse aux groupes | Calculer par groupe et comparer |
+| Manquement informatif | Valeurs absentes concentrées ailleurs | Indicateur de disponibilité plus imputation |
+| Étiquette bruitée | Désaccord des annotateurs | Réécrire les consignes, mesurer l'accord |
+```
+
+
+Avant de confier une colonne à un modèle, une courte vérification suffit à écarter l'essentiel de ces risques. Elle tient en six questions, à poser dans cet ordre : quelle population ce fichier représente-t-il, quelle est l'unité de chaque colonne, quelle fenêtre de temps couvre-t-elle, existe-t-il un plafond ou un plancher artificiel, quelle proportion de valeurs manque et pourquoi, et enfin la colonne était-elle disponible au moment exact où l'on prédit ? Cette dernière question n'a l'air que d'un détail chronologique, mais c'est la plus importante de toute la leçon : elle ouvre directement sur les fuites de données, où un modèle apprend à répondre avant même d'avoir posé la question.
+
+- Vérifier l'unité, la fenêtre et le sens avant le premier calcul.
+- Compter les valeurs exactement au plafond et au plancher.
+- Comparer la population du fichier à la population cible.
+- Calculer l'intervalle de confiance avant d'affirmer une différence.
+- Produire les moyennes par groupe et globales, puis les confronter.
+- Conserver un indicateur de valeur manquante plutôt que de l'effacer.
+- Mesurer l'accord entre annotateurs avant de conclure à la qualité des étiquettes.
+
+## Fuites de données : le modèle qui triche sans le savoir
+
+Une fuite de données, en anglais data leakage, se produit quand une information que le modèle ne devrait pas posséder au moment de la prédiction influence l'entraînement ou l'évaluation. Le modèle n'apprend alors plus à prévoir : il apprend à déchiffrer un indice laissé sur la table. Les conséquences sont toujours les mêmes et toujours déroutantes : des scores de validation remarquables, une fierté passagère, puis un effondrement une fois le système branché sur des données réelles, sans que la phase d'entraînement n'ait changé d'une ligne. Cette section décrit les quatre grandes familles de fuites, puis les méthodes simples pour les repérer. Toutes se décrivent en une phrase : la frontière entre ce qui est connu et ce qui doit être prédit a été franchie dans le mauvais sens.
+
+La première famille, la plus spectaculaire, est la fuite de cible. Elle concerne une colonne qui contient, directement ou indirectement, l'issue que l'on cherche à prédire. L'exemple canonique est une variable mesurée après l'événement : pour prédire un désabonnement, vous disposez d'un champ indiquant le motif de résiliation saisi par le client, ou d'un score calculé à partir des données de clôture du compte. La corrélation avec la cible approche alors un, le modèle atteint une performance extraordinaire, et le déploiement échoue puisque cette donnée n'existe tout simplement pas avant le désabonnement. Les fuites de cible passent aussi par des dérivés plus discrets : un identifiant attribué à la suite du churn, un compteur d'événements qui inclut lui-même l'événement à prédire, ou une agrégation temporelle calculée sur la période entière alors que la prédiction porte sur son début.
+
+La deuxième famille est la fuite entre entraînement et évaluation. Elle intervient lorsqu'un calcul utilise l'ensemble du fichier avant le découpage : normalisation, remplacement des valeurs manquantes, réduction de dimension, sélection de variables. La conséquence est subtile mais réelle : les données de test ont participé à la définition des paramètres appliqués aux données d'entraînement, si bien que le test n'est plus indépendant. Le score mesure alors un modèle qui a vu un peu de l'avenir. La règle à mémoriser tient en trois mots : découper d'abord. Une fois le découpage effectué, chaque paramètre estimé, moyenne, écart-type, minimum, maximum, fréquence de catégorie, se calcule sur l'entraînement uniquement, puis s'applique tel quel aux données de validation et de test. L'exemple ci-dessous montre le calcul fautif et sa correction, tous deux écrits sans bibliothèque externe.
+
+```python
+import statistics as st
+
+
+def normalisation_faute(valeurs):
+    moyenne = st.mean(valeurs)
+    ecart = st.stdev(valeurs)
+    return [(v - moyenne) / ecart for v in valeurs]
+
+
+def normalisation_honnête(entrainement, a_evaluer):
+    moyenne = st.mean(entrainement)
+    ecart = st.stdev(entrainement)
+    ajuster = lambda v: (v - moyenne) / ecart
+    return [ajuster(v) for v in entrainement], [ajuster(v) for v in a_evaluer]
+
+
+durees = [4, 5, 6, 5, 7, 6, 8, 5, 44, 6]
+appariement = durees[:7], durees[7:]
+
+faux = normalisation_faute(durees)
+bon_train, bon_test = normalisation_honnête(*appariement)
+print("faute  ", [round(v, 2) for v in faux])
+print("train  ", [round(v, 2) for v in bon_train])
+print("test   ", [round(v, 2) for v in bon_test])
+```
+
+Le détail qui fait toute la différence tient à l'origine des paramètres. Dans la version fautive, la moyenne et l'écart-type sont calculés sur les dix valeurs, y compris celles réservées à l'évaluation : le test a donc influencé la transformation. Dans la version honnête, les paramètres proviennent des sept seules valeurs d'entraînement et sont réutilisés à l'identique pour le reste. Sur ce petit exemple l'écart paraît ténu, mais il grandit avec le nombre de colonnes et se cumule : à mesure que le jeu de données grossit, le test finit par définir à lui seul la position du zéro et l'unité de dispersion, et le score observé devient une mesure de confort plutôt qu'une estimation.
+
+La troisième famille rassemble les fuites de préparation, où l'information circule par des canaux moins visibles. Remplacer les valeurs manquantes par la médiane calculée sur tout le jeu en est une, tout comme compter la fréquence d'une catégorie sur l'ensemble des lignes avant le découpage. L'exemple le plus rusé est l'encodage de la cible : remplacer chaque catégorie par le taux de cible correspondant impose de connaître la cible de toutes les lignes, y compris celles du test. La parade consiste à calculer ces statistiques à l'intérieur de chaque pli d'entraînement, puis à les appliquer aux plis voisins. Une autre source de fuite, très répandue, vient des opérations réalisées avant le découpage par commodité : un dédoublonnage, un filtrage des colonnes ou un agrégat calculé une fois pour toutes peut faire communiquer les deux côtés de la frontière.
+
+La quatrième famille est la fuite temporelle, celle qui ruine les prévisions. Si vos données sont datées et que vous découpez au hasard, une observation de lundi se retrouve en entraînement et son lendemain en test : le modèle dispose d'informations postérieures à celles qu'il doit prédire. Le score obtenu mesure la capacité à interpoler entre des dates déjà vues, non à extrapoler vers un futur inconnu. Le correctif est structurel plutôt que statistique : découper sur le temps, en conservant les dates les plus anciennes pour l'entraînement et les plus récentes pour l'évaluation. La même logique s'étend au découpage par groupe. Lorsqu'un même client, site ou patient apparaît des centaines de fois, un tirage aléatoire disperse ses lignes des deux côtés et le modèle mémorise des profils plutôt qu'il n'apprend des régularités.
+
+```python
+import random
+
+
+def split_temporel(lignes, part_entrainement=0.8):
+    tries = sorted(lignes, key=lambda ligne: ligne["date"])
+    coupe = int(len(tries) * part_entrainement)
+    return tries[:coupe], tries[coupe:]
+
+
+def split_par_groupe(lignes, cle_groupe, part_entrainement=0.8, graine=0):
+    random.seed(graine)
+    groupes = sorted({ligne[cle_groupe] for ligne in lignes})
+    random.shuffle(groupes)
+    coupe = int(len(groupes) * part_entrainement)
+    conserves = set(groupes[:coupe])
+    entrainement = [l for l in lignes if l[cle_groupe] in conserves]
+    test = [l for l in lignes if l[cle_groupe] not in conserves]
+    return entrainement, test
+
+
+lignes = [{"date": f"2024-01-{jour:02d}", "utilisateur": f"u{jour % 3}",
+           "valeur": jour * 3.5} for jour in range(1, 21)]
+
+avant, apres = split_temporel(lignes)
+print("temporel  entrainement", len(avant), "test", len(apres))
+print("dates test", [l["date"] for l in apres[:3]])
+
+par_train, par_test = split_par_groupe(lignes, "utilisateur")
+ids_train = {l["utilisateur"] for l in par_train}
+ids_test = {l["utilisateur"] for l in par_test}
+print("groupes partages :", sorted(ids_train & ids_test))
+```
+
+La sortie confirme les deux propriétés recherchées. Le découpage temporel place entièrement la fin de la période côté test, sans aucun recouvrement de dates ; le découpage par groupe garantit qu'aucun identifiant n'apparaît des deux côtés, ce que la ligne des groupes partagés affiche vide. Ces deux routines suffisent pour sécuriser la très grande majorité des projets, et elles s'écrivent en quelques lignes parce qu'elles ne font que respecter une frontière. Le coût est un score souvent moins flatteur, ce qui doit être lu comme une amélioration : un chiffre plus bas mais honnête vaut infiniment mieux qu'un chiffre élevé construit sur une information interdite.
+
+Repérer une fuite relève d'une démarche systématique plutôt que d'un coup de flair. Cinq tests couvrent l'essentiel. Le premier est chronologique : pour chaque colonne, demandez à quel moment précis la valeur existe dans le monde réel, et éliminez toute colonne postérieure à l'instant de prédiction. Le deuxième est statistique : une corrélation supérieure à zéro virgule neuf avec la cible, sur une variable qui devrait être indépendante, signale presque toujours un dérivé de la cible. Le troisième est un test d'ablation : réentraînez le modèle sans la colonne suspecte et comparez les scores ; un effondrement brutal révèle une information indûment obtenue. Le quatrième est un contrôle d'impossibilité : un modèle linéaire très simple qui atteint des sommets signale souvent une colonne qui répond à la place du modèle. Le cinquième est documentaire : retrouvez le code qui produit la colonne et lisez sa date de calcul.
+
+```table
+| Type de fuite | Symptôme typique | Correction |
+| --- | --- | --- |
+| Fuite de cible | Corrélation quasi parfaite avec l'étiquette | Supprimer la colonne et ses dérivés |
+| Entraînement et test mélangés | Score qui chute après retrait d'une étape | Découper avant toute estimation de paramètres |
+| Préparation ajustée partout | Écart entre prototype et production | Ajuster sur l'entraînement, appliquer ailleurs |
+| Fuite temporelle | Excellente validation, échec en production | Découper sur le temps, jamais au hasard |
+| Fuite de groupe | Mêmes entités des deux côtés | Découper par identifiant |
+| Fuite par sélection | Colonne apparue après filtrage du jeu | Reproduire la chaîne complète dans l'ordre |
+```
+
+
+Un test d'ablation complet mérite d'être écrit une fois pour toutes, car il transforme une intuition en mesure. Le principe est rudimentaire : vous évaluez le modèle avec toutes les colonnes, puis vous le réévaluez après en avoir retiré une, et vous observez l'écart. Sur des données honnêtes, l'écart reste modeste et progressif ; sur des données contaminées, il est brutal, et la colonne incriminée se dévoile d'elle-même. Appliquez-le d'abord aux variables les plus rassurantes, celles dont la corrélation avec la cible vous semble trop belle.
+
+```python
+import statistics as st
+
+
+def evaluation(lignes, colonnes):
+    score = 0.0
+    for colonne in colonnes:
+        avec = [l["cible"] for l in lignes if l[colonne] >= 0]
+        sans = [l["cible"] for l in lignes if l[colonne] < 0]
+        if not avec or not sans:
+            continue
+        ecart = abs(st.mean(avec) - st.mean(sans))
+        score += ecart
+    return round(score / max(len(colonnes), 1), 3)
+
+
+lignes = [
+    {"cible": 1, "anciennete": 3, "motif_resiliation": 5},
+    {"cible": 1, "anciennete": 4, "motif_resiliation": 4},
+    {"cible": 0, "anciennete": 40, "motif_resiliation": -1},
+    {"cible": 0, "anciennete": 52, "motif_resiliation": -1},
+    {"cible": 1, "anciennete": 2, "motif_resiliation": 5},
+    {"cible": 0, "anciennete": 35, "motif_resiliation": -1},
+]
+
+toutes = ["anciennete", "motif_resiliation"]
+print("avec les deux  :", evaluation(lignes, toutes))
+print("sans le motif   :", evaluation(lignes, ["anciennete"]))
+```
+
+L'écart obtenu entre les deux colonnes dit tout : l'ancienneté sépare les groupes de façon modérée, le motif de résiliation les sépare de façon nette parce qu'il n'existe que chez ceux qui ont déjà résilié. La colonne n'est pas fausse, elle est simplement postérieure à la décision, et c'est exactement ce que doit apprendre à voir un œil exercé. Rappelez-vous que la fuite ne triche pas sur les calculs : elle triche sur le calendrier, et c'est pourquoi aucun contrôle de types, aucune vérification de valeurs négatives et aucun test de cohérence ne la détecteraient.
+
+## Une chaîne de traitement honnête
+
+Toutes les précautions de cette leçon se rangent dans un ordre unique, et cet ordre constitue à lui seul la moitié de la méthode. On découpe d'abord les données en ensembles distincts ; on choisit ensuite les colonnes en s'interdisant tout regard sur la part réservée à l'évaluation ; on ajuste les transformations sur l'entraînement, moyennes, écarts, seuils, fréquences, encodages ; on entraîne le modèle ; on évalue une seule fois sur le jeu tenu à l'écart ; on documente enfin les choix, les dates et les hypothèses. Inversez deux étapes, même innocemment, et le découpage ne sert plus à rien. Cette discipline a un avantage supplémentaire : elle rend le travail reproductible, puisque n'importe qui relançant la chaîne dans le même ordre obtient les mêmes chiffres.
+
+```text
+1. verrouiller le jeu de test      4. ajuster les transformations
+2. choisir les colonnes            5. entrainer le modele
+   sans voir le test               6. evaluer une seule fois
+3. imputer sur l'entrainement      7. documenter dates et choix
+
+   frontiere : rien n'est estimate sur le jeu de test
+```
+
+La validation croisée prolonge ce raisonnement lorsque les données sont rares. Le principe consiste à répartir l'entraînement en plusieurs plis, à entraîner sur les plis réunis et à évaluer sur le pli laissé de côté, en tournant jusqu'à ce que chaque pli ait servi d'évaluation. La moyenne des scores donne une estimation plus stable qu'un unique découpage, et l'écart entre les plis mesure la sensibilité du résultat. Deux variantes sont indispensables dès que les données sont datées ou regroupées : la validation croisée temporelle, où chaque pli est strictement postérieur au précédent, et la validation croisée par groupe, où aucun identifiant n'apparaît dans deux plis différents. Appliquer la forme ordinaire à des données temporelles reproduit la fuite au sein même de l'évaluation.
+
+La documentation n'est pas un supplément décoratif, c'est le dernier maillon de la chaîne. Notez pour chaque colonne sa source, son unité, sa fenêtre de temps et le moment exact où elle devient disponible ; notez pour chaque décision de traitement le seuil retenu et sa justification ; notez enfin la date du découpage, car les données changent avec le temps et une évaluation refaite six mois plus tard ne doit pas intégrer par accident des informations nouvelles. Un fichier de quelques lignes suffit. Cette habitude vous sauvera lorsque la question reviendra, presque toujours à la mauvaise occasion : sur quoi ce score s'appuyait-il exactement ?
+
+- Découper avant la moindre estimation de paramètre.
+- Ajuster imputation, normalisation et encodage sur l'entraînement.
+- Séparer les calculs datés et interdire tout aperçu du jeu de test.
+- Découper sur le temps pour toute donnée historique.
+- Découper par identifiant quand une entité apparaît plusieurs fois.
+- Tester chaque colonne suspecte par corrélation et par ablation.
+- Documenter la chaîne complète avant de publier un score.
+
+## À retenir
+
+- Résumer un échantillon, c'est choisir entre moyenne et médiane selon la forme, puis toujours annoncer une dispersion à côté.
+- La médiane et l'IQR résistent aux queues longues ; l'écart-type et la moyenne ne les résistent pas.
+- Un histogramme se lit avant tout calcul : symétrie, queue à droite, pic unique ou deux populations mélangées.
+- Pearson mesure un lien droite, Spearman un lien monotone ; un coefficient proche de zéro n'exclut aucune relation en cloche.
+- Une corrélation forte impose de chercher la variable commune, l'inverse de causalité et la possible fuite de cible.
+- Les pièges de mesure, échantillon biaisé, effectif faible, fenêtre variable, troncature et agrégat trompeur, faussent des chiffres pourtant exacts.
+- Une fuite de données triche sur le calendrier : la valeur n'existe pas encore au moment où l'on prétend prédire.
+- L'ordre des opérations fait la moitié de la méthode : découper, ajuster sur l'entraînement, entraîner, évaluer une fois, documenter.
+- Un score plus bas mais obtenu sans fuite vaut mieux qu'un score flatteur construit sur une information interdite.
+
+## Erreurs fréquentes
+
+- Présenter une moyenne seule sur une colonne visiblement étirée à droite.
+- Conclure à l'absence de relation parce que le coefficient de Pearson est proche de zéro.
+- Transformer une corrélation forte en certitude causale sans contrôle de strate ni hypothèse explicite.
+- Calculer normalisation et imputation sur l'ensemble du fichier avant de découper entraînement et test.
+- Découper au hasard des données datées, ce qui place le futur dans l'entraînement.
+- Laisser un même client apparaître des deux côtés du découpage.
+- Comparer deux périodes de longueur différente sans rapporter les totaux à un dénominateur.
+- Supprimer une valeur extrême parce qu'elle dérange, sans être allé vérifier sa source.
+- Publier un score sans indiquer l'effectif, la méthode de découpage et la date des données.
+- Chercher à améliorer un modèle alors que le problème vient d'une colonne qui ne devrait pas exister.
+
+## Pour aller plus loin
+
+La référence du module statistics de la bibliothèque standard reste le premier arrêt : elle détaille chaque fonction de résumé, distingue explicitement les versions pour échantillon et pour population, et documente les quantiles. Adressez-vous à : https://docs.python.org/fr/3/library/statistics.html
+
+Le guide des pièges courants du projet scikit-learn est la lecture la plus directe pour approfondir la partie fuites : il passe en revue la contamination du test, l'ajustement précoce des transformateurs, la fuite de cible et les biais d'échantillonnage, avec des exemples concrets de code à ne pas écrire. Adressez-vous à : https://scikit-learn.org/stable/common_pitfalls.html
+
+La documentation de scipy.stats rassemble les lois de probabilité, les tests d'hypothèse et les mesures d'association, avec les hypothèses attachées à chacune : elle servira de référence dès que vous sortirez des seuls résumés descriptifs. Adressez-vous à : https://docs.scipy.org/doc/scipy/reference/stats.html
+
+Enfin, la documentation du module csv et celle du module random de Python complètent la boîte à outils pour manipuler des fichiers et reproduire des tirages contrôlés. Adressez-vous à : https://docs.python.org/fr/3/library/csv.html et https://docs.python.org/fr/3/library/random.html
+
+## Et maintenant : passez à l'exercice pratique
+
+L'exercice qui suit cette leçon reprend exactement la chaîne que vous venez d'étudier, sur un fichier de mesures de sessions clients avec une colonne de désabonnement. Vous calculerez les résumés de chaque colonne et choisirez la mesure adaptée à sa forme, vous produirez une matrice de corrélation en vous demandant lequel des coefficients raconte l'histoire, vous listerez les colonnes tronquées, mal normalisées ou disponibles trop tard, puis vous écrirez le découpage temporel et le rapport des fuites potentielles. Tout se fera avec les seuls modules statistics, math, csv, json et random, si bien que vous pourrez exécuter votre travail partout. C'est au moment d'écrire le rang de chaque colonne, ligne à ligne, que les notions de distribution, de corrélation et de fuite cesseront d'être des définitions pour devenir des réflexes de lecture.

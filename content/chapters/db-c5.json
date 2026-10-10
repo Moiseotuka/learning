@@ -1,0 +1,61 @@
+{
+  "exercise": "Réalisez un audit d'index complet sur la base de la bibliothèque des Lilas. Le script de départ crée les tables ouvrages, exemplaires, lecteurs et emprunts, mais il ne contient aucun index de performance, et les quatre requêtes fournies, qui représentent les écrans les plus sollicités de l'application, s'exécutent par balayage complet. Commencez par charger le schéma et les données d'exemple, puis produisez le plan de chaque requête avec EXPLAIN ANALYZE et relevez le temps réel, le nombre de lignes estimées et le nombre de lignes réellement traitées. Estimez ensuite la sélectivité de chaque condition en comptant les lignes concernées rapportées au total. Pour chaque requête, décidez si la condition est sargeable : signalez les colonnes enveloppées dans une fonction, les motifs LIKE ouverts par un joker, les colonnes à faible cardinalité et les colonnes qui manquent pour une couverture. Créez enfin les index que vos mesures justifient, dans un fichier de migration annoté, en respectant la règle du préfixe de gauche pour les index composites et en évitant tout index sur une colonne isolée à faible cardinalité. Réécrivez les requêtes non sargeables afin d'utiliser ces index, remplacez les SELECT étoile par la liste stricte des colonnes utiles, puis mesurez à nouveau et consignez dans un tableau les temps d'avant et d'après. Terminez par la suppression d'un index inutile, si le schéma en contient, et vérifiez qu'aucune performance ne se dégrade.",
+  "resources": [
+    {
+      "label": "PostgreSQL — Documentation officielle : index et utilisation des index",
+      "url": "https://www.postgresql.org/docs/current/indexes.html"
+    },
+    {
+      "label": "PostgreSQL — Documentation officielle : utilisation de EXPLAIN pour planifier les requêtes",
+      "url": "https://www.postgresql.org/docs/current/using-explain.html"
+    },
+    {
+      "label": "MySQL — Documentation officielle : optimisation des requêtes et stratégies d'index",
+      "url": "https://dev.mysql.com/doc/refman/8.0/en/optimization.html"
+    },
+    {
+      "label": "Vidéos tutorielles DB",
+      "url": "https://www.youtube.com/results?search_query=db db"
+    },
+    {
+      "label": "Grafikart — PostgreSQL : installation et bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=postgresql%20tutoriel"
+    },
+    {
+      "label": "Grafikart — Modélisation Merise, MLD, MCD",
+      "url": "https://www.youtube.com/@grafikart/search?query=merise%20mld%20mcd"
+    },
+    {
+      "label": "Grafikart — Requêtes SQL avancées",
+      "url": "https://www.youtube.com/@grafikart/search?query=sql%20avanc%C3%A9"
+    }
+  ],
+  "code_language": "sql",
+  "starter_code": "-- Bibliothèque des Lilas : audit d'index\n-- 1. Chargez ce schéma, insérez vos données, puis mesurez avec EXPLAIN ANALYZE.\n\nCREATE TABLE lecteurs (\n  identifiant      INTEGER PRIMARY KEY,\n  nom              TEXT NOT NULL,\n  prenom           TEXT NOT NULL,\n  courriel         TEXT NOT NULL,\n  ville            TEXT NOT NULL,\n  date_inscription DATE NOT NULL\n);\n\nCREATE TABLE ouvrages (\n  identifiant INTEGER PRIMARY KEY,\n  titre       TEXT NOT NULL,\n  auteur      TEXT NOT NULL,\n  annee       INTEGER NOT NULL\n);\n\nCREATE TABLE exemplaires (\n  identifiant  INTEGER PRIMARY KEY,\n  ouvrage_id   INTEGER NOT NULL REFERENCES ouvrages (identifiant),\n  cote         TEXT NOT NULL,\n  etat         TEXT NOT NULL\n);\n\nCREATE TABLE emprunts (\n  identifiant    INTEGER PRIMARY KEY,\n  lecteur_id     INTEGER NOT NULL REFERENCES lecteurs (identifiant),\n  exemplaire_id  INTEGER NOT NULL REFERENCES exemplaires (identifiant),\n  date_sortie    DATE NOT NULL,\n  date_retour    DATE,\n  est_en_retour  BOOLEAN NOT NULL DEFAULT FALSE\n);\n\n-- Requête 1 : fiche d'un lecteur saisie par son courriel.\nSELECT identifiant, nom, prenom\nFROM lecteurs\nWHERE LOWER(courriel) = 'ada@lilas.fr';\n\n-- Requête 2 : écran des emprunts en cours, triés du plus ancien au plus récent.\nSELECT *\nFROM emprunts\nWHERE est_en_retour = TRUE\n  AND date_retour IS NULL\nORDER BY date_sortie;\n\n-- Requête 3 : recherche d'ouvrages contenant un mot dans le titre.\nSELECT titre, auteur\nFROM ouvrages\nWHERE titre LIKE '%nuit%';\n\n-- Requête 4 : statistique annuelle des emprunts.\nSELECT count(*)\nFROM emprunts\nWHERE EXTRACT(YEAR FROM date_sortie) = 2026;\n\n-- À produire : vos constats, vos index, vos réécritures et vos mesures d'avant/après.",
+  "solution_code": "-- Bibliothèque des Lilas : audit d'index (corrigé)\n\n-- Index de contrainte déjà présents : clé primaire et contraintes d'unicité.\n-- Index de performance justifiés par les mesures :\n\n-- Requête 1 : la fonction autour de courriel interdisait l'index.\n-- Deux solutions possibles, la seconde étant la plus durable.\nCREATE UNIQUE INDEX idx_lecteurs_courriel ON lecteurs (courriel);\nCREATE INDEX idx_lecteurs_courriel_min ON lecteurs (LOWER(courriel));\n\nSELECT identifiant, nom, prenom\nFROM lecteurs\nWHERE courriel = 'ada@lilas.fr';\n\n-- Requête 2 : colonnes de gauche pour le filtre, colonne de tri ensuite.\nCREATE INDEX idx_emprunts_retour_sortie ON emprunts (est_en_retour, date_sortie);\n\nSELECT identifiant, lecteur_id, exemplaire_id, date_sortie\nFROM emprunts\nWHERE est_en_retour = TRUE\n  AND date_retour IS NULL\nORDER BY date_sortie;\n\n-- Requête 3 : le joker en tête rend l'index impossible, on passe au plein texte.\nCREATE INDEX idx_ouvrages_titre_texte\n  ON ouvrages USING GIN (to_tsvector('french', titre));\n\nSELECT titre, auteur\nFROM ouvrages\nWHERE to_tsvector('french', titre) @@ plainto_tsquery('french', 'nuit');\n\n-- Requête 4 : la fonction annule l'index, la plage de dates le réactive.\nCREATE INDEX idx_emprunts_date_sortie ON emprunts (date_sortie);\n\nSELECT count(*)\nFROM emprunts\nWHERE date_sortie >= '2026-01-01'\n  AND date_sortie <  '2027-01-01';\n\n-- Index inutile détecté : compteur de lecture à zéro, suppression mesurée.\n-- DROP INDEX idx_lecteurs_ville;\n\n-- Vérification finale : chaque plan doit montrer un accès par index,\n-- et les temps réels doivent être consignés avant et après chaque changement.\nEXPLAIN ANALYZE\nSELECT identifiant, lecteur_id, exemplaire_id, date_sortie\nFROM emprunts\nWHERE est_en_retour = TRUE\n  AND date_retour IS NULL\nORDER BY date_sortie;",
+  "concepts": [
+    "Modèle relationnel (entities/attributes/relations)",
+    "Clés primaires et étrangères",
+    "Cardinalités",
+    "Diagramme Entité-Association",
+    "Concepts SQL de base"
+  ],
+  "lecon": "db-c5.txt",
+  "videos": [
+    {
+      "title": "PostgreSQL : installation et bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=postgresql%20tutoriel",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Modélisation Merise, MLD, MCD",
+      "url": "https://www.youtube.com/@grafikart/search?query=merise%20mld%20mcd",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Requêtes SQL avancées",
+      "url": "https://www.youtube.com/@grafikart/search?query=sql%20avanc%C3%A9",
+      "channel": "Grafikart"
+    }
+  ]
+}

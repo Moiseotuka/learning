@@ -1,0 +1,187 @@
+Jusqu'ici, chaque requête posait une seule question, et les jointures permettaient d'étendre la question à plusieurs tables. La réalité métier est plus exigeante : certaines réponses conditionnent d'autres réponses. Quels sont les lecteurs ayant emprunté plus que la moyenne ? Quels ouvrages n'ont jamais été sortis depuis leur acquisition ? Pour répondre, il faut calculer une valeur, puis s'en servir comme critère dans la même interrogation. Les sous-requêtes résolvent exactement ce problème : elles placent une requête à l'intérieur d'une autre, de sorte que le résultat de la requête interne devienne une donnée pour la requête externe.
+
+Ce mécanisme s'exprime partout en SQL. On place une sous-requête après un opérateur de comparaison dans WHERE, après FROM pour traiter un intermédiaire calculé, ou même dans la liste SELECT pour afficher une valeur agrégée à côté de chaque ligne. Chaque emplacement possède ses règles, ses limites et ses conséquences sur la performance. Une fois ces formes maîtrisées, une troisième écriture encore plus lisible s'offre à vous : la CTE, ou expression de table commune, introduite par le mot-clé WITH. Elle organise les étapes d'une requête complexe comme des briques nommées, et prépare le terrain aux vues, qui figent une requête sous un nom permanent.
+
+La dernière partie de ce chapitre rassemble le tout dans des exemples complets. Vous y verrez comment une même question se résout de trois manières différentes, à l'aide d'une sous-requête, d'une CTE ou d'une vue, et comment choisir entre ces approches selon le contexte. Avant d'aller plus loin, une recommandation pratique : conservez un jeu de test modeste mais couvrant, une dizaine de lecteurs, deux ouvrages sans exemplaire, quelques emprunts en cours et d'autres close. Les sous-requêtes et les vues se testent difficilement sur des données uniformes, puisque leur intérêt apparaît précisément dans les cas limites.
+
+## Sous-requêtes dans WHERE, dans FROM et sous-requêtes scalaires
+
+La forme la plus courante place une sous-requête après le mot-clé IN ou après un opérateur de comparaison dans la clause WHERE. Par exemple, pour lister les ouvrages qui n'ont jamais été empruntés, on demande d'abord à la sous-requête de fournir la liste des ouvrages déjà sortis, puis on retient ceux qui n'appartiennent pas à cette liste. La sous-requête s'exécute, son résultat est mis en mémoire, et la requête externe le compare à chaque ligne candidate. L'opérateur NOT IN exprime l'exclusion, IN exprime l'appartenance, et les deux se lisent presque comme une phrase française.
+
+```sql
+SELECT o.titre, o.auteur
+FROM ouvrages AS o
+WHERE o.identifiant NOT IN (
+  SELECT x.ouvrage_id
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+);
+```
+
+L'opérateur EXISTS offre une variante dont le comportement diffère sur un point crucial. Placé devant une sous-requête, EXISTS ne calcule pas une liste de valeurs : il vérifie simplement qu'au moins une ligne est renvoyée, et s'arrête dès la première trouvée. La sous-requête peut alors citer les colonnes de la requête externe : on parle de sous-requête corrélée, car elle dépend de la ligne en cours d'exécution. Le moteur répète alors la recherche pour chaque ligne candidate, ce qui peut sembler coûteux, mais qui reste très efficace quand un index couvre la condition. En pratique, EXISTS et IN produisent le même résultat lorsque les données sont propres ; EXISTS reste préférable quand la colonne de gauche peut contenir des valeurs nulles, car NOT IN cesse alors de fonctionner de façon intuitive.
+
+La sous-requête scalaire occupe une place à part : elle doit renvoyer exactement une ligne et une colonne, car son rôle est de fournir une valeur. On la place dans la liste SELECT, à côté des colonnes ordinaires, ou dans WHERE avec un opérateur de comparaison. Par exemple, afficher chaque lecteur avec le nombre total d'emprunts de la bibliothèque revient à calculer une fois un compteur, puis à l'afficher sur chaque ligne. Attention : si la sous-requête renvoie deux lignes, le moteur refuse l'exécution avec une erreur explicite ; si elle ne renvoie aucune ligne, la valeur devient NULL, sans avertissement. Le contrat une ligne une colonne est strict, et c'est ce qui rend la lecture du résultat fiable.
+
+```sql
+SELECT l.nom,
+       l.prenom,
+       (SELECT COUNT(*) FROM emprunts AS e WHERE e.lecteur_id = l.identifiant) AS emprunts
+FROM lecteurs AS l
+ORDER BY emprunts DESC;
+```
+
+La sous-requête dans FROM, appelée table dérivée, sert à fabriquer un intermédiaire sur lequel la requête externe peut à son tour jointer, filtrer ou agréger. On l'écrit entre parenthèses après FROM et on lui attribue obligatoirement un alias, sans quoi la plupart des moteurs refusent la syntaxe. Son intérêt apparaît dès que l'agrégation doit précéder la jointure : compter les exemplaires empruntés par ouvrage, puis rattacher ce total aux informations de l'ouvrage. Tenter l'inverse, joindre d'abord puis agréger, produit des totaux faux, car la jointure a déjà multiplié les lignes.
+
+```sql
+SELECT o.titre,
+       o.auteur,
+       COALESCE(t.total, 0) AS exemplaires_emprunts
+FROM ouvrages AS o
+LEFT JOIN (
+  SELECT x.ouvrage_id, COUNT(*) AS total
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+  GROUP BY x.ouvrage_id
+) AS t ON t.ouvrage_id = o.identifiant
+ORDER BY exemplaires_emprunts DESC;
+```
+
+Trois règles de bon usage complètent ce panorama. Premièrement, une sous-requête dans SELECT doit rester simple : si elle dépend de la ligne externe, elle s'exécute autant de fois que la requête produit de lignes, ce qui coûte cher sur une table large. Deuxièmement, préférez IN ou EXISTS pour un test d'appartenance, et réservez la forme scalaire à l'affichage d'un indicateur. Troisièmement, lisez toujours votre requête de l'intérieur vers l'extérieur : identifiez d'abord ce que la sous-requête renvoie, une liste, un tableau ou une valeur, puis comprenez ce que la requête externe en fait. Cette lecture du dedans au dehors suffit à dénouer la plupart des requêtes épineuses.
+
+## Les CTE avec WITH : des sous-requêtes lisibles et réutilisables
+
+L'expression de table commune, ou CTE pour common table expression, se déclare avant la requête principale avec le mot-clé WITH. Elle donne un nom à un résultat intermédiaire, comme on nommerait une variable dans un programme, puis la requête principale l'utilise comme s'il s'agissait d'une table ordinaire. Dès que deux sous-requêtes s'enchaînent, ou que la même sous-requête doit être citée deux fois, la CTE transforme une formule difficile à relire en une suite d'étapes nommées, chacune répondant à une question précise.
+
+```sql
+WITH emprunts_en_cours AS (
+  SELECT e.identifiant, e.lecteur_id, e.date_sortie
+  FROM emprunts AS e
+  WHERE e.date_retour IS NULL
+),
+volumetrie AS (
+  SELECT ee.emprunt_id, COUNT(*) AS nb_exemplaires
+  FROM emprunt_exemplaires AS ee
+  GROUP BY ee.emprunt_id
+)
+SELECT l.nom,
+       l.prenom,
+       e.date_sortie,
+       v.nb_exemplaires
+FROM lecteurs AS l
+INNER JOIN emprunts_en_cours AS e ON e.lecteur_id = l.identifiant
+INNER JOIN volumetrie AS v ON v.emprunt_id = e.identifiant
+ORDER BY e.date_sortie;
+```
+
+Observez la structure de cet exemple. Deux CTE sont séparées par une virgule, chacune possède son SELECT, et la requête principale commence par le FROM qui les consomme. Chaque étape possède un nom parlant, emprunts_en_cours et volumetrie, qui remplace un bloc de parenthèses imbriquées. Le résultat est identique à la version avec sous-requêtes, mais l'intention se lit ligne à ligne : d'abord filtrer les emprunts ouverts, puis compter leurs exemplaires, puis rapprocher le tout des lecteurs. Cette lisibilité n'est pas un luxe : elle réduit les erreurs de parenthèses et facilite la relecture entre collègues.
+
+Les CTE se distinguent des sous-requêtes par deux capacités supplémentaires. Elles peuvent être référencées plusieurs fois dans la requête principale, là où une sous-requête serait recopiée. Et elles peuvent être récursives, avec la mention RECURSIVE après le mot-clé WITH. Une CTE récursive s'appelle elle-même pour descendre une hiérarchie : la table des ouvrages qui recommandent d'autres ouvrages, ou celle des lecteurs parrainés, se parcourt ainsi jusqu'à la racine sans écrire dix jointures successives. La syntaxe comporte une partie non récursive qui initialise le parcours et une partie récursive qui l'étend, séparées par une union.
+
+Il existe un débat technique sur le statut des CTE : certains moteurs les matérialisent, c'est-à-dire exécutent et stockent temporairement leur résultat, tandis que d'autres les incorporent simplement dans la requête principale, comme une sous-requête en ligne. PostgreSQL propose une clause MATERIALIZED pour forcer la première interprétation, MySQL et SQL Server gèrent ces choix différemment. Pour un débutant, la conséquence pratique tient en une phrase : une CTE réutilisée plusieurs fois peut être calculée une fois ou plusieurs, et sur une table volumineuse la différence se mesure. Mesurez, ne supposez pas, et comparez les temps d'exécution avant d'optimiser.
+
+Un conseil d'écriture : composez vos CTE dans l'ordre des questions métier, pas dans l'ordre où le moteur les exécutera probablement. L'optimiseur reste libre de réorganiser les étapes, donc votre ordre n'a aucune influence sur la performance ; il influence en revanche entièrement la compréhension humaine. Une CTE par idée, un nom qui décrit le résultat, et une requête principale courte : c'est la recette des requêtes que l'on ose laisser commentaires dans un projet professionnel.
+
+## CREATE VIEW : donner un nom stable à une requête
+
+Une vue est une requête enregistrée sous un nom. Le mot-clé CREATE VIEW la déclare, et dès lors on peut l'utiliser comme une table dans un FROM, un JOIN ou une sous-requête. Contrairement à une table physique, la vue ne stocke aucune donnée : elle ne fait que mémoriser le texte de la requête et le réexécuter à chaque utilisation. On gagne ainsi en abstraction, puisque les utilisateurs manipulent un objet simple sans connaître la mécanique de jointures qui se cache derrière.
+
+```sql
+CREATE VIEW v_emprunts_detail AS
+SELECT e.identifiant   AS emprunt_id,
+       l.nom           AS lecteur_nom,
+       l.prenom        AS lecteur_prenom,
+       o.titre         AS ouvrage_titre,
+       x.cote          AS exemplaire_cote,
+       e.date_sortie,
+       e.date_retour
+FROM emprunts AS e
+INNER JOIN lecteurs AS l ON l.identifiant = e.lecteur_id
+INNER JOIN emprunt_exemplaires AS ee ON ee.emprunt_id = e.identifiant
+INNER JOIN exemplaires AS x ON x.identifiant = ee.exemplaire_id
+INNER JOIN ouvrages AS o ON o.identifiant = x.ouvrage_id;
+
+SELECT lecteur_nom, ouvrage_titre, date_sortie
+FROM v_emprunts_detail
+WHERE date_retour IS NULL
+ORDER BY date_sortie;
+```
+
+Les vues répondent à trois besoins distincts. Le premier est la simplification : la requête précédente réunit cinq tables, et la remplacer par le nom v_emprunts_detail raccourcit tous les rapports qui l'utilisent. Le deuxième est la sécurité : on peut restreindre les colonnes visibles par un utilisateur, lui montrer une vue ne contenant ni courriel ni téléphone, tout en lui permettant d'interroger les emprunts. Le troisième est la stabilité : si la structure interne change, par exemple si la table intermédiaire est renommée, seule la définition de la vue est modifiée, et les requêtes des applications continuent de fonctionner.
+
+Le comportement des vues varie selon leur nature. Une vue simple, qui ne fait que filtrer et projeter une seule table, est souvent modifiable par un INSERT ou un UPDATE : le moteur traduit l'opération sur la table sous-jacente. Une vue complexe, qui combine plusieurs tables, joint et agrège, est en général lecture seule, et toute tentative d'écriture échoue. Plutôt que d'apprendre par cœur les règles de mise à jour de chaque moteur, adoptez la discipline courante : les vues servent à lire, et les écritures passent par les tables. Cela évite les surprises liées aux déclencheurs et aux colonnes calculées.
+
+Les commandes d'entretien sont simples. CREATE OR REPLACE VIEW permet de mettre à jour la définition sans la supprimer d'abord, ce qui préserve les autorisations accordées. DROP VIEW supprime la vue, sans toucher aux données. SHOW CREATE VIEW, ou la consultation du catalogue système, affiche la requête stockée, ce qui est précieux quand on redécouvre une vue ancienne. Une bonne pratique de projet consiste à versionner les définitions des vues dans les migrations, à côté des tables : une vue fait partie du schéma, elle se conçoit, se relit et se teste comme le reste.
+
+Enfin, gardez à l'esprit ce qu'une vue n'est pas : elle n'accélère pas forcément la requête, car elle ne pré-calcule rien, et elle ne fige aucun instantané des données. Interroger une vue deux fois peut produire deux résultats différents si les données ont changé entre-temps. Si vous avez besoin d'un instant figé, c'est une table physique ou une table de travail qu'il faut créer ; si vous avez besoin d'un nom stable pour une requête évolutive, la vue est l'outil idéal. La confusion entre ces deux notions explique la plupart des malentendus au début de l'apprentissage.
+
+## Exemples SQL complets : assemblage sur la bibliothèque
+
+Réunissons maintenant les outils du chapitre dans des requêtes intégrées, telles qu'on les rencontre dans un vrai projet. Le premier exemple calcule, pour chaque ouvrage, le nombre d'exemplaires sortis et le nombre d'exemplaires disponibles, puis n'affiche que les ouvrages entièrement sortis. Il combine une jointure externe, une agrégation et une sous-requête, et il illustre la question de granularité : le résultat doit comporter une ligne par ouvrage, donc l'agrégation intervient avant l'affichage final.
+
+```sql
+WITH sortis AS (
+  SELECT x.ouvrage_id, COUNT(*) AS nb_sortis
+  FROM exemplaires AS x
+  INNER JOIN emprunt_exemplaires AS ee ON ee.exemplaire_id = x.identifiant
+  INNER JOIN emprunts AS e ON e.identifiant = ee.emprunt_id
+  WHERE e.date_retour IS NULL
+  GROUP BY x.ouvrage_id
+)
+SELECT o.titre,
+       COUNT(x.identifiant)            AS total_exemplaires,
+       COALESCE(s.nb_sortis, 0)        AS sortis
+FROM ouvrages AS o
+INNER JOIN exemplaires AS x ON x.ouvrage_id = o.identifiant
+LEFT JOIN sortis AS s ON s.ouvrage_id = o.identifiant
+GROUP BY o.identifiant, o.titre, s.nb_sortis
+HAVING COUNT(x.identifiant) = COALESCE(s.nb_sortis, 0)
+ORDER BY o.titre;
+```
+
+Le second exemple crée une vue consolidée, puis l'interroge. Il montre que la vue n'est qu'une requête nommée, et que tout ce qui précède s'applique à son intérieur comme à son extérieur. Notez le choix du préfixe v_ pour signaler visuellement qu'il s'agit d'une vue, convention répandue et utile dans les bases partagées.
+
+```sql
+CREATE OR REPLACE VIEW v_activite_lecteurs AS
+WITH par_lecteur AS (
+  SELECT e.lecteur_id,
+         COUNT(*)                 AS nb_emprunts,
+         MAX(e.date_sortie)       AS dernier_emprunt
+  FROM emprunts AS e
+  GROUP BY e.lecteur_id
+)
+SELECT l.identifiant,
+       l.nom,
+       l.prenom,
+       l.date_inscription,
+       COALESCE(p.nb_emprunts, 0) AS nb_emprunts,
+       p.dernier_emprunt
+FROM lecteurs AS l
+LEFT JOIN par_lecteur AS p ON p.lecteur_id = l.identifiant;
+
+SELECT nom, prenom, nb_emprunts, dernier_emprunt
+FROM v_activite_lecteurs
+WHERE nb_emprunts = 0
+   OR dernier_emprunt < CURRENT_DATE - INTERVAL '12 months'
+ORDER BY nb_emprunts, nom;
+```
+
+Le troisième exemple traite une question qui revient sans cesse : la comparaison à une moyenne. Il combine une sous-requête scalaire dans WHERE, qui fournit la moyenne des emprunts par lecteur, et un tri sur l'écart. C'est le cas d'usage typique de la sous-requête dans un opérateur de comparaison : la valeur calculée n'a pas besoin d'être affichée, elle sert uniquement de seuil.
+
+```sql
+SELECT l.nom,
+       l.prenom,
+       COUNT(e.identifiant) AS nb_emprunts
+FROM lecteurs AS l
+INNER JOIN emprunts AS e ON e.lecteur_id = l.identifiant
+GROUP BY l.identifiant, l.nom, l.prenom
+HAVING COUNT(e.identifiant) > (
+  SELECT AVG(cnt) FROM (
+    SELECT COUNT(*) AS cnt
+    FROM emprunts
+    GROUP BY lecteur_id
+  ) AS moyenne
+)
+ORDER BY nb_emprunts DESC;
+```
+
+Relisez cette dernière requête du dehors vers l'intérieur : on compte les emprunts par lecteur, on filtre les groupes dont le total dépasse la moyenne des totaux, et on trie. La sous-requête la plus profonde produit une moyenne, une valeur scalaire, qui sert de seuil dans HAVING. Chaque niveau répond à une question indépendante, et c'est précisément cette indépendance qui rend la formulation possible. C'est aussi le signe que vous maîtrisez le chapitre : pouvoir décomposer une question complexe en étapes nommées, puis les réassembler dans une seule requête, est la compétence que les jointures, les sous-requêtes et les vues, réunies, sont censées vous apporter.

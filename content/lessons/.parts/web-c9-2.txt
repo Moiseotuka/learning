@@ -1,0 +1,186 @@
+## Un hook de données : useInscriptions
+
+Trois écrans du site chargent une liste : la page programme charge les séances, l'espace organisateur charge les inscrits, l'accueil charge les prochains ateliers. Dans chacun, la mécanique est identique — un état d'attente, un état d'erreur, la donnée elle-même et une fonction pour relancer la requête. Copiée trois fois, elle dérive : l'un des écrans oublie d'effacer l'erreur au nouveau chargement, l'autre laisse une réponse tardive écraser une donnée plus récente. Extraire ce comportement dans useInscriptions revient à écrire une seule fois la politique des quatre états, puis à l'appliquer partout.
+
+```jsx
+import { useCallback, useEffect, useState } from "react";
+
+export function useInscriptions(url) {
+  const [etat, setEtat] = useState({ statut: "repos", liste: [], erreur: null });
+  const [recherche, setRecherche] = useState(0);
+
+  const recharger = useCallback(() => setRecherche((n) => n + 1), []);
+
+  useEffect(() => {
+    const controleur = new AbortController();
+    setEtat((e) => ({ ...e, statut: "chargement" }));
+    fetch(url, { signal: controleur.signal })
+      .then((reponse) => {
+        if (!reponse.ok) throw new Error("HTTP " + reponse.status);
+        return reponse.json();
+      })
+      .then((liste) => setEtat({ statut: "succes", liste, erreur: null }))
+      .catch((erreur) => {
+        if (erreur.name === "AbortError") return;
+        setEtat({ statut: "erreur", liste: [], erreur: erreur.message });
+      });
+    return () => controleur.abort();
+  }, [url, recherche]);
+
+  return { ...etat, recharger };
+}
+```
+
+```image
+js-logo
+| Le logo JavaScript : un carré jaune marqué des lettres JS noires, l'alphabet dans lequel s'écrivent les hooks et les modules qu'ils exportent.
+```
+
+La première décision est la forme de l'état. Un objet unique portant un champ statut aux valeurs nommées — repos, chargement, succes, erreur — remplace avantageusement trois booléens qui, eux, autorisent des combinaisons absurdes comme en chargement et en erreur en même temps. La donnée reste dans le même objet, ce qui garantit qu'elle est remise à zéro quand la requête échoue : un écran ne peut pas afficher une liste périmée tout en annonçant une erreur. Cette discipline se retrouve dans chaque écran : quatre affichages possibles, un seul état courant.
+
+La seconde décision est l'annulation. Le contrôleur transmis à fetch interrompt la requête au démontage ou dès qu'une nouvelle la remplace ; sans lui, deux réponses concurrentes s'écrivent l'une l'autre au gré de leur temps de réseau, et c'est la plus rapide qui gagne, pas la plus pertinente. Le test sur AbortError évite d'afficher une erreur causée par l'annulation elle-même. C'est exactement le piège que StrictMode expose au montage : deux requêtes lancées, une annulée aussitôt — si le nettoyage manque, la liste se remplit deux fois.
+
+La troisième décision porte sur le tableau des dépendances. L'effet dépend de l'adresse demandée et du compteur de rechargement : quand l'organisateur tape un filtre et que l'adresse change, une nouvelle requête part ; quand il clique sur réessayer, seul le compteur change et le même effet repart. Notez que recharger est enveloppé dans useCallback avec un tableau vide : la fonction ne change jamais d'identité, ce qui évite qu'un composant mémoïsé la prenne pour une nouvelle callback à chaque rendu. Le hook offre ainsi une action stable, ce qui est la moindre des choses pour un bouton.
+
+La consommation côté écran tient en une ligne et un balisage. L'écran ne sait plus où vivent les états, les promesses ni les annulations ; il sait qu'il reçoit une liste, un statut et une action. Le chapitre précédent vous a appris à distinguer chargement, erreur, vide et succès : ce sont désormais les quatre branches d'un simple conditionnel sur statut, sans aucun état local à déclarer.
+
+```jsx
+function ListeInscrits() {
+  const { statut, liste, erreur, recharger } = useInscriptions("/api/inscrits");
+
+  if (statut === "chargement") return <p>Chargement des inscrits…</p>;
+  if (statut === "erreur")
+    return (
+      <p role="alert">
+        {erreur} <button onClick={recharger}>Réessayer</button>
+      </p>
+    );
+  if (liste.length === 0) return <p>Aucune inscription pour l'instant.</p>;
+  return <ul>{liste.map((i) => <li key={i.id}>{i.nom}</li>)}</ul>;
+}
+```
+
+Vérifiez le hook sur le terrain avant de le réutiliser partout. Chargez l'écran : le chargement doit apparaître immédiatement, sans blanc écran. Coupez le service : le message d'erreur s'affiche avec un bouton de reprise qui fonctionne réellement. Filtrez vite dans la liste : seule la dernière réponse doit rester, sans mélange des deux. Naviguez pendant la requête : aucun avertissement de composant démonté ne doit paraître dans la console. Ces quatre tests coûtent deux minutes et valent pour chaque hook de données que vous écrirez ensuite.
+
+## Un hook de formulaire : useFormulaire
+
+Le formulaire d'inscription du site porte quatre champs, une validation, un statut d'envoi et une remise à zéro. L'écran d'ajout d'une séance, dans l'espace organisateur, présente la même ossature avec des champs différents. Plutôt que de dupliquer gestionnaires et erreurs, on extrait un hook de formulaire qui reçoit la configuration — valeurs initiales et fonction de validation — et qui fournit la mécanique. Le composant, lui, se contente de décrire ses champs et son message de confirmation.
+
+```jsx
+export function useFormulaire(config) {
+  const { initiales, valider, envoyer } = config;
+  const [valeurs, setValeurs] = useState(initiales);
+  const [erreurs, setErreurs] = useState({});
+  const [saisies, setSaisies] = useState({});
+  const [statut, setStatut] = useState("repos");
+
+  function changer(nom, valeur) {
+    const suivantes = { ...valeurs, [nom]: valeur };
+    setValeurs(suivantes);
+    if (saisies[nom] || statut === "erreur") setErreurs(valider(suivantes));
+  }
+
+  async function soumettre(evenement) {
+    evenement.preventDefault();
+    const trouvees = valider(valeurs);
+    setSaisies(Object.fromEntries(Object.keys(valeurs).map((n) => [n, true])));
+    setErreurs(trouvees);
+    if (Object.keys(trouvees).length > 0) { setStatut("erreur"); return; }
+    setStatut("envoi");
+    try { await envoyer(valeurs); setStatut("confirme"); setValeurs(initiales); }
+    catch (erreur) { setStatut("echec"); }
+  }
+
+  return { valeurs, erreurs, statut, changer, soumettre };
+}
+```
+
+Tout l'intérêt du hook tient à ce qu'il ignore le contenu du formulaire. Il ne sait ni ce qu'est une adresse électronique, ni combien de places restent pour l'atelier : ces règles arrivent dans valider, une fonction pure qui reçoit les valeurs et renvoie un objet d'erreurs. Deux avantages en découlent. La même validation peut être appelée au changement d'un champ déjà touché, à la soumission, et dans un test unitaire sans aucun rendu ; et le hook reste identique pour un formulaire de contact ou de réservation.
+
+La notion de champ saisi mérite une précision, car elle distingue un bon formulaire d'un formulaire pénible. Afficher l'erreur d'une adresse dès la première frappe du visiteur est agressif et faux en pratique : on n'a pas encore fini de taper. Le hook mémorise donc les champs déjà touchés et n'affiche l'erreur que si le champ a été modifié après une tentative, ou si la soumission a échoué. C'est ce comportement que l'utilisateur décrit par la phrase j'ai eu le temps de finir ma phrase avant qu'on me reprenne.
+
+La forme de retour suit la même logique que pour les hooks précédents : un objet unique, extensible, dont chaque champ a un nom explicite. Un écran qui a besoin d'une remise à zéro complète peut l'ajouter plus tard sans casser les appels existants. Attention en revanche à ne pas y ranger l'adressage : si le formulaire doit inscrire l'utilisateur puis rediriger vers un écran, la navigation appartient au composant, après l'appel, dans la continuité de la promesse — le hook doit rester muet sur ce que fait l'application après l'envoi.
+
+Deux limites doivent être dites pour éviter l'abus. D'abord, un formulaire très spécifique — glisser-déposer de fichiers, étapes successives avec reprise — paiera plus cher une couche générique qu'une écriture directe. Ensuite, le hook suppose que la soumission est une promesse unique : si l'envoi doit faire progresser une barre ou autoriser plusieurs tentatives simultanées, il faut enrichir le statut ou renoncer à l'extraction. Un hook doit rester plus petit que le problème qu'il résout.
+
+## Nommer, documenter et tester un hook
+
+Un hook personnalisé est une API interne : vos écrans en sont les consommateurs, et la qualité du nom décide de la qualité de l'usage. La convention est courte : le nom commence par use, il est au singulier, il désigne un comportement et non une donnée. useInscriptions annonce ce que le hook fournit ; useData ne dit rien ; chargerLesInscriptions, sans le préfixe, ment sur la nature de la fonction. Le nom du fichier doit être identique à celui de la fonction exportée, pour que la recherche dans l'arborescence aboutisse en une seconde.
+
+La documentation d'un hook tient en cinq lignes placées au-dessus de la fonction, et elle répond à cinq questions : ce que le hook fait, ce qu'on lui donne, ce qu'il renvoie, les effets de bord qu'il produit, et ce qui se passe en cas d'erreur. Sans cette notice, un collègue doit lire le corps de la fonction pour savoir s'il peut l'appeler dans un composant qui se démonte souvent. Avec elle, il lit le contrat et passe à autre chose. La notice devient également la référence des tests : on y décrit le comportement attendu, pas l'implémentation.
+
+```jsx
+/**
+ * Charge une liste depuis une adresse et expose ses quatre états.
+ * @param {string} url - adresse de la ressource, relue à chaque changement
+ * @returns {{statut: "repos"|"chargement"|"succes"|"erreur", liste: object[],
+ *            erreur: string|null, recharger: () => void}}
+ * Effet de bord : requête réseau annulée au démontage ou à chaque nouvelle adresse.
+ * En cas d'échec, la liste est vidée et le message du serveur est conservé.
+ */
+export function useInscriptions(url) { /* ... */ }
+```
+
+Le test d'un hook ne demande pas de l'écran : la bibliothèque de tests React fournit une fonction de rendu dédiée, qui monte le hook dans un composant jetable et met à jour ses états. On teste alors le comportement — un état passe de chargement à succes, une erreur vide le tableau, la fonction de rechargement relance l'effet — et jamais la structure interne de l'objet d'état. Deux précautions : simulez le temps avec une horloge contrôlée quand le hook contient un minuteur, et annulez le fetch factice pour que le test ne dépende ni du réseau ni de l'adresse.
+
+```jsx
+import { renderHook, waitFor } from "@testing-library/react";
+import { useInscriptions } from "./useInscriptions";
+
+test("passe en succès avec la liste renvoyée", async () => {
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => [{ id: 1, nom: "Amina" }],
+  });
+
+  const { result } = renderHook(() => useInscriptions("/api/inscrits"));
+  expect(result.current.statut).toBe("chargement");
+
+  await waitFor(() => expect(result.current.statut).toBe("succes"));
+  expect(result.current.liste).toHaveLength(1);
+});
+```
+
+Le rangement compte aussi. Un dossier hooks regroupe les fichiers, un fichier par comportement, sans mélanger avec les composants ni avec les utilitaires purs. Ce classement rend visible ce qui est extrait et facilite la revue : on voit d'un coup d'œil quel comportement l'application partage. Un hook que plus personne n'appelle se supprime sans remords ; la conservation d'une API morte coûte plus cher que sa réécriture, parce qu'elle impose à chacun de vérifier s'il s'agit encore de la bonne entrée.
+
+Enfin, l'extraction se juge à une question unique, et le tableau suivant sert de grille avant d'ouvrir un nouveau fichier. Si vous hésitez sur deux lignes, écrivez d'abord le comportement dans le composant : les hooks naissent d'une répétition constatée, jamais d'une anticipation.
+
+| Question à se poser | Réponse qui justifie l'extraction | Réponse qui doit vous retenir |
+|---|---|---|
+| Combien d'écrans utilisent ce comportement ? | Deux au minimum, avec la même logique | Un seul écran, une seule configuration |
+| Contient-il des hooks ou des effets ? | Oui : état, effet, abonnement ou minuteur | Non : une simple transformation de données |
+| Sa forme de retour tiendra-t-elle dans une phrase ? | Liste et rechargement, valeurs et soumission | Un objet qui dépend de huit écrans différents |
+| Peut-on le tester sans afficher d'écran ? | Oui, avec un rendu de hook isolé | Il se confond avec la mise en forme |
+| Le comportement change-t-il à chaque projet ? | Il exprime une règle métier stable | Il reflète un choix propre à un écran |
+
+## Le contexte : distribuer un état sans le propager
+
+La session de l'organisateur doit être visible dans le bandeau, dans la navigation, dans la page des inscrits et dans le pied de page. Sans mécanisme dédié, elle descend de proche en proche : le composant racine la reçoit, la transmet à l'en-tête, qui la transmet à la navigation, qui la transmet au lien de déconnexion. À quatre niveaux, la prop drilling n'est pas seulement pénible à écrire, elle est dangereuse : un composant intermédiaire qui oublie la propriété dans ses props casse un écran éloigné, sans lien apparent avec son code.
+
+Le contexte répond à cela par un mécanisme différent. Plutôt que de descendre la valeur de composant en composant, on la déclare une fois dans un contexte, on l'expose depuis un fournisseur placé au sommet de l'application, et chaque composant qui en a besoin va la chercher directement, à n'importe quelle profondeur. La valeur ne transite plus par les étages ; elle est disponible sur place. C'est le même principe que le chauffage central : on ne porte pas un radiateur de pièce en pièce, on branche chacune des pièces sur une distribution unique.
+
+```jsx
+import { createContext, useContext } from "react";
+
+const SessionContext = createContext(null);
+
+export function FournisseurSession({ session, enfants }) {
+  return (
+    <SessionContext.Provider value={session}>{enfants}</SessionContext.Provider>
+  );
+}
+
+export function useSession() {
+  const session = useContext(SessionContext);
+  if (session === null) {
+    throw new Error("useSession doit être utilisé sous FournisseurSession");
+  }
+  return session;
+}
+```
+
+Trois règles gouvernent cette écriture. Le contexte se crée en dehors du composant, sinon chaque rendu en fabriquerait un nouveau et romprait les liens. Le fournisseur expose une valeur — jamais le contexte lui-même comme composant d'accès. Et la lecture passe par un hook personnalisé qui vérifie la présence du fournisseur : sans ce contrôle, la valeur par défaut silencieuse de createContext se contente de renvoyer null et l'erreur apparaît bien plus loin, sur une propriété introuvable au milieu d'un écran.
+
+La question de savoir quand recourir au contexte se résout en deux critères. Le premier est la portée : la valeur est-elle nécessaire à des composants séparés par plusieurs niveaux ou à des écrans entiers ? La session, le thème, la langue et la préférence d'affichage répondent oui. Le second est la stabilité : cette valeur change-t-elle rarement ? Si elle change à chaque frappe, le contexte propage cette frappe à tous les lecteurs, et vous venez d'acheter un ralentissement. À l'inverse, une valeur utilisée par un seul composant n'a aucun besoin du contexte : gardez-la locale, elle sera plus simple à tester.
+
+Notez enfin que le contexte et les hooks personnalisés sont complémentaires, non concurrents. Le contexte transporte la valeur ; le hook useSession lui donne un nom, un contrat et un message d'erreur exploitable. Les écrans n'importent jamais le contexte brut : ils appellent le hook, ce qui vous laisse modifier l'emplacement du fournisseur ou la forme de la donnée sans toucher à quinze fichiers. Cette séparation — transport d'un côté, interface de l'autre — est exactement celle que vous avez instaurée entre écrans et données dans la section précédente.

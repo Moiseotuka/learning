@@ -1,0 +1,145 @@
+Bienvenue dans le quatrième chapitre du parcours Cybersécurité offensive, consacré à la post-exploitation. Les chapitres précédents vous ont appris à observer un réseau, à éprouver une application et à obtenir un accès initial dans un laboratoire contrôlé. Ce chapitre prend le relais exactement à l'endroit où ils s'arrêtent : la session s'ouvre enfin, l'invite de commande affiche un identifiant, et vous vous demandez ce qu'il faut faire ensuite. La post-exploitation est l'ensemble des gestes que l'on mène après l'accès pour transformer celui-ci en démonstration utile, sans dégrader le système, sans sortir du périmètre autorisé et sans laisser d'actions que vous ne seriez pas capable d'expliquer.
+
+L'objectif n'est pas d'accumuler les superpouvoirs. Dans un audit autorisé, la valeur d'une mission se mesure à la clarté de ce qu'elle démontre : voici l'obtenu, voici ce qu'il permet concrètement, voici le risque pour l'organisation, voici comment le corriger. Un accès restreint, soigneusement exploité et rigoureusement documenté convainc davantage qu'une escalade spectaculaire dont personne ne peut reconstituer le déroulé. C'est pourquoi ce chapitre est organisé comme une suite de gestes mesurés : vous observez, vous hiérarchisez, vous démontrez au strict nécessaire, puis vous remettez l'environnement en état.
+
+Tout ce qui suit se déroule dans un laboratoire isolé, sur des machines qui vous appartiennent ou qui ont été explicitement mises à votre disposition par un mandat écrit. Aucune cible réelle, aucun service tiers, aucune organisation qui ne vous a pas donné son accord par écrit. Le cadre légal n'est pas une note de bas de page : il détermine ce que vous avez le droit de faire, ce que vous devez consigner et ce que vous devez rendre en fin de mission. Gardez cette règle en tête dès la première commande : si vous ne pouvez pas l'écrire dans votre rapport, ne l'exécutez pas.
+
+## Après l'accès : ce que la post-exploitation change
+
+La phase d'exploitation cherche une chose : entrer. La phase de post-exploitation en cherche une autre : comprendre ce que l'entrée vaut. Un compte compromis sur une machine de test n'a aucune valeur tant que vous ne savez pas à quoi il donne accès, quelles machines il peut atteindre, quels fichiers il peut lire et quel niveau de privilèges il détient. Le changement est donc d'abord intellectuel : vous passez d'une logique de percée, rapide et bruyante, à une logique d'enquête, lente et méthodique. Le rythme ralentit, la documentation s'accélère.
+
+Ce changement de rythme se justifie par une contrainte pratique : dans un audit, chaque action laisse une marque et consomme du temps. Une commande d'énumération se lit dans les journaux, un transfert de fichier occupe de la bande passante, un service redémarré coupe une application que quelqu'un surveille. Vous devez donc arbitrer en permanence entre l'information que vous obtenez et le bruit que vous produisez. La règle que nous appliquerons dans tout le chapitre tient en une phrase : n'exécutez que la commande qui répond à une question que vous vous êtes posée à l'écrit.
+
+Le tableau suivant résume les quatre temps de la phase et le livrable attendu à chacun. Il servira de fil rouge : à chaque instant, vous devez pouvoir dire dans quelle colonne vous vous trouvez et quelle pièce vous devez produire avant de passer à la suivante.
+
+```table
+| Temps | Question posée | Exemple de geste | Livrable |
+|---|---|---|---|
+| Cadrage | Qu'ai-je le droit de faire ? | Lecture du mandat, rappel des exclusions | Périmètre écrit en tête du journal |
+| Enumeration | Sur quoi suis-je exactement ? | whoami, id, uname, decouverte du reseau | Fiche machine d'une page |
+| Demonstration | Que permet vraiment cet accès ? | Lecture d'un fichier temoin, test de privilege | Preuve horodee et empreintee |
+| Remise en etat | Qu'ai-je change, et tout est-il revenu ? | Suppression des artefacts, verification | Journal d'assainissement signe |
+```
+
+Un dernier point sur ce que la post-exploitation n'est pas. Elle ne consiste pas à parcourir le disque à la recherche de données personnelles, à copier des bases entières « pour voir », ni à installer un outil de surveillance « au cas où ». Ces gestes n'ont aucune valeur probante dans un audit, sortent du périmètre contractuel et constituent, hors mandat, des infractions. La collecte se limite à ce qui démontre le risque, et rien de plus : un fichier témoin choisi avec le client, un compteur, une capture, une empreinte.
+
+Il faut aussi distinguer nettement le laboratoire d'apprentissage, la compétition de type capture the flag et l'audit contractuel, car les trois se ressemblent au premier regard et n'autorisent pas les mêmes gestes. Dans un laboratoire, vous êtes seul propriétaire des machines : vous pouvez tout essayer, tout casser, recommencer, y compris provoquer un plantage volontaire pour comprendre ce qui se passe. Dans une compétition, le but est d'obtenir des drapeaux dans un temps limité, l'infrastructure est jetable et la persistance n'a aucun sens. Dans un audit, l'environnement vit, d'autres personnes l'utilisent, les journaux sont conservés et votre patron n'est pas le directeur technique de la cible mais son conseil d'administration. Les habitudes prises en laboratoire ne se transfèrent donc pas telles quelles : c'est précisément l'objet des sections sur la persistance et sur l'assainissement.
+
+Un autre changement concerne la façon dont vous rendez compte. En laboratoire, vous apprenez en échouant et personne ne vous demande de justifier vos tentatives. En audit, chaque tentative se compte, y compris les échecs, parce qu'une tentative d'élévation refusée apparaît dans les journaux et qu'on vous demandera ce que vous cherchiez à ce moment-là. Vous devez donc être capable de relire votre propre séquence et de l'expliquer ligne à ligne. C'est la raison pour laquelle le journal de bord n'est pas une corvée administrative : c'est votre seule protection contre l'incompréhension.
+
+## Énumération locale : cartographier la machine sans rien casser
+
+La première heure après l'accès appartient à l'énumération locale. L'objectif est de produire une fiche machine complète : système d'exploitation et version exacte, identité de la session, privilèges réels, carte réseau et voisins, services à l'écoute, comptes locaux, tâches planifiées et fichiers de configuration remarquables. Cette fiche se rédige pendant que vous commandez, pas après, car les détails oubliés ne se reconstituent plus. Ouvrez un fichier de notes à côté du terminal, notez l'heure de début en heure UTC, puis avancez par famille d'informations.
+
+Commencez par l'identité et le système, qui déterminent toutes vos hypothèses ultérieures. Prenons l'exemple d'une machine où whoami renvoie un compte de service : vous n'aurez probablement ni sudo ni accès direct aux journaux, mais peut-être des droits sur un répertoire applicatif. À l'inverse, un compte nommé avec un shell complet change la stratégie : les fichiers d'historique, les variables d'environnement et les clés présentes dans le répertoire deviennent prioritaires.
+
+```bash
+# Fiche d'identite et de systeme, a coller tel quel dans le journal
+date -u +"%Y-%m-%dT%H:%M:%SZ"
+whoami; id; hostname
+uname -a
+cat /etc/os-release
+cat /proc/version
+
+# Seance en cours : quels autres utilisateurs sont presents ?
+w
+who
+
+# Variables d'environnement : souvent la source des secrets
+env | sort
+```
+
+La famille suivante décrit le réseau, parce qu'elle détermine ce qui est atteignable sans franchir de frontière nouvelle. Notez les adresses configurées, la passerelle, le ou les serveurs de résolution, puis les connexions déjà ouvertes : elles appartiennent au périmètre, à la différence d'un scan que vous lanceriez sur un segment non mentionné dans le mandat. La découverte des voisins se limite ici à la table de routage et à la table ARP, deux lectures qui ne produisent aucun paquet suspect.
+
+```bash
+# Carte et routage : lecture seule
+ip -brief address
+ip route
+cat /etc/resolv.conf
+
+# Ce qui écoute et ce qui est connecte
+ss -tulpn
+ss -tnp
+
+# Voisins deja connus du systeme
+ip neigh
+```
+
+Enfin, relevez les processus, les tâches planifiées et les fichiers de configuration utiles. Un service tourne avec un compte de service dont le mot de passe figure dans un fichier de configuration world-readable : c'est une trouvaille, et elle se documente sans être exploitée immédiatement. Une tâche planifiée s'exécute toutes les cinq minutes avec des droits élevés : c'est une piste d'escalade, à classer dans votre carte des vecteurs plutôt qu'à manipuler.
+
+```bash
+# Processus et taches planifiees
+ps aux --sort=-%mem | head -n 25
+crontab -l 2>/dev/null
+ls -la /etc/cron.d /etc/cron.daily 2>/dev/null
+
+# Fichiers de configuration contenant potentiellement des secrets
+grep -RIl --exclude-dir=proc --exclude-dir=sys -E 'password|passwd|secret|token' \
+  /etc /opt /srv 2>/dev/null | head -n 20
+```
+
+La capture d'écran ci-dessous montre l'état d'un poste de laboratoire au début de l'énumération : une session ouverte en tant que compte local, un répertoire de travail limité et les premières commandes d'identification défilant dans le terminal. C'est exactement le point de départ que vous devez consigner avant toute action plus intrusive, car tout le reste de votre rapport s'appuiera sur cette heure et cette identité.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/f/f6/VirtualBox_Kali_Linux_21.01_x64_Terminal_%28root%29_GER_26_02_2021_16_59_57.png/960px-VirtualBox_Kali_Linux_21.01_x64_Terminal_%28root%29_GER_26_02_2021_16_59_57.png
+| Début d'énumération locale dans un laboratoire isolé : une session ouverte, l'identité et le système relevés avant toute autre action.
+```
+
+Un piège attend le débutant à ce stade, et il est fréquent : l'énumération sans question. On lance un script qui balaie tout, on obtient mille lignes, puis on ne sait plus ce qui est intéressant. Retournez la méthode : écrivez d'abord les cinq questions auxquelles vous devez répondre, commande automatique ou manuelle. Quel système ? Quels privilèges ? Quelles interfaces ? Quels comptes ? Quels candidats à l'escalade ? Une énumération ciblée de quarante lignes vaut mieux qu'un inventaire de dix mille que personne ne relira.
+
+Deux habitudes de terrain complètent cette méthode. La première consiste à capturer la sortie de chaque commande dans un fichier daté, plutôt qu'à la laisser défiler dans un terminal que vous refermerez. Vous écrivez la sortie dans un répertoire de travail unique, nommé d'après la machine et la date, de sorte que votre rapport puisse citer un fichier et non votre mémoire. La deuxième consiste à horodater en UTC chaque famille de commandes : les journaux du système sont en UTC, votre montre est en heure locale, et un décalage non signalé suffit à rendre toute chronologie suspecte.
+
+```bash
+# Repertoire de travail unique, cree une seule fois par mission
+export AUDIT_DIR="$HOME/audit-2026-10-09/serveur-web-01"
+mkdir -p "$AUDIT_DIR"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$AUDIT_DIR/debut.txt"
+
+# Chaque famille de commandes alimente son propre fichier
+id >> "$AUDIT_DIR/identite.txt" 2>&1
+uname -a >> "$AUDIT_DIR/identite.txt" 2>&1
+ss -tulpn >> "$AUDIT_DIR/reseau.txt" 2>&1
+ps aux >> "$AUDIT_DIR/processus.txt" 2>&1
+```
+
+Attention enfin aux scripts d'énumération automatiques téléchargés depuis un dépôt public. Dans un laboratoire, ils font gagner du temps ; dans un audit, ils posent trois problèmes simultanés : ils exécutent du code dont vous n'avez pas vérifié la portée, ils balayent souvent des répertoires hors périmètre, et leurs sorties mélangent l'utile et l'inutile dans un format que vous devrez de toute façon réécrire. Préférez les commandes que vous pouvez expliquer une par une, et gardez les outils automatisés pour les phases où leur comportement est documenté et borné.
+
+## Lire l'environnement : identités, réseau, services et fichiers sensibles
+
+Une fois la fiche machine constituée, il faut l'interpréter. L'énumération vous donne des données ; l'interprétation vous donne un ordre de priorité. Prenons l'exemple des comptes locaux : la liste des entrées de /etc/passwd n'a d'intérêt que si vous la recoupez avec les comptes qui disposent d'un shell, les membres des groupes d'administration et les comptes dont le mot de passe semble absent ou vide. Trois lignes croisées valent mieux qu'une page de noms.
+
+Le réseau se lit de la même façon. Une interface vers un segment de serveurs, une passerelle par défaut et un serveur de résolution interne vous disent que la machine est un point de départ légitime vers d'autres ressources du périmètre. Une machine sans route vers l'extérieur, en revanche, vous indique que tout transfert devra passer par un canal déjà ouvert, ce qui change votre stratégie de démonstration. Observez aussi les règles de filtrage en place, car elles dessinent la frontière que vous n'avez pas le droit de franchir.
+
+```bash
+# Comptes locaux utiles : shells, groupes d'administration
+awk -F: '($7 !~ /(nologin|false)$/){print $1, $7}' /etc/passwd
+getent group sudo wheel admin 2>/dev/null
+awk -F: '($3==0){print "UID 0 :", $1}' /etc/passwd
+
+# Fichiers sensibles et repertoires d'identite
+ls -la ~/.ssh 2>/dev/null
+find / -maxdepth 4 -name 'id_*' -o -name '*.pem' 2>/dev/null | head -n 20
+
+# Regles de filtrage actives, si l'identite le permet
+sudo -n iptables -L -n 2>/dev/null || cat /proc/net/ip_tables_names 2>/dev/null
+```
+
+Les fichiers sensibles méritent une attention particulière parce qu'ils sont la source la plus courante d'obtention de privilèges sans aucune faille : une clé privée laissée dans un dépôt, un mot de passe de base de données dans un fichier d'application, un script de sauvegarde contenant un compte de service. Vous les notez, vous les citez par chemin et par date, et vous vous arrêtez là. La démonstration du risque consiste à prouver que le fichier était lisible, pas à en extraire le contenu complet ni à l'emporter hors du laboratoire.
+
+Le dernier volet de l'interprétation consiste à distinguer ce qui relève du périmètre de ce qui en sort. Un répertoire d'application déployée sur la machine visée entre dans le mandat ; le répertoire personnel d'un autre utilisateur, non mentionné, en sort. Cette frontière n'est pas toujours évidente, surtout sur une machine partagée : en cas de doute, vous demandez, vous notez la question dans votre journal et vous poursuivez sur ce qui ne fait aucun doute. Une mission qui pose des questions est une mission qui tiendra debout en réunion de restitution.
+
+La rigueur du croisement fait toute la différence entre une observation et un constat. Un fichier lisible n'est un risque que si vous pouvez dire qui pouvait le lire, depuis quel compte, avec quels droits et depuis quand. C'est exactement le travail que vous ferez dans la section suivante, lorsqu'il s'agira d'examiner les voies d'élévation de privilèges : partir de la configuration réelle du système, jamais d'une liste d'exploits mémorisée.
+
+Les systèmes de fichiers montés et les partages distants complètent cette lecture. Un répertoire monté en écriture depuis un autre serveur vous indique que la machine n'est pas une île, et qu'une modification locale se répercutera ailleurs, y compris après votre départ. Inversement, un montage en lecture seule vous donne un repère précieux : vous pourrez y chercher des informations sans risquer d'altérer quoi que ce soit. Notez systématiquement les options de montage, elles apparaîtront dans votre rapport pour expliquer pourquoi tel répertoire a été consulté et tel autre laissé intact.
+
+```bash
+# Systemes de fichiers montes et espaces occupes
+findmnt -t ext4,xfs,btrfs,nfs,cifs
+df -hT
+
+# Services demarres : ce qui tourne reellement, pas ce qui est installe
+systemctl list-units --type=service --state=running --no-pager
+systemctl list-units --type=service --state=failed --no-pager
+```
+
+Enfin, une remarque sur la qualité de vos notes. Notez aussi ce que vous n'avez pas pu vérifier, et pourquoi : une commande refusée par manque de droits, un répertoire non accessible, une information absente de la machine. Ces lignes, qui semblent inutiles le jour où vous les écrivez, deviennent les limites explicites de votre rapport trois semaines plus tard. Un constat qui affiche ses trous est plus crédible qu'un constat complet qui les dissimule, parce que le lecteur n'a alors aucune objection imprévue à vous opposer.

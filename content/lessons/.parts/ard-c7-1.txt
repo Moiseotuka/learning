@@ -1,0 +1,195 @@
+Les six chapitres précédents de ce parcours vous ont appris à faire beaucoup de choses avec un seul fil d'exécution : allumer des broches, lire des capteurs, piloter un afficheur sur un bus, écrire une machine à états avec des interruptions, puis connecter l'ESP32 en Wi-Fi et publier des mesures en MQTT. Tout cela a tenu dans une fonction boucle() relancée indéfiniment, et cela a marché. Ce chapitre part d'un constat désagréable mais libérateur : un unique fil qui fait tout à tour a une date de péremption. Dès que vos exigences se contredisent — mesurer toutes les secondes, rafraîchir l'écran plusieurs fois par seconde, envoyer un paquet qui réclame parfois quatre cents millisecondes — un seul fil ne suffit plus : il n'a qu'un instant à donner, et vous lui en demandez trois.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, déjà écrites dans du code exécuté sur votre carte. Premièrement, vous découperez une application en tâches, c'est-à-dire en flux d'exécution indépendants, en posant trois questions à chaque unité : à quelle fréquence tourner, combien de temps attendre, que faire si elle prend du retard. Deuxièmement, vous les ordonnancerez avec des priorités, en comprenant la préemption, l'état bloqué et la raison pour laquelle une tâche prioritaire qui attend une entrée série peut paralyser tout le reste. Troisièmement, vous les ferez communiquer par files de messages, vous protégerez les ressources partagées avec mutex et sémaphores, et vous éviterez le blocage mutuel. Quatrièmement, vous mesurerez le résultat : hauteur de pile, statistiques d'exécution, watchdog.
+
+Le fil rouge est la station météo assemblée au chapitre six, regardée sous un angle neuf : non plus comme un ensemble de modules, mais comme un ensemble de tâches concurrentes. Une tâche capteur, cadencée à la seconde, interroge le capteur I2C, filtre et horodate la mesure. Une tâche afficheur, plus rapide, rafraîchit l'écran et l'état de la station. Une tâche réseau, lente et imprévisible, maintient la liaison Wi-Fi et publie les mesures en MQTT. Ces trois flux n'ont ni la même fréquence, ni la même tolérance au retard, ni le même rapport au blocage : c'est précisément pourquoi ils deviennent trois tâches. L'exercice final vous demandera de réaliser cette refonte seul.
+
+Deux règles de conduite avant de commencer, parce que le temps réel se travaille comme un métier d'atelier. La première : ici, on ne devine jamais, on mesure ; un délai se constate avec un horodatage, une pile se mesure avec un indicateur, un déblocage se prouve avec un trace. La deuxième : chaque notion a un prix, une pile allouée, un temps de changement de contexte, un risque de course.
+
+## La superloop a ses limites
+
+Reprenez le sketch de la station météo tel que le chapitre six vous l'a laissé : la boucle attend la fin de la fenêtre d'échantillonnage, lit le capteur, valide, filtre, écrit le journal local, rafraîchit l'écran, puis publie si la fenêtre de publication est ouverte. Ce programme repose sur une hypothèse implicite : chaque étape se termine toujours dans un temps raisonnable. Or c'est précisément ce que le réseau ne garantit pas. Tant que le broker répond en dix millisecondes, la boucle paraît souple ; dès que la liaison se réassocie ou que le point d'accès sature, l'envoi monopolise le processeur pendant des centaines de millisecondes, pendant lesquelles ni le capteur, ni l'écran, ni le bouton ne sont servis.
+
+Trois façons typiques de voir une superloop se fissurer, qui se ressemblent toutes au début. La première est le blocage discret : une connexion, une lecture série, un envoi réseau qui occupe le fil principal bien plus longtemps que prévu. La deuxième est la dérive de cadence : la période réelle devient le temps de travail plus le temps d'attente, elle varie donc à chaque tour, et vos séries temporelles s'en aperçoivent avant vous par des intervalles irréguliers. La troisième est la contradiction d'échéances : un rafraîchissement régulier et une publication qui peut absorber une demi-seconde ne cohabitent pas dans un ordre strictement séquentiel. Pour les rendre visibles, chronométrez chaque bloc avec millis() et affichez les durées extrêmes, jamais seulement la moyenne.
+
+Le tableau suivant relie les symptômes de votre banc à leur cause réelle et au remède de ce chapitre. Si deux lignes décrivent votre situation, la refonte en tâches s'impose.
+
+| Symptôme observé | Cause réelle | Remède apporté ici |
+|---|---|---|
+| L'écran gèle à chaque reconnexion réseau | Une seule boucle exécute les deux | Tâche réseau distincte, communication par file |
+| La période de mesure s'allonge par à-coups | Travail et attente s'additionnent | Tâche capteur cadencée sur l'horloge du système |
+| Le bouton rate des appuis courts | La boucle est occupée au moment du front | Découpage et priorités |
+| Ajouter une fonctionnalité casse une autre | Interactions croisées dans un unique flux | Messages entre tâches, ressources protégées |
+
+Le listing ci-dessous est la version superloop de votre station. Cherchez le point où le fil principal se trouve captif : il n'est pas au début, il est dans l'appel d'envoi, et c'est là que tout le reste s'arrête avec lui.
+
+```cpp
+// Version superloop : tout dans un seul fil d'execution
+void loop() {
+  static unsigned long dernierEchantillon = 0;
+  static unsigned long dernierePublication = 0;
+  unsigned long maintenant = millis();
+
+  if (maintenant - dernierEchantillon >= 1000) {
+    dernierEchantillon = maintenant;
+    Mesure m = lireCapteur();          // 5 a 20 ms sur un bus I2C
+    if (m.valide) {
+      mesurerFiltrerEtStocker(m);      // 1 a 3 ms
+      mettreAJourAfficheur(m);         // 10 a 40 ms selon l'ecran
+    }
+  }
+
+  if (maintenant - dernierePublication >= 10000) {
+    dernierePublication = maintenant;
+    publierMQTT(derniereValide);       // 50 ms en temps normal,
+                                       // 400 ms si la liaison se retablit
+  }
+
+  gererLeBouton();                     // execute APRES l'envoi,
+  lireLaConsoleSerie();                // donc avec du retard variable
+}
+```
+
+L'ordonnancement temps réel répond autrement : au lieu d'un fil qui alterne les activités, on crée plusieurs fils indépendants, et l'on confie à un composant système, l'ordonnanceur, le soin de décider lequel tourne à chaque instant. Ce composant existe déjà sous vos doigts : l'ESP32 exécute FreeRTOS dès la mise sous tension, y compris dans vos sketches Arduino. Il est temps de cesser de le subir.
+
+## Une tâche, ce qu'elle est réellement
+
+Une tâche est un flux d'exécution autonome : un point de départ, une suite d'instructions, une pile mémoire propre, un contexte processeur propre, et une place dans la file d'attente de l'ordonnanceur. Le mot important est autonome. Quand une tâche est interrompue dans son exécution, l'ordonnanceur sauvegarde ses registres sur sa pile, charge ceux d'une autre tâche puis rend la main : pour celle qui reprend, le temps s'est écoulé sans qu'elle s'en aperçoive, et elle reprend exactement à l'instruction où elle en était. Ce mécanisme, le changement de contexte, crée l'illusion de plusieurs processeurs sur un seul cœur.
+
+La distinction entre fonction et tâche est la première source d'erreurs chez ceux qui viennent du langage C. Une fonction est appelée par quelqu'un, fait son travail, puis retourne à son appelant : sa pile est empruntée. Une tâche n'est jamais appelée : elle est créée, puis elle tourne. Sa fonction corps contient une boucle infinie et se termine rarement par return ; sa pile lui appartient et n'est libérée qu'à sa destruction. Vous n'écrivez donc pas une fonction que l'on utilise, vous écrivez le programme d'une entité qui vit.
+
+Chaque tâche possède cinq caractéristiques que l'on retrouve dans toutes les API de la suite : sa poignée pour la piloter après création, son nom court visible dans les traces, sa pile mesurée en octets sur l'ESP32, sa priorité, dont la signification exacte vient dans la section suivante, et son état : prête à tourner, en train de tourner, bloquée en attendant quelque chose, ou suspendue volontairement. La majorité du temps, vos tâches ne tournent pas, elles attendent — une file vide, un délai écoulé, une ressource libérée.
+```image
+freertos-logo
+| Le logo de FreeRTOS, noyau temps réel open source embarqué dans l'ESP32 et exécuté par défaut dans tous vos sketches Arduino pour cette carte.
+```
+
+Le tableau suivant confronte les trois formes d'exécution que vous avez manipulées dans ce parcours. Elles ne se remplacent pas, elles se complètent.
+
+| Critère | Fonction | Tâche | Routine d'interruption |
+|---|---|---|---|
+| Comment elle démarre | Par un appel | Par sa création | Par un événement matériel |
+| Ce qui l'arrête | Un return | Presque jamais, sinon suppression | Le retour d'interruption |
+| Pile utilisée | Celle de l'appelant | La sienne, allouée à la création | Pile dédiée, très courte |
+| Durée admise | Celle que l'appelant accepte | Doit céder la main régulièrement | Quelques instructions |
+| Exemple | lireCapteur() | Tâche d'affichage | Drapeau posé sur un front |
+
+L'écriture d'une tâche suit un patron unique : la fonction prend un paramètre générique, une boucle traite le travail disponible, et chaque itération se termine par une attente qui met la tâche en sommeil plutôt que de faire tourner le processeur à vide. Cette dernière ligne sépare un système réel d'un système qui chauffe : une tâche qui ne dort jamais monopolise son cœur et affame les tâches de priorité égale.
+
+```cpp
+// Patron d'une tache : parametre, boucle, attente
+typedef struct {
+  const char *nom;
+  uint32_t periodeMs;
+} ParametresTache;
+
+void maTache(void *parametre) {
+  ParametresTache *p = (ParametresTache *)parametre;
+  TickType_t prochainReveil = xTaskGetTickCount();
+
+  for (;;) {
+    traiterUneUniteDeTravail();                 // le travail reel
+    xTaskDelayUntil(&prochainReveil,            // puis le sommeil :
+                    pdMS_TO_TICKS(p->periodeMs)); // la main est rendue
+  }
+}
+```
+
+Une découverte rassurante : vous utilisez déjà des tâches sans le savoir. Quand vous compilez un sketch pour l'ESP32, le cœur Arduino crée une tâche nommée loopTask, y exécute votre setup() puis votre boucle() à répétition, avec une pile de 8192 octets, une priorité de 1 et une préférence pour le cœur numéro 1. Votre programme est donc une tâche parmi d'autres, qui coexiste avec les tâches du pilote Wi-Fi, du pilote TCP et du service de surveillance. Découper votre application, c'est créer vous-même les tâches qui manquent.
+
+## Découper une application en tâches
+
+Le découpage est un acte de conception, pas une écriture de code : c'est ici que se joue la qualité du firmware, et c'est ici que la plupart des projets se trompent en créant soit une seule tâche géante, soit une tâche par fonction. La méthode repose sur trois questions, posées à chaque unité candidate. Premièrement, à quelle fréquence doit-elle s'exécuter, et avec quelle régularité. Deuxièmement, quelle est sa pire durée d'exécution, surtout quand tout va mal : c'est elle qui détermine ce que les autres tâches subiront. Troisièmement, que se passe-t-il si elle prend du retard : la donnée se perd-elle, ou peut-elle attendre ? Des réponses nettes aux trois questions font un bon candidat.
+
+Appliquons le tri à la station météo. La mesure doit avoir lieu toutes les secondes, sans exception, car elle donne son sens à la station : elle devient une tâche. L'affichage doit rester lisible, une vingtaine de rafraîchissements par seconde suffisent, et quelques images de retard n'ont aucune conséquence : deuxième tâche. La publication doit avoir lieu toutes les dix secondes, mais son temps d'exécution est le plus incertain de tous, puisqu'il dépend d'un équipement extérieur : troisième tâche, et c'est elle qu'il faut isoler. L'effet est mécanique : si l'envoi rame, seule l'équipe réseau rame, pendant que la mesure tient sa cadence.
+
+Le tableau ci-dessous formalise ce tri. Les priorités indiquées sont des ordres de grandeur pédagogiques, justifiés dans la section suivante : ce qui compte d'abord, c'est que chaque ligne ait une raison d'être.
+
+| Tâche | Rôle | Cadence | Priorité de départ | Pile indicative | Peut bloquer ? |
+|---|---|---|---|---|---|
+| TacheCapteur | Lire, valider, filtrer, horodater | 1 Hz | 3 | 4096 octets | Oui, dizaines de ms sur le bus |
+| TacheAfficheur | Dessiner l'état et les valeurs | 4 à 10 Hz | 2 | 4096 octets | Oui, dizaines de ms sur l'écran |
+| TacheReseau | Wi-Fi, MQTT, reconnexion | 0,1 Hz | 2 | 6144 octets | Oui, jusqu'à plusieurs secondes |
+| loopTask Arduino | setup, loop, console | libre | 1 | 8192 octets | Oui, si vous y écrivez du bloquant |
+
+Quatre règles complètent ce découpage. Une tâche doit avoir une responsabilité nommable en une phrase, sans et ni. Ne créez pas une tâche par bouton ni par afficheur : les périphériques d'un même rythme restent dans la même tâche, sinon vous payez un changement de contexte pour rien. Gardez une tâche de service, celle qui hérite de votre boucle() Arduino, pour la console et les commandes manuelles. Enfin, documentez le contrat de chaque tâche, ce qu'elle produit et ce qu'elle ne doit jamais faire.
+
+L'antipatron à connaître est la tâche unique qui reproduit votre superloop : tout le code de la boucle() déplacé à l'identique dans une fonction à boucle infinie. Cela compile, cela démarre, et aucun des problèmes initiaux n'est réglé, puisqu'un seul fil reste seul à attendre le réseau. Le symptôme se repère vite : une tâche qui contient les mots Wi-Fi, afficheur et capteur dans le même bloc. La correction consiste à extraire ce qui bloque et à relier les deux par une file de messages.
+
+Voici la charpente de la station en trois tâches, volontairement vide de logique métier : les trois fonctions corps, les trois périodes, l'ossature d'attente. La logique écrite au chapitre six se glisse dans le bloc de travail, sans autre modification.
+
+```cpp
+// Charpente : trois taches, trois cadences, aucun travail inutile
+ParametresTache pCapteur  = {"capteur",  1000};
+ParametresTache pEcran    = {"ecran",     250};
+ParametresTache pReseau   = {"reseau",  10000};
+
+void tacheCapteur(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  for (;;) {
+    Mesure m = lireCapteurFiltre();
+    if (m.valide) xQueueOverwrite(fileMesures, &m);
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+
+void tacheAfficheur(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure copie;
+  for (;;) {
+    if (xQueuePeek(fileMesures, &copie, 0) == pdTRUE) dessinerEcran(copie);
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(250));
+  }
+}
+
+void tacheReseau(void *param) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure aPublier;
+  for (;;) {
+    maintenirLiaisonWifi();
+    if (xQueueReceive(fileMesures, &aPublier, 0) == pdTRUE) {
+      publierMQTT(aPublier);
+    }
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(10000));
+  }
+}
+```
+
+## Créer une tâche : xTaskCreate et ses pièges
+
+La création passe par une seule fonction, xTaskCreate, ou sa variante à affinité de cœur, xTaskCreatePinnedToCore, que vous utiliserez presque toujours sur l'ESP32. Elle prend six arguments : la fonction corps, le nom d'affichage, la taille de la pile, le pointeur transmis à la tâche, la priorité, et l'adresse d'une variable qui recevra la poignée. Quatre de ces six arguments contiennent un piège classique, classé ci-dessous selon leur fréquence d'apparition sur un banc.
+
+Le premier piège est la pile. Sur l'ESP32, la taille s'exprime en octets, alors que FreeRTOS d'origine, celui des livres et de nombreux exemples en ligne, l'exprime en mots de 32 bits : un code copié tel quel vous donne une pile quatre fois trop grande ou quatre fois trop petite. Les symptômes d'insuffisance sont têtus : redémarrage aléatoire, variable jamais écrite qui se corrompt, crash uniquement sur une branche donnée. Partez large, 4096 à 6144 octets, puis mesurez la consommation réelle avec l'indicateur de pile que nous utiliserons en fin de chapitre.
+
+Le deuxième piège est le paramètre. La fonction corps reçoit un pointeur void, et la donnée désignée doit encore exister quand la tâche s'exécute. Si vous transmettez l'adresse d'une variable locale de setup(), votre tâche lit une pile devenue illisible et son comportement devient aléatoire. Déclarez les paramètres statiques ou globaux, ou rattachez-les à la structure de configuration du système.
+
+```cpp
+// Creation correcte : parametre statique, retour verifie, poignee conservee
+static ParametresTache pCapteur = {"capteur", 1000};
+TaskHandle_t handleCapteur = NULL;
+
+BaseType_t ok = xTaskCreatePinnedToCore(
+    tacheCapteur,      // fonction corps
+    "capteur",         // nom court, visible dans les traces
+    4096,              // pile en OCTETS sur ESP32
+    &pCapteur,         // pointeur stable, pas une variable locale
+    3,                 // priorite
+    &handleCapteur,    // poignee pour piloter la tache
+    1);                // coeur applicatif de l'Arduino
+
+if (ok != pdPASS) {
+  Serial.println("Creation de la tache capteur impossible");
+  while (true) delay(1000);   // on n'execute jamais un firmware incomplet
+}
+```
+
+Le troisième piège est le retour. xTaskCreate renvoie pdPASS en cas de succès ; ignorer ce code revient à démarrer un firmware dont on ne sait pas s'il est complet. Une création ratée vient presque toujours d'une pile insuffisante ou d'une mémoire épuisée, et poursuivre alors produit des comportements impossiles à diagnostiquer.
+
+Le quatrième point est l'affinité de cœur, une spécificité de l'ESP32 absente des microcontrôleurs simples. La puce embarque deux cœurs identiques : le cœur 0, dit processeur de protocole, abrite en priorité les tâches du Wi-Fi et du Bluetooth ; le cœur 1, dit processeur applicatif, porte l'exécution du sketch Arduino. On peut laisser l'ordonnanceur répartir, ou épingler une tâche pour des raisons de performance ou d'accès matériel. La règle sûre pour débuter : tâches applicatives épinglées au cœur 1, cœur 0 réservé à la pile réseau, et jamais de présomption de parallélisme sans vérifier les accès communs.
+
+```image
+esp32
+| Une carte de développement ESP32 : son processeur dual-cœur impose de choisir lequel des deux cœurs exécute chaque tâche, tandis que sa mémoire vive partagée impose de les protéger.
+```
+
+Un dernier comportement à maîtriser est l'arrêt. Une tâche qui a fini son travail appelle vTaskDelete(NULL) pour se supprimer elle-même, ce qui libère sa pile et son emplacement ; une tâche qui doit s'arrêter temporairement ne se supprime pas, elle se suspend avec vTaskSuspend et se réveille plus tard, par une autre tâche ou par un événement. La suppression est définitive, la suspension ne l'est pas. En pratique, peu de tâches meurent : elles tournent, bloquées la majeure partie du temps, jusqu'à l'extinction.

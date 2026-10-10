@@ -1,0 +1,100 @@
+Avant d'écrire la moindre ligne de code d'attaque, il y a une étape que les professionnels sérieux ne bâclent jamais : l'analyse de vulnérabilités. Ce chapitre vous apprend à produire un inventaire honnête et priorisé des faiblesses d'un système, sans jamais franchir la porte. Vous allez apprendre à demander poliment au réseau ce qu'il expose, à interpréter ses réponses, à distinguer une information fiable d'un bruit de fond, et à transformer des milliers de lignes de sorties en un rapport que quelqu'un pourra lire et corriger.
+
+La tentation, quand on débute en cyber offensive, est de foncer vers les outils qui exploitent : les modules d'expansion, les payloads, les shellcodes. C'est une erreur pédagogique et professionnelle. La quasi-totalité des failles qui font la une des journaux ont été découvertes, publiées et corrigées grâce à une étape préalable de cartographie : scanner, relever les versions, consulter des bases publiques, prioriser. Le pentester débutant qui sait bien scanner est infiniment plus utile à une équipe que celui qui lance des exploits au hasard et casse un serveur de production.
+
+Nous allons travailler comme dans un vrai mandat : d'abord le cadre (autorisation, périmètre, règles du jeu), puis la mécanique des paquets qui sous-tend chaque scan, ensuite les types de scan et leurs signatures, et enfin la lecture des réponses. Chaque commande présentée est destinée à des systèmes que vous êtes autorisé à tester. Gardez cette habitude dès le premier jour : le terminal ne fait pas la différence entre un scan légal et un scan illégal, c'est vous qui la faites.
+
+## Pourquoi scanner sans exploiter
+
+Scanner, c'est poser des questions à distance et observer les réponses. Ouvrir un port TCP, c'est obtenir une réponse de type SYN-ACK : le serveur vous dit « oui, j'écoute ici ». Récupérer l'en-tête d'un serveur HTTP, c'est obtenir une réponse du type « je suis nginx 1.24.0 ». Aucune de ces réponses n'est une intrusion ; elles sont produites volontairement par le service, dans le cadre normal de son fonctionnement. L'analyse de vulnérabilités se contente de collecter ces réponses, de les comparer à ce que l'on sait des défauts connus, et d'en tirer des conclusions.
+
+Cette distinction est essentielle pour une raison pratique : elle détermine le risque juridique et opérationnel. Un scan non intrusif ne détruit rien, ne modifie aucune donnée, ne crée aucun compte. Un exploit, lui, exécute du code, modifie des fichiers, peut faire tomber un service. Dans un environnement de production — une banque, un hôpital, un site e-commerce — la différence entre les deux est la différence entre un rapport de test et une interruption de service. Vous apprendrez dans la leçon suivante du parcours à exploiter, mais toujours après avoir prouvé la vulnérabilité par d'autres moyens.
+
+Le non-intrusif présente aussi une qualité souvent sous-estimée : la répétabilité. Vous pouvez lancer un scan SYN tous les lundis matin sans jamais inquiéter personne, et construire une historique de comparaison. Quand un service passe de nginx 1.20 à nginx 1.24, votre inventaire le montre. Quand un port 3389 apparaît sur une machine qui n'en avait pas, votre historique le montre aussi. Cette discipline de suivi est la base de tout programme de gestion des actifs, et elle ne demande aucun code d'exploitation.
+
+Un troisième argument, plus technique cette fois : un scan bien conçu donne souvent la preuve suffisante d'une vulnérabilité sans l'exploiter. Si votre scan révèle qu'un serveur FTP expose la version vsftpd 2.3.4, et que cette version est associée publiquement à une porte dérobée documentée sous l'identifiant CVE-2011-2526, vous avez la preuve du risque. Vous n'avez pas besoin de se connecter avec la séquence magique pour convaincre l'administrateur : le numéro de CVE et le score de sévérité suffisent dans la très grande majorité des cas. C'est le principe de preuve minimale que tout rapport de vulnérabilités professionnel applique.
+
+Voici à quoi ressemble la première étape d'un scan basique, la découverte d'hôtes. Supposons que votre autorisation vous donne le droit de tester le sous-réseau 192.168.56.0/24 :
+
+```bash
+nmap -sn 192.168.56.0/24
+```
+
+La sortie attendue liste les adresses qui ont répondu, avec leurs adresses MAC et, si la résolution est disponible, leurs noms d'hôtes. Rien n'est encore envoyé aux services : vous venez seulement de dresser la liste des machines présentes. C'est l'équivalent, pour un auditeur, de faire l'inventaire d'une maison pièce par pièce avant d'ouvrir les placards.
+
+Un scan de ports suit naturellement cette étape, et c'est là que la notion d'intrusivité devient concrète. Le choix du mode de scan détermine la quantité de trafic généré, la probabilité d'être détecté par un système de détection, et la fiabilité des résultats. Les deux modes fondamentaux sur lesquels vous allez construire toute votre pratique sont le scan SYN et le scan CONNECT, que nous détaillons dans les sections suivantes. Chacun a sa place : le premier pour la discrétion et la vitesse, le second pour la simplicité et la compatibilité.
+
+Un dernier mot sur la posture mentale. Un rapport de vulnérabilités n'est pas une liste de courses : c'est un document qui doit permettre à quelqu'un d'agir. « Port 445 ouvert » n'est pas une finding ; « Port 445 expose SMBv1 sur 14 machines du parc, vulnérable à EternalBlue selon CVE-2017-0144, score CVSS 8.1, correction prioritaire sous 30 jours » est une finding. Toute la chaîne que vous allez apprendre dans ce chapitre — scan, interprétation, corrélation avec les bases de vulnérabilités, priorisation — vise à produire la seconde phrase, jamais la première.
+
+## Autorisation et cadre légal
+
+Aucune commande de ce chapitre n'a de valeur si vous n'avez pas l'autorisation écrite de tester les systèmes visés. En France, l'accès frauduleux à un système de traitement automatisé de données est un délit pénal prévu par l'article 323-1 du code pénal, puni de trois ans d'emprisonnement et de 100 000 euros d'amende. Les agissements sont aggravés lorsque l'intrusion entraîne une suppression ou une modification de données. Ce cadre s'applique à un scan même sans exploitation : une connexion initiée sur un système sans autorisation peut suffire à caractériser l'infraction.
+
+L'autorisation prend la forme d'un document daté et signé qui précise plusieurs éléments. Le périmètre exact : les adresses IP, les plages de sous-réseau, les noms de domaine, et éventuellement les ports interdits. Les dates et horaires pendant lesquels les tests sont autorisés. Les types de tests autorisés, car un mandat peut autoriser un scan basique mais interdire les tests d'intrusion complets. Les contacts d'astreinte, c'est-à-dire les personnes à prévenir immédiatement en cas de désagrément. Et enfin les livrables attendus, qui déterminent la profondeur du reporting que vous allez devoir produire.
+
+Voici un exemple de cadre de référence que vous retrouverez, sous des variantes, dans la plupart des contrats :
+
+```table
+| Élément du mandat | Exemple de formulation | Ce qu'il interdit implicitement |
+| Périmètre réseau | 192.168.56.100 à 192.168.56.130 | Tout test hors plage, même accidentel |
+| Fenêtre horaire | Lundi au vendredi, 22 h à 6 h | Tout test en heures ouvrables |
+| Techniques autorisées | Scan SYN, scan CONNECT, scripts http-enum | Fuzzing, brute force, injection de code |
+| Niveau d'urgence | Critique : réponse sous 4 h | Aucun, mais impose une astreinte |
+| Livrable | Rapport PDF, tableau CSV des findings | Aucun, mais précise le format attendu |
+```
+
+À noter que la colonne de droite est souvent la plus utile : elle traduit ce qui n'a pas été écrit. Si le mandat ne mentionne pas le brute force, vous ne le pratiquez pas. Si le mandat ne mentionne pas les Denial of Service, vous n'en déclenchez aucun, même involontairement par un rythme de scan trop agressif. Le doute se lève toujours en faveur de la prudence, et par un appel au contact technique avant de poursuivre.
+
+Les bug bounty programs, ces programmes de récompenses publiques proposés par des entreprises, ont des règles publiques qui font office de mandat. Leur lecture est une compétence en soi : ils indiquent les domaines couverts, les techniques bannies — souvent le spam, le Denial of Service, l'exposition de données personnelles — et le niveau de preuve attendu. Un test hors du périmètre déclaré, même réalisant une découverte légitime, expose l'entreprise et l'auditeur. Lisez la politique en entier avant de lancer la première commande, et conservez une copie de la version en vigueur au moment de votre test.
+
+Enfin, l'environnement d'apprentissage constitue un périmètre à part entière. Les machines virtuelles proposées par des distributions comme Kali Linux, par les laboratoires VulnHub, ou par les plateformes de pratique en ligne sont conçues pour que vous puissiez scanner, exploiter, casser, réinstaller. C'est dans ces environnements que vous devez prendre vos habitudes de scan, mémoriser les sorties de vos outils, et commettre vos erreurs. Passez-y du temps avant de toucher à un réseau dont la propriété ne vous appartient pas. La compétence s'y construit exactement de la même manière, sans le risque pénal.
+
+## Anatomie d'un scan SYN
+
+Le scan SYN, noté -sS dans Nmap, est appelé scan à moitié ouvert parce qu'il n'achève jamais l'établissement de la connexion TCP. Pour le comprendre, il faut se rappeler le fonctionnement du handshake TCP. Un client qui veut ouvrir une connexion envoie un paquet avec le bit SYN levé. Le serveur, si le port est ouvert, répond SYN-ACK. Le client devrait alors répondre ACK, et la connexion est établie. Dans un scan SYN, le client s'arrête après avoir reçu le SYN-ACK et envoie un RST, ou reset, pour interrompre la connexion avant qu'elle ne soit complète.
+
+```bash
+sudo nmap -sS -p 22,80,443 192.168.56.101
+```
+
+Cette commande produit une sortie attendue de la forme suivante :
+
+```bash
+Starting Nmap 7.94 ( https://nmap.org ) at 2026-03-10 09:14 CET
+Nmap scan report for serveur-demo (192.168.56.101)
+Host is up (0.00042s latency).
+PORT    STATE    SERVICE
+22/tcp  open     ssh
+80/tcp  open     http
+443/tcp filtered https
+Nmap done: 1 IP address (1 host up) scanned in 1.21 seconds
+```
+
+L'avantage de cette approche est double. D'abord, la connexion n'étant jamais achevée, elle ne laisse souvent aucune trace dans les journaux d'application : le serveur a vu un début de connexion, mais le service lui-même, lui, n'a pas été contacté. Ensuite, la rapidité est nettement supérieure, car Nmap peut envoyer plusieurs requêtes en parallèle sans attendre la fin des connexions. C'est le mode de scan par défaut lorsque vous disposez des privilèges nécessaires, généralement le compte root sous Linux ou un compte administrateur sous Windows.
+
+```bash
+sudo nmap -sS -T2 --max-rate 100 -p 1-1024 192.168.56.0/24
+```
+
+Le diagnostic, lui, se fait au niveau du système, et c'est là que l'image suivante devient utile pour visualiser le chemin que suit chaque paquet à travers les états de la machine :
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Tcp_state_diagram.svg/960px-Tcp_state_diagram.svg.png
+| Diagramme des états de la machine à états TCP, montrant le passage de l'état de fermeture à celui d'écoute après l'envoi du SYN et la réception du SYN-ACK.
+```
+
+Un point de vigilance sur les privilèges. Nmap a besoin de construire lui-même les paquets SYN, ce qui impose les droits administrateur. Si vous lancez la commande sans sudo, Nmap vous en informera et basculera automatiquement vers un scan complet, noté -sT, dont nous parlerons dans la partie suivante. Ce basculement silencieux est une source classique de résultats trompeurs pour les débutants : vous croirez faire un scan SYN discret alors que vous faites un scan complet, beaucoup plus traceable. Vérifiez toujours la ligne de l'en-tête de sortie, qui vous indique le mode réellement utilisé.
+
+L'interprétation des états de port est l'autre compétence à acquérir. Un port ouvert, noté open, signifie qu'une application a répondu positivement : il y a bien un service derrière. Un port fermé, noté closed, signifie que la machine a répondu par un RST : elle est joignable, mais rien n'écoute sur ce port. Un port filtré, noté filtered, signifie qu'aucune réponse n'a été obtenue dans le délai : un pare-feu bloque probablement, mais il peut aussi s'agir d'une perte de paquets. La distinction entre fermé et filtré est capitale, car elle change la nature du constat : « rien n'écoute » et « quelqu'un bloque exprès » n'appellent pas les mêmes suites.
+
+Vous rencontrerez aussi des états plus rares, comme open|filtered, typique des scan UDP où l'absence de réponse n'est pas discriminante, ou closed|filtered dans les scans à l'aide de IP fragments. Dans la pratique, restez concentré sur les trois états principaux, et apprenez à lire une sortie complète ligne par ligne avant de chercher à automatiser quoi que ce soit. Une heure passée à comprendre une sortie de vingt lignes vous fait gagner une journée à corriger un script qui classait les ports filtrés comme ouverts.
+
+Un réflexe à prendre dès maintenant : sauvegarder systématiquement les sorties brutes, avant tout filtrage ou tri. Nmap sait écrire dans plusieurs formats à la fois, ce qui vous évitera de relancer un scan coûteux parce que vous avez fermé votre terminal. La commande suivante produit trois fichiers à partir d'une seule exécution : un lisible pour l'œil, un au format XML pour l'importation dans un outil, et un format simple pour les scripts :
+
+```bash
+sudo nmap -sS -p 1-1024 -oA inventaire/demo-2026-03 192.168.56.101
+```
+
+Cette habitude de nommage daté, associée à un dossier dédié par cible et par mission, constitue déjà le premier bricks de votre inventaire. Vous y reviendrez dans la dernière partie du chapitre, lorsque nous transformerons ces fichiers bruts en tableau de findings priorisés.
+
+Enfin, le scan SYN n'est pas un outil magique : il connaît des limites. Certains pare-feux modernes rejettent les paquets provenant d'adresses inconnues, d'autres réécrivent les tables de connexions de sorte qu'un port fermé et un port filtré deviennent indiscernables. Les systèmes déployés derrière du Network Address Translation nécessitent également une attention particulière, car la réponse vient parfois de la traduction d'adresse et non du serveur lui-même. Ne vous contentez donc jamais d'une seule exécution : relancez, comparez, et croisez avec un second mode de scan avant d'affirmer qu'un port est réellement ouvert. La rigueur du double contrôle est ce qui sépare un constat d'un présupposé.

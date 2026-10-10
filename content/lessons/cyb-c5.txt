@@ -1,0 +1,874 @@
+Bienvenue dans le cinquième chapitre du parcours Cybersécurité, consacré à la sécurité applicative : tout ce qui peut se passer lorsque vos propres lignes de code deviennent la porte d'entrée d'un visiteur indésirable. Jusqu'ici, votre réflexe portait sur des choses extérieures au programme : un pare-feu mal réglé, un mot de passe trop court, un poste laissé déverrouillé. Désormais, vous tournez le regard vers l'intérieur, vers les fichiers que vous écrivez, les requêtes que vous formez, les champs que vous acceptez sans les relire. La faille n'est alors plus une configuration oubliée : c'est une chaîne concaténée à la va-vite, un tableau de bord dont l'adresse change à peine, une session dont le jeton n'est lié à rien. Le site fonctionne et plaît à vos utilisateurs ; la question du chapitre est de savoir ce qu'il fait quand quelqu'un va plus loin que le parcours normal.
+
+La bonne nouvelle, c'est que tout ce que vous allez apprendre tient dans un nombre limité de mécanismes, et qu'ils se ressemblent tous : un endroit où un programme confond ce qu'il manipule avec ce qu'il exécute, un endroit où l'on fait confiance à quelque chose qui ne la mérite pas. Injection SQL, injection de commandes, XSS, CSRF, validation de saisie, erreurs, mots de passe, fichiers, journaux : chaque cas de ce chapitre est une variante de ces deux phrases. On ne mémorise donc pas des recettes, on se forge un réflexe : devant chaque donnée qui entre, se demander ce qu'un visiteur malveillant pourrait en faire. Nous avancerons par étapes, en alternant explications et exemples commentés défensivement : ils sont réduits pour que vous compreniez le mécanisme, pas pour que vous le répétiez.
+
+Le fil rouge de la leçon est un site concret, celui de la Médiathèque des Lilas, dont vous avez rencontré les pages dans les chapitres précédents du parcours web. Il possède un formulaire d'inscription aux ateliers, un moteur de recherche de titres, un espace de dépôt de documents et un espace administrateur où le personnel valide les inscriptions. C'est un site modeste, exactement le genre que construit la majorité des développeurs, et c'est pour cela qu'il est parfait : il concentre, en quelques écrans, la quasi-totalité des pièges du chapitre. Le formulaire reçoit du texte qui partira en base, la recherche renvoie du texte affiché, le dépôt accepte des fichiers, l'administrateur déclenche des actions sensibles. Chaque section prendra un de ces morceaux, montrera ce qui ne va pas, puis la parade, puis la version corrigée. À la fin, vous auditerez le formulaire d'inscription dans le mini-projet guidé.
+
+Une dernière recommandation avant d'entrer dans le vif du sujet : la sécurité se pratique comme un instrument, pas comme une lecture. Recopiez chaque exemple, modifiez-le, faites-le échouer, puis rétablissez la parade et observez que l'attaque disparaît. Essayez un champ vide, un champ trop long, un champ contenant des guillemets : votre application doit réagir de manière prévisible dans chaque cas. Le moment le plus rentable pour penser sécurité est celui où l'on écrit le code, non celui où l'on répare l'incident. Gardez enfin l'idée qui traverse toutes les sections : ne jamais laisser une donnée changer de rôle entre son entrée et son usage.
+
+## L'OWASP Top 10 : ce que c'est et comment s'y repérer
+
+L'OWASP signifie Open Web Application Security Project, une association internationale sans but lucratif qui publie gratuitement une documentation produite par une communauté de praticiens, d'auditeurs et de chercheurs. Parmi ses publications, la plus connue est le Top 10, un classement des failles applicatives les plus fréquemment observées dans le monde réel. Ce classement n'est ni une norme, ni une certification : c'est un outil de priorisation et un langage commun. Quand un responsable annonce en réunion qu'un point relève de l'accès contrôlé ou de l'injection, tout le monde sait de quoi on parle, quel que soit le langage utilisé. Le Top 10 sert à créer ce vocabulaire et à indiquer où concentrer l'effort quand le temps manque.
+
+Sa force vient de la méthode de constitution : les catégories sont établies à partir de retours d'expérience anonymisés, d'analyses de correctifs et d'enquêtes menées auprès d'équipes qui corrigent des incidents quotidiennement. Une faible proportion de causes produit la majorité des compromissions, et c'est cette concentration qui rend un tableau de dix entrées utile. Attention toutefois à ce qu'il ne dit pas : le classement ne couvre pas tout et ne remplace pas l'analyse de votre propre modèle de menace. Un projet conforme au Top 10, mais dont les champs sont concaténés dans une requête et les pages d'erreur affichent la trace d'une exception, reste compromettable en quelques secondes.
+
+Les grandes entrées du dernier référentiel publié s'ordonnent autour de thèmes qui vous deviendront familiers au fil du chapitre : le contrôle d'accès insuffisant, c'est-à-dire l'impossibilité de prouver que l'utilisateur est réellement autorisé à l'action demandée ; les défaillances cryptographiques, algorithmes faibles, clés mal protégées, données envoyées en clair ; l'injection, qui regroupe l'injection SQL, l'injection de commandes et les injections vers d'autres interpreteurs ; les failles de conception, apparues quand on n'a jamais imaginé un scénario d'abus ; puis les mauvaises configurations, les composants périmés, les défaillances d'authentification, l'insuffisance des journaux et la falsification de requête côté serveur. Vous reconnaîtrez ces mots-clés dans les sections suivantes.
+
+Comment s'y repérer concrètement, sur votre propre code ? En trois temps. Dressez l'inventaire des points où de l'information extérieure entre dans le programme : champs de formulaire, paramètres d'adresse, en-têtes HTTP, fichiers déposés, appels d'interface. Pour chaque point d'entrée, tracez la donnée jusqu'à sa destination finale, qui est presque toujours l'une de quatre : une requête vers une base, une commande système, un affichage dans une page, un appel vers un autre service. Appliquez enfin la parade correspondante à ce croisement précis. Vous venez de décrire la méthode d'un auditeur professionnel : il ne lit pas tout le code à la recherche d'un bug, il cherche les endroits où une donnée change de nature.
+
+Le tableau suivant résume le croisement entre les points d'entrée, les destinations dangereuses et les parades qui font le cœur de ce chapitre. Gardez-le sous la main pendant votre relecture : il vous servira de filtre chaque fois que vous hésiterez sur la marche à suivre.
+
+```table
+| Destination de la donnée | Ce qui peut se passer sans parade | Parade principale |
+| --- | --- | --- |
+| Requête vers la base de données | Lecture ou modification non autorisée des données | Requêtes paramétrées, liste blanche pour les identifiants |
+| Commande système | Exécution d'actions arbitraires sur le serveur | Arguments passés en liste, aucune interpolation dans un shell |
+| Affichage dans une page | Exécution de script dans le navigateur d'un autre utilisateur | Échappement adapté au contexte, politique de sécurité de contenu |
+| Formulaire soumis par un autre site | Action sensible déclenchée sans consentement | Jeton lié à la session, vérification de l'origine |
+| Fichier déposé | Remplacement de fichier, exécution, inclusion distante | Liste blanche d'extensions, nom aléatoire, stockage hors racine |
+| Message d'erreur | Fuite de schéma, de chemins et de versions | Message générique côté utilisateur, détail dans les journaux |
+| Journal d'activité | Fuite de données personnelles | Masquage des données sensibles, accès restreint |
+```
+
+
+Le flux normal d'un formulaire d'inscription illustre parfaitement l'enjeu. Voici ce que voit un visiteur honnête, puis ce que voit un attaquant qui remplace la valeur attendue par autre chose, et voici comment le même flux se comporte une fois les parades en place. Les deux schémas suivants, dessinés en texte, montrent le trajet complet d'une donnée de la page du formulaire jusqu'à la table de la base.
+
+```text
+SANS PARADE — la donnée et l'instruction sont mélangées
+
+  page du formulaire              serveur                         base
+  ------------------              ------                          ----
+  champ "nom"  =  saisi librement
+        |
+        |  POST /inscription
+        v
+  [ concaténation de chaînes ]  --->  SELECT * FROM inscriptions
+        |                              WHERE nom = '<valeur>'
+        |                                        |
+        |  la valeur peut fermer les quotes      |
+        |  et ajouter une instruction            v
+        |                              [ exécution de la requête
+        |                                telle qu'elle arrive ]
+        |
+  résultat : le visiteur obtient une page, l'attaquant obtient
+  la possibilité d'interroger ou de modifier d'autres tables
+
+AVEC PARADE — la donnée ne peut pas devenir une instruction
+
+  page du formulaire              serveur                         base
+  ------------------              ------                          ----
+  champ "nom"  =  saisi librement
+        |
+        |  POST /inscription
+        v
+  [ validation de type et de longueur ]
+        |
+        v
+  [ requête préparée : instruction fixe ]  --->  instruction SQL
+  [ valeur transmise à part ]             --->  paramètre de donnée
+                                                    |
+                                                    v
+                                          [ exécution : la base
+                                            traite le paramètre
+                                            comme une donnée seule ]
+  résultat : quelle que soit la valeur reçue, le programme
+  exécute exactement la même instruction SQL
+```
+
+Appliquons ce découpage au site de la médiathèque. Le formulaire d'inscription reçoit un nom, une adresse électronique et le choix d'une session : ces valeurs finiront dans une table, donc de la première ligne. La recherche de titres renvoie un mot-clé affiché dans la page de résultats : donc de la troisième ligne. L'espace de dépôt accepte un fichier, donc de la cinquième ; L'espace administrateur modifie l'état du site, donc de la quatrième ligne. En quelques instants, vous avez cartographié l'application : c'est le travail à refaire en tête de chaque nouveau projet.
+
+```text
+Cartographie express d'une application web — Médiathèque des Lilas
+
+  point d'entrée                 destination finale           risque dominant
+  -------------                  ------------------           ---------------
+  /inscription (formulaire)  ->  table inscriptions       ->  injection SQL
+  /recherche  (mot-clé)      ->  HTML de la page          ->  XSS
+  /admin/valider (action)    ->  modification d'état      ->  CSRF + accès
+  /admin (page protégée)     ->  session de l'administrateur -> accès direct
+  /depot (fichier)           ->  disque du serveur        ->  upload dangereux
+  toute erreur technique     ->  écran de l'utilisateur   ->  fuite d'info
+```
+
+Classer ses risques ne les traite pas : la cartographie ci-dessus vous dit où regarder, mais elle ne dit pas ce que votre framework fait déjà à votre place. La seule manière de le savoir est de tester le comportement réel de l'application, en modifiant une valeur à la main et en observant ce qui arrive.
+
+## Injection SQL : mécanisme et parade avec les requêtes paramétrées
+
+L'injection SQL est la plus ancienne et la plus redoutable des failles applicatives, parce qu'elle exploite une propriété fondamentale des bases de données : pour le moteur, une requête reçue est un programme, et aucun marqueur ne distingue, dans la chaîne reçue, la partie exécutée de la partie traitée comme une donnée. Si votre programme construit cette chaîne en additionnant des morceaux, vous confiez au visiteur le soin d'écrire une partie de votre programme. Le champ de recherche de la médiathèque est l'exemple canonique : on y écrit un mot, le serveur assemble la requête, la base répond. Le jour où quelqu'un écrit autre chose qu'un mot, l'assemblage continue de la même manière, parce que le programme ne fait qu'une opération mécanique de collage.
+
+Le point essentiel est que la faille ne vient pas d'un bug de la base, mais d'une erreur de conception de votre code : la base exécutera toujours fidèlement l'instruction qu'elle reçoit, et si cette instruction a été modifiée par une valeur venue du visiteur, elle obéit à l'instruction modifiée. D'où l'intuition définitive : le seul moyen robuste de supprimer le risque est d'empêcher toute valeur de participer à la rédaction de l'instruction. C'est ce que fait la requête paramétrée, et c'est la parade à appliquer systématiquement, y compris dans les scripts jetables, parce que les scripts jetables finissent souvent en production.
+
+```python
+# Version vulnérable : la valeur est collée dans le texte de la requête.
+# Ce que verrait un attaquant : une valeur qui ferme la chaîne et ajoute
+# une condition toujours vraie, puis récupère des comptes qu'il n'a pas
+# le droit de voir. L'exemple est volontairement réduit et commenté.
+motcle = champ_recherche_de_l_utilisateur
+requete = "SELECT titre, auteur FROM catalogue WHERE titre LIKE '%" + motcle + "%'"
+curseur.execute(requete)
+
+# La parade : l'instruction est fixe et écrite à l'avance, la valeur
+# est transmise séparément par l'intermédiaire du moteur de requêtes.
+motcle = champ_recherche_de_l_utilisateur
+requete = "SELECT titre, auteur FROM catalogue WHERE titre LIKE %s"
+curseur.execute(requete, ("%" + motcle + "%",))
+```
+
+La différence tient à un argument supplémentaire, et pourtant elle est totale. Dans la première version, la chaîne contient déjà la valeur au moment où elle est envoyée : si elle contient un guillemet, elle rompt la chaîne et tout ce qui suit devient du code exécuté. Dans la seconde, la chaîne envoyée au moteur ne contient qu'un jeton de remplacement, et la valeur part par un canal distinct, dans les métadonnées de la requête. Le moteur la reçoit et la traite, quelle que soit sa teneur, comme une donnée : il n'y a plus de chaîne à rompre, donc plus de confusion possible. Le programme, lui, ne change jamais : la requête est identique à chaque exécution, seule la valeur varie.
+
+Le trajet de la donnée, sans puis avec la parade, se dessine ainsi entre le formulaire et la table :
+
+```text
+Formulaire de recherche "titre"  ->  parcours sans parade
+
+  utilisateur ----> [ champ texte ]
+                        |
+                        v
+                 [ concaténation avec le texte SQL ]
+                        |
+                        v
+                 [ envoi d'une chaîne complète ]
+                        |
+                        v
+                   moteur SQL  --->  catalogue / inscriptions / comptes
+                        |
+                 l'instruction et la donnée
+                 sont indiscernables
+
+
+Formulaire de recherche "titre"  ->  parcours avec requête paramétrée
+
+  utilisateur ----> [ champ texte ]
+                        |
+                        v
+                 [ validation : type texte, longueur maximale ]
+                        |
+                        v
+                 [ instruction SQL fixe, écrite par le développeur ]
+                        |
+                        +----> valeur ------> canal de données
+                        |
+                        +----> instruction --> canal d'instruction
+                                                |
+                                                v
+                                           moteur SQL
+                                    la valeur reste une donnée,
+                                    quelle qu'elle soit
+                                                |
+                                                v
+                                        résultat attendu uniquement
+```
+
+Les moteurs et leurs bibliothèques exposent tous ce mécanisme, avec des syntaxes de remplacement différentes : le point d'interrogation dans les connecteurs les plus courants, le signe de dollar suivi d'un numéro pour PostgreSQL, la virgule de nommage dans quelques ORM. Retenez le principe plutôt que la lettre : il existe un séparateur entre le texte de l'instruction et la valeur, et vous devez toujours passer par ce séparateur. Une recherche dans la documentation de votre connecteur confirme la syntaxe exacte ; ce qui ne varie jamais, c'est l'habitude de ne jamais construire une requête par addition de chaînes.
+
+```python
+# Placeholders : la même intention, deux syntaxes courantes de connecteurs.
+# Le principe ne change jamais : instruction fixe + valeur transmise à part.
+
+# style point d'interrogation
+curseur.execute("SELECT id FROM comptes WHERE courriel = ?", (courriel,))
+
+# style nommé
+curseur.execute("SELECT id FROM comptes WHERE courriel = :courriel",
+                {"courriel": courriel})
+```
+
+Il existe un cas où la requête paramétrée ne suffit pas à elle seule, et il est fréquent à la médiathèque : le tri des résultats et la pagination. On ne peut pas transmettre un identifiant de colonne en paramètre de données, car la base doit connaître le nom de la colonne avant de traiter une valeur. La parade est alors la liste blanche : le programme n'accepte que les valeurs qu'il a lui-même définies. Si le visiteur demande le tri par titre, il choisit la colonne titre ; sinon, il retombe sur le tri par défaut. Toute autre approche, y compris le filtrage de mots interdits, est vouée à l'échec : une liste noire ne sera jamais aussi complète que la grammaire du langage de requêtes.
+
+```python
+# Identifiant de colonne : impossible à paramétrer, on utilise une liste blanche.
+# Ce que verrait un attaquant : un champ de tri qui contient autre chose
+# qu'un nom de colonne, par exemple une instruction complète.
+tri_demande = requete_get.get("tri", "titre")
+
+COLONNES_AUTORISEES = {
+    "titre": "titre",
+    "auteur": "auteur",
+    "annee": "annee_de_publication",
+}
+
+# La parade : la valeur entrante sert uniquement de clé de recherche
+# dans un dictionnaire défini par le développeur. Si elle n'y figure pas,
+# le programme utilise la valeur par défaut.
+colonne = COLONNES_AUTORISEES.get(tri_demande, "titre")
+requete = f"SELECT titre, auteur FROM catalogue ORDER BY {colonne} ASC"
+```
+
+Deux compléments ferment cette section. Le premier concerne les privilèges du compte de base utilisé par l'application : un compte limité aux tables dont il a réellement besoin rend une injection aboutie beaucoup moins rentable. Le second concerne les messages d'erreur : afficher au visiteur l'erreur du moteur revient à lui livrer le schéma, les noms de colonnes et parfois l'extrait de requête qui a échoué. La base doit parler à vos journaux, jamais à vos écrans.
+
+Enfin, les ORM et les frameworks construisent-ils des requêtes paramétrées à votre place ? Dans la grande majorité des cas, oui, mais la sortie de route reste possible : requêtes brutes exécutées à la main, chaînes formatées passées à une fonction d'exécution, utilitaires qui acceptent des fragments de requête. Vérifiez ce que produit votre couche d'accès aux données en activant la journalisation des requêtes sur un environnement de test, puis regardez si la valeur apparaît dans l'instruction envoyée. Une fois cette différence vue sur votre propre écran, vous ne referez plus jamais autrement.
+
+## Injection de commandes : quand votre code parle au système d'exploitation
+
+La deuxième grande famille d'injection se produit lorsque votre application doit accomplir une tâche que le langage ne sait pas faire seul : convertir une image, compresser un dossier, interroger un service externe, exporter un rapport en PDF. On appelle alors souvent le système d'exploitation, qui reçoit lui aussi une instruction sous forme de texte et ne peut pas distinguer, dans celle-ci, la partie que vous avez écrite de la partie qui provient du visiteur. L'injection de commandes est le même mécanisme que l'injection SQL, appliqué à un autre interpreteur, avec une conséquence souvent plus grave : au lieu de toucher aux données, on exécute des actions sur la machine.
+
+En Python, le cas le plus cité est la fonction os.system, qui prend une chaîne de caractères et la confie à l'interpréteur de commandes de la machine : commode pour un script personnel, c'est un piège dès que la chaîne contient une trace de donnée venant de l'extérieur. Le danger vient des métacaractères, ces symboles que l'interpréteur interprète comme des instructions : fin de chaîne, séparation entre commandes, exécution enchaînée, remplacement par la sortie d'une autre commande. Un visiteur qui les maîtrise n'a pas besoin de comprendre votre programme : il lui suffit de fermer la chaîne que vous avez commencée, exactement comme dans le cas SQL.
+
+```python
+import os
+
+# Version dangereuse : le nom du fichier fourni par l'utilisateur est collé
+# dans une chaîne qui part vers l'interpréteur de commandes.
+# Ce que verrait un attaquant : un nom de fichier qui contient un séparateur
+# de commandes et fait ainsi exécuter une seconde commande à votre place.
+nom = champ_nom_fichier_de_l_utilisateur
+os.system("convert --resize 800 " + nom + " /var/www/thumb/" + nom)
+
+# La parade : aucun passage par l'interpréteur de commandes.
+# Les arguments sont transmis sous forme de liste, chacun est préservé
+# comme une valeur, y compris s'il contient des métacaractères.
+import subprocess
+subprocess.run(
+    ["convert", "--resize", "800", nom, "/var/www/thumb/" + nom],
+    check=True,
+    shell=False,
+)
+```
+
+La parade repose sur trois gestes qui se complètent. Ne construisez jamais une commande à partir de fragments : appelez la fonction avec une liste d'arguments séparés, et la bibliothèque transmet chacun d'eux sans qu'aucun symbole ne soit réinterprété. Forcez ensuite l'absence d'interpréteur de commandes ; dès que cette option bascule, votre liste d'arguments est de nouveau traitée comme du texte à interpréter et la parade disparaît. Enfin, ne laissez jamais une valeur entrante désigner un chemin, un nom d'hôte ou un drapeau : un argument qui commence par un tiret devient une option, et un chemin peut viser n'importe quel fichier lisible par le processus.
+
+Il est utile de déplacer la réflexion sur un terrain plus concret, car les injections de commandes se cachent rarement là où on les cherche. Le site de la médiathèque génère une archive d'inscriptions, appelle un outil externe pour produire un rapport PDF, lance un utilitaire de métadonnées sur les photos déposées ou convertit un document reçu. Chacun de ces appels est légitime ; le risque naît du fait que le nom du fichier, le titre de l'atelier ou le chemin du dépôt soit inséré dans la chaîne. Un appel dont tous les éléments sont fixés par le développeur n'est pas vulnérable : c'est l'entrée d'une donnée externe dans la commande qui crée le risque.
+
+Les protections de fond complètent le passage en liste d'arguments. Limitez la durée d'exécution de chaque appel et interrompez ce qui dépasse. Faites tourner ces appels sous un compte dédié, qui ne dispose que des droits nécessaires à la tâche, de sorte qu'un appel détourné ne puisse ni réécrire votre code ni lire la base. Refusez enfin les noms de fichiers qui ne correspondent pas à l'expression simple définie par le programme. Ces mesures ne remplacent pas la parade principale, mais elles transforment un incident potentiellement critique en tentative anodine et détectable.
+
+```python
+# Contrôle des entrées avant tout appel système, dans l'esprit du site.
+# On valide la forme, on impose une taille, puis on n'utilise jamais
+# la valeur pour écrire une commande : seulement comme argument.
+
+import re
+import subprocess
+from pathlib import Path
+
+NOM_VALIDE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RACINE_DEPOT = Path("/var/mediatheque/depots")
+
+def regenerer_vignette(nom_recu: str) -> None:
+    if not NOM_VALIDE.fullmatch(nom_recu):
+        raise ValueError("nom de fichier invalide")
+    source = RACINE_DEPOT / nom_recu
+    if not source.resolve().is_relative_to(RACINE_DEPOT.resolve()):
+        raise ValueError("chemin hors zone autorisée")
+    subprocess.run(
+        ["convert", str(source), "-resize", "800x800", str(source) + ".thumb"],
+        check=True,
+        shell=False,
+        timeout=30,
+    )
+```
+
+Pour repérer ces appels dans un code existant, cherchez les fonctions qui prennent une chaîne et la confient à l'extérieur : elles constituent un point de contrôle prioritaire dans votre relecture, et il n'en faut qu'un seul, dans un script d'administration oublié, pour que tout le site soit concerné.
+
+## XSS : stocké, réfléchi ou DOM, trois variantes d'un même malentendu
+
+Le sigle XSS signifie Cross-Site Scripting, ce qui se traduit par exécution de script transverse. Le principe tient en une phrase : votre site affiche un texte que quelqu'un a su modifier pour qu'il contienne du code exécutable par le navigateur. Celui-ci ne distingue pas le script émis par le serveur du site du script glissé dans un champ : les deux arrivent dans la même page, sous la même origine, avec les mêmes droits. Les conséquences sont donc celles du visiteur : lecture du jeton de session, exécution d'actions au nom de la personne connectée, dégradation de la page, redirection. Le XSS n'attaque pas votre base de données, il attaque vos utilisateurs, ce qui le rend grave et difficile à détecter depuis l'extérieur.
+
+On distingue trois variantes, qui se dépistent et se corrigent différemment. Le XSS réfléchi, ou reflected, survient quand une valeur reçue dans la requête est renvoyée dans la réponse sans traitement : la recherche de la médiathèque, qui affiche le mot-clé tapé, est exactement ce cas. Le XSS stocké, ou stored, survient quand la valeur est enregistrée, dans un commentaire, un nom d'atelier ou un profil, puis servie à d'autres personnes : c'est la variante la plus redoutable, car la charge utile attend sa prochaine victime. Le XSS de type DOM, enfin, ne transite pas nécessairement par le serveur : votre code JavaScript lit une valeur dans l'adresse de la page ou le stockage local, puis l'écrit sans la traiter. Le serveur n'y voit rien, et pourtant le script s'exécute.
+
+```html
+<!-- Version fragile : le texte du visiteur est inséré dans la page
+     tel quel. Ce que verrait un attaquant : un champ de nom ou de
+     commentaire contenant une balise de script, qui sera exécutée
+     par le navigateur de la prochaine personne ouvrant la page. -->
+<h3>Inscription de {{ visiteur.nom }}</h3>
+
+<!-- La parade côté gabarit : échappement automatique activé.
+     Le même contenu est alors affiché comme du texte et non
+     interprété comme du code. -->
+<h3>Inscription de {{ visiteur.nom | escape }}</h3>
+
+<!-- Piège DOM : une valeur lue dans l'adresse puis écrite dans la page
+     sans traitement. La parade consiste à écrire du texte, pas du HTML. -->
+<script>
+  // Fragile : interprète la valeur comme du balisage
+  zoneResultat.innerHTML = new URLSearchParams(location.search).get("q");
+  // Parade : la même valeur devient un nœud texte, jamais du code
+  zoneResultat.textContent = new URLSearchParams(location.search).get("q");
+</script>
+```
+
+La parade universelle est l'échappement, mais il ne s'écrit pas de la même manière selon l'endroit où la valeur se trouve. C'est le point que la plupart des relectures oublient : remplacer un guillemet par une entité, correct dans un contenu de page, ne suffit pas dans un attribut, dans une chaîne de script ou dans une adresse. Le tableau suivant donne le réflexe à acquérir, contexte par contexte, avec la parade correspondante ; imprimez-le mentalement, il vous servira chaque fois que vous insérerez une donnée entrante dans un gabarit.
+
+```table
+| Contexte d'insertion | Ce qui peut se passer | Parade adaptée |
+| --- | --- | --- |
+| Corps d'un élément HTML | Interprétation du balisage injecté | Échappement des quatre caractères réservés |
+| Valeur d'un attribut | Rupture d'attribut et ajout d'événement | Échappement des guillemets, attribut entre guillemets doubles |
+| Bloc de script | Fin de chaîne et exécution d'instruction | Ne jamais insérer de donnée ici, serializer en JSON |
+| Adresse ou paramètre d'URL | Fabrication de fausses destinations | Encodage des pourcentages, liste blanche des destinations |
+| Feuille de style | Affectation d'une URL ou d'une expression | Ne jamais concaténer de donnée dans du style |
+| Attribut d'URL type href | Javascript trois points deux points ou fausse destination | Liste blanche des protocoles autorisés |
+```
+
+
+L'exemple suivant montre l'opération côté serveur : chaque caractère qui pourrait ouvrir du balisage devient sa représentation textuelle, et les gabarits modernes l'appliquent automatiquement tant qu'on ne les a pas désactivés.
+
+```python
+from html import escape
+
+# Échappement d'un contenu inséré dans le corps d'un élément.
+# Les caractères qui pourraient ouvrir un balisage deviennent
+# leur représentation textuelle et perdent tout sens pour le navigateur.
+def afficher_nom(nom: str) -> str:
+    # On limite aussi la longueur : la sécurité n'empêche pas l'économie
+    return escape(nom[:80], quote=True)
+
+# Dans un attribut, le même échappement est complété par des guillemets
+# doubles, pour qu'aucune valeur ne puisse rompre l'attribut.
+def attribut_titre(titre: str) -> str:
+    return escape(titre[:120], quote=True)
+
+# Interdiction : insérer une donnée entrante dans un bloc de script.
+# La seule méthode sûre est d'écrire la donnée ailleurs, puis de la
+# lire depuis le DOM, ou de la sérialiser en JSON avec sérialisation stricte.
+```
+
+La seconde ligne de défense est la politique de sécurité de contenu, ou Content Security Policy, un en-tête HTTP que votre serveur envoie avec chaque page et qui indique au navigateur quels types de ressources il accepte d'exécuter. Elle ne corrige pas l'absence d'échappement, mais elle réduit radicalement la portée d'une faille : un script injecté qui parviendrait à s'insérer dans la page ne s'exécuterait pas, car il ne proviendrait pas d'une source autorisé. L'en-tête suivant illustre une configuration raisonnable pour un site comme celui de la médiathèque : scripts issus de votre seul domaine, avec une marque de session unique renouvelée à chaque requête, aucune ressource externe, aucun modèle en ligne et aucun connecteur de données depuis la page.
+
+```http
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'nonce-4f9c1a7d2e6b8053';
+  style-src 'self';
+  img-src 'self' data:;
+  connect-src 'self';
+  font-src 'self';
+  object-src 'none';
+  base-uri 'self';
+  form-action 'self';
+  frame-ancestors 'none';
+  upgrade-insecure-requests;
+```
+
+Trois remarques sur cet en-tête. La marque de session, ou nonce, est une valeur aléatoire différente à chaque réponse : le serveur l'inscrit dans l'en-tête et l'ajoute aux balises de script légitimes, de sorte que le navigateur n'exécute que les scripts porteurs de la marque du moment, qu'un script injecté ne peut pas connaître à l'avance. La directive qui interdit les connecteurs de données empêche un script compromis d'envoyer les informations volées vers un autre domaine. Commencez enfin par la directive de rapport, qui signale les violations sans les bloquer, observez quelques jours, puis basculez en application stricte.
+
+Les cookies méritent une place dans la parade, car c'est par eux que le XSS devient vraiment rentable. L'attribut qui rend un cookie inaccessible au script empêche toute lecture depuis une page, y compris compromise ; celui de même site limite l'envoi automatique aux requêtes issues du même site ; l'exigence de transport chiffré interdit l'envoi en clair. Cette combinaison ne supprime pas l'exécution, mais elle retire la récompense immédiate. Ces mêmes attributs serviront dans la section suivante à bloquer une autre famille d'attaque : la sécurité applicative est affaire de couverture croisée.
+
+```python
+# Définition d'un cookie de session verrouillé.
+# Trois attributs complémentaires, trois attaques rendues plus difficiles.
+import secrets
+from http.cookies import SimpleCookie
+
+def emettre_session(reponse) -> None:
+    jeton = secrets.token_urlsafe(32)
+    cookie = SimpleCookie()
+    cookie["sid"] = jeton
+    morsure = cookie["sid"]
+    morsure["httponly"] = True   # illisible depuis le JavaScript de la page
+    morsure["samesite"] = "Lax"  # pas envoyé depuis un autre site en POST
+    morsure["secure"] = True     # jamais transmis en clair
+    morsure["path"] = "/"
+    morsure["max-age"] = 1800    # expiration courte, renouvelée à la connexion
+    reponse.headers["Set-Cookie"] = morsure.OutputString()
+```
+
+Les bibliothèques d'assainissement de balisage restent utiles quand vous devez réellement accepter du HTML riche, mais elles reposent sur des listes d'autorisations à maintenir et à tester : utilisez-les en dernier recours, avec la configuration la plus restrictive possible.
+
+## CSRF : le formulaire trop confiant et les jetons qui le réparent
+
+Le CSRF, ou Cross-Site Request Forgery, exploite une propriété si ordinaire du navigateur qu'on la voit passer : lorsque vous demandez une page, le navigateur joint automatiquement les cookies correspondants au domaine appelé. C'est ce qui vous permet de rester connecté, et c'est exactement ce qu'un site tiers utilise contre vous. Si la médiathèque accepte une action sensible sur la seule base du cookie de session, n'importe quelle page consultée ailleurs peut la déclencher à votre insu : le navigateur joint le cookie, le serveur voit un utilisateur authentifié et exécute. L'utilisateur n'a rien vu, l'action a eu lieu.
+
+L'attaque suppose une session maintenue par cookie, une action qui modifie un état et l'absence de preuve quant à l'origine de la requête : trois conditions que l'attaquant remplit en hébergeant une page qui provoque l'envoi. Le schéma suivant décrit le scénario, réduit à l'essentiel, avec la parade correspondante : la même action, mais assortie d'une preuve que seul le formulaire réel de votre site peut fournir.
+
+```text
+Sans jeton — l'action part d'un site tiers mais porte votre cookie
+
+  page tenue par un tiers              navigateur                serveur médiathèque
+  ------------------------            ----------                -------------------
+  <formulaire invisible,              envoie la requête         reçoit le cookie de
+   action vers votre site>    --->    automatiquement     --->  session avec la requête
+  <script : soumission auto>          (le cookie voyage)        |
+                                                                v
+                                                            action exécutée
+                                                            sans consentement réel
+
+Avec jeton — la preuve ne peut pas être fabriquée par un tiers
+
+  formulaire réel de votre site       navigateur                serveur médiathèque
+  --------------------------------    ----------                -------------------
+  champ caché portant un jeton   ---> envoie la requête   ---> vérifie : le jeton
+  lié à la session, issu du           avec le cookie             correspond à cette
+  serveur                                                          session ?
+                                                                    |
+                                                          +---------+---------+
+                                                          |                   |
+                                                        valide            rejetée
+                                                      exécutée            403
+  page tierce : elle peut envoyer le cookie, mais elle ignore
+  le jeton, donc elle ne peut pas fabriquer la preuve
+```
+
+Le jeton CSRF est une chaîne aléatoire de longueur suffisante, générée par le serveur, associée à la session et renvoyée dans chaque formulaire sensible sous forme de champ caché. À la réception, le serveur compare la valeur reçue à celle conservée pour cette session, puis rejette si elles diffèrent. Trois propriétés font la solidité du mécanisme : la longueur, qui rend toute devinette impossible ; l'association à la session, qui empêche le détournement d'un jeton volé ailleurs ; l'absence de valeur métier, de sorte qu'un jeton fui n'autorise rien sans le cookie correspondant. La comparaison est stricte et à durée constante, pour ne pas trahir l'information par un temps de réponse variable.
+
+```python
+import hmac
+import secrets
+
+# Création d'un jeton CSRF pour une session donnée.
+# Le jeton est aléatoire, il n'est utile que s'il est comparé à la
+# valeur conservée côté serveur pour cette session.
+def creer_jeton(session: dict) -> str:
+    jeton = secrets.token_urlsafe(32)
+    session["csrf"] = jeton
+    return jeton
+
+# Vérification à la réception d'une requête qui modifie un état.
+def verifier_jeton(session: dict, recu: str | None) -> bool:
+    attendu = session.get("csrf")
+    if not attendu or not recu:
+        return False
+    # Comparaison à durée constante : pas de fuite par le temps
+    return hmac.compare_digest(attendu, recu)
+
+# Côté gabarit, le jeton part dans un champ caché du formulaire.
+# Il est régénéré à chaque affichage du formulaire pour limiter sa durée.
+```
+
+Le formulaire de la médiathèque devient alors le suivant : un champ caché rempli par le serveur à l'affichage et vérifié à l'envoi, jamais par le JavaScript de la page.
+
+```html
+<form action="/inscription" method="post">
+  <input type="hidden" name="csrf_token" value="{{ jeton_csrf }}">
+  <label for="nom">Nom complet</label>
+  <input type="text" id="nom" name="nom" maxlength="80" required>
+
+  <label for="courriel">Adresse électronique</label>
+  <input type="email" id="courriel" name="courriel" maxlength="120" required>
+
+  <button type="submit">Confirmer mon inscription</button>
+</form>
+
+<!-- À la réception, le serveur compare la valeur du champ caché
+     à celle enregistrée pour la session, puis agit en conséquence. -->
+```
+
+Parallèlement au jeton, trois mesures complémentaires réduisent la surface. Toute requête qui modifie un état doit utiliser la méthode adaptée, jamais une simple adresse cliquable : un lien ne porte qu'une requête de lecture, et changer un état par lien dans un courriel est un défaut de conception autant qu'une faille. L'attribut de cookie dit stricte supprime l'envoi automatique hors du même site, tandis que la valeur souple l'autorise pour les navigations venues d'un lien tout en bloquant les soumissions d'un autre site : c'est le réglage raisonnable pour un site public. Enfin, comparer l'en-tête d'origine de la requête à votre propre domaine est un filet, pas une preuve : il coexiste avec le jeton, il ne le remplace pas.
+
+Un cas limite mérite une mention : le CSRF de connexion, où l'attaquant vous connecte à son propre compte pour recueillir ce que vous y déposerez par la suite. Il se traite comme les autres, en exigeant un jeton sur le formulaire d'authentification et en régénérant l'identifiant de session après chaque changement de statut, ce qui vide immédiatement les anciens jetons.
+
+Pour les applications à interface riche, où les formulaires sont construits dynamiquement, récupérez le jeton à partir d'une balise réservée du document puis ajoutez-le dans l'en-tête de chaque requête de modification : le serveur accepte les deux formes, à condition de les comparer avec la même rigueur. Ne placez jamais le jeton dans une adresse, car les adresses sont enregistrées par l'historique, transmises par les en-têtes de référent et souvent conservées dans les journaux.
+
+## Validation de saisie côté serveur : le navigateur ne protège jamais
+
+Il y a une tentation très répandue et totalement vaine : valider les données dans la page, avec des attributs de saisie et des expressions régulières côté client. C'est utile pour l'ergonomie : le visiteur voit ce qui ne va pas et la page ne se recharge pas pour une faute de forme. En termes de sécurité, cette validation n'existe pas : elle vit dans un programme que l'attaque contrôle entièrement. On peut la désactiver, l'ignorer, ou appeler votre point d'entrée directement sans jamais charger la page qui l'entoure. Votre serveur est la seule frontière réelle, et c'est lui qui doit exiger, contrôler et rejeter.
+
+Une bonne validation serveur combine quatre opérations, dans cet ordre. La normalisation retire les espaces superflus et convertit les caractères vers leur forme canonique, de sorte que deux saisies équivalentes deviennent rigoureusement identiques. Le contrôle de forme vérifie ensuite, par une expression régulière ou une structure définie par le programme, la longueur, le jeu de caractères autorisé et le motif attendu. Puis viennent le type et la plage : une date est réellement une date, un nombre est compris dans les valeurs admissibles, un identifiant existe dans la table. Enfin les règles métier, qui sont de votre ressort : la session choisie est ouverte, les places restantes le permettent, l'adresse n'est pas déjà inscrite. Chaque contrôle rejette avec un message clair, sans divulguer le détail interne.
+
+```python
+import re
+import unicodedata
+
+COURRIEL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[A-Za-z]{2,24}$")
+NOM = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ' -]{2,80}$")
+
+def normaliser(texte: str) -> str:
+    # Forme canonique, puis retrait des espaces de bord
+    return unicodedata.normalize("NFC", texte.strip())
+
+def valider_inscription(donnees: dict) -> dict:
+    erreurs = []
+
+    nom = normaliser(donnees.get("nom", ""))
+    if not NOM.fullmatch(nom):
+        erreurs.append("nom invalide")
+
+    courriel = normaliser(donnees.get("courriel", "")).lower()
+    if not COURRIEL.fullmatch(courriel) or len(courriel) > 190:
+        erreurs.append("adresse invalide")
+
+    session = donnees.get("session")
+    if session not in ("matin", "aprem"):  # liste blanche, jamais une instruction
+        erreurs.append("session inconnue")
+
+    if erreurs:
+        # Message générique côté utilisateur, détail côté journal
+        raise ValueError("Formulaire incomplet ou invalide")
+
+    return {"nom": nom, "courriel": courriel, "session": session}
+```
+
+L'opposition entre liste blanche et liste noire mérite une insistance particulière, car elle revient dans chaque section. Une liste blanche décrit ce qui est accepté et rejette tout le reste ; une liste noire décrit ce qui est interdit et accepte tout le reste. La première est finie et vérifiable, la seconde est ouverte et condamnée à être incomplète, parce que l'inventaire des entrées possibles ne cesse de grandir : nouvelles unités Unicode, nouveaux protocoles, nouvelles façons d'écrire une expression. Devant un champ de nom, écrivez ce qui est admis ; devant une redirection, écrivez les domaines acceptés. Le réflexe inverse, filtrer les mots dangereux, revient à poser un cadenas sur la porte principale en laissant la fenêtre ouverte.
+
+Un deuxième point concerne les messages d'échec. Ils distinguent ce qui relève de la forme, que l'utilisateur peut corriger, de ce qui relève du fond, qu'il ne doit pas explorer. Dire que le mot de passe est trop court est utile et sans danger ; dire que le compte n'existe pas aide à recenser les adresses inscrites ; renvoyer le détail interne de l'échec, chemin compris, revient à ouvrir la porte du système d'information. Dans le formulaire de la médiathèque, les messages restent descriptifs du champ, jamais de l'état de la base, et chaque échec est journalisé en agrégat pour repérer les séries de tentatives anormales.
+
+La couche suivante consiste à refaire les mêmes contrôles là où la donnée est réellement utilisée. Une application a souvent plusieurs portes d'entrée vers la même fonction : formulaire, interface appelée par le navigateur, traitement de lot, script d'administration. Valider à la porte principale sans revérifier dans la fonction métier, c'est laisser une brèche par chaque autre porte. C'est le principe de défense en profondeur : la validation la plus proche de l'usage est celle qui compte, et une fonction sensible doit exiger un argument déjà typé et déjà contrôlé.
+
+Enfin, deux habitudes complètent la validation. Borner la taille des données reçues avant de les examiner : un champ annoncé pour quatre-vingts caractères et un corps de requête limité à quelques kilo-octets suppriment une classe entière de tentatives de déni de service. Puis tester sa propre validation comme on teste une fonction : cas limites, caractères Unicode, chaînes vides, chaînes très longues, valeurs presque valides. Ces tests coûtent peu, se rédigent une fois, et apprendront plus sur votre application qu'une heure de relecture attentive.
+
+## Gestion des erreurs : ne jamais montrer au visiteur ce que le programme sait
+
+Une application qui affiche ses exceptions est une application qui publie son plan. Le message d'erreur par défaut de la plupart des frameworks contient, avec une générosité variable mais toujours excessive, le nom du fichier source, le numéro de ligne, le chemin complet sur le serveur, la version de la bibliothèque, parfois la requête exacte qui a échoué, parfois le contenu des variables locales. Tout cela est précieux pour le développeur qui débogue, et tout cela est parfaitement inutile, souvent très dangereux, pour la personne qui vient de provoquer l'échec. L'attaque commence souvent là : une faute de syntaxe volontaire, un identifiant inexistant, une valeur hors plage, pour observer ce que la page raconte.
+
+Le remède tient en un principe simple : la page dit que quelque chose s'est mal passé, le journal dit pourquoi. L'utilisateur reçoit un message neutre, formulé dans sa langue, assorti d'un identifiant de suivi que le développeur retrouvera dans les journaux ; l'équipe reçoit le détail complet, horodaté, avec le contexte nécessaire. Cette séparation a un avantage supplémentaire : elle force à écrire des journaux exploitables, ce qui est la condition de toute détection. Un incident dont personne ne trouve la trace est un incident dont on ne saura jamais quand il a commencé.
+
+```python
+import logging
+import secrets
+
+journal = logging.getLogger("mediatheque")
+
+# Ce qu'on ne fait JAMAIS : laisser l'exception traverser jusqu'à l'écran.
+# Une telle page révèle le chemin d'installation, la version du framework
+# et, souvent, la requête exacte qui a échoué.
+#
+# try:
+#     ...
+# except Exception as exc:
+#     return reponse(f"Erreur : {exc}")
+#     return reponse(str(traceback.format_exc()))
+
+# Ce qu'on fait : un identifiant pour l'utilisateur, le détail pour les journaux.
+def traiter_requete(fonction):
+    try:
+        return fonction()
+    except Exception as exc:
+        reference = secrets.token_hex(4)
+        journal.exception(
+            "échec_traitement reference=%s type=%s",
+            reference,
+            type(exc).__name__,
+        )
+        return (
+            f"Une erreur est survenue. Référence à communiquer : {reference}",
+            500,
+        )
+```
+
+Les codes de statut font partie du discours et doivent rester exacts. Un refus d'autorisation n'est pas une erreur système, un envoi malformé n'est pas une absence de ressource, et un doublon n'est pas un crash : des codes corrects aident les navigateurs, les clients et votre propre compréhension des journaux, tandis que des codes systématiquement retournés à deux cents masquent les incidents pendant des mois. Les messages de refus doivent aussi être stables : varier le texte selon que l'adresse est inconnue ou le mot de passe incorrect revient à fournir un service de recensement de comptes. Une formulation identique dans les deux cas supprime cet avantage.
+
+Le mode de développement, enfin, ne doit jamais voyager jusqu'à la production : des variables d'environnement s'en chargent, et vérifier leur valeur au démarrage prend trois secondes. En production, le niveau d'affichage des erreurs est au plus haut, les pages d'erreur personnalisées sont activées et les variables de mise en service sont rejetées. Ajoutez à votre rituel de mise en production un contrôle simple : déclenchez une erreur sur un environnement de recette et regardez ce que l'écran dit. Si vous y lisez un chemin, un nom de module ou une requête, la configuration n'est pas bonne.
+
+Deux cas particuliers méritent d'être cités : l'erreur qui contient une donnée personnelle, qui étend la fuite à toute personne présente sur l'écran, et l'erreur de ressource épuisée, qui doit déclencher une alerte vers l'équipe là où une erreur métier doit rester silencieuse. Bien distinguer ces deux familles, c'est éviter que les vraies alertes se noient dans le bruit.
+
+## Mots de passe : un chiffrement qu'on ne peut pas lire
+
+La question revient à chaque réunion : faut-il chiffrer les mots de passe pour pouvoir les récupérer ? Non, et la raison est simple : si vous pouvez les lire, d'autres le pourront un jour, à cause d'une fuite, d'une sauvegarde exposée ou d'un compte compromis. On n'a jamais besoin de connaître un mot de passe, seulement de vérifier que la personne qui se connecte fournit le bon. C'est cette vérification qui définit le bon outil : un calcul à sens unique, irréversible en pratique, appelé fonction de hachage à calcul lent, avec un sel unique pour chaque enregistrement.
+
+La distinction avec le chiffrement doit être nette : un chiffrement est réversible, on lui donne une clé et on récupère le texte d'origine ; un hachage conçu pour les mots de passe ne l'est pas, on lui donne le mot de passe et on obtient une empreinte, mais l'opération inverse n'existe pas. D'où le choix : chiffrer ce qui doit être relu, hacher ce qui doit seulement être comparé. Une adresse postale, un nom d'atelier ou un document sont chiffrés ou protégés autrement ; un mot de passe est haché, toujours. Si votre application doit afficher un mot de passe à un administrateur, c'est qu'un autre besoin existe : envoyez plutôt un lien de réinitialisation.
+
+```python
+# Mauvaise pratique : hachage rapide, sans sel, non adapté aux mots de passe.
+# Un algorithme conçu pour la vérification d'intégrité tourne des
+# milliards de fois par seconde sur une carte graphique.
+#
+# import hashlib
+# empreinte = hashlib.md5(mot_de_passe.encode()).hexdigest()
+
+# Bonne pratique : algorithmes lents et paramétrés, conçus pour ce usage.
+import bcrypt
+import argon2
+
+# bcrypt : le travail est réglé par le facteur de coût
+def enregistrer_bcrypt(mot_de_passe: str) -> str:
+    sel = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(mot_de_passe.encode("utf-8"), sel).decode("ascii")
+
+def verifier_bcrypt(mot_de_passe: str, empreinte: str) -> bool:
+    return bcrypt.checkpw(mot_de_passe.encode("utf-8"), empreinte.encode("ascii"))
+
+# argon2 : recommandé, réglé sur la mémoire, le temps et le parallélisme
+def enregistrer_argon2(mot_de_passe: str) -> str:
+    hacheur = argon2.PasswordHasher(
+        time_cost=3, memory_cost=65536, parallelism=4
+    )
+    return hacheur.hash(mot_de_passe)
+
+def verifier_argon2(mot_de_passe: str, empreinte: str) -> bool:
+    try:
+        return argon2.PasswordHasher().verify(empreinte, mot_de_passe)
+    except argon2.exceptions.VerifyMismatchError:
+        return False
+```
+
+Trois paramètres décident de la robustesse réelle de ce stockage. Le sel est une valeur différente pour chaque enregistrement, jointe au mot de passe avant le calcul et conservée avec l'empreinte : elle rend inutile la fabrication de tables de correspondances et fait que deux personnes ayant le même mot de passe n'ont pas la même empreinte. Le facteur de coût est la quantité de travail demandée au calcul ; il doit rendre une attaque par force brute coûteuse sans dégrader la durée d'une connexion. L'algorithme, enfin, doit être maintenu : d'où bcrypt ou argon2, plutôt qu'une construction maison.
+
+La vérification s'accompagne de deux réflexes. Comparez à durée constante et ne raccourcissez jamais la saisie avant calcul : chaque information de timing est une information de trop. Puis appliquez la remontée de niveau : quand un utilisateur se connecte avec une empreinte calculée selon des paramètres anciens, recalculez et remplacez l'enregistrement, sans migration risquée. Côté politique de saisie, privilégiez la longueur, acceptez les phrases de passe, refusez les listes de mots compromis, et ne poussez pas l'utilisateur vers un mot de passe en majuscule, chiffre et symbole, réutilisé partout.
+
+Enfin, les abords du mot de passe comptent autant que son stockage : ne le journalisez jamais, ne le transmettez jamais en adresse, ne le renvoyez jamais dans une erreur. Les jetons de réinitialisation sont des secrets aléatoires à usage unique, à durée courte, invalidés dès leur emploi : ils se traitent comme des jetons de session, pas comme des questions secrètes dont la réponse est un souvenir d'enfance. Un canal qui reflète le jeton dans un message visible par d'autres personnes reproduit le défaut que vous cherchez à éviter.
+
+## Uploads de fichiers : quand le site accepte des documents
+
+Le site de la médiathèque n'accepte pas que du texte : les intervenants déposent une affiche au format image, un programme en format portable, une feuille signée scannée. Chaque dépôt introduit une famille de risques que le formulaire de saisie ne connaissait pas, parce qu'un fichier n'est pas seulement une donnée : c'est un contenu, un nom, une taille, un type déclaré et un type réel, et ces cinq informations peuvent toutes mentir. La première erreur est de faire confiance au nom transmis par le navigateur ; la seconde, au type annoncé dans la requête : tous deux sont écrits par la personne qui envoie.
+
+Les conséquences d'un dépôt mal contrôlé sont variées. Le nom peut contenir un chemin et viser un fichier existant plutôt que le dossier de dépôt, pratique appelée traversée de chemin, ou se terminer par une extension inoffensive suivie d'une extension exécutable. Le contenu peut être un fichier texte qui se fait passer pour une image, ou une image contenant en plus du code exécuté par le navigateur de quiconque l'ouvrira. Une archive peut créer des dossiers hors de la zone prévue, un volume peut saturer le disque, et un fichier déposé peut être servi à un autre utilisateur : c'est alors un vecteur de diffusion.
+
+La parade tient en une liste de règles simples. On vérifie la taille avant tout traitement, puis on extrait l'extension et on la confronte à une liste blanche définie par le développeur. On examine les premiers octets pour confirmer que la structure réelle correspond au type annoncé, puis on recopie ou on ré-encode le fichier, ce qui détruit tout contenu parasite ajouté à la suite. On ignore le nom reçu pour lui substituer un identifiant généré, on stocke en dehors de la racine servie, on limite le nombre de dépôts par compte. Enfin, on sert les fichiers par une route contrôlée qui fixe le type de contenu et le nom affiché, sans jamais laisser le serveur deviner ce qu'il doit faire d'un fichier.
+
+```python
+import secrets
+import unicodedata
+from pathlib import Path
+
+# Dossier de dépôt, hors racine servie directement par le navigateur.
+RACINE = Path("/var/mediatheque/depots")
+EXTENSIONS = {".pdf", ".jpg", ".jpeg", ".png"}
+TAILLE_MAX = 5 * 1024 * 1024
+MAGIQUES = {
+    ".jpg": (b"\xff\xd8\xff",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".pdf": (b"%PDF-",),
+}
+
+def accepter_depot(stream, nom_recu: str) -> Path:
+    # 1. Taille, avant toute lecture complète
+    donnees = stream.read(TAILLE_MAX + 1)
+    if len(donnees) > TAILLE_MAX:
+        raise ValueError("fichier trop volumineux")
+
+    # 2. Extension extraite du nom reçu, puis liste blanche
+    nom = unicodedata.normalize("NFC", Path(nom_recu).name)
+    suffixe = Path(nom).suffix.lower()
+    if suffixe not in EXTENSIONS:
+        raise ValueError("type de fichier refusé")
+
+    # 3. Structure réelle du contenu, indépendamment du type annoncé
+    if not any(donnees.startswith(m) for m in MAGIQUES[suffixe]):
+        raise ValueError("contenu incohérent avec l'extension")
+
+    # 4. Nom généré : le nom reçu ne sert jamais de chemin
+    destination = RACINE / f"{secrets.token_hex(16)}{suffixe}"
+    destination.write_bytes(donnees)
+    return destination
+```
+
+Deux précisions complètent ces règles. Un fichier vectoriel est du balisage : il peut emporter du code, il doit donc être accepté par conversion contrôlée vers une forme aplatie, jamais servi tel quel. Les métadonnées photographiques, elles, contiennent parfois la position ou le nom du fichier d'origine : les retirer par ré-encode relève à la fois de la confidentialité et de la sécurité. Testez enfin votre chemin de dépôt avec un nom malveillant, un nom vide et un nom contenant un chemin complet : si l'un de ces cas provoque une erreur technique détaillée, vous venez de trouver deux défauts d'un coup.
+
+## Journaliser sans exposer les données personnelles
+
+Les journaux d'activité sont le nerf de la détection : sans eux, une intrusion passe inaperçue, une anomalie ne se remarque pas et un incident ne se retrace jamais. Ils sont aussi une copie de vos données, souvent stockée avec moins de soin que la base elle-même, accessible à davantage de personnes et conservée bien après la durée utile. Journaliser est donc un acte de sécurité à double tranchant, et la discipline consiste à écrire ce qui permet de comprendre, jamais ce qui permet de reconstituer. La question pratique est toujours la même : si ce fichier de journaux fuit demain, que peut-on en apprendre ?
+
+Une liste courte suffit à écarter les évidences : ne jamais consigner un mot de passe, même haché, ni un jeton de session, ni un jeton CSRF, ni une clé d'API, ni l'intégralité d'un corps de requête, ni un numéro de carte. Les données personnelles ordinaires, comme l'adresse électronique, ont un usage légitime dans les journaux, mais elles gagnent à être masquées : la forme abrégée conserve l'utilité analytique, sans offrir la valeur complète. Le texte libre doit être neutralisé, car il peut contenir des retours à la ligne qui cassent la structure du journal et permettent d'inventer des entrées fictives : c'est l'injection de journal.
+
+```python
+import logging
+import re
+
+# Masquage conservant l'analyse sans livrer la valeur complète.
+def masquer_courriel(courriel: str) -> str:
+    if "@" not in courriel:
+        return "***"
+    local, domaine = courriel.split("@", 1)
+    return f"{local[:2]}***@{domaine}"
+
+# Neutralisation des caractères qui casseraient une ligne de journal.
+def ligne_propre(valeur: str) -> str:
+    return re.sub(r"[\r\n\t]+", " ", valeur)[:200]
+
+journal = logging.getLogger("mediatheque.inscription")
+
+def tracer_inscription(courriel: str, session: str, ip: str) -> None:
+    journal.info(
+        "inscription_recue courriel=%s session=%s ip=%s resultat=%s",
+        masquer_courriel(courriel),
+        ligne_propre(session),
+        ligne_propre(ip),
+        "acceptee",
+    )
+    # Ce qui ne figure jamais dans l'appel : mot de passe, jeton,
+    # contenu intégral du formulaire, message d'erreur interne.
+```
+
+Au-delà du contenu, trois règles de gouvernance font la différence. L'accès : les journaux sont lus par un petit nombre de comptes, en lecture seule, depuis un endroit distinct des machines qui les produisent, de sorte qu'une compromission du serveur n'efface pas la trace de ce qui s'y est passé. La conservation : définissez une durée, quelques mois pour l'activité détaillée et plus longtemps pour les événements de sécurité, puis appliquez-la, car un journal jamais purgé est un risque dormant. La structure : une ligne par événement, au format structuré, avec un identifiant de corrélation partagé de bout en bout, permet de retrouver une opération complète à travers plusieurs services.
+
+Chaque ligne de journal répond à cinq questions : qui a agi, quelle action a été tentée, quand, depuis quelle origine, avec quel résultat et sous quelle référence. C'est suffisant pour reconstruire une séquence, sans recopier la donnée elle-même. Des journaux réduits à des messages vagues, sans identifiant d'acteur ni résultat, sont inutilisables dès le premier incident.
+
+## Tester sa propre application : la checklist de relecture
+
+Aucun outil ne remplacera votre relecture, et aucun outil ne sera remplacé par elle : les deux se complètent. Les outils automatiques excellent à repérer des motifs connus, appel système dangereux, hachage faible, configuration oubliée, dépendance obsolète ; ils sont aveugles aux défauts de conception, à l'absence d'autorisation sur une route, au champ de tri qui accepte n'importe quoi, au formulaire sensible sans jeton. Votre relecture, elle, part du flux de données cartographié au début de ce chapitre et demande, point d'entrée par point d'entrée, ce que la destination fait de la valeur reçue. Commencez par la relecture manuelle, puis lancez les outils pour ne rien oublier du déjà connu.
+
+La checklist suivante tient sur une page et couvre l'essentiel du chapitre. Répondez à chaque question par oui ou par non ; un seul non justifie une correction avant mise en production, pas un ticket à remettre plus tard.
+
+```table
+| Domaine à vérifier | Question à se poser | Quand |
+| --- | --- | --- |
+| Accès aux données | Chaque requête est-elle paramétrée, sans assemblage de chaînes ? | À chaque fonction nouvelle |
+| Identifiants de colonnes | Tout tri ou filtre passe-t-il par une liste blanche ? | À chaque fonction nouvelle |
+| Commandes système | Chaque appel passe-t-il une liste d'arguments sans shell ? | À chaque appel système |
+| Affichage | Toute donnée entrante est-elle échappée selon son contexte ? | À chaque gabarit touché |
+| Formulaires sensibles | Chaque action de modification porte-t-elle un jeton vérifié ? | À chaque formulaire d'état |
+| Validation | Chaque champ est-il contrôlé côté serveur, en type et en longueur ? | À chaque point d'entrée |
+| Erreurs | Une page d'erreur contient-elle un chemin, une requête ou une version ? | Avant chaque mise en production |
+| Mots de passe | Le stockage utilise-t-il bcrypt ou argon2, avec sel unique ? | À chaque nouveau compte |
+| Dépôts de fichiers | Nom généré, extension en liste blanche, stockage hors racine ? | À chaque zone de dépôt |
+| Journalisation | Les journaux sont-ils masqués, datés, accessibles en lecture seule ? | Chaque trimestre |
+```
+
+
+Un script de repérage, même sommaire, fait gagner un temps considérable sur un code existant : il ne prouve rien, mais il oriente la lecture vers les fichiers qui méritent d'être ouverts en premier. Le suivant balaye une arborescence de source et signale quelques motifs dont ce chapitre a parlé, en affichant simplement l'endroit à examiner.
+
+```python
+# Balayage heuristique d'une arborescence de source.
+# Ce script ne détecte pas des failles : il indique où regarder.
+import re
+from pathlib import Path
+
+MOTIFS = {
+    "appel système direct": re.compile(r"os\.system\(|shell\s*=\s*True"),
+    "hachage inadapté": re.compile(r"hashlib\.(md5|sha1)\("),
+    "évaluation de code": re.compile(r"\beval\(|\bexec\("),
+    "désactivation de vérification": re.compile(r"verify\s*=\s*False"),
+    "mode debug actif": re.compile(r"DEBUG\s*=\s*True"),
+    "requête concaténée": re.compile(r"(SELECT|INSERT|UPDATE).*(\"|\')\s*\+"),
+}
+
+def balayer(racine: Path) -> None:
+    for chemin in racine.rglob("*.py"):
+        for numero, ligne in enumerate(chemin.read_text("utf-8").splitlines(), 1):
+            for libelle, motif in MOTIFS.items():
+                if motif.search(ligne):
+                    print(f"{chemin}:{numero} — {libelle}")
+```
+
+Passez ensuite à la vérification du comportement, qui diffère de la vérification du code. Sur un environnement de recette, déclenchez chaque erreur prévue : champ vide, champ trop long, valeur inconnue, fichier sans extension, requête avec un jeton absent. Confirmez qu'aucun chemin, aucune requête ni aucun nom de module n'apparaît à l'écran, puis vérifiez les en-têtes de réponse, la politique de contenu et les attributs des cookies. Essayez enfin de franchir les limites : demandez une action administrative sans être connecté, puis avec une session ordinaire ; si le refus diffère, un simple changement de cookie suffit.
+
+## Mini-projet guidé : audit du formulaire d'inscription
+
+Il est temps d'assembler les pièces du chapitre sur un objet unique : le formulaire d'inscription du site de la médiathèque des Lilas, tel qu'un développeur pressé l'aurait écrit un mardi soir. Le point de départ est le traitement suivant, qui reçoit les trois champs, vérifie très peu, assemble une requête, affiche ce qui a été reçu et fait générer un accusé de dépôt. Chaque ligne y est défendable prise isolément ; c'est l'ensemble qui pose problème.
+
+```python
+# Traitemend'inscription tel qu'il a été écrit — version à auditer.
+import os
+import sqlite3
+
+def inscription(request):
+    nom = request.form["nom"]
+    courriel = request.form["courriel"]
+    session = request.form["session"]
+
+    connexion = sqlite3.connect("/var/mediatheque/base.db")
+    curseur = connexion.cursor()
+    curseur.execute(
+        "INSERT INTO inscriptions (nom, courriel, session) VALUES ('"
+        + nom + "', '" + courriel + "', '" + session + "')"
+    )
+    connexion.commit()
+
+    # Affichage du message de confirmation avec le nom reçu
+    page = "<h1>Inscription de " + nom + " enregistrée</h1>"
+    page += "<p>Un accusé a été envoyé à " + courriel + "</p>"
+
+    # Génération du document transmis à l'intervenant
+    os.system("generate-receipt --name " + nom + " --out /tmp/receipt.pdf")
+
+    return page
+```
+
+L'audit se déroule en douze points de contrôle, à noter un par un et à traiter dans l'ordre où ils apparaissent dans le flux. Un, la valeur de chaque champ est-elle lue avant d'être contrôlée, et un champ absent provoque-t-il une erreur technique ? Deux, la longueur est-elle bornée avant toute utilisation ? Trois, la requête d'insertion est-elle construite par concaténation ? Quatre, le nom de la table et les noms de colonnes peuvent-ils être influencés de l'extérieur ? Cinq, la confirmation affiche-t-elle le nom et l'adresse sans traitement ? Six, quel contexte exact chaque insertion occupe-t-elle dans la page produite ? Sept, l'action de soumission est-elle protégée par un jeton vérifié côté serveur ? Huit, la session est-elle créée ou modifiée sans régénérer l'identifiant ? Neuf, l'appel système utilise-t-il une chaîne contenant une valeur entrante ? Dix, les erreurs de la base sont-elles renvoyées à l'écran ? Onze, le fichier de base et les journaux sont-ils accessibles depuis la racine servie ? Douze, un compte administrateur peut-il accomplir la même action par un autre chemin sans contrôle ?
+
+La correction commence par la requête, qui passe d'une instruction fabriquée à une instruction fixe accompagnée de ses paramètres. La valeur n'est plus jamais collée dans le texte : elle est transmise par le connecteur, qui la traite comme une donnée, quelle que soit sa teneur.
+
+```python
+# Version corrigée du même traitement, décrite section par section.
+import html
+import secrets
+import sqlite3
+import subprocess
+
+TAILLES = {"nom": 80, "courriel": 190, "session": 10}
+
+def inscription(request, session_utilisateur):
+    # 1. Contrôle de présence, de type et de longueur, côté serveur
+    brut = {clef: (request.form.get(clef) or "").strip()
+            for clef in ("nom", "courriel", "session")}
+    if any(len(valeur) > TAILLES[clef] for clef, valeur in brut.items()):
+        return "Formulaire invalide", 400
+    if brut["session"] not in ("matin", "aprem"):
+        return "Formulaire invalide", 400
+
+    # 2. Preuve que la requête vient du formulaire réel du site
+    if not secrets.compare_digest(
+        session_utilisateur.get("csrf", ""), request.form.get("csrf_token", "")
+    ):
+        return "Requête refusée", 403
+
+    # 3. Instruction fixe, valeurs transmises à part
+    connexion = sqlite3.connect("/var/mediatheque/base.db")
+    with connexion:
+        connexion.execute(
+            "INSERT INTO inscriptions (nom, courriel, session) "
+            "VALUES (?, ?, ?)",
+            (brut["nom"], brut["courriel"], brut["session"]),
+        )
+
+    # 4. Affichage : chaque insertion échappée selon son contexte
+    nom_affiche = html.escape(brut["nom"][:80], quote=True)
+    courriel_affiche = html.escape(brut["courriel"][:190], quote=True)
+    page = f"<h1>Inscription de {nom_affiche} enregistrée</h1>"
+    page += f"<p>Accusé envoyé à {courriel_affiche}</p>"
+
+    # 5. Appel système : arguments séparés, aucune commande assemblée
+    subprocess.run(
+        ["generate-receipt", "--name", brut["nom"], "--out", "/tmp/receipt.pdf"],
+        check=True,
+        shell=False,
+        timeout=30,
+    )
+    return page
+```
+
+La politique d'échappement doit être justifiée par le contexte, pas décidée à la louche. Dans la page produite ci-dessus, le nom apparaît dans un élément de titre : il relève du contexte de contenu, où l'on neutralise les caractères qui pourraient ouvrir un balisage. L'adresse figure dans un paragraphe, avec la même règle mais une longueur bornée différemment. Si le nom doit un jour figurer dans un attribut, la règle change : le guillemet employé ne doit pas pouvoir clore l'attribut. S'il devait être écrit dans un bloc de script, la seule réponse correcte serait de ne jamais le faire, mais de placer la donnée ailleurs et de la lire depuis le document. Chaque insertion s'accompagne donc d'une justification, et cette justification fait partie de la relecture.
+
+La conception du jeton CSRF de ce formulaire repose sur cinq décisions explicites. La longueur : au moins trente-deux octets d'aléatoire, qui rend toute devinette hors de portée. La liaison : le jeton est stocké dans la session qu'il protège, il n'a aucun sens ailleurs. La durée : il est régénéré à chaque affichage et, si le framework le permet, n'accepte qu'une seule utilisation. La comparaison : stricte et à durée constante, jamais une égalité simple sur des chaînes de longueur variable. La portée : il protège toute requête qui modifie un état, pas seulement celle-ci. À cela s'ajoutent l'attribut de même site sur le cookie de session et l'absence d'action de modification par adresse cliquable.
+
+La checklist de relecture du code, à exécuter en dix lignes de raisonnement sur la version corrigée comme sur toute autre, prend la forme suivante.
+
+1. Toute donnée qui entre est-elle présente, typée et de longueur bornée avant d'être utilisée ?
+2. Chaque requête vers la base est-elle paramétrée, sans aucune concaténation ?
+3. Tout identifiant variable passe-t-il par une liste blanche définie dans le programme ?
+4. Chaque appel système reçoit-il des arguments séparés, sans interpréteur de commandes ?
+5. Chaque valeur affichée est-elle échappée selon le contexte exact où elle apparaît ?
+6. Chaque action qui modifie un état exige-t-elle un jeton vérifié à durée constante ?
+7. Une page d'erreur contient-elle un chemin, une requête, une version ou une donnée interne ?
+8. Les secrets sont-ils hachés avec un algorithme lent et un sel unique, jamais chiffrés ?
+9. Les fichiers déposés sont-ils renommés, contrôlés en contenu et stockés hors racine ?
+10. Les journaux contiennent-ils l'acteur, l'action, le résultat et la référence, sans donnée secrète ?
+
+Appliquez cette suite de questions au formulaire de la médiathèque, puis au moteur de recherche, puis à l'espace administrateur : le même ordre fonctionne, parce que les mêmes familles de risques se répètent. C'est le véritable objectif du chapitre : moins une liste de correctifs qu'une méthode de lecture que vous emporterez dans tous les projets suivants.
+
+## À retenir
+
+- La faille applicative naît toujours d'une donnée qui change de rôle entre l'entrée et l'usage.
+- L'OWASP Top 10 sert de langage commun et de priorisation, pas de certification.
+- Une requête paramétrée sépare l'instruction fixe de la valeur transmise : c'est la parade à l'injection SQL.
+- Les identifiants de colonnes et les noms de table ne se paramétrent pas, ils se choisissent dans une liste blanche.
+- Une commande système ne se construit jamais par concaténation : arguments en liste, sans interpréteur de commandes.
+- XSS se présente en trois formes, réfléchi, stocké et DOM, et toutes trois viennent du même oubli d'échappement.
+- L'échappement dépend du contexte : contenu, attribut, script, adresse et style n'ont pas les mêmes règles.
+- La politique de sécurité de contenu réduit la portée d'un XSS même si une faille subsiste.
+- Un cookie de session porte trois attributs : inaccessible au script, de même site, réservé au transport chiffré.
+- Le CSRF exige une preuve que seul votre formulaire produit : jeton aléatoire, lié à la session, comparé à durée constante.
+- Le navigateur ne protège rien : toute validation utile se fait côté serveur, en liste blanche.
+- Les messages d'erreur disent que ça a échoué ; les journaux disent pourquoi.
+- Un mot de passe se hache avec bcrypt ou argon2, jamais chiffré, jamais haché rapidement.
+- Un dépôt de fichier exige taille bornée, extension en liste blanche, contenu vérifié, nom généré, stockage hors racine.
+- Journaliser, c'est analyser sans conserver : masquez les données personnelles, limitez l'accès, fixez la durée.
+- Relisez d'abord le trajet des données, puis lancez les outils pour ne rien oublier du déjà connu.
+
+## Erreurs fréquentes
+
+- Piège : assembler une requête SQL avec des guillemets autour d'une valeur → Correction : instruction fixe et paramètres transmis par le connecteur.
+- Piège : filtrer les mots interdits dans une valeur avant de l'insérer dans une requête → Correction : liste blanche, la liste noire sera toujours incomplète.
+- Piège : construire une commande système avec la valeur d'un champ → Correction : liste d'arguments, option d'interpréteur de commandes désactivée, chemin généré.
+- Piège : échapper partout de la même manière → Correction : adaptez l'échappement au contexte exact : contenu, attribut, adresse, script.
+- Piège : désactiver l'échappement automatique du gabarit pour insérer du balisage riche → Correction : conservez-le et autorisez un balisage restreint explicitement.
+- Piège : faire confiance au type de fichier annoncé par le navigateur → Correction : extension en liste blanche, vérification des premiers octets, nom généré.
+- Piège : afficher l'exception de la base pour comprendre un échec en production → Correction : message générique et référence, détail dans les journaux.
+- Piège : valider seulement dans la page avec des attributs de saisie → Correction : rejouez chaque contrôle côté serveur, à chaque porte d'entrée.
+- Piège : stocker les mots de passe avec un algorithme rapide ou un chiffrement réversible → Correction : bcrypt ou argon2 avec sel unique et remontée de niveau.
+- Piège : protéger les formulaires en exigeant un en-tête d'origine, sans jeton → Correction : gardez le jeton, traitez l'origine comme un filet complémentaire.
+- Piège : journaliser le corps complet de la requête pour faciliter le débogage → Correction : enregistrez l'acteur, l'action, le résultat et la référence, jamais les secrets.
+- Piège : penser qu'un framework sécurisé dispense de relecture → Correction : vérifiez ce que produit réellement le code, sur votre environnement.
+
+## Pour aller plus loin
+
+La référence de départ reste le site de l'Open Web Application Security Project, consultable à l'adresse https://owasp.org. Le Top 10 y est publié avec, pour chaque catégorie, une description, des scénarios d'attaque typiques, des conseils de prévention et des liens vers les fiches techniques correspondantes. Ces documents, écrits par la communauté et mis à jour régulièrement, gagnent à être gardés en favori plutôt qu'imprimés : revenez-y quand une décision d'architecture se pose.
+
+Deuxièmement, la documentation de Mozilla sur le web est la meilleure source pour tout ce qui touche au navigateur : XSS, politique de sécurité de contenu, cookies. La page https://developer.mozilla.org/docs/Web/Security rassemble les notions de sécurité côté client, avec des exemples exécutables et des liens vers les pages individuelles des en-têtes étudiés ici. Pour les cookies, la page dédiée décrit les attributs de même site, d'inaccessibilité script et de transport chiffré, et signale ce qui est obsolète. Complétez avec les fiches sur la falsification de requête transverse et sur l'échappement de sortie.
+
+## Et maintenant : appliquer l'audit à votre propre code
+
+Vous disposez à présent d'une méthode complète : cartographier les points d'entrée, suivre chaque donnée jusqu'à sa destination, appliquer la parade correspondante, puis relire avec une liste de questions courtes. L'exercice pratique qui suit vous demande d'appliquer cette séquence au formulaire d'inscription de la médiathèque, en réécrivant la requête, en justifiant l'échappement par contexte, en concevant le jeton et en produisant votre checklist. Réessayez seul, sans regarder la correction, puis comparez : les différences que vous découvrirez seront plus instructives que la leçon elle-même. Le quiz de quatre questions vérifie en quelques minutes les notions essentielles, du choix de l'algorithme de hachage jusqu'à la parade adaptée à chaque destination.
+
+Le pas suivant consistera à étendre ce réflexe au-delà d'une seule application : sécurité de la chaîne d'approvisionnement logicielle, dépendances, secrets, intégrité des paquets et suivi des correctifs. Le principe reste le même : ne faites jamais confiance à une donnée qui n'a pas été contrôlée là où elle est utilisée. En attendant, ouvrez le dernier projet livré et appliquez-lui dès aujourd'hui les dix lignes de la checklist de relecture : c'est le geste le plus rentable de tout ce chapitre, et il ne vous coûtera qu'une heure.
+

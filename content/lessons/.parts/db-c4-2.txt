@@ -1,0 +1,161 @@
+Une écriture isolée suffit quand elle ne dépend d'aucune autre. Ajouter un lecteur, c'est une seule ligne, une seule décision, une seule chance d'échouer. Mais la plupart des opérations réelles sont composées. Enregistrer un emprunt, c'est créer la ligne d'emprunt, rattacher l'exemplaire, changer l'état de cet exemplaire, décrémenter le nombre de exemplaires disponibles, inscrire éventuellement une réservation honorée. Trois ou quatre écritures dans deux ou trois tables, qui n'ont de sens que si elles aboutissent ensemble. Si la troisième échoue et que les deux premières sont déjà enregistrées, votre base raconte un mensonge : un emprunt existe sans exemplaire concerné.
+
+C'est exactement le problème que résout la transaction. Une transaction délimite dans le temps un ensemble d'écritures que le moteur traite comme une seule unité indivisible. Tant que la frontière n'est pas posée, chaque commande s'applique immédiatement et séparément. Dès que vous ouvrez une transaction, le serveur regroupe tout ce qui suit jusqu'à votre décision finale. Cette décision en est une de deux : valider, ce qui rend l'ensemble définitivement visible pour tout le monde, ou annuler, ce qui efface l'ensemble comme s'il n'avait jamais eu lieu. Il n'y a pas de troisième issue, et surtout pas de demi-validation partielle.
+
+Les trois commandes qui portent ce mécanisme sont simples à retenir. BEGIN, parfois écrit START TRANSACTION, marque le début. COMMIT rend l'ensemble permanent. ROLLBACK annule. Elles se placent dans votre code exactement comme des accolades le feraient dans un langage de programmation : ce qui est entre BEGIN et COMMIT constitue une opération métier. La différence, c'est que la base de données elle-même comprend cette délimitation, peut suspendre les écritures, isoler les autres sessions, et rétablir l'état antérieur en cas de panne sans que votre application ait à gérer la moindre reconstruction manuelle.
+
+Notons enfin que la transaction n'est pas un luxe réservé aux opérations bancaires. Elle sert dès que plusieurs lignes se dépendent, dès qu'une lecture doit correspondre exactement à ce que l'écriture a produit, dès qu'une opération de maintenance touche des centaines de milliers de lignes dont la cohérence doit être totale. Dans la pratique professionnelle, on commence une transaction avant toute opération qui contient plus d'une commande d'écriture, on la termine par un COMMIT explicite, et on prévoit un ROLLBACK dans le chemin d'erreur. Ce réflexe est l'un des plus importants de ce cours.
+
+## BEGIN, COMMIT et ROLLBACK : poser les frontières
+
+Ouvrir une transaction, c'est donner au serveur une consigne : retiens tout, je vais décider plus tard. À partir du BEGIN, les lignes que vous insérez, modifiez ou supprimez sont visibles par votre session, mais les autres sessions continuent de voir l'ancien état. Vous travaillez donc dans un espèce de brouillon privé, que vous pouvez inspecter, corriger, recommencer, avant de le rendre public d'un seul coup. Cette visibilité partielle est la clé pour comprendre les comportements étranges que nous étudierons au chapitre suivant, alors gardez-la en tête : pendant la transaction, votre vue n'est pas celle des autres.
+
+```sql
+BEGIN;
+
+INSERT INTO emprunts (identifiant, lecteur_id, date_sortie)
+VALUES (9001, 12, '2026-03-02');
+
+UPDATE exemplaires
+SET etat = 'emprunté'
+WHERE identifiant = 101;
+
+UPDATE ouvrages
+SET nb_disponibles = nb_disponibles - 1
+WHERE identifiant = 7;
+
+COMMIT;
+```
+
+Le COMMIT est le point de non-retour. À cet instant, le serveur écrit dans ses journaux ce qu'il faut pour garantir que l'opération survit à une coupure électrique, puis rend les lignes visibles aux autres sessions. Avant ce moment, une défaillance entraîne une annulation automatique : les données ne sont jamais partiellement appliquées. Après ce moment, il n'y a plus de retour arrière par la base elle-même : la seule façon d'annuler une opération validée est d'exécuter une nouvelle opération inverse, ce qui suppose de savoir exactement ce que l'on a fait. C'est pourquoi on valide tard et seulement après vérification.
+
+Le ROLLBACK, lui, détruit tout ce qui s'est passé depuis le BEGIN. Il restaure l'état de la base tel qu'il était à l'ouverture de la transaction, y compris les identifiants consommés par les séquences si le moteur le prévoit. On l'utilise pour trois raisons : une condition métier qui s'avère fausse, une erreur technique détectée en cours de route, ou une vérification dont le résultat ne correspond pas aux attentes. Dans un code applicatif sain, chaque chemin d'erreur appelle ROLLBACK avant de remonter l'exception vers l'utilisateur. Ne laissez jamais une transaction ouverte par accident : une session qui oublie de terminer sa transaction peut bloquer des nettoyages, retenir des verrous, et faire dériver la mémoire du serveur.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM exemplaires WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+UPDATE exemplaires
+SET etat = 'bon'
+WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+SELECT COUNT(*) FROM exemplaires WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+ROLLBACK;
+```
+
+Il existe une notion complémentaire, le point de sauvegarde, déclaré avec SAVEPOINT. Il marque à l'intérieur d'une transaction un jalon auquel on peut revenir sans annuler tout le reste. On l'utilise quand une opération comporte plusieurs phases indépendantes et que l'échec de la deuxième ne doit pas effacer la première. Dans la pratique, on préfère presque toujours découper le traitement en plusieurs transactions courtes, plus simples à raisonner et à tester. Le point de sauvegarde reste utile dans les scripts de migration et les imports longs, à condition de ne jamais s'en servir pour masquer un problème de cohérence : si une étape échoue, la bonne question est souvent de savoir pourquoi, pas seulement de rebondir au jalon précédent.
+
+Un mot sur les transactions implicites. Selon la configuration du moteur et les réglages de votre bibliothèque de données, une commande isolée peut être entourée automatiquement d'une transaction que le système valide lui-même. C'est pratique pour une lecture unique, mais cela prête à confusion quand on débute : on croit écrire sans transaction, alors que le moteur en crée une. La règle simple est de rendre l'explicite dès que vous avez plusieurs commandes, et de vérifier dans la documentation de votre moteur comment se comportent les commandes exécutées à l'extérieur de toute déclaration explicite.
+
+## ACID expliqué simplement
+
+Le sigle ACID résume quatre propriétés que tout système de gestion de base de données sérieux garantit pour vos transactions. Ce sont atomicité, cohérence, isolation et durabilité. Chacune répond à une question précise sur ce qui se passe quand tout se passe mal, ou quand tout se passe en même temps. Inutile d'en connaître les algorithmes internes pour les utiliser correctement, mais il est essentiel de savoir ce qu'elles vous promettent, car vos choix d'application en dépendent.
+
+L'atomicité est la propriété la plus intuitive : tout ou rien. Une transaction se termine soit par application complète, soit par annulation complète. Il n'existe pas d'état intermédiaire dans lequel la moitié des commandes serait appliquée. Si le troisième UPDATE d'un lot échoue, les deux premiers sont annulés comme s'ils n'avaient jamais été exécutés. C'est cette promesse qui vous dispense de coder un mécanisme de compensation manuelle, et qui fait de BEGIN, COMMIT et ROLLBACK une grammaire suffisante pour gérer l'échec.
+
+La cohérence, ou intégrité, signifie que la transaction amène la base d'un état valide à un autre état valide. Toutes les contraintes déclarées sur le schéma sont vérifiées : clés primaires uniques, clés étrangères référencées, colonnes obligatoires remplies, types respectés, règles métier encodées. Si la transaction viole l'une d'entre elles, elle est intégralement rejetée. La base ne se contente pas d'exécuter vos ordres, elle refuse ceux qui conduiraient à un état absurde, ce qui fait d'elle le dernier rempart de vos règles métier.
+
+L'isolation traite de la concurrence. Quand deux sessions écrivent en même temps, chacune doit avoir l'impression d'être seule. Les effets d'une transaction non validée ne doivent pas fuiter dans les lectures d'une autre, et deux transactions qui touchent les mêmes lignes doivent s'organiser sans se marcher dessus. L'isolation n'est pas un simple souhait : elle se décline en plusieurs niveaux, plus ou moins stricts, dont les compromis font l'objet d'une section entière du chapitre suivant. Retenez surtout que le niveau choisi détermine quelles anomalies sont tolérées.
+
+La durabilité dit que si le COMMIT a été renvoyé, la transaction est enregistrée définitivement, même si le serveur plante une seconde plus tard. Le moteur s'appuie pour cela sur un journal d'écriture : avant de rendre la main, il note l'opération sur un support persistent. Si la machine redémarre, il rejoue ce qui devait être appliqué et rejette ce qui ne l'était pas. Vous pouvez donc considérer qu'une validation réussie équivaut à une écriture physique sur disque, sans avoir à attendre vous-même le fsync du système de fichiers.
+
+```sql
+BEGIN;
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111';
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+COMMIT;
+```
+
+Ces quatre propriétés forment un tout : retenir l'une sans les autres ne suffit pas. Une base peut garantir l'atomicité de vos commandes sans qu'aucune contrainte n'assure la cohérence de vos données, et elle peut valider durablement une opération dont le niveau d'isolation laisse des fenêtres ouvertes à la concurrence. C'est pourquoi les fournisseurs de bases de données affichent le sigle ACID comme une promesse globale, et pourquoi vous devez vérifier, dans la documentation de votre moteur, quel comportement exact est couvert pour chaque niveau d'isolation déclaré.
+
+Ce petit exemple de virement illustre les quatre propriétés d'un coup. Atomicité : si le débit échoue, le crédit est annulé. Cohérence : un solde qui deviendrait négatif si une contrainte l'interdit fait échouer l'opération entière. Isolation : un autre client qui lit les comptes pendant l'opération ne verra jamais le débit sans le crédit. Durabilité : une fois le COMMIT renvoyé, le virement survit à tout incident matériel. Comprenez bien que vous n'écrivez aucune ligne de code pour obtenir ces garanties : elles sont le service rendu par le moteur, à condition que vous utilisiez correctement les transactions.
+
+## Exemples SQL : quatre opérations métier pas à pas
+
+Voyons maintenant comment une opération métier complète se traduit en transactions SQL réelles. Le premier exemple est la création d'un emprunt. On commence par vérifier que le lecteur existe et que l'exemplaire est disponible, puis on insère l'emprunt, on rattache l'exemplaire, on change son état. Chaque étape lit avant d'écrire, ce qui permet d'abandonner proprement si la prémisse est fausse.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM lecteurs WHERE identifiant = 12;
+
+SELECT COUNT(*) FROM exemplaires
+WHERE identifiant = 101 AND etat = 'neuf';
+
+INSERT INTO emprunts (identifiant, lecteur_id, date_sortie)
+VALUES (9002, 12, '2026-03-05');
+
+UPDATE exemplaires
+SET etat = 'emprunté', emprunt_id = 9002
+WHERE identifiant = 101;
+
+COMMIT;
+```
+
+Le deuxième exemple est la restitution d'un emprunt, qui inverse le précédent : on date le retour, on libère l'exemplaire, on recalcule la disponibilité. Notez la condition date_retour IS NULL dans la mise à jour : elle protège contre un double enregistrement de restitution, au cas où deux agents cliqueraient en même temps sur le même bouton. C'est une protection applicative simple, qui complète la protection offerte par les contraintes.
+
+```sql
+BEGIN;
+
+UPDATE emprunts
+SET date_retour = '2026-03-19'
+WHERE identifiant = 9002 AND date_retour IS NULL;
+
+UPDATE exemplaires
+SET etat = 'bon', emprunt_id = NULL
+WHERE identifiant = 101;
+
+COMMIT;
+```
+
+Le troisième exemple illustre la gestion d'erreur. On ouvre la transaction, on effectue une mise à jour conditionnée par un SELECT préalable, puis on décide. Si la condition n'est pas réunie, on annule ; sinon, on valide. Cette structure se retrouve dans toutes les applications bien écrites : la décision de valider est prise après lecture, jamais avant.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM emprunts WHERE lecteur_id = 12 AND date_retour IS NULL;
+
+UPDATE lecteurs
+SET statut = 'suspendu'
+WHERE identifiant = 12
+  AND 3 <= (SELECT COUNT(*) FROM retards WHERE lecteur_id = 12);
+
+ROLLBACK;
+```
+
+Le quatrième exemple montre une opération de maintenance à grande échelle. Recalculer une colonne dérivée sur cent mille lignes n'est pas une opération anodine : pendant son exécution, les lecteurs voient des valeurs incohérentes si la transaction n'est pas utilisée. En enfermant le lot dans une transaction, vous assurez que les autres sessions verront soit l'ancien calcul, soit le nouveau, jamais un mélange des deux. La durée de la transaction augmente, ce qui oblige à réfléchir au niveau d'isolation et aux verrous, mais la cohérence est préservée.
+
+```sql
+BEGIN;
+
+UPDATE ouvrages
+SET nb_disponibles = (
+  SELECT COUNT(*)
+  FROM exemplaires e
+  WHERE e.ouvrage_id = ouvrages.identifiant
+    AND e.etat <> 'emprunté'
+);
+
+COMMIT;
+```
+
+Un dernier conseil sur la longueur des transactions. Une transaction maintenue ouverte trop longtemps retient des verrous, empêche certains nettoyages et peut ralentir les autres sessions. Il faut donc les garder courtes dès que possible : lire d'abord hors transaction, préparer les valeurs, puis ouvrir, écrire et valider. À l'inverse, une transaction qui contiendrait des appels réseaux, des appels à un service externe ou des calculs longs est une transaction mal conçue. Le périmètre idéal est une suite courte de commandes SQL qui se terminent par un COMMIT ou un ROLLBACK explicite et déterministe.
+
+## Ce que la transaction ne fait pas
+
+Il est utile de délimiter ce qui relève de la transaction et ce qui en sort, pour éviter deux illusions fréquentes. Première illusion : la transaction protège contre toutes les erreurs. Elle protège contre l'échec partiel, pas contre l'erreur de logique. Si vous validez une mise à jour dont la condition était fausse mais syntaxiquement correcte, la base appliquera fidèlement votre erreur et la rendra définitive. Seule la lecture préalable du périmètre vous protège de ce cas.
+
+Deuxième illusion : la transaction rend les opérations atomiques pour l'utilisateur final. Si votre application appelle deux services distants, un pour le paiement et un pour l'expédition, la transaction de base de données ne couvre pas le service externe. Elle ne coordonne que ce qui se passe à l'intérieur du moteur. Au-delà, il faut un protocole de compensation ou une architecture adaptée. Savoir exactement où s'arrête la garantie est une compétence professionnelle essentielle, et elle commence par la compréhension de ce que BEGIN et COMMIT délimitent réellement.
+
+Troisième point, plus pratique : toutes les commandes ne sont pas transactionnelles. Certaines opérations de structure, comme créer une table ou ajouter une colonne, sont automatiquement validées dans certains moteurs, indépendamment de la transaction en cours. D'autres, comme TRUNCATE dans certaines configurations, se comportent différemment. Consultez la documentation de votre moteur avant d'enfermer une opération DDL dans une transaction que vous comptez annuler, et testez systématiquement dans un environnement de préproduction le comportement exact que vous attendez.
+
+Enfin, la transaction ne remplace pas la sauvegarde. Elle garantit la cohérence en temps réel, pas la récupération après une suppression volontaire ou accidentelle mal validée. Un COMMIT effectué sur la mauvaise condition est parfaitement durable, ce qui signifie que la base appliquera votre erreur avec la même fiabilité qu'une opération correcte. Combinez les deux disciplines : transactions pour la cohérence, sauvegardes et journaux pour le temps long, lectures préalables pour la justesse de l'intention. Ensemble, ces trois réflexes couvrent la grande majorité des incidents de données rencontrés en production.

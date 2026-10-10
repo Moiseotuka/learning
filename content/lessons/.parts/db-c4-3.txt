@@ -1,0 +1,151 @@
+Le chapitre précédent vous a montré comment encadrer plusieurs écritures pour qu'elles aboutissent ensemble. La question qui suit est naturelle : que se passe-t-il quand deux personnes font cela en même temps ? Dans une bibliothèque, deux agents peuvent rendre le même exemplaire pendant que le responsable met à jour les tarifs, et un import de nuit peut tourner pendant que les usagers consultent le catalogue. Si chaque transaction travaille comme si elle était seule, leurs écritures peuvent se croiser, se perdre ou produire un résultat que personne n'avait prévu.
+
+Le mécanisme qui règle ce problème s'appelle l'isolation. Son principe est simple à énoncer : chaque transaction doit avoir l'impression d'être la seule à agir, et les autres sessions ne doivent jamais observer un état intermédiaire, c'est-à-dire une situation qui n'a jamais existé dans la réalité métier. Le problème est que respecter ce principe à la lettre coûte cher en performance, car il faut alors sérialiser les opérations les unes après les autres. Les ingénieurs ont donc conçu plusieurs niveaux, du plus strict au plus souple, qui acceptent chacun des anomalies particulières en échange d'un débit plus élevé.
+
+Ces niveaux sont décrits dans les normes relationnelles et repris par les grands moteurs, avec des noms qui varient un peu selon les systèmes. Vous rencontrerez READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ et SERIALIZABLE, auxquels s'ajoute souvent le niveau par défaut de PostgreSQL, appelé READ COMMITTED avec des règles de détection des conflits. Comprendre ces quatre échelons, c'est comprendre quelles illusions votre application peut observer, et donc quelles vérifications elle doit ajouter pour rester correcte.
+
+Une distinction préalable aide à lire tout ce qui suit. Le verrouillage pessimiste considère qu'un conflit est probable et empêche d'accéder aux données en conflit : celui qui écrit pose un verrou, les lecteurs attendent. L'optimiste considère qu'un conflit est rare et laisse tout le monde travailler, puis détecte à la validation si quelqu'un a modifié les mêmes lignes, auquel cas il rejette et recommence. Les moteurs combinent les deux approches selon le contexte. Pour vous, l'essentiel est moins le mécanisme que le résultat observable : à chaque niveau d'isolation correspond un catalogue précis d'anomalies autorisées.
+
+Enfin, un rappel de vocabulaire. Une lecture sale, ou dirty read, est la lecture d'une donnée modifiée par une transaction non validée. Une lecture non répétable, ou non-repeatable read, c'est la même lecture qui donne un résultat différent parce qu'une autre transaction a modifié entre-temps les lignes lues. Un fantôme, ou phantom read, c'est le même phénomène sur l'ensemble des lignes correspondant à une condition : une ligne apparaît ou disparaît entre deux exécutions. Ces trois anomalies sont les repères centraux du chapitre, et chacune est neutralisée par un niveau d'isolation supérieur.
+
+## Les niveaux d'isolation
+
+Le niveau READ UNCOMMITTED est le plus permissif, au point d'être parfois implémenté comme un alias de READ COMMITTED par des moteurs qui refusent les lectures sales. Lorsqu'il est réellement disponible, il autorise une transaction à lire les modifications d'une autre transaction avant que celle-ci ne valide. On comprend l'intérêt théorique : aucune attente, débit maximal. En pratique, il est si dangereux qu'aucune application de gestion sérieuse ne l'utilise, car il revient à travailler sur des données qui peuvent disparaître à tout instant.
+
+Le niveau READ COMMITTED est le plus répandu. Une transaction ne voit que les données validées par les autres, et plus précisément celles qui étaient validées au moment où chaque lecture a eu lieu. L'anomalie résiduelle est la lecture non répétable : deux lectures identiques, séparées par une validation concurrente, renvoient deux réponses différentes. C'est acceptable dans la plupart des applications, à condition de ne pas raisonner en plusieurs lectures indépendantes pour prendre une décision unique.
+
+```sql
+-- Session A                          -- Session B
+BEGIN;                                BEGIN;
+SET TRANSACTION ISOLATION LEVEL      SET TRANSACTION ISOLATION LEVEL
+  READ COMMITTED;                       READ COMMITTED;
+SELECT solde FROM comptes             UPDATE comptes
+WHERE numero = 'FR111';               SET solde = solde + 100
+SELECT solde FROM comptes             WHERE numero = 'FR111';
+WHERE numero = 'FR111';               COMMIT;
+-- les deux lectures peuvent différer
+```
+
+Le niveau REPEATABLE READ ajoute l'image stable : dès qu'une transaction a lu une ligne, les lectures ultérieures de cette même ligne renvoient la même valeur. On élimine donc les lectures non répétables sur les lignes déjà vues. En revanche, les nouveaux éléments qui arrivent dans le périmètre d'une condition peuvent rester invisibles ou apparaître selon les implémentations, ce qui laisse la place aux fantômes. PostgreSQL va plus loin à ce niveau et rejette les transactions qui tenteraient de modifier une ligne déjà lue, transformant ainsi le problème en erreur plutôt qu'en résultat faux.
+
+Le niveau SERIALIZABLE est le plus strict. Il garantit que l'exécution concurrente de plusieurs transactions équivaut à une exécution séquentielle, l'une après l'autre, dans un ordre quelconque mais cohérent. Aucune anomalie n'est permise : ni lecture sale, ni lecture non répétable, ni fantôme. Le prix se paie en conflits. Quand deux transactions raisonnent sur les mêmes données, l'une d'elles est souvent rejetée avec une erreur de sérialisation, et l'application doit recommencer. On réserve ce niveau aux opérations financières, aux calculs d'inventaire et aux contraintes qui doivent être absolues.
+
+Comment choisir ? La règle courante est de partir du niveau par défaut du moteur, généralement READ COMMITTED, puis de l'élever uniquement là où une anomalie réelle a été identifiée. Monter systématiquement à SERIALIZABLE par sécurité revient à rendre toutes les transactions lentes et conflictuelles sans bénéfice mesurable. À l'inverse, descendre en dessous du défaut pour gagner quelques millisecondes revient à accepter des données fausses en production. La bonne pratique consiste à documenter le choix par opération, à le justifier par un scénario de concurrence précis, et à le tester avec deux sessions réelles plutôt que de raisonner dans l'abstrait.
+
+## Dirty read : lire des données non confirmées
+
+La lecture sale se produit quand une session lit une valeur qui appartient à une transaction ouverte, c'est-à-dire qui n'a pas encore été validée et qui peut donc être annulée à tout moment. Le cas classique est le suivant. Une transaction porte un solde de 1000 à 1500, une seconde lit 1500, puis la première annule l'opération. La deuxième session a travaillé sur un chiffre qui n'a jamais existé de manière durable. Si elle déclenche une décision, cette décision repose sur une fiction.
+
+Le danger va au-delà de la simple valeur erronée. Imaginez un rapport d'inventaire qui lit, pendant une mise à jour massive, les valeurs intermédiaires d'une colonne recalculée ligne à ligne. Chaque ligne est cohérente prise isolément, mais l'ensemble ne correspond à aucun état réel de la base. L'application produit alors un total qui n'a jamais été juste, et personne ne s'en aperçoit puisque les nombres sont plausibles. Les lectures sales sont d'autant plus redoutables qu'elles ne provoquent aucune erreur : elles renvoient simplement du faux.
+
+```sql
+-- Transaction 1 : mise à jour non validée
+BEGIN;
+UPDATE comptes SET solde = 5000 WHERE numero = 'FR111';
+-- à ce stade, la valeur n'existe que pour la session 1
+
+-- Transaction 2 avec READ UNCOMMITTED
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT solde FROM comptes WHERE numero = 'FR111';  -- lit 5000
+ROLLBACK;
+
+-- Transaction 1 annule à son tour
+ROLLBACK;
+-- La session 2 a traité un solde qui n'a jamais été validé.
+```
+
+Les niveaux READ COMMITTED, REPEATABLE READ et SERIALIZABLE interdisent tous cette anomalie, puisqu'ils n'exposent que des données validées. C'est la raison pour laquelle READ UNCOMMITTED est pratiquement abandonné, et pourquoi la plupart des références modernes le décrivent comme équivalent au niveau par défaut. Dans votre code, cela signifie qu'il n'y a presque rien à faire : le défaut vous protège déjà. Il faut en revanche comprendre ce qui se passe lorsqu'une transaction est annulée après avoir été lue par un autre processus, pour ne pas confondre disponibilité et exactitude.
+
+Le cas concret le plus fréquent dans une application est le scénario de lecture puis écriture, souvent appelé problème du lost update. Deux agents lisent le même stock, voient 10 exemplaires, en retirent chacun un et écrivent 9. La base enregistre 9 alors que deux exemplaires ont été retirés : il en reste 8. Le niveau READ COMMITTED n'a rien fait de mal, car chaque lecture était valide au moment où elle a eu lieu. C'est l'écart entre la lecture et l'écriture qui crée l'incohérence. Deux parades existent : ajouter une condition atomique dans l'UPDATE, par exemple soustraire directement la quantité plutôt qu'affecter une valeur calculée, ou monter le niveau d'isolation à SERIALIZABLE et gérer la reprise.
+
+```sql
+-- Écriture sûre : on exprime une différence, pas une valeur lue
+UPDATE stocks
+SET quantite = quantite - 1
+WHERE ouvrage_id = 7 AND quantite > 0;
+```
+
+Retenez que la lecture sale est un problème de visibilité, et que les moteurs modernes la suppriment presque toujours. Le problème du lost update, lui, est un problème de raisononnement à distance entre deux requêtes. Vous ne pouvez pas compter sur le niveau d'isolation par défaut pour le résoudre toujours : c'est à vous d'écrire des mises à jour qui portent leur propre logique, comme l'exemple ci-dessus, ou à vous fier à une transaction strictement sérialisable quand la décision est critique.
+
+## Phantom read : quand les lignes apparaissent et disparaissent
+
+Le fantôme désigne une anomalie particulière : entre deux lectures d'une même condition, une ligne entre ou sort du résultat parce qu'une autre transaction a inséré ou supprimé des lignes. Il diffère de la lecture non répétable, qui porte sur des lignes déjà présentes. Le fantôme concerne l'ensemble, le périmètre, la réponse à une question posée deux fois. Prenons l'exemple d'une requête qui compte les emprunts en cours pour un lecteur : si un autre agent enregistre un nouvel emprunt entre les deux comptes, la seconde interrogation retourne une valeur différente.
+
+```sql
+-- Session A                                -- Session B
+BEGIN;                                      BEGIN;
+SET TRANSACTION ISOLATION LEVEL             SET TRANSACTION ISOLATION LEVEL
+  REPEATABLE READ;                            READ COMMITTED;
+SELECT COUNT(*) FROM emprunts               INSERT INTO emprunts (identifiant,
+WHERE date_retour IS NULL;                   lecteur_id, date_sortie)
+SELECT COUNT(*) FROM emprunts               VALUES (9100, 12, '2026-04-01');
+WHERE date_retour IS NULL;                  COMMIT;
+-- avec READ COMMITTED : deux comptes différents, c'est un fantôme
+```
+
+À READ COMMITTED, ce phénomène est autorisé et courant. C'est d'ailleurs ce niveau qui produit le plus de surprises dans les applications : une boucle qui traite un résultat en plusieurs passages peut voir ce résultat changer sous ses yeux, un filtre appliqué avant une action peut ne plus correspondre après. REPEATABLE READ réduit le problème en figeant l'image des données déjà consultées, mais il ne couvre pas toujours les insertions concurrentes. Seul SERIALIZABLE garantit l'absence totale de fantômes, au prix de rejections à reprendre.
+
+Le remède applicatif le plus simple consiste à ne pas découper une décision en plusieurs lectures indépendantes. Récupérez le jeu complet dont vous avez besoin en une seule requête, ou enfermez l'ensemble dans une transaction au niveau suffisant, et décidez sur cette image unique. Si vous devez agir ligne à ligne sur un résultat volumineux, traitez-le en une seule opération SQL plutôt qu'en une boucle applicative : une mise à jour conditionnée par une jointure ou un IN porté par une sous-requête reste atomique, alors qu'une boucle de mille appels ne l'est pas.
+
+Une variante utile est la lecture de contrôle, aussi appelée phantom de comptage. Avant d'insérer un enregistrement supposé unique, vous vérifiez son absence, puis vous l'insérez. Entre les deux, une autre session peut faire de même : les deux vérifications passent, les deux insertions sont refusées par la contrainte d'unicité, et l'une des deux obtient une erreur. C'est précisément pour cela que l'on préfère toujours déclarer une contrainte plutôt que de faire une vérification manuelle. La contrainte agit au moment exact de l'écriture, sans fenêtre de temps exploitable, alors que la vérification ne couvre jamais l'intervalle qui la sépare de l'insertion.
+
+Le quatrième type d'anomalie, souvent oublié, est l'écriture perdue : deux transactions mettent à jour la même ligne, la dernière validation écrase la première sans avertissement. Les moteurs à verrous empêchent ce cas en bloquant la seconde écriture jusqu'à validation ou expiration de la première. Si votre application travaille avec un connecteur en mode optimiste, elle peut recevoir une erreur de concurrence qu'il faudra traduire en nouveau calcul. Dans tous les cas, la bonne pratique reste de garder les transactions courtes, de ne jamais effectuer d'appel réseau à l'intérieur d'une transaction, et de rejouer proprement une opération rejetée plutôt que de la forcer.
+
+## Cas bancaire : débit et crédit en toute sécurité
+
+Le virement bancaire est le cas d'école des transactions, et il mérite d'être traité avec soin parce qu'il concentre toutes les difficultés. L'opération doit débiter un compte, créditer un autre, et éventuellement enregistrer une ligne d'écriture dans un journal. Les deux mouvements de solde sont indissociables : ni débit seul, ni crédit seul n'a de sens métier. La somme totale des soldes doit rester constante, ce qui est une contrainte de cohérence au sens ACID du terme.
+
+La première étape consiste à lire les soldes hors transaction afin de vérifier les prérequis, notamment que le compte débiteur dispose de la somme. Cette lecture préalable n'a qu'une valeur indicative : entre votre lecture et votre écriture, un autre virement peut intervenir. D'où l'importance de rejouer le contrôle au moment de l'écriture, avec une condition portée directement dans l'UPDATE. On ne vérifie pas un solde, on écrit une condition sur le solde. La base évalue cette condition au moment exact de la modification, sous verrou, et refuse l'opération si elle n'est plus vraie.
+
+```sql
+BEGIN;
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111'
+  AND solde >= 150;
+
+-- si aucune ligne n'a été mise à jour, le solde était insuffisant
+-- ou le compte n'existe pas : on annule
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+INSERT INTO ecritures (compte_debit, compte_credit, montant, date_operation)
+VALUES ('FR111', 'FR222', 150, '2026-05-12');
+
+COMMIT;
+```
+
+La structure ci-dessus illustre le bon réflexe : la condition de disponibilité est portée par le premier UPDATE, et la vérification du nombre de lignes modifiées détermine la suite. Si le débit n'a touché aucune ligne, vous appelez ROLLBACK et remontez une erreur métier, par exemple solde insuffisant. Si le débit a porté, vous poursuivez et validez. Aucune lecture intermédiaire n'est nécessaire, et aucune autre session ne peut modifier le solde entre la condition et l'application, grâce aux verrous posés par le moteur.
+
+Le niveau d'isolation approprié dépend des règles exactes. Pour un simple transfert de fonds entre deux comptes, READ COMMITTED suffit souvent, car la contrainte de solde non négatif est portée par la condition de l'UPDATE et, idéalement, par une contrainte sur la colonne. Pour un calcul de total qui doit correspondre exactement à la somme des opérations enregistrées, ou pour une clôture comptable qui examine toutes les lignes d'une période, SERIALIZABLE est préférable, car il interdit qu'une écriture concurrente modifie le périmètre entre deux lectures. On accepte alors des reprises automatiques, car l'opération est rare et critique.
+
+Voici comment on refuse proprement un débit impossible, avec une procédure stockée simplifiée. Elle montre la séquence complète : ouverture, contrôle, décision, validation ou annulation.
+
+```sql
+BEGIN;
+
+SELECT solde FROM comptes WHERE numero = 'FR111';
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111' AND solde >= 150;
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+-- contrôle du débit effectif avant validation
+SELECT solde FROM comptes WHERE numero = 'FR111';
+
+COMMIT;
+```
+
+Trois pièges restent à connaître dans ce cas. Le premier est l'oubli du COMMIT : la transaction reste ouverte, les autres sessions ne voient rien, le virement disparaît quand la connexion se ferme. Le deuxième est le contrôle hors transaction, qui donne un faux sentiment de sécurité et introduit une fenêtre de concurrence. Le troisième est l'ordre des opérations : toujours débiter avant de créditer, afin que le compte le plus contraint soit traité en premier, ce qui limite les verrous retenus et rend l'abandon immédiat si la condition échoue.
+
+Un mot sur le journal d'écritures. Conserver une ligne d'historique à chaque mouvement, en plus de la mise à jour des soldes, double le volume d'écritures mais apporte une traçabilité indispensable : on peut reconstruire un solde, détecter une anomalie et expliquer un différent. Cette table d'historique s'insère dans la même transaction que les deux mises à jour, car un solde modifié sans écriture est un mouvement illégitime. La règle professionnelle est donc toujours la même : regroupez dans une unique transaction tout ce qui doit être vrai en même temps, et rien de plus.
+
+Enfin, la transaction ne dispense pas de la contrainte. Déclarez sur la colonne solde une règle interdisant les valeurs négatives si le métier l'exige, et laissez le moteur refuser l'opération même si votre condition a été contournée par erreur ailleurs dans le code. Contrainte et transaction jouent à deux niveaux différents : la contrainte garantit l'état admissible, la transaction garantit le passage d'un état admissible à un autre. Ensemble, elles constituent la réponse complète à la question de savoir ce qui se passe quand deux utilisateurs transfèrent de l'argent en même temps.

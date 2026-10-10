@@ -1,0 +1,120 @@
+## Le chien de garde : premier rempart contre les blocages
+
+Un microcontrôleur qui plante sur l'établi se redémarre à la main. Le même défaut, installé dans un boîtier scellé au fond d'une parcelle, met l'objet hors service jusqu'à l'intervention suivante. Le chien de garde, ou watchdog, transforme cette panne en rédémarrage automatique : c'est un compteur matériel que le logiciel doit réinitialiser régulièrement ; s'il n'y parvient pas, la puce redémarre d'elle-même. C'est la mesure de sécurité la moins coûteuse à mettre en place et la plus efficace contre les blocages logiciels, les attentes infinies sur un capteur qui ne répond plus et les boucles de reconnexion qui ne tournent jamais à leur terme.
+
+L'ESP32 en propose deux. Le chien de garde de tâche surveille l'exécution des tâches FreeRTOS : chaque tâche inscrite doit être nourrie, sinon le système déclenche un redémarrage. Le chien de garde d'interruption, lui, détecte un processeur resté trop longtemps en traitement sans jamais rendre la main. Tous deux signalent leur déclenchement par un message explicite au démarrage. Apprenez à le lire : il vous dira non pas que la carte a redémarré, mais pour quelle raison, ce qui change radicalement la suite de l'investigation.
+
+Sous l'environnement Arduino, la surveillance de la tâche d'inactivité est active par défaut : si votre boucle principale cesse de rendre la main pendant plusieurs secondes, la carte redémarre avec un avertissement sur le moniteur série. Pour une supervision explicite, configurez le délai et inscrivez la boucle principale vous-même. Notez que l'API a changé entre les versions : les anciennes proposaient une initialisation en secondes, les plus récentes prennent une structure de configuration et séparent la réconfiguration de l'ajout des tâches.
+
+```cpp
+#include "esp_task_wdt.h"
+
+void configurerLeChienDeGarde() {
+  esp_task_wdt_config_t cfg = {};
+  cfg.timeout_ms = 10000;
+  cfg.idle_core_mask = 0;
+  cfg.trigger_panic = true;
+  esp_task_wdt_reconfigure(&cfg);
+  esp_task_wdt_add(nullptr);
+}
+
+void alimenterLeChienDeGarde() {
+  esp_task_wdt_reset();
+}
+```
+
+Trois règles d'usage valent plus que n'importe quel réglage. Premièrement, on nourrit le chien uniquement là où le travail progresse réellement, c'est-à-dire à la fin d'un tour complet de la boucle, jamais au milieu d'une attente. Deuxièmement, on n'allonge jamais le délai pour faire taire l'alarme : un chien de garde dont on triple le temps de réponse ne corrige rien, il se contente de retarder la panne et de masquer la cause. Troisièmement, chaque tâche longue, traitement réseau, mise à jour, acquisition lente, est inscrite individuellement, de manière à ce que le redémarrage désigne la tâche fautive plutôt que le système tout entier.
+
+Le redémarrage doit toujours être diagnostiqué. Après chaque démarrage, relevez la cause : réinitialisation logicielle délibérée, déclenchement du chien de garde, coupure d'alimentation, détecteur de chute de tension. Conservez un compteur de redémarrages en mémoire persistante et transmettez-le avec le prochain relevé. Un objet qui redémarde trois fois par jour paraît fonctionnel à l'œil et est en réalité déjà en panne : sans ce compteur, vous ne le découvrirez qu'au retour d'une intervention coûteuse. L'API fournit la liste complète des causes possibles, qu'il suffit d'associer à un libellé stable pour construire votre journal de démarrage.
+
+```cpp
+#include "esp_system.h"
+
+const char* expliquerReset(uint32_t cause) {
+  switch (cause) {
+    case ESP_RST_POWERON:  return "alimentation arrivee";
+    case ESP_RST_EXT:      return "demande externe";
+    case ESP_RST_PANIC:    return "panique logicielle";
+    case ESP_RST_INT_WDT:  return "chien de garde d'interruption";
+    case ESP_RST_TASK_WDT: return "chien de garde de tache";
+    case ESP_RST_BROWNOUT: return "chute de tension";
+    case ESP_RST_DEEPSLEEP:return "reveil de veille profonde";
+    default:               return "cause inconnue";
+  }
+}
+
+void journaliserLeDemarrage() {
+  Serial.print("cause du redemarrage : ");
+  Serial.println(expliquerReset(esp_reset_reason()));
+}
+```
+
+Cette cause doit voyager avec les données. Un relevé transmis sans l'historique des redémarrages vous prive du seul signal capable de distinguer un défaut rare d'une défaillance récurrente. Rassemblez les deux dans un même message, conservez les dix derniers événements en mémoire persistante, et vous disposerez d'une boucle de rétroaction exploitable même lorsque l'objet n'est joignable qu'une fois par jour. C'est la différence entre une flotte qu'on surveille et une flotte qu'on découvre.
+
+La vigilance doit aussi s'étendre à la nature du blocage lui-même. Un délai de temporisation trop généreux, une attente sur une lecture série sans limite, une file de messages qui ne se vide jamais : chacune de ces situations nourrit le chien de garde encore et encore sans que le travail progresse. Le symptôme n'est alors pas un redémarrage isolé mais une série régulière, presque métronomique. Mesurez l'intervalle entre deux redémarrages : s'il correspond au délai du chien de garde, vous tenez la cause, et le remède se trouve dans le code, pas dans les réglages.
+
+La chute de tension mérite une attention particulière sur batterie, car elle produit un symptôme très trompeur. Au moment de l'émission Wi-Fi, le courant appelle plusieurs centaines de milliampères ; une batterie fatiguée ou un câblage trop fin fait chuter la tension, le détecteur de chute déclenche une réinitialisation, la carte redémarre, réessaye, réactive la radio et redémarre à nouveau. La boucle est parfaite et le logiciel est irréprochable. Le remède est matériel : condensateur de soutien de quelques centaines de microfarads à proximité de la carte, câblage court et généreux, batterie dimensionnée pour la crête, seuil du détecteur vérifié. C'est exactement le type d'incident qu'une checklist de mise en production doit écarter avant expédition.
+
+## Durcir la carte : chiffrement, amorce sécurisée et clés
+
+Tant que votre objet est branché sur votre bureau, la protection n'a pas d'enjeu. Dès qu'il est expédié, il circule : un boîtier ouvert, un connecteur de débogage accessible, une mise à jour interceptée sur un réseau public. La question n'est plus de savoir si quelqu'un pourra accéder à la carte, mais ce qu'il pourra en tirer. Trois menaces structurent la réflexion : la lecture du firmware, qui révèle votre propriété intellectuelle et vos secrets ; l'écriture d'un firmware non signé, qui transforme votre objet en exécuteur de code étranger ; l'extraction des identifiants stockés en mémoire, qui ouvre l'accès à vos services.
+
+La première réponse est le chiffrement de la flash. La puce chiffre et déchiffre automatiquement chaque accès à la mémoire vive externe, avec une clé de deux cent cinquante-six bits gravée dans les eFuses, une mémoire programmable une seule fois. Pour le logiciel, l'opération est transparente : le code s'exécute normalement. Pour l'attaquant, la puce ne présente plus que du chiffrement, y compris lorsque l'image est extraite par voie matérielle. Le coût est nul en performance notable, et l'activation se fait à la fabrique, puisqu'une fois la clé gravée, on ne revient pas en arrière.
+
+La seconde réponse est l'amorce de démarrage sécurisé. Le module d'amorce vérifie la signature numérique de chaque image avant de l'exécuter, y compris celles reçues par la mise à jour à distance. Sur les premiers ESP32, la vérification repose sur une courbe elliptique ; sur les générations suivantes, elle s'appuie sur un schéma de signature plus long, plus résistant, avec une empreinte conservée dans les eFuses. Résultat : un firmware altéré, même déposé sur le bon emplacement de la flash, ne démarre pas. Cette mesure conditionne la sécurité de tout le mécanisme de mise à jour traité dans la section suivante.
+
+La troisième réponse concerne les secrets eux-mêmes. Un mot de passe Wi-Fi en clair dans le code source reste lisible dans la mémoire chiffrée par quiconque obtient la clé. Stockez plutôt les identifiants dans une partition de préférences chiffrée, ou mieux, dans un composant de sécurité dédié qui ne les livre jamais en clair. Ne réutilisez jamais un jeu d'identifiants pour toute une flotte : un objet compromis doit pouvoir être révoqué sans compromettre les autres. Pour une production sérieuse, la génération d'une clé par appareil, effectuée à la fabrication, reste la seule approche qui tienne sur la durée.
+
+Le tableau ci-dessous relie chaque menace à la mesure correspondante et à son coût de mise en œuvre.
+
+| Menace | Mesure | Où elle s'applique | Coût réel |
+| --- | --- | --- | --- |
+| Lecture du firmware | Chiffrement de la flash | Dès la fabrique | faible, une clé gravée |
+| Exécution d'image étrangère | Amorce sécurisée et signature | Module d'amorce | modéré, chaîne de signatures |
+| Extraction des identifiants | Partition de préférences chiffrée | Système de fichiers | faible |
+| Attaque par rejeu de mise à jour | Version minimale imposée | Serveur de mise à jour | faible |
+| Compromission d'un seul objet | Clés par appareil | Parc entier | à planifier en fabrication |
+
+La gravure des eFuses est l'opération la plus délicate de tout le parcours, parce qu'elle est définitive. Une clé perdue, un bit de configuration mal positionné ou une option activée par erreur peuvent rendre la carte inexploitable, et aucun redémarrage ne la sauvera. Avant toute opération, sauvegardez l'état des eFuses, générez les clés sur une machine hors réseau, conservez les clés privées dans un coffre et non dans le dépôt de code, puis validez la procédure sur une carte jetable avant de toucher à une série. La séquence suivante illustre l'ordre des opérations tel qu'on l'exécute réellement en atelier.
+
+```
+$ espefuse.py --port /dev/ttyUSB0 dump-summary --file eFuse-avant.json
+$ idf.py secure-boot-sign build/sonde.bin secure_certs/cle-signature.pem
+$ espefuse.py --port /dev/ttyUSB0 burn_key secure_boot_v2 \
+      secure_certs/cle-signature.pem --force_write_protect
+$ idf.py flash
+```
+
+Deux régimes coexistent, et les confondre annule la protection. En mode de développement, l'amorce sécurisée accepte les images non signées afin de ne pas entraver les essais ; en mode de production, seule une image signée par la clé gravée est acceptée. Une carte expédiée en mode de développement présente donc toutes les apparences de la sécurité, chiffrement activé, signature configurée, sans opposer la moindre résistance à une image réécrite. Vérifiez l'état réel des eFuses sur l'appareil final, et non la configuration de votre projet : c'est la seule preuve qui vaille.
+
+La gestion des clés a elle aussi une dimension d'équipe. La clé privée ne doit jamais être la même que celle du dépôt de code, jamais stockée avec l'objet, jamais transmise par messagerie. On la conserve sur un support hors ligne, avec une copie d'urgence confiée à une personne tierce, parce qu'une clé perdue signifie l'impossibilité de signer la prochaine mise à jour et une flotte bloquée sur sa version courante. Pour une production de série, chaque appareil reçoit sa propre clé, dérivée d'un jeu de fabricant, de sorte qu'un objet compromis soit révocable un par un. Cette rigueur n'est pas une formalité : elle décide de votre capacité à corriger vos produits pendant toute leur durée de vie.
+
+Un mot enfin sur le débogage : laissez l'interface de débogage ouverte pendant le développement, refermez-la avant l'expédition. Un port de débogage actif sur une carte dont l'amorce sécurisée est en mode de développement ne protège quasiment rien. Ce verrouillage constitue le dernier jalon de la fabrication, après les tests finaux et avant l'emballage, et il doit figurer comme tel dans votre procédure.
+
+## Le principe de la mise à jour à distance : partitions, slots et retour arrière
+
+Une mise à jour à distance repose sur une idée très simple : ne jamais écrire par-dessus le programme en cours d'exécution. La mémoire flash est partagée en zones nommées par une table de partitions, et l'espace applicatif est dupliqué. Le nouveau firmware est téléchargé dans l'emplacement inoccupé, vérifié, puis l'indicateur de démarrage est commuté : le redémarrage suivant démarre la nouvelle version. Tant que la bascule n'a pas eu lieu, la version précédente reste intacte sur son propre emplacement, prête à servir de plan de repli. C'est ce partage qui rend l'opération tolérante à la panne.
+
+La table de partitions se décrit dans un fichier simple, dont l'exemple ci-dessous correspond à une carte de quatre mégaoctets équipée d'une mémoire de fichiers pour la persistance des mesures.
+
+```
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+app0,     app,  ota_0,   0x20000,  0x1E0000,
+app1,     app,  ota_1,   0x200000, 0x1E0000,
+donnees,  data, spiffs,  0x3E0000, 0x20000,
+```
+
+Chaque ligne a un rôle précis. La partition nvs reçoit les préférences, le Wi-Fi et l'état des mesures. La partition otadata, minuscule, contient deux exemplaires d'un enregistrement portant un numéro de séquence et un contrôle d'intégrité : le module d'amorce choisit l'enregistrement valide le plus récent, donc l'application qu'il doit lancer. Les deux partitions app0 et app1 sont les emplacements A et B, de taille strictement identique, chacun devant accueillir une image complète. Enfin, la partition de fichiers survit aux mises à jour, ce qui permet de conserver les mesures accumulées lors du changement de version.
+
+Le retour arrière, ou rollback, est ce qui distingue une mise à jour professionnelle d'une expérience. Au démarrage, la nouvelle image est marquée comme en cours de vérification. Elle doit alors prouver qu'elle fonctionne : lecture d'un capteur, connexion réseau, publication du premier relevé, puis déclaration explicite de sa validité. Si la carte redémarre avant cette déclaration, que ce soit par défaut du programme ou par déclenchement du chien de garde, le module d'amorce considère l'image comme défaillante et remet l'ancienne en service. L'objet revient seul à la dernière version connue pour fonctionner, et la mise à jour ratée n'a coûté qu'une tentative.
+
+Le schéma mental complet tient en cinq temps : réception de l'image, vérification de sa taille et de sa signature, écriture dans l'emplacement libre, commutation de l'indicateur de démarrage, vérification sur le vif puis déclaration de validité. Chaque étape peut échouer, et chacune doit échouer proprement. Une coupure de courant pendant l'écriture laisse l'image inachevée dans l'emplacement libre, jamais dans l'emplacement courant : le redémarrage repart donc de la version d'origine, sans intervention. Une image trop volumineuse pour l'emplacement est rejetée avant toute écriture. Un redémarrage non prévu avant la déclaration ramène l'objet à la version précédente. Toutes ces garanties sont structurelles : elles ne dépendent pas de la qualité de votre code applicatif.
+
+Le serveur a son propre contrat à respecter, qu'aucune bibliothèque ne gère pour vous. Il doit conserver au moins deux versions, publier un manifeste indiquant version, taille, empreinte et date, refuser toute demande portant une version inférieure à la version minimale, journaliser chaque téléchargement par identifiant d'appareil et rester joignable par HTTPS avec un certificat valide. Un serveur de mise à jour qui répond en clair sur un réseau public annule une partie des protections embarquées, puisqu'un tiers peut se substituer à l'objet et lui livrer une image de son choix. Serveur, certificat, jeton d'authentification et empreinte de l'image forment un ensemble indivisible.
+
+Il reste une discipline avant toute mise à jour en production : éprouver la panne volontairement. Déployez sur une seule carte un firmware qui refuse de se déclarer valide, laissez-la redémarrer et vérifiez qu'elle revient à l'ancienne version en une seule tentative. Débranchez l'alimentation en pleine écriture et contrôlez que la version d'origine survit. Remplacez l'image par un fichier tronqué et confirmez son rejet avant toute écriture. Ces trois essais coûtent une heure de banc et vous apprennent exactement ce que verront vos utilisateurs le jour où quelque chose se passe mal.
+
+Deux contraintes de dimensionnement restent fréquemment négligées. D'une part, l'image doit tenir dans un emplacement : au-delà, il faut choisir une table avec moins de mémoire de fichiers ou renoncer à la mise à jour en optant pour une partition unique, ce qui retire tout retour arrière. D'autre part, la version du firmware doit augmenter de manière stricte, sinon un attaquant pourrait réinstaller une version antérieure contenant une faille connue. Cette exigence, dite de version minimale, se règle côté serveur et se vérifie côté client, et elle constitue le complément indispensable de la signature.

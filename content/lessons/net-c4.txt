@@ -1,0 +1,750 @@
+Bienvenue dans le quatrième chapitre du parcours Réseaux, celui du routage. Les trois chapitres précédents vous ont appris à achemener des trames d'un bout à l'autre d'un réseau local, à segmenter ce réseau en VLAN, puis à faire dialoguer les postes et les serveurs grâce aux ports, au DNS, au DHCP et à TLS. Toutes ces étapes restaient cependant confinées à l'intérieur d'un même domaine. À partir de maintenant, la question change de nature : comment un paquet destiné à un réseau que vous ne connaissez pas trouve-t-il sa route, qui décide de cette route, et que se passe-t-il lorsque la route choisie tombe en panne ? Ce chapitre répond à ces questions en traitant deux approches complémentaires : le routage statique, que vous écrivez à la main, et OSPF (Open Shortest Path First), protocole à état de lien qui calcule tout seul les meilleurs chemins et se reconstruit quand un lien disparaît.
+
+Les objectifs sont très concrets et chacun d'eux sera manipulé dans du code de configuration réel. Vous saurez écrire des routes statiques précises : une route par défaut vers l'Internet, une route spécifique vers un réseau distant, une route flottante qui ne prend le relais qu'en cas de panne. Vous saurez lire une table de routage et expliquer chaque caractère qui la compose, depuis le code de protocole jusqu'au prochain saut, en passant par la distance administrative et la métrique. Vous saurez activer OSPF sur un routeur, choisir un identifiant de routeur, déclarer des interfaces dans des zones, puis vérifier qu'une adjacence est bien montée jusqu'à l'état Full. Vous saurez enfin diagnostiquer les pannes classiques d'adjacence et valider une configuration complète sur les trois routeurs du site Lilas qui sert de fil rouge à tout le parcours.
+
+Le fil rouge du chapitre est le suivant. Le site Lilas comprend trois routeurs : R1, installé dans le local technique et qui porte le cœur du réseau, R2, routeur de redondance situé dans le bâtiment C, et FW, le pare-feu de bordure qui donne accès à l'Internet. Ces trois routeurs sont reliés entre eux par trois liaisons en /30 : 10.10.1.128/30 relie R1 à R2, 10.10.1.132/30 relie R2 à FW, et 10.10.1.136/30 relie directement R1 à FW. Les réseaux utilisateurs sont répartis en trois zones OSPF : la zone 10 pour le bâtiment A (10.10.0.0/22), la zone 20 pour le bâtiment B (10.10.4.0/22) et la zone 30 pour le bâtiment C (10.10.8.0/22), la zone 0 réservée aux liaisons entre routeurs. Tout au long de la leçon, vous reviendrez à cette topologie pour ancrer les concepts dans un cas tangible.
+
+Voici le schéma du site, que vous garderez sous les yeux pendant toute la lecture. Il tient dans un bloc de code afin que les traits restent alignés quel que soit votre éditeur.
+
+```text
+                    +----------------------+
+                    |   Internet           |
+                    +----------+-----------+
+                               |
+                        10.10.1.136/30 (zone 0)
+                               |
+   +---------------------------+---------------------------+
+   |                             |                           |
++--v---------+            +------v------+            +------v------+
+|  FW        |            |     R1      |            |     R2      |
+|  bordure   |<---------->|  coeur      |<---------->|  redondance |
+|  ASBR      | 132/30     |  ABR+ASBR   | 128/30     |  ABR        |
++------------+   zone 0   +------+------+   zone 0   +------+------+
+                              |     |                       |
+                       zone 10|     |zone 20           zone 30|
+                              |     |                       |
+                     +--------v-+ +-v---------+      +--------v--------+
+                     | Bat. A   | | Bat. B    |      | Bat. C          |
+                     | 10.10.0.0| | 10.10.4.0 |      | 10.10.8.0/22    |
+                     | /22      | | /22       |      |                 |
+                     +----------+ +-----------+      +-----------------+
+```
+
+## Routage statique : contrôle total, pas de surprise
+
+Une route statique est une entrée de table de routage écrite à la main par un opérateur. Elle décrit trois choses au minimum : la destination que l'on veut atteindre, le masque qui délimite cette destination, et le prochain saut vers lequel les paquets doivent être envoyés. Le prochain saut, qu'on appelle next-hop, est l'adresse IP du routeur voisin qui, lui aussi, saura quoi faire du paquet. Parfois on préfère indiquer une interface de sortie plutôt qu'une adresse IP, notamment sur les liaisons point à point où il n'y a qu'un seul interlocuteur possible. Dans les deux cas, l'idée reste la même : le routeur local n'a aucune intelligence à déployer, il se contente de recopier une décision déjà prise.
+
+Cette approche a des avantages décisifs. La première est la prévisibilité : une route statique ne change jamais toute seule, elle ne dépend d'aucun voisin, d'aucun timer, d'aucun échange de paquets. Ce que vous avez écrit ce matin sera encore vrai ce soir, ce qui simplifie considérablement l'audit d'une configuration. La deuxième est la légèreté : un routeur qui ne parle aucun protocole dynamique ne consomme ni bande passante ni cycle processeur pour maintenir des adjacences, et il reste parfaitement utilisable sur du matériel modeste. La troisième est le contrôle : vous décidez exactement quel trafic part vers quelle sortie, ce qui est indispensable à la bordure d'un réseau ou pour forcer un chemin chiffré.
+
+Les inconvénients, eux, sont tout aussi nets. Aucune route statique ne se répare : si le lien qu'elle désigne tombe, elle continue de pointer vers un prochain saut devenu inaccessible, et le routeur ne s'en aperçoit pas toujours. Aucune route statique ne se propage non plus : chaque routeur du chemin doit recevoir sa propre ligne, à la main, et cette corvée devient ingérable dès que le réseau grandit. Enfin, aucune route statique ne se rééquilibre : si un second chemin existe, il ne sera utilisé que si vous l'avez explicitement prévu. Le routage statique est donc parfait pour une bordure, une redirection de paquets, un réseau de taille modeste ou une route de secours, et inadapté à un réseau d'entreprise en croissance.
+
+La syntaxe sur Cisco IOS tient en une seule commande, ip route, suivie du réseau de destination, du masque, du prochain saut, puis d'options facultatives. Parmi ces options, quatre reviendront souvent. Le mot distance permet de modifier la distance administrative de la route, c'est-à-dire le niveau de confiance qu'on lui accorde par rapport aux autres sources de routes. Le mot name donne un libellé lisible à la route, précieux pour l'audit. Le mot permanent empêche la route de disparaître de la table quand l'interface associée tombe. Enfin, le mot track relie la route à un objet de suivi : la route n'existera que tant que l'objet reste en état de succès.
+
+```text
+EXEMPLE : routes statiques sur le routeur R1 (Cisco IOS)
+
+! Route par défaut : tout trafic sans destination connue part vers le pare-feu
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 name DEFAULT_VIA_FW
+
+! Route spécifique : le réseau serveurs du bâtiment C est derrière R2
+ip route 10.10.8.0 255.255.252.0 10.10.1.130 name BAT_C_VIA_R2
+
+! Route flottante : elle ne prend vie que si la route principale disparaît
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10 name DEFAULT_VIA_R2_FLOATING
+
+! Route par défaut conditionnée à un test de portée vers l'Internet
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1
+
+! Route permanente : reste affichée même si l'interface est en panne
+ip route 10.10.4.0 255.255.252.0 10.10.1.130 permanent
+```
+
+La route par défaut mérite une explication particulière, car elle est la route la plus utilisée et la plus mal comprise. Sa destination s'écrit 0.0.0.0 0.0.0.0, ce qui signifie littéralement n'importe quelle adresse avec n'importe quel masque. C'est le filet de sécurité de la table : quand aucune autre ligne ne correspond au paquet reçu, c'est celle-ci qui s'applique. On la surnomme gateway of last resort, la passerelle du dernier recours. Dans notre site, R1 l'envoie vers FW, car FW est le seul routeur connecté à l'Internet. Sans elle, tout paquet vers une adresse publique serait détruit faute de correspondance.
+
+La route spécifique, elle, repose sur une règle qui gouverne l'ensemble du routage IP : la correspondance par préfixe le plus long, longest prefix match. Lorsqu'une adresse correspond à plusieurs entrées de table, ce n'est pas la première trouvée qui gagne, ni celle du protocole le plus rapide, mais celle dont le masque est le plus long, donc la plus précise. Si votre table contient 10.10.0.0/16 et 10.10.8.0/22, un paquet destiné à 10.10.8.50 suivra la seconde route, plus spécifique, tandis qu'un paquet destiné à 10.10.9.50 suivra la première. Cette règle s'applique à tous les protocoles, statiques comme dynamiques, et elle explique pourquoi une route par défaut ne casse jamais une route précise.
+
+La route flottante est le troisième cas de figure, et le plus malin. On lui donne la même destination qu'une route déjà présente, mais une distance administrative volontairement supérieure, par exemple 10 quand la route principale en a 1. Une route n'est installée dans la table que si elle est meilleure que celles qui existent déjà pour le même préfixe, compte tenu de la distance administrative puis de la métrique. Tant que la route principale existe, la flottante reste en attente dans l'arrière-boutique et n'apparaît pas dans show ip route. Dès que la principale disparaît, la flottante devient la meilleure candidates et s'installe, sans qu'aucun protocole n'ait eu besoin de converger. C'est le mécanisme de secours le plus rapide et le plus simple qui existe.
+
+Il existe une variante plus évoluée de cette idée, la route conditionnée par un objet de suivi. Plutôt que de laisser la route principale exister à tort quand le lien est physically présent mais que le service est absent, on la soumet à un test. L'objet de suivi, track, est alimenté par une sonde IP SLA qui envoie périodiquement un echo ICMP vers une adresse de référence, par exemple 8.8.8.8. Si les échos échouent plusieurs fois de suite, l'objet bascule en échec et la route qui dépend de lui est retirée de la table, ce qui déclenche immédiatement la route flottante. On obtient ainsi une bascule non pas basée sur l'état d'un câble, mais sur la capacité réelle à joindre l'Internet.
+
+```text
+EXEMPLE : sonde IP SLA et objet de suivi sur R1
+
+ip sla 1
+ icmp-echo 8.8.8.8 source-interface GigabitEthernet0/1
+ frequency 10
+ timeout 5000
+ threshold 1000
+ip sla schedule 1 life forever start-time now
+
+track 1 ip sla 1 reachability
+
+! La route principale n'existe que si la sonde réussit
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1
+! La route flottante prend le relais dès que track 1 échoue
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10
+```
+
+## Lire et comprendre une table de routage
+
+La table de routage est le document le plus important d'un routeur : elle résume, à un instant donné, toutes les décisions d'acheminement prises par la machine. Sur Cisco IOS, elle s'affiche avec show ip route. Chaque ligne commence par un code de protocole qui indique d'où vient l'information, suivi du préfixe de destination et du masque, puis du prochain saut ou de l'interface de sortie, et enfin d'informations complémentaires comme la distance administrative, la métrique ou l'âge de la route. Apprendre à lire cette sortie, c'est apprendre à lire la pensée du routeur.
+
+Les codes de protocole sont peu nombreux et se retiennent vite. C signifie connecté : le réseau est directement attaché à une interface du routeur, il n'y a donc aucun prochain saut. L signifie local : c'est l'adresse de l'interface elle-même, atteignable par le routeur. S désigne une route statique, O une route apprise par OSPF, et l'astérisque qui suit parfois le code signifie que cette route est un candidat pour devenir la passerelle par défaut. D appartient à EIGRP, B à BGP, R à RIP, i à IS-IS. Lors d'un dépannage, le premier réflexe consiste à regarder ce code : il vous dit immédiatement si le routeur a appris la route par lui-même, par un pair, ou si personne ne la lui a donnée.
+
+```text
+EXEMPLE : sortie de show ip route sur R1
+
+Gateway of last resort is 10.10.1.138 to network 0.0.0.0
+
+S*    0.0.0.0/0 [1/0] via 10.10.1.138
+      1.1.1.1/32 is directly connected, Loopback0
+C     10.10.0.0/22 is directly connected, Vlan10
+O IA  10.10.4.0/22 [110/101] via 10.10.1.130, 00:12:44, GigabitEthernet0/0
+O IA  10.10.8.0/22 [110/101] via 10.10.1.130, 00:12:44, GigabitEthernet0/0
+O     10.10.1.128/30 is directly connected, GigabitEthernet0/0
+O E2  172.16.0.0/16 [110/20] via 10.10.1.138, 00:05:10, GigabitEthernet0/1
+```
+
+Le bloc entre crochets mérite une attention particulière, car il contient les deux nombres qui départagent les routes concurrentes. Le premier est la distance administrative, le second la métrique. La distance administrative traduit la confiance accordée à la source : plus elle est basse, plus la route est préférée. Sur les équipements Cisco, une interface connectée vaut 0, une route statique 1, un voisin eBGP 20, OSPF 110, IS-IS 115, RIP 120, EIGRP 90 pour les routes internes et 170 pour les routes redistribuées, iBGP 200. La métrique, elle, mesure le coût du chemin au sein d'un même protocole ; elle n'est comparable qu'à l'intérieur du même protocole, car chaque protocole la définit à sa manière.
+
+Le tableau suivant récapitule les distances administratives que l'on rencontre le plus souvent dans un réseau d'entreprise. Gardez-le en tête : il explique la quasi-totalité des priorités observées dans une table.
+
+```table
+| Source de la route | Distance administrative | Remarque |
+| --- | --- | --- |
+| Interface connectée | 0 | Toujours préférée, c'est le réseau local |
+| Route statique | 1 | Contrôle total, préférée à OSPF |
+| eBGP | 20 | Routage inter-domaines |
+| EIGRP interne | 90 | Ancien protocole Cisco |
+| OSPF | 110 | Le standard des réseaux d'entreprise |
+| IS-IS | 115 | Très utilisé dans les réseaux opérateurs |
+| RIP | 120 | Pédagogique, à éviter en production |
+| EIGRP redistribué | 170 | Routes injectées depuis un autre protocole |
+| iBGP | 200 | Le moins préféré des chemins BGP internes |
+```
+
+
+Quand deux routes concourent pour la même destination, le routeur compare d'abord les distances administratives : la plus petite l'emporte, et la métrique n'est même pas examinée. Si les distances sont égales, c'est-à-dire si les deux routes viennent du même protocole, la métrique départage. Cette hiérarchie est essentielle : elle explique pourquoi une route statique masque une route OSPF pour la même destination, et pourquoi deux routes OSPF peuvent être utilisées simultanément si leurs métriques sont identiques, auquel cas le trafic est réparti entre elles.
+
+La règle du préfixe le plus long passe avant tout le reste. Si votre table contient une route statique 10.10.0.0/16 et une route OSPF 10.10.8.0/22, c'est la seconde qui s'applique pour tout paquet destiné à 10.10.8.0/22, et ce alors même que la première vient d'un protocole a priori moins prioritaire. La distance administrative et la métrique ne servent qu'à départager des routes de longueur identique. Ne renversez jamais cet ordre dans votre tête : la précision du masque prime, ensuite seulement vient la confiance accordée à la source.
+
+Une route n'apparaît dans la table que si elle est la meilleure pour son préfixe. Les routes concurrentes qui perdent ne sont pas nécessairement perdues : elles restent connues du routeur, et certaines protocoles les conservent dans une base interne pour basculer instantanément si la meilleure disparaît. C'est le cas d'OSPF, qui conserve dans sa base d'état de lien l'ensemble des chemins possibles, même ceux qu'il n'a pas retenus. Cette propriété est la clé de la convergence rapide : lorsqu'une route tombe, le routeur n'a pas besoin de tout réapprendre, il se contente de recalculer avec ce qu'il possède déjà.
+
+Pour creuser, trois commandes suffisent. show ip route avec un préfixe précis, par exemple show ip route 10.10.8.0, affiche uniquement les entrées qui concernent cette destination et le détail du chemin suivi. show ip route protocole, comme show ip route ospf, filtre par source et permet de vérifier que toutes les routes attendues sont bien présentes. show ip route summary donne un décompte par protocole, très pratique pour repérer une explosion du nombre de routes après une redistribution mal filtrée. Ces trois lectures, répétées avant et après chaque changement, forment la colonne vertébrale de toute méthode de dépannage.
+
+- Une route statique se décrit par destination, masque, prochain saut et options.
+- La route par défaut 0.0.0.0/0 est le dernier recours, jamais un choix parmi d'autres.
+- Le préfixe le plus long gagne toujours, avant toute considération de protocole.
+- La distance administrative départage les protocoles, la métrique départage à l'intérieur d'un protocole.
+- La route flottante attend patiemment une distance administrative plus élevée pour prendre le relais.
+- Une sonde IP SLA et un objet de suivi transforment une bascule mécanique en bascule de service.
+- show ip route est la première commande à lancer, avant comme après un changement.
+
+## OSPF : le protocole à état de lien
+
+OSPF, Open Shortest Path First, est un protocole de routage à état de lien standardisé par la RFC 2328 pour IPv4 et par la RFC 5340 pour IPv6. Le mot important est état de lien : chaque routeur ne se contente pas d'écouter ses voisins lui dire je peux atteindre tel réseau, il recueille au contraire une description complète de tous les liens du domaine, en déduit une carte du réseau, puis calcule lui-même le meilleur chemin vers chaque destination. Cette différence de philosophie est immense, et elle explique à elle seule la domination d'OSPF dans les réseaux d'entreprise.
+
+Une fois la LSDB complète, OSPF exécute l'algorithme de Dijkstra, aussi appelé algorithme des plus courts chemins ou SPF (Shortest Path First). Partant du routeur lui-même comme racine, il explore la carte et construit un arbre couvrant où chaque destination est atteinte par le chemin de coût minimal. Les branches de cet arbre qui concernent le routeur local deviennent alors les entrées de sa table de routage. L'algorithme est déterministe : deux routeurs dotés de la même LSDB calculent exactement le même arbre. C'est pourquoi il est si précieux en dépannage, et pourquoi la moindre incohérence entre deux LSDB produit des boucles ou des trous noirs.
+
+La métrique OSPF s'appelle le coût (cost) et elle est liée à la bande passante de l'interface. Sur les équipements Cisco, la formule par défaut est cost égale à 100 Mbit/s divisé par la bande passante de l'interface, le résultat étant arrondi à l'entier supérieur, avec un minimum de 1. Une interface de 10 Mbit/s vaut donc 10, une interface de 100 Mbit/s vaut 1, une interface de 1 Gbit/s vaut aussi 1 car le quotient 0,1 est arrondi à 1. Le coût d'un chemin est la somme des coûts de tous les liens qui le composent. Cette définition a une conséquence pratique utile : OSPF préfère naturellement les liens rapides, mais il ne peut pas distinguer deux liens de même débit ayant des latences différentes, et c'est pourquoi on ajuste parfois le coût à la main pour contraindre un chemin.
+
+```text
+EXEMPLE : activation d'OSPF sur un routeur (Cisco IOS)
+
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ no passive-interface GigabitEthernet0/1
+
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+ ip ospf 1 area 0
+```
+
+Trois éléments de cette configuration méritent d'être décortiqués. Le numéro qui suit router ospf est l'identifiant de processus OSPF : il est purement local et n'a aucun lien avec les voisins, mais il permet de faire coexister deux instances distinctes sur un même routeur. Le router-id est, lui, une adresse IP fictive de format 32 bits qui identifie le routeur dans le domaine ; elle doit être unique, et une fois l'établi, elle ne change plus, sous peine de provoquer une remise à zéro complète des adjacences. Enfin, la commande network associe des adresses à des zones en utilisant une forme abrégée : le masque inversé 0.0.0.3 correspond à un préfixe /30, et le masque inversé 0.0.3.255 correspond à un préfixe /22. Chaque interface dont l'adresse tombe dans la plage déclarée rejoint la zone indiquée.
+
+L'alternative à la commande network est la déclaration directement sur l'interface, avec ip ospf numéro-de-processus area numéro-de-zone. Cette seconde écriture est souvent préférée aujourd'hui, car elle évite les erreurs de masques inversés et rend la configuration lisible ligne à ligne. Quelle que soit la forme retenue, une seule règle ne se négocie pas : les deux extrémités d'une liaison doivent déclarer la même zone. Une divergence de zone empêche toute adjacence et reste l'une des causes les plus fréquentes d'échec à l'installation.
+
+La commande passive-interface mérite également une attention soutenue. Une interface en mode passif n'envoie aucun paquet Hello et n'en accepte aucun : elle ne formera donc jamais d'adjacence, tout en continuant d'annoncer son réseau dans la LSDB. Le motif est double. Sur une interface utilisateur branchée sur des postes, un Hello OSPF reçu par un poste compromis permettrait à l'attaquant de rejoindre le domaine de routage ; sur un VLAN serveur, des Hello inutiles consommeraient de la bande passante et des cycles processeur. L'usage recommandé est donc d'inverser la logique : passive-interface default pour tout couper, puis no passive-interface sur les seules liaisons inter-routeurs.
+
+Passons maintenant aux cas particuliers de topologie. Sur un réseau de diffusion multi-accès comme un Ethernet avec plusieurs routeurs, OSPF évite d'établir une pleine adjacence entre chaque couple : ce serait quatre adjacences pour quatre routeurs, soit six échanges de LSA redondants. Il élit donc un routeur maître appelé DR (Designated Router) et un remplaçant BDR (Backup Designated Router), et tous les routeurs ne deviennent pleinement adjacents qu'avec eux deux. Les autres se contentent de l'état 2-Way et s'échangent leurs LSA via le DR. Sur une liaison point à point, cette élection n'a pas lieu : il n'y a que deux participants, et ils deviennent voisins directs.
+
+```text
+SCHÉMA : les états d'une adjacence OSPF
+
+   Down                                                       Full
+   |                                                           ^
+   |  Hello reçu                                               |  LSA synchronisés
+   v                                                           |
+   Init  -------->  2-Way  -------->  ExStart  -------->  Exchange
+                     |                  |                    |
+                     |  (DR/BDR seulement)                   |  DD échangés
+                     v                  v                    v
+                 (pause)            Loading  <----------  (LSAs manquants)
+                                       |
+                                       |  Request / Update / Ack
+                                       v
+                                     (Full)
+```
+
+Le passage de Down à Full suit un enchaînement strict de sept états, et chaque transition a un symptôme observable. En Down, aucun voisin n'est connu. Dès qu'un Hello est reçu, l'état passe à Init, ce qui signifie que le routeur distant nous a mentionné dans son propre Hello. L'état 2-Way indique qu'un Hello échangé contient bien l'identité de l'autre : la relation est confirmée dans les deux sens, et sur un réseau multi-accès c'est à ce moment que se termine l'élection du DR. L'état ExStart ouvre la négociation de la base : les deux routeurs conviennent de qui maîtrise l'échange et vérifient que leurs tailles de paquet maximum sont compatibles. L'état Exchange échange les résumés de la LSDB sous forme de Database Description. L'état Loading envoie les demandes LSR pour les LSA manquants et les réponses LSU qui les apportent. L'état Full signifie que les deux bases sont identiques et que les routeurs sont prêts à calculer.
+
+Les temporisations sont l'autre pilier de l'adjacence. Sur un réseau de diffusion, le Hello est envoyé toutes les 10 secondes et l'expiration du compteur de disparition intervient après 40 secondes, soit quatre Hello manqués. Sur une liaison de type non broadcast, ces valeurs deviennent 30 et 120 secondes. Ces deux nombres doivent être rigoureusement identiques sur les deux extrémités : OSPF vérifie leur concordance dès les premiers Hello et refuse l'adjacence en cas de divergence, car des timers incompatibles produiraient des coupures intempestives. Réduire les timers accélère la détection de panne, mais augmente proportionnellement le trafic de contrôle : on ne descend pas sous quelques secondes sans raison mesurée.
+
+```text
+EXEMPLE : vérification d'une adjacence sur R1
+
+R1# show ip ospf neighbor
+
+Neighbor ID     Pri   State           Dead Time   Address         Interface
+2.2.2.2           1   FULL/BDR        00:00:34    10.10.1.130     GigabitEthernet0/0
+10.10.1.137       1   FULL/DROTHER    00:00:38    10.10.1.138     GigabitEthernet0/1
+
+R1# show ip ospf interface brief
+
+Interface    PID   Area   IP Address      Mask     State     Cost  Type
+Gi0/0        1     0      10.10.1.129     0.0.0.3  POINT_TO_POINT  1  NONE
+Gi0/1        1     0      10.10.1.137     0.0.0.3  POINT_TO_POINT  1  NONE
+Vlan10       1     10     10.10.0.1       0.0.255.255  DROTHER    1  BROADCAST
+```
+
+L'authentification est la dernière pièce de ce premier assemblage. OSPF accepte de signer ses paquets avec un mot de passe, ce qui empêche quiconque de se brancher sur un lien et d'injecter de fausses LSA. Les modes historiques sont none, simple avec un mot de passe en clair, et message-digest basé sur MD5 ; les équipements récents ajoutent SHA-256, recommandé aujourd'hui car MD5 est considéré comme trop faible. La clé est configurée séparément sur chaque extrémité et l'algorithme doit correspondre au caractère près. Une erreur d'authentification ne produit pas d'erreur explicite : la commande show ip ospf neighbor affiche simplement rien, ce qui rend ce défaut particulièrement trompeur pour un débutant.
+
+Voici un exemple complet de liaison chiffrée entre R1 et R2, avec le type de réseau déclaré explicitement.
+
+```text
+EXEMPLE : liaison cœur R1-R2 sécurisée
+
+interface GigabitEthernet0/0
+ description Lien R1-R2 zone 0
+ ip address 10.10.1.129 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_R2
+ ip ospf hello-interval 10
+ ip ospf dead-interval 40
+```
+
+- OSPF est à état de lien : chaque routeur construit la même carte du réseau, puis calcule seul.
+- Le coût vaut 100 Mbit/s divisé par la bande passante, sommé sur tout le chemin.
+- L'algorithme de Dijkstra part du routeur et dessine l'arbre des plus courts chemins.
+- Le router-id identifie le routeur de façon stable et unique dans le domaine.
+- passive-interface default ferme les interfaces utilisateur, no passive-interface rouvre les liaisons.
+- L'adjacence suit sept états, de Down à Full, en passant par ExStart et Loading.
+- Les temporisations Hello et Dead doivent être identiques des deux côtés, sous peine d'échec silencieux.
+
+## Établir une adjacence OSPF, étape par étape
+
+Savoir ce qu'est une adjacence ne suffit pas : encore faut-il savoir la construire méthodiquement, la vérifier, puis savoir quel levier actionner lorsqu'elle refuse de monter. Cette section transforme les concepts précédents en procédure opérable, en suivant un ordre immuable : préparer les interfaces, activer le processus, déclarer les zones, ouvrir les liaisons, puis contrôler chaque étape.
+
+La première étape est la préparation des interfaces, et elle se fait avant même de prononcer le mot ospf. Chaque interface doit avoir une adresse IP valide, un masque cohérent avec son voisin, et surtout être administrativement active. Une interface en état down ne participera jamais à OSPF, quelle que soit la configuration par-dessus. Vérifiez donc avec show ip interface brief que l'interface est up et that l'adresse est celle attendue. Un détail fréquent : sur une liaison en /30, les deux routeurs doivent utiliser les deux adresses utilisables de la plage, à savoir la première et la deuxième, jamais la troisième qui est l'adresse de réseau elle-même.
+
+La deuxième étape consiste à créer le processus OSPF et à lui donner un identifiant. Le choix du router-id suit une règle de priorité bien définie : OSPF retient d'abord un router-id configuré explicitement avec la commande router-id ; à défaut, il prend l'adresse de loopback la plus élevée ; à défaut encore, l'adresse de loopback physique la plus élevée ; en dernier recours, l'adresse de port série la plus élevée. La leçon pratique est qu'il ne faut jamais laisser le routeur choisir au hasard, car l'ajout d'une interface de loopback après coup modifierait l'identifiant et forcerait une remise à zéro de toutes les adjacences. Configurez toujours un router-id explicite et la séquence ordonnée.
+
+```text
+EXEMPLE : mise en service complète d'une liaison OSPF
+
+! Étape 1 : interfaces et adresses
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+interface GigabitEthernet0/0
+ ip address 10.10.1.129 255.255.255.252
+ no shutdown
+
+! Étape 2 : processus et zones
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+
+! Étape 3 : contrôle
+show ip protocols | section OSPF
+show ip ospf neighbor
+```
+
+La troisième étape est la déclaration des zones. Pour chaque interface, il faut décider dans quelle zone elle tombe, et cette décision engage l'architecture tout entière. La zone 0, dite backbone, est obligatoire : c'est la zone de transit par laquelle tout trafic inter-zones doit passer. Les autres zones, numérotées de 1 à 16 millions, relient leurs routeurs bordures à la zone 0. Un routeur dont toutes les interfaces appartiennent à une même zone est un routeur interne ; un routeur ayant des interfaces à la fois en zone 0 et dans une zone non zéro est un routeur de bordure de zone, ou ABR ; un routeur qui redistribue des routes extérieures à OSPF est un routeur de frontière d'autonome, ou ASBR.
+
+La quatrième étape est l'ouverture explicite des liaisons, ce qui consiste à choisir le bon type de réseau. Sur notre site, chaque lien entre routeurs sera déclaré en point à point. Ce choix supprime l'élection du DR, réduit le nombre d'échanges et fait gagner plusieurs secondes à la montée en état Full. Il faut l'appliquer des deux côtés, car une dissymétrie de type de réseau produit des comportements inattendus. Sur un VLAN qui regroupe plusieurs routeurs, en revanche, on conserve le type broadcast et on laisse OSPF élire son DR.
+
+La cinquième étape, et la seule qui soit réellement un contrôle, consiste à vérifier. On commence par confirmer que le routeur voit bien son voisin, puis que l'état est Full, puis que la base d'état de lien contient les LSA attendus, et enfin que la table de routage porte les routes désirées. Cette séquence en quatre temps est importante : elle localise le défaut dans une couche précise. Pas de voisin du tout, le problème est au niveau des Hello ou de la couche 2. Voisin en ExStart, le problème est au niveau de la négociation MTU. Voisin Full mais base vide, le problème est au niveau de la synchronisation des LSA. Base complète mais table incomplète, le problème est au niveau de l'algorithme ou des filtres.
+
+```text
+EXEMPLE : sortie détaillée d'un voisin OSPF
+
+R1# show ip ospf neighbor 2.2.2.2 detail
+
+  Neighbor 2.2.2.2, interface address 10.10.1.130
+    In the area 0 via interface GigabitEthernet0/0
+    Neighbor priority is 1, State is FULL, 6 state changes
+    Last neighbor hello received 00:00:07 ago
+    Dead timer interval is 40
+      Neighbor is up for 01:12:45
+    Options are 72 0x0 0x4 (LSASign, EC-capable, Opaque)
+    Message digest authentication enabled with key 1, algorithm sha256
+```
+
+Les tableaux markdown qui suivent résument d'une part les états d'adjacence et leur signification, d'autre part les quatre types de paquets OSPF et leur rôle. Servez-vous-en comme d'une aide-mémoire pendant vos premiers dépannages.
+
+```table
+| État | Ce qu'il signifie | Action attendue |
+| --- | --- | --- |
+| Down | Aucun Hello reçu ou émis | Vérifier la couche 2, l'adresse IP et le processus |
+| Init | Un Hello distant contient notre identité | Le trafic est à sens unique, vérifier filtres et ACL |
+| 2-Way | Relations confirmées dans les deux sens | Normal sur un réseau multi-accès, anormal sur point à point |
+| ExStart | Négociation du maître et de la taille de paquet | Vérifier l'MTU des deux interfaces |
+| Exchange | Échange des résumés de LSA | Vérifier que les zones correspondent |
+| Loading | Demandes et livraisons des LSA manquants | Vérifier l'authentification et les timers |
+| Full | Bases synchronisées | Adjacence opérationnelle |
+```
+
+```table
+| Paquet | Rôle | Moment |
+| --- | --- | --- |
+| Hello | Découverte, confirmation de présence, négociation des timers | Périodique, toutes les 10 secondes |
+| Database Description | Résumé des en-têtes de LSA que l'on possède | Au début de l'échange |
+| Link State Request | Demande explicite d'un LSA précis | Pendant l'état Loading |
+| Link State Update | Livraison du contenu complet d'un ou plusieurs LSA | Réponse aux demandes, aussi en diffusion |
+| Link State Ack | Accusé de réception d'un Update | Immédiatement après un Update |
+```
+
+
+Un mot sur la relation entre OSPF et le MTU, car elle est source de confusion. Le MTU est la taille maximale d'une trame, généralement 1500 octets sur Ethernet. Lors de l'échange des Database Description, OSPF annonce la taille de paquet qu'il accepte, et si les deux routeurs n'annoncent pas la même valeur, la négociation échoue et l'état reste bloqué en ExStart indéfiniment. C'est un défaut typique lorsqu'une liaison traverse un tunnel, une liaison PPP ou un équipement qui fragmente différemment. La correction propre consiste à aligner le MTU sur les deux interfaces ; la correction de contournement, ip ospf mtu-ignore, doit être utilisée en connaissance de cause et documentée, car elle masque la cause sans la réparer.
+
+L'authentification mérite la même rigueur. Voici comment la configurer en SHA-256 sur les deux extrémités, en veillant à ce que l'identifiant de clé et l'algorithme soient identiques.
+
+```text
+EXEMPLE : authentification OSPF en SHA-256
+
+! Sur R1
+interface GigabitEthernet0/0
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 MA_CLE_SECRETE
+
+! Sur R2
+interface GigabitEthernet0/0
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 MA_CLE_SECRETE
+
+! Contrôle : la clé et l'algorithme doivent apparaître dans la sortie
+show ip ospf interface GigabitEthernet0/0
+```
+
+Les commandes de débogage viennent en dernier recours, quand les show ne suffisent plus. debug ip ospf hello affiche en temps réel chaque Hello émis et reçu, avec l'identité de l'émetteur : si rien ne s'affiche alors que le voisin devrait parler, le paquet n'arrive tout simplement pas. debug ip ospf adjacences détaille l'enchaînement des états et signale la raison exacte d'un rejet, par exemple mismatch en dead time. Ces commandes produisent beaucoup de sortie et consomment du processeur : activez-les sur un lien calme, enregistrez la sortie, puis désactivez-les immédiatement avec undebug all.
+
+- Préparez les interfaces avant d'activer OSPF : up, adresse correcte, masque cohérent.
+- Configurez un router-id explicite pour éviter toute remise à zéro des adjacences.
+- Déclarez le type de réseau point à point sur les liaisons inter-routeurs.
+- Dépannez par strates : voisin, état, base d'état de lien, table de routage.
+- Un état bloqué en ExStart désigne presque toujours une incompatibilité de MTU.
+- Une sortie neighbor vide après authentification ne signifie pas un câble coupé.
+- Utilisez debug avec parcimonie : c'est une loupe, pas un outil de surveillance.
+
+## OSPF multi-zones : backbone, ABR et résumés
+
+Une zone OSPF est un périmètre de synchronisation : à l'intérieur d'une zone, tous les routeurs partagent exactement la même base d'état de lien, tandis que l'extérieur n'est connu que sous forme de résumés. Ce découpage répond à deux besoins contradictoires qu'il faut absolument comprendre. D'un côté, la connaissance complète de la topologie est ce qui rend OSPF fiable et rapide ; de l'autre, cette connaissance coûte de la mémoire, de la bande passante et du processeur, et elle explose dès que le réseau grandit. Les zones permettent de garder le meilleur des deux mondes : la précision locale, la simplicité globale.
+
+Concrètement, la règle est la suivante. À l'intérieur d'une zone, les routeurs échangent des LSA de type 1 et 2 qui décrivent leurs liens et les réseaux de diffusion : c'est la cartographie détaillée, la plus lourde. Les routeurs de bordure de zone, les ABR, résument ensuite l'ensemble de la zone en un ou plusieurs LSA de type 3 annonçant des préfixes de réseau avec un coût. Les routeurs des autres zones ne voient donc jamais l'intérieur de la zone voisine : ils savent juste qu'un préfixe est atteignable via un ABR à tel coût. La conséquence pratique est que la panne d'un lien à l'intérieur d'une zone ne provoque un recalcul complet que dans cette zone-là ; les autres se contentent de conserver le résumé de sortie.
+
+Le périmètre le plus important reste la zone 0, le backbone, obligatoire et unique. Toutes les zones non zéro doivent y être connectées, directement par un ABR ou, dans les cas tordus, par une liaison virtuelle. Cette contrainte a une raison historique et technique : OSPF a été conçu pour que les routeurs du backbone sachent toujours comment atteindre chaque zone, ce qui interdit toute boucle de transit entre zones. Si vous dessinez un réseau où la zone 10 et la zone 20 communiquent uniquement en traversant la zone 30, vous avez fait une erreur de conception : le trafic devra transiter par le backbone.
+
+```text
+SCHÉMA : hiérarchie des zones sur le site Lilas
+
+   +---------------------------+---------------------------+
+   |                        ZONE 0                          |
+   |            backbone : liaisons entre routeurs          |
+   |     10.10.1.128/30   10.10.1.132/30   10.10.1.136/30   |
+   +----------+----------------+---------------+------------+
+              |                |               |
+              |            +---v---+           |
+              |            |  R1   | ABR       |
+              |            | ASBR  |           |
+              |            +---+---+           |
+              |        ______|_______          |
+   +----------v--+   +-------v-----+  +--------v---------+
+   |   ZONE 10   |   |  ZONE 20    |  |    ZONE 30       |
+   |  Bat. A     |   |  Bat. B     |  |    Bat. C        |
+   | 10.10.0.0/22|   | 10.10.4.0/22|  | 10.10.8.0/22    |
+   | abonnés     |   | WiFi        |  | postes + R2 ABR  |
+   +-------------+   +-------------+  +------------------+
+```
+
+Pour maîtriser le trafic inter-zones, l'ABR dispose de deux leviers. Le premier est la commande area range, qui fusionne plusieurs préfixes en un seul avant de l'annoncer dans la zone 0. Sans elle, chaque sous-réseau de la zone 10 produirait sa propre ligne de résumé, et la zone 0 finirait par contenir des milliers d'entrées. Avec area range 10.10.0.0 255.255.252.0, l'ABR n'annonce plus qu'un seul /22. L'option cost permet d'ajuster le coût annoncé, ce qui donne un contrôle simple sur la préférence entre deux ABR : si R1 annonce le /22 avec un coût de 100 et R2 avec un coût de 200, tout le monde préférera R1, et R2 ne servira qu'en secours.
+
+Le second levier est la réduction du trafic par des zones spéciales. Une zone stub refuse les LSA de type 5, c'est-à-dire les routes externes, et reçoit en échange une route par défaut injectée par l'ABR : elle suffit pour tout ce qui sort de la zone. Une zone totally stubby refuse aussi les résumés de type 3 venant des autres zones, ne gardant qu'une route par défaut et ses propres réseaux : c'est la forme la plus économique pour une zone d'accès. Une zone NSSA, Not-So-Stubby Area, accepte d'abriter un ASBR local tout en restant fermée aux routes externes du reste du domaine : ses routes locales circulent en LSA de type 7, converties en type 5 par l'ABR à la frontière.
+
+```text
+EXEMPLE : configuration d'un ABR multi-zones sur R1
+
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ network 10.10.4.0 0.0.3.255 area 20
+ network 10.10.8.0 0.0.3.255 area 30
+ area 10 range 10.10.0.0 255.255.252.0 cost 100
+ area 20 range 10.10.4.0 255.255.252.0 cost 100
+ area 30 range 10.10.8.0 255.255.252.0 cost 100
+ area 10 stub default-cost 10
+ area 20 stub default-cost 10
+ area 30 nssa
+```
+
+Le coût d'un chemin inter-zones s'obtient en additionnant le coût local jusqu'à l'ABR et le coût annoncé dans le résumé de type 3. C'est une somme de deux termes indépendants, et c'est la raison pour laquelle area range cost influence réellement la préférence globale. Lorsque vous concevez un réseau à plusieurs sites, écrivez toujours à la main le calcul du coût pour chaque couple zone source et zone destination : ce tableau vaut mieux que n'importe quelle intuition, et il révèle immédiatement un chemin de transit inattendu.
+
+Voici le récapitulatif des types de LSA que vous rencontrerez. Connaître leur portée, c'est savoir instantanément dans quelle base les chercher avec show ip ospf database.
+
+```table
+| Type | Nom | Portée | Contenu |
+| --- | --- | --- | --- |
+| 1 | Router LSA | Zone | Les liens du routeur et leurs coûts, décrits pour la zone |
+| 2 | Network LSA | Zone | Les routeurs présents sur un réseau de diffusion, publié par le DR |
+| 3 | Summary LSA | Inter-zones | Les préfixes d'une zone annoncés dans une autre, publié par l'ABR |
+| 4 | ASBR Summary | Inter-zones | Le chemin pour rejoindre un ASBR, publié par l'ABR |
+| 5 | AS External | Domaine | Les routes redistribuées depuis l'extérieur d'OSPF, publiées par l'ASBR |
+| 7 | NSSA External | Zone NSSA | Les routes externes locales d'une zone NSSA, converties en type 5 à la sortie |
+```
+
+
+Une erreur classique mérite d'être signalée, car elle trompe beaucoup de monde. Configurer area 10 stub d'un seul côté seulement ne provoque aucun message d'erreur : l'ABR accepte d'envoyer des résumés, l'autre routeur les accepte de recevoir, et l'adjacence monte même jusqu'à Full. Le problème apparaît plus tard, quand l'ABR se demande si la zone est stub et finit par injecter ou non la route par défaut. Les deux extrémités d'une zone doivent porter les mêmes attributs de zone, stub, totally stubby, nssa, no-summary, et la même authentification de zone. C'est la règle d'or du multi-zones : les attributs de zone sont un contrat, pas une préférence.
+
+## Redistribution et routes externes
+
+La redistribution est l'opération qui injecte dans OSPF des routes apprises par une autre source : une route statique, un réseau directement connecté, un autre protocole de routage, ou la table complète d'un autre domaine. Elle est indispensable dans la réalité, car aucun réseau ne se résume à OSPF : il y a toujours une liaison série vers un prestataire, un segment de maintenance qui parle RIP, un VPN, ou des interfaces de loopback qui ne doivent pas être annoncées telles quelles. Elle est aussi l'opération la plus risquée du routage, car elle peut créer des boucles et des réinjections en cascade.
+
+Sur les équipements Cisco, la syntaxe se place sous router ospf et se lit redistribute protocole, suivi d'options. Le mot-clé subnets est crucial : sans lui, OSPF ne redistribue que les réseaux classful, c'est-à-dire ceux qui correspondent exactement à un /8, /16 ou /24, et ignore tous les sous-réseaux. Sur un réseau moderne entièrement en /22 ou en /30, l'oubli de subnets produit l'impression la plus étrange du monde : la commande est acceptée, la commande show conf le confirme, et pourtant aucune route n'apparaît chez les voisins.
+
+```text
+EXEMPLE : redistribution complète sur R1, l'ASBR
+
+ip prefix-list LISTE_STATIQUES seq 5 permit 0.0.0.0/0
+ip prefix-list LISTE_STATIQUES seq 10 permit 10.10.8.0/22
+ip prefix-list LISTE_LOOPBACKS seq 5 permit 1.1.1.1/32
+ip prefix-list LISTE_LOOPBACKS seq 10 permit 2.2.2.2/32
+
+route-map VERS_OSPF_STATIQUE permit 10
+ match ip address prefix-list LISTE_STATIQUES
+ set metric 100
+ set metric-type 1
+ set tag 100
+
+route-map VERS_OSPF_CONNECTE permit 10
+ match ip address prefix-list LISTE_LOOPBACKS
+ set metric 10
+ set metric-type 1
+
+router ospf 1
+ redistribute static subnets route-map VERS_OSPF_STATIQUE
+ redistribute connected subnets route-map VERS_OSPF_CONNECTE
+```
+
+Le type de métrique externe mérite une explication approfondie, car il change complètement le comportement du réseau. Un type 2, qui est le défaut, signifie que le coût affiché chez les routeurs internes est uniquement le coût attribué par l'ASBR lors de l'injection : le chemin interne jusqu'à l'ASBR est ignoré dans le calcul. Un type 1 signifie que le coût affiché est la somme du coût interne jusqu'à l'ASBR et du coût attribué à l'injection. En pratique, le type 1 donne des chemins cohérents quand plusieurs ASBR injectent la même destination, car il tient compte du chemin réel ; le type 2 convient mieux aux routes par défaut, où l'on souhaite que tous les routeurs partagent la même référence sans additionner des coûts variables.
+
+Les tags constituent la protection la plus efficace contre les boucles de redistribution. L'idée est mécanique : à l'injection, on marque la route avec un nombre ; à l'autre bout du domaine, on refuse de réinjecter une route porteuse de ce marqueur. Sans tag, deux routeurs qui se redistribuent mutuellement finissent par répéter indéfiniment la même annonce, et la table enfle jusqu'à l'épuisement des ressources. Avec un tag et une route-map qui fait match tag à l'entrée, le cycle est brisé à la première tentative. Les autres parade consistent à utiliser une distance administrative différente pour la route réinjectée, ou à filtrer avec une prefix-list restrictive.
+
+```text
+EXEMPLE : injection de la route par défaut et vérification
+
+router ospf 1
+ default-information originate always metric-type 1 metric 10
+
+! Vérification côté ASBR
+show ip route | include gateway
+show ip ospf database external
+
+! Vérification sur un routeur interne
+show ip route ospf | include 0.0.0.0
+```
+
+La commande default-information originate injecte 0.0.0.0/0 dans OSPF sous forme de LSA de type 5. Elle n'injecte cette route que si une route par défaut existe déjà dans la table du routeur, sauf si on ajoute le mot-clé always, qui force l'annonce même en l'absence de route locale. Le choix entre les deux formes n'est pas anodin : avec always, les autres routeurs croient toujours disposer d'un accès au monde extérieur, même si l'ASBR a perdu sa propre route. Sans always, l'annonce disparaît en même temps que la panne, ce qui est plus honnête mais plus perturbant pour le domaine. Dans notre site, nous utiliserons always pour garantir que R1 distribue un défaut stable, et nous confierons la détection réelle de la panne à une sonde et à une route flottante.
+
+- La zone est un périmètre de synchronisation, pas un simple regroupement d'interfaces.
+- La zone 0 est unique et obligatoire, et toutes les zones non zéro s'y rattachent.
+- area range fusionne les préfixes avant leur annonce et fixe le coût annoncé.
+- Stub, totally stubby et NSSA réduisent la LSDB au prix d'une route par défaut.
+- Les attributs de zone doivent être identiques sur toutes les interfaces de la zone.
+- La redistribution exige subnets, un route-map explicite et un tag anti-boucle.
+- default-information originate always diffuse un défaut même si l'ASBR perd la sienne.
+
+## Diagnostiquer les pannes de convergence
+
+La convergence est l'intervalle entre la disparition d'un lien et le moment où tous les routeurs ont intégré cette nouvelle réalité. Dans un réseau sain, cette fenêtre se compte en secondes ; dans un réseau mal réglé, elle peut durer des dizaines de secondes, voire ne jamais se produire. Le dépannage de la convergence repose sur une distinction fondamentale : il faut savoir si le routeur ignore un événement, s'il le connaît mais refuse d'en tirer parti, ou s'il agit mais vers une mauvaise destination.
+
+Commencez toujours par la couche la plus basse. Une adjacence OSPF ne peut pas exister sans une couche 2 fonctionnelle : commencez donc par pinguer le voisin, puis vérifiez show ip interface brief pour confirmer que l'interface est up et up. Si le ping échoue, OSPF n'est même pas à examiner : le défaut est sur le câble, le VLAN, le port switch ou le masque. Beaucoup d'heures perdues viennent d'administrateurs qui scrutent des commandes OSPF alors qu'un simple test de portée aurait tout de suite montré que le voisin était injoignable.
+
+Une fois la couche 2 confirmée, vérifiez que les Hello circulent réellement. La commande show ip ospf statistiques montre les paquets reçus par type : si le compteur de Hello progresse alors que aucun voisin n'apparaît, le paquet arrive mais est rejeté, et la cause la plus fréquente est une divergence de temporisation ou d'authentification. Si le compteur ne bouge pas, le paquet n'arrive pas, et l'on retombe sur la couche 2, un filtre de paquet, une interface en mode passif, ou un processus OSPF qui ne tourne tout simplement pas sur l'autre routeur.
+
+```text
+EXEMPLE : ordre de dépannage d'une adjacence qui ne monte pas
+
+R1# ping 10.10.1.130
+R1# show ip interface brief | include 10.10.1.129
+R1# show ip ospf statistiques
+R1# show ip ospf neighbor
+R1# show ip ospf interface GigabitEthernet0/0
+R1# show ip ospf database | begin Area 0
+R1# show ip route ospf
+```
+
+L'interprétation de cette séquence suit une logique d'élimination. Ping sans réponse : problème de couche 2 ou d'adresse. Ping OK mais aucun Hello reçu : problème de configuration OSPF, interface passif, zone absente du processus, ou routeur qui n'a pas de processus actif. Hello reçus mais aucun voisin : divergence de timers, d'authentification ou de type de réseau. Voisin présent mais état bloqué : problème de MTU ou de synchronisation des LSA. Voisin Full mais routes manquantes : problème de zones, de filtres ou de redistribution.
+
+Le tableau suivant regroupe les symptômes les plus courants avec leur cause probable et la correction correspondante. Imprimez-le mentalement : il couvre l'immense majorité des incidents d'adjacence rencontrés en production.
+
+```table
+| Symptôme | Cause la plus fréquente | Correction |
+| --- | --- | --- |
+| Aucun voisin, aucun Hello reçu | Interface en mode passif ou processus absent | no passive-interface, vérifier router ospf |
+| Hello reçus, toujours aucun voisin | Identifiants de zone ou timers différents | Aligner la zone et les intervalles Hello et Dead |
+| État bloqué en ExStart | MTU incohérent entre les deux interfaces | Aligner le MTU ou utiliser ip ospf mtu-ignore |
+| État bloqué en Loading | Authentification ou LSA corrompus | Vérifier clé et algorithme, réinitialiser le processus |
+| État 2-Way sur une liaison point à point | Type de réseau non déclaré | ip ospf network point-to-point des deux côtés |
+| Adjacence qui monte puis retombe sans cesse | Lien physique instable ou router-id changeant | Contrôler le compteur state changes et fixer le router-id |
+| Voisin Full mais aucune route inter-zone | ABR absent ou area range mal placé | show ip ospf border-routers et show ip ospf database summary |
+```
+
+
+L'instabilité chronique mérite une attention particulière, car elle est plus insidieuse qu'une panne franche. Dans show ip ospf neighbor, le champ state changes augmente à chaque rétablissement : une valeur qui grimpe de plusieurs unités par heure signale que l'adjacence est en train de retomber. Les coupures courtes passent inaperçues pour les utilisateurs mais produisent des pertes de paquets et des ralentissements ; elles proviennent le plus souvent d'un lien physique défaillant, d'une négociation de débit en boucle, d'un arbitrage de port switch, ou d'un routeur dont le router-id dérive parce qu'une interface de loopback a été ajoutée en cours de route.
+
+Un mot sur le débogage ciblé. La commande debug ip ospf adjacences affiche en clair la raison d'un rejet : elle écrit par exemple mismatch en dead time ou authentication failed, ce qui vous donne immédiatement la commande correctrice à taper. Elle s'active avec debug ip ospf adjacences, se coupe avec undebug all, et ne doit jamais rester allumée sur un routeur de production, car le flux de messages peut dépasser la capacité du processeur et provoquer un incident plus grave que celui que vous cherchiez à résoudre.
+
+- Dépannez par strates : couche 2, Hello, état, LSDB, table de routage.
+- Un compteur de Hello qui progresse sans voisin révèle un rejet, pas une coupure.
+- Un état bloqué en ExStart est presque toujours un problème de MTU.
+- Le champ state changes mesure l'instabilité, pas seulement l'état courant.
+- debug ip ospf adjacences donne la raison exacte d'un rejet, à utiliser brièvement.
+- Une LSDB trop grosse allonge le calcul SPF, donc la convergence elle-même.
+- Consignez symptôme, cause et correction : le dépannage s'apprend aussi en relisant.
+
+## Exemple guidé : configuration du site Lilas
+
+Nous voici arrivés au moment d'assembler toutes les pièces. Le site Lilas doit disposer d'une configuration de routage complète et cohérente : des routes statiques vers l'Internet, OSPF multi-zones à l'intérieur, de la redondance si un routeur de bordure tombe, et une méthode de validation qui prouve que chaque exigence est remplie. Nous allons procéder dans l'ordre où l'on travaille réellement sur un chantier : d'abord les fondations, puis les interfaces, ensuite le protocole, enfin les politiques et les secours.
+
+Rappelons les données du problème. R1 est le routeur cœur installé dans le local technique ; il est à la fois ABR pour les zones 0, 10, 20 et 30, et ASBR pour la redistribution. R2 est le routeur de redondance du bâtiment C, ABR des zones 0 et 30. FW est le pare-feu de bordure, connecté à l'Internet et à la fois ASBR pour la route par défaut. Les liaisons sont 10.10.1.128/30 entre R1 et R2, 10.10.1.132/30 entre R2 et FW, 10.10.1.136/30 entre R1 et FW. Les zones utilisateurs sont la zone 10 pour 10.10.0.0/22, la zone 20 pour 10.10.4.0/22 et la zone 30 pour 10.10.8.0/22.
+
+Les exigences sont les suivantes : processus OSPF numéro 1 sur les trois routeurs, identifiant de routeur pris sur une interface de loopback, authentification SHA-256 sur toutes les liaisons cœur, interfaces utilisateur en mode passif par défaut, agrégation des préfixes par zone avec un coût annoncé de 100, redistribution des routes statiques et des réseaux connectés, injection d'une route par défaut de type 1 avec une métrique de 10, une route flottante statique sur R1 avec une distance administrative de 10 pour survivre à la panne de FW, et une sonde IP SLA qui surveille réellement l'accès à l'Internet.
+
+Commençons par R1, le routeur le plus chargé. La configuration ci-dessous est un extrait commenté, prêt à être adapté à vos propres adresses.
+
+```text
+EXEMPLE : configuration de R1, routeur cœur, ABR et ASBR
+
+! --- Identification ---
+hostname R1
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+ ip ospf 1 area 0
+
+! --- Liaison vers R2, zone 0 ---
+interface GigabitEthernet0/0
+ description Lien R1-R2 vers zone 0
+ ip address 10.10.1.129 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_R2
+
+! --- Liaison vers FW, zone 0 ---
+interface GigabitEthernet0/1
+ description Lien R1-FW vers zone 0
+ ip address 10.10.1.137 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_FW
+
+! --- Réseaux utilisateurs, interfaces passives ---
+interface Vlan10
+ description Abonnes batiment A
+ ip address 10.10.0.1 255.255.252.0
+ ip ospf 1 area 10
+
+interface Vlan20
+ description WiFi batiment B
+ ip address 10.10.4.1 255.255.252.0
+ ip ospf 1 area 20
+
+interface Vlan30
+ description Postes batiment C
+ ip address 10.10.8.1 255.255.252.0
+ ip ospf 1 area 30
+
+! --- Processus OSPF ---
+router ospf 1
+ router-id 1.1.1.1
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ no passive-interface GigabitEthernet0/1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ network 10.10.4.0 0.0.3.255 area 20
+ network 10.10.8.0 0.0.3.255 area 30
+ area 10 range 10.10.0.0 255.255.252.0 cost 100
+ area 20 range 10.10.4.0 255.255.252.0 cost 100
+ area 30 range 10.10.8.0 255.255.252.0 cost 100
+ area 10 stub default-cost 10
+ area 20 stub default-cost 10
+ area 30 stub default-cost 10
+ default-information originate always metric-type 1 metric 10
+ redistribute static subnets route-map VERS_OSPF_STATIQUE
+ redistribute connected subnets route-map VERS_OSPF_CONNECTE
+```
+
+Passons aux routes statiques et aux mécanismes de secours de R1. C'est ici que la partie théorique sur les distances administratives et le suivi d'objets devient tangible.
+
+```text
+EXEMPLE : routes statiques, sonde et bascule sur R1
+
+! Route principale vers l'Internet, conditionnée à la sonde
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1 name DEF_VIA_FW
+
+! Route flottante : distance administrative 10, elle prend le relais
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10 name DEF_VIA_R2_SECOURS
+
+! Sonde vers l'Internet, évaluée toutes les 10 secondes
+ip sla 1
+ icmp-echo 8.8.8.8 source-interface GigabitEthernet0/1
+ frequency 10
+ timeout 5000
+ threshold 1000
+ip sla schedule 1 life forever start-time now
+track 1 ip sla 1 reachability
+```
+
+Le raisonnement à retenir est le suivant. Tant que la sonde reçoit des réponses de 8.8.8.8, l'objet track 1 reste en état de succès, la route principale existe, et la route flottante, de distance administrative supérieure, reste hors table. Dès que trois échos consécutifs échouent, l'objet bascule en échec, la route principale est retirée, et la flottante devient la meilleure candidates pour le préfixe 0.0.0.0/0 : elle s'installe en une fraction de seconde, sans aucun échange OSPF. Le retour se fait naturellement quand la sonde redevient satisfaisante.
+
+Voici maintenant la configuration de FW, le pare-feu de bordure, qui joue le rôle d'ASBR pour la route par défaut et qui doit être plus sobre que R1.
+
+```text
+EXEMPLE : configuration de FW, pare-feu de bordure
+
+interface Loopback0
+ ip address 3.3.3.3 255.255.255.255
+ ip ospf 1 area 0
+
+interface GigabitEthernet0/0
+ description Lien FW-R1 vers zone 0
+ ip address 10.10.1.138 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_FW
+
+interface GigabitEthernet0/1
+ description Sortie Internet
+ ip address 203.0.113.2 255.255.255.252
+ ip nat outside
+
+router ospf 1
+ router-id 3.3.3.3
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ network 10.10.1.132 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ default-information originate metric-type 1 metric 10
+ redistribute static subnets
+
+ip route 0.0.0.0 0.0.0.0 203.0.113.1 name DEF_VERS_FAIBLE_OPERATEUR
+```
+
+R2, enfin, est le plus simple des trois : il est ABR des zones 0 et 30, il reçoit les résumés de toutes les autres zones, et il n'a rien à redistribuer. Sa configuration tient en quelques lignes de réseau dans le processus, plus l'authentification sur ses deux liaisons. C'est volontairement le routeur de référence pour un débutant : il vous permet d'observer un ABR minimaliste et de lire la sortie de show ip ospf border-routers sans la surcharge des routes externes.
+
+Une fois les trois configurations en place, la validation suit un ordre strict que vous ne devez jamais dévier. Chaque étape prouve un point précis, et sauter une étape revient à parier sur ce que vous n'avez pas vérifié.
+
+```text
+EXEMPLE : séquence de validation après mise en service
+
+R1# show ip ospf neighbor
+R1# show ip ospf database | include Link ID
+R1# show ip ospf database summary
+R1# show ip ospf database external
+R1# show ip route ospf
+R1# show ip route 0.0.0.0
+R1# show ip ospf border-routers
+R1# show ip sla statistics
+R1# show track
+```
+
+Interprétons les résultats attendus. show ip ospf neighbor doit afficher deux voisins en état Full, un vers R2 et un vers FW, avec zéro ou un seul state change selon l'âge de la session. show ip ospf database doit lister des LSA de type 1 dans chaque zone, des LSA de type 3 en zone 0 venant des ABR, et un LSA de type 5 pour la route par défaut. show ip route ospf doit montrer les préfixes des trois zones en intercalant les codes O pour la zone locale et O IA pour les zones voisines. show ip route 0.0.0.0 doit afficher le défaut, avec le code S suivi de l'astérisque, via 10.10.1.138.
+
+La vérification de la redondance est la plus importante, car c'est elle qui transforme une configuration théorique en résilience réelle. Coupez la liaison R1-FW en simulation, puis observez : l'adjacence avec FW disparaît, la route statique track 1 tombe en échec, la route flottante s'installe, et show ip route 0.0.0.0 doit afficher désormais 10.10.1.130 au lieu de 10.10.1.138. Rétablissez la liaison et vérifiez le retour à la normale. Si la bascule ne se produit pas, vérifiez d'abord show track : si l'objet reste en succès alors que l'Internet est coupé, c'est la sonde qu'il faut examiner, pas le routage.
+
+```text
+SCHÉMA : comportement attendu lors de la panne de FW
+
+   Avant panne                          Après panne de FW
+
+   R1 ---- FW ---- Internet             R1 ---- (coupé) ---- Internet
+    |                                    |
+    +---- R2 ---- (secours dormant)      +---- R2 ---- Internet
+
+   show ip route 0.0.0.0                 show ip route 0.0.0.0
+   S* via 10.10.1.138  [1/0]            S* via 10.10.1.130  [10/0]
+   track 1 : succès                      track 1 : échec
+   route flottante hors table            route flottante installée
+```
+
+Pour rendre la preuve définitive, effectuez un test de bout en bout plutôt qu'une simple lecture de table. Depui un poste de la zone 10, lancez une commande de déplacement d'octets vers une adresse publique, puis ouvrez un tracé de chemin. Tant que FW est en service, le premier saut après R1 est 10.10.1.138 ; après la coupure, le tracé doit montrer 10.10.1.130 puis R2. Ce contraste, visible depuis un poste utilisateur, constitue la démonstration que la redondance fonctionne réellement et pas seulement sur le papier.
+
+- Configurez dans l'ordre : interfaces, loopback, processus OSPF, zones, politiques, secours.
+- Les zones stub sur les zones d'accès réduisent la LSDB sans rien perdre d'utile.
+- La route principale track et la route flottante forment un couple indissociable.
+- Validez par strates : voisin, LSDB, table, défaut, puis test de bout en bout.
+- Coupez réellement un lien pour prouver la bascule, ne vous fiez pas aux tables.
+- Documentez chaque règle notable : elle sera lue par quelqu'un d'autre, un jour.
+
+## À retenir
+
+Le routage statique vous donne un contrôle absolu mais aveugle : il ne détecte ni panne ni dégradation. Il s'écrit avec ip route, et trois variantes couvrent la quasi-totalité des besoins : la route par défaut pour sortir du réseau, la route spécifique pour gagner en précision, la route flottante pour prévoir l'imprévu. La correspondance par préfixe le plus long prime toujours sur la distance administrative, elle-même prioritaire sur la métrique. Ces trois règles, dans cet ordre, suffisent à expliquer toute table de routage que vous aurez à lire.
+
+OSPF apporte ce que la route statique ne peut pas offrir : la découverte automatique, le calcul des meilleurs chemins et la réparation de lui-même. C'est un protocole à état de lien, donc chaque routeur construit la même carte, exécute Dijkstra et en déduit sa table. La métrique reflète la bande passante, ce qui oriente naturellement le trafic vers les liens rapides. La hiérarchie en zones limite la taille de la base et la portée des recalculs, avec la zone 0 en colonne vertébrale obligatoire et les ABR en points de passage obligés.
+
+La mise en service d'une adjacence suit une procédure immuable : interfaces actives et correctement adressées, router-id explicite, zones identiques des deux côtés, type de réseau cohérent, authentification et temporisations alignées. La vérification suit la même logique inversée, de la couche 2 jusqu'à la table : ping, statistiques de Hello, voisin, état, base, table. Chaque étape élimine une famille entière de causes, et c'est cette discipline qui fait la différence entre un dépannage de dix minutes et une après-midi perdue.
+
+La redistribution est l'outil le plus puissant et le plus dangereux de ce chapitre. Elle exige le mot-clé subnets, un route-map qui déclare précisément ce qui passe, et un tag qui empêche les boucles. La route par défaut injectée par default-information originate doit être choisie en connaissance de cause entre la forme always, qui ment par omission, et la forme simple, qui disparaît avec la panne. Enfin, la résilience ne se déclare pas, elle se démontre : coupez un lien, regardez la table basculer, rétablissez, et ne considérez la configuration comme terminée que lorsque ce test a été passé.
+
+Voici les commandes qui reviendront dans votre quotidien, à retenir par cœur plutôt que par fiche.
+
+```text
+AIDE-MÉMOIRE : les commandes essentielles du chapitre
+
+show ip route                         lire la table de routage
+show ip route 10.10.8.0               détailler une destination
+show ip route ospf                    isoler les routes OSPF
+show ip ospf neighbor                 état des adjacences
+show ip ospf neighbor 2.2.2.2 detail  détails d'un voisin
+show ip ospf database                 résumé de la base d'état de lien
+show ip ospf database summary         LSA de type 3 entre zones
+show ip ospf database external        routes externes redistribuées
+show ip ospf border-routers           ABR et chemins inter-zones
+show ip ospf interface brief          coût, type de réseau, mode passif
+show ip sla statistics                état de la sonde de portée
+show track                            état des objets de suivi
+```
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus répandue, est d'oublier le mot-clé subnets lors d'une redistribution. La commande est acceptée, la configuration sauvegardée, et pourtant aucune route n'apparaît chez les voisins, car OSPF ignore les réseaux qui ne sont pas classful. Le second réflexe doit être de vérifier show ip ospf database external avant de soupçonner quoi que ce soit d'autre : si le LSA de type 5 n'existe pas, le problème est côté ASBR, pas côté récepteur.
+
+La deuxième erreur consiste à configurer la même zone d'un seul côté, ou à faire diverger les attributs de zone. Une zone stub déclarée uniquement sur l'ABR ne provoque aucune alerte : l'adjacence monte, et le comportement devient simplement imprévisible. Toujours appliquer les attributs de zone de façon symétrique et le vérifier avec show ip ospf interface sur les deux routeurs concernés.
+
+La troisième erreur est le type de réseau mal déclaré. Sur une liaison Ethernet entre routeurs laissée en mode broadcast, OSPF élit un DR inutile et l'adjacence met plus de temps à se stabiliser ; en point à point, elle est directe. L'inverse, déclarer point à point un réseau où trois routeurs partagent le même segment, casse l'élection et empêche les adjacences. La correction tient en une ligne par interface, mais il faut penser à l'appliquer des deux côtés.
+
+La quatrième erreur concerne le MTU. Lorsque la liaison traverse un tunnel ou un équipement qui réduit la taille de paquet, l'échange des Database Description échoue et l'état reste bloqué en ExStart sans le moindre message d'erreur explicite. Vérifier le MTU affiché par show ip ospf interface des deux côtés avant d'envisager toute autre piste ; la solution propre est d'aligner les valeurs, la solution de contournement ip ospf mtu-ignore doit rester documentée comme telle.
+
+La cinquième erreur est de créer une route flottante qui ne bascule jamais, parce que sa distance administrative est inférieure ou égale à celle de la route principale, ou parce que les deux routes n'ont pas exactement le même préfixe. Une route flottante doit reprendre la destination au caractère près et porter une distance administrative franchement supérieure. Le test est simple : supprimez la route principale et regardez si la flottante apparaît ; si elle n'apparaît pas, elle ne vous sauvera jamais.
+
+## Pour aller plus loin
+
+La meilleure poursuite de ce chapitre est la lecture directe de la spécification. La RFC 2328 décrit OSPF version 2 dans son intégralité ; les sections sur les LSA et l'algorithme SPF sont d'une précision que aucun tutoriel n'égale, et vous y retrouverez mot pour mot les notions de zones, d'états d'adjacence et de calcul de coût abordées ici. L'adresse est https://datatracker.ietf.org/doc/html/rfc2328. Pour la version destinée à l'IPv6, la RFC 5340 se lit à https://datatracker.ietf.org/doc/html/rfc5340 ; les différences de format de LSA y sont détaillées, mais la logique de zones reste identique.
+
+Ensuite, les guides de configuration des constructeurs constituent la référence pratique. Cisco publie son guide OSPF à l'adresse https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/xe-16/iro-xe-16-book.html, avec des chapitres entiers consacrés aux zones stub, à l'authentification et à l'optimisation de la LSDB. Les documents équivalents existent chez Juniper, chez Arista et chez F5 : le vocabulaire change à peine, ce qui confirme que vous avez appris des concepts et pas seulement une syntaxe.
+
+Un terrain de pratique reste indispensable, et plusieurs options gratuites existent. GNS3 et EVE-NG acceptent les images des constructeurs et permettent de bâtir le site Lilas à l'identique ; Packet Tracer suffit amplement pour les exercices de routage statique et OSPF mono-zone. Quel que soit l'outil, le principe est le même : construisez la topologie, appliquez les configurations de ce chapitre, puis cassez méthodiquement chaque lien en observant les commandes de contrôle. C'est dans ces moments-là que le routage cesse d'être abstrait.
+
+## Et maintenant : passez à la configuration du site Lilas
+
+Vous avez désormais toutes les pièces du puzzle : le routage statique avec ses routes par défaut, spécifiques et flottantes, la lecture complète d'une table de routage, les fondements d'OSPF, la construction d'une adjacence, l'architecture multi-zones, la redistribution contrôlée et la méthode de dépannage. Il ne reste qu'une chose à faire, et elle est concrète : ouvrir un simulateur ou votre poste de travail, créer les trois routeurs du site Lilas, et produire les fichiers de configuration complets de R1, de R2 et de FW, commentés, cohérents et prêts à déployer. C'est exactement l'exercice pratique qui suit cette leçon, et vous le mènerez à bien en vous appuyant sur les extraits de configuration de l'exemple guidé.
+
+Une fois les trois configurations livrées et les tests de coupure passés, vous aurez terminé la partie fondations du parcours Réseaux. Le chapitre suivant franchit un palier : ACL, NAT et redondance avancée, c'est-à-dire le filtrage du trafic, la traduction d'adresses vers l'Internet et les techniques de bascule au-delà de la route flottante. Les bases que vous venez d'installer, tables de routage, adjacences, zones, redistribution, en sont le socle direct : tout ce que vous y aurez mis en pratique vous fera gagner un temps considérable. Rendez-vous donc au chapitre cinq, armé de vos trois fichiers de configuration et de la confiance que seule donne une topologie que vous avez vue basculer de vos propres yeux.

@@ -1,0 +1,692 @@
+Bienvenue au dernier chapitre du parcours Intelligence artificielle et Data Science. Vous avez franchi, au chapitre 7, la frontière qui sépare le notebook du service : vous avez écrit une API de prédiction, donné à chaque artefact un numéro et une empreinte, observé les réponses en production et appris à décider d'un réentraînement. Au chapitre 8, vous vous êtes frotté à l'IA générative, ces systèmes dont la qualité dépend autant du contexte qu'on leur fournit que du modèle lui-même. Il reste une étape, et c'est elle qui sépare une démonstration réussie d'un outil sur lequel l'organisation peut compter : transformer cette chaîne artisanique en usine. C'est le sens exact du mot MLOps, contraction de apprentissage machine et d'opérations : appliquer à l'entraînement des modèles l'exigence que l'on applique depuis dix ans au déploiement du logiciel.
+
+À la fin de cette leçon, vous saurez faire trois choses, et vous les aurez déjà manipulées dans du code exécutable. Premièrement, vous reproductibiliserez un entraînement : même graine, même environnement, mêmes données, donc mêmes métriques, à la virgule près, sur la machine de votre collègue comme sur la vôtre. Deuxièmement, vous versionnerez données et modèles avec la rigueur que Git impose au code, jusqu'à pouvoir répondre à la question qui arrive toujours un lundi matin : avec quelles données ce modèle a-t-il été appris ? Troisièmement, vous installerez une surveillance de dérive en production, capable de distinguer une distribution d'entrées qui bouge d'une relation entre entrées et cible qui se rompt, et de lancer une alerte avant que le métier ne s'en aperçoive.
+
+Le fil rouge de ce chapitre est un modèle de crédit. Il estime la probabilité de défaut d'un emprunteur à partir de son revenu, son ancienneté, son endettement et son historique de paiement. Il n'a rien d'exotique : c'est le cas type de l'industrie, celui où l'on remet le modèle en production chaque semaine parce que les données, les taux et les comportements changent en continu. Toutes les notions abordées ici — graine, empreinte de données, pipeline, registre, déploiement progressif, PSI, test de Kolmogorov-Smirnov, contrat de données, intégration continue — seront posées sur ce terrain, puis vérifiées sur le vôtre.
+
+Un mot sur la manière d'aborder ce cours. Le MLOps s'apprend comme un métier d'atelier : en exécutant, en cassant, en réparant. Nous avancerons par étapes courtes, en alternant explications, cas concret, tableaux de synthèse et blocs de commande à reproduire tels quels. Gardez une règle simple en tête : un modèle qui ne se reproduit pas n'est pas un modèle, c'est un coup de chance ; un modèle qui se reproduit mais ne se surveille pas n'est pas un service, c'est une bombe à retardement. Tout ce chapitre tient dans ces deux phrases.
+
+## Pourquoi industrialiser : du prototype au service fiable
+
+La première raison d'industrialiser est la régression silencieuse. Dans un notebook, si le résultat change d'un jour à l'autre, vous le voyez parce que vous relancez la même cellule et que l'affichage vous saute aux yeux. En production, personne ne relance rien : les données arrivent, le service répond, les courbes défilent, et c'est trois semaines plus tard, lorsqu'un indicateur métier a déjà baissé, qu'on remonte le fil. L'industrialisation commence donc par un acte de foi méthodologique : figer ce qui doit l'être pour que tout ce qui bouge soit suspect, et non l'inverse.
+
+La seconde raison est l'échelle. Le prototype appartient à une personne qui connaît le détail de chaque décision prise en chemin : le filtre appliqué ici, la variable abandonnée là, le seuil choisi après trois tentatives. L'usine appartient à une équipe, qui change, qui se suit, qui prend des congés, et dont la mémoire institutionelle ne survit pas à trois mois sans trace écrite. Ce que vous n'avez pas versionné, testé et documenté, votre successeur le redécouvrira par erreur, souvent le vendredi après-midi.
+
+La troisième raison est la confiance, et elle se mesure plus facilement qu'on ne le croit. Un modèle industriel se caractérise par des propriétés vérifiables : on peut dire quelle version tourne, on peut la remplacer sans coupure, on peut revenir en arrière en moins de cinq minutes, on peut expliquer une décision contestée en retraçant l'entrée, le prétraitement et le poids utilisé. Aucune de ces propriétés n'est spectaculaire ; toutes sont absentes d'un notebook livré par fichier.
+
+Le tableau suivant met face à face les deux régimes. Servez-vous-en comme d'un diagnostic : si vous vous reconnaissez dans la colonne de gauche sur trois lignes au moins, votre chaîne a besoin du présent chapitre.
+
+```table
+| Aspect | Prototype en notebook | Chaîne industrialisée |
+|---|---|---|
+| Exécution | Manuelle, relancée à la main | Déclenchée par événement ou planifiée |
+| Résultat | Variable selon la machine et l'humeur des bibliothèques | Reproduit à l'identique, vérifié par empreinte |
+| Données | Fichier local, parfois modifié à la main | Jeu versionné, immuable, référencé par hash |
+| Modèle | Dossier écrasé à chaque essai | Registre avec états, historique et retour arrière |
+| Changement | Réécriture opportuniste | Branche, revue, tests, déploiement progressif |
+| Panne | Découverte par un utilisateur | Détectée par une surveillance, avant l'utilisateur |
+| Responsabilité | La personne qui a écrit le code | L'équipe qui assure le service |
+```
+
+
+Une précision s'impose avant d'aller plus loin, car le mot MLOps est souvent vendu trop grand. Industrialiser ne signifie pas tout automatiser. Certaines décisions restent humaines et doivent le rester : publier un modèle en production, changer un seuil de risque, accepter une baisse de métrique compensée par un gain métier, décider qu'une dérive est une nouveauté légitime plutôt qu'un incident. L'automatisation porte sur la préparation, les tests, la mesure et la remontée d'information ; elle libère du temps pour les décisions, elle ne les remplace pas. Un pipeline qui publie tout, tout le temps, sans regard humain, n'est pas industriel : c'est une machine à diffuser des erreurs.
+
+Enfin, notez que rien de ce qui suit n'exige une grande infrastructure. Les commandes de ce chapitre tournent sur un poste de développement, les exemples de pipeline tiennent en quelques dizaines de lignes, et la surveillance de dérive tient en un script Python de moins de cent lignes. Ce qui change avec l'industrialisation, ce n'est pas le matériel, c'est la discipline : tout est nommé, tout est versionné, tout est rejouable, tout est mesuré.
+
+## Reproductibilité : graine, environnement, données
+
+Reproduire un entraînement, c'est pouvoir le relancer dans six mois et obtenir exactement la même métrique, ce qui suppose de maîtriser toutes les sources d'aléa. Il en existe quatre grandes, et chacune appelle un contrepoids distinct. La première est l'aléa algorithmique : initialisation des poids, mélange des échantillons, découpage en sous-ensembles, sélection aléatoire d'hyperparamètres. On la neutralise par des graines. La seconde est l'aléa d'environnement : version de la bibliothèque, version de l'interpréteur, options de compilation, nombre de threads. On la neutralise en figeant l'environnement. La troisième est l'aléa de données : un fichier ré-extrait, une ligne corrigée à la main, un ordre de lecture différent. On la neutralise en versionnant les données. La quatrième, plus insidieuse, est l'aléa matériel : le même code, sur deux processeurs différents, peut produire des résultats différant au dernier chiffre significatif, par l'ordre des opérations flottantes.
+
+Commençons par la graine. Un générateur pseudo-aléatoire n'est pas vraiment aléatoire : c'est une suite déterministe qui part d'une graine. Si vous fixez la graine, la suite est la même à chaque exécution, sur toute machine. En Python pur, cela se fait avec le module random ; avec NumPy, par l'objet générique de génération ; avec scikit-learn, par le paramètre random_state de chaque estimateur, qui doit être posé explicitement, estimateur par estimateur. Le bloc suivant est la mise en place minimale que vous devriez copier en tête de tout script d'entraînement.
+
+```python
+import os
+import random
+
+# 1. Graine d'interpréteur : doit être fixee AVANT l'import de numpy/sklearn,
+#    car elle influence l'ordre de traitement de certains hashages.
+os.environ["PYTHONHASHSEED"] = "0"
+random.seed(42)
+
+# 2. Graine explicite pour chaque estimateur, pas seulement au debut du fichier.
+from sklearn.ensemble import RandomForestClassifier
+
+modele = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=1)
+
+# 3. n_jobs=1 : le parallelisme peut changer l'ordre d'addition des gradients
+#    et faire diverger les resultats au dernier chiffre.
+modele.fit(X_train, y_train)
+print("metrique figee :", round(modele.score(X_valid, y_valid), 6))
+```
+
+Le détail du n_jobs mérite d'être compris, parce qu'il contredit l'intuition. On croit volontiers que paralléliser n'altère que la vitesse ; en réalité, agréger des contributions dans un ordre différent modifie, à la septième décimale, la somme des flottants. Cette différence se propage ensuite, et un entraînement long peut finir par produire un modèle mesurablement distinct. Pour un travail de recherche, cela n'a pas d'importance ; pour une chaîne qui promet la reproductibilité, cela invalide la promesse. La règle : graines partout, exécution séquentielle pendant l'entraînement, parallélisme réservé à l'inférence.
+
+Vient l'environnement, qui est la cause la plus fréquente de non-reproductibilité observée sur le terrain. Votre script tourne aujourd'hui avec la version 1.5 de la bibliothèque ; votre collègue l'installe la semaine suivante et obtient la 1.6, qui a changé un comportement par défaut. Rien n'erre, aucune alerte ne se déclenche, mais les métriques ne sont plus comparables. La parade consiste à déclarer l'environnement comme du code : un fichier de dépendances verrouillé, généré une fois, commité, régénéré seulement quand on le décide. Trois outils se partagent le marché ; ce qui compte, c'est le principe, pas la marque.
+
+```bash
+# 1. Declaration de l'environnement, versionnees dans le depot
+uv pip compile requirements.in -o requirements.lock
+pip install -r requirements.lock
+
+# 2. Empreinte exacte, enregistree dans le registre a chaque entrainement
+python -c "import sys, sklearn, numpy; print(sys.version); print('numpy', numpy.__version__); print('sklearn', sklearn.__version__)"
+
+# 3. Verification du determinisme : deux executions, une empreinte comparee
+python train.py --seed 42 --out run_a.pkl
+python train.py --seed 42 --out run_b.pkl
+sha256sum run_a.pkl run_b.pkl
+```
+
+Attention à une limite honnête : deux empreintes identiques prouvent que le traitement est déterministe, pas que le modèle est bon. La reproductibilité est un prérequis, pas une métrique. Elle vous garantit que toute différence de performance vient d'une décision que vous avez prise, et non du hasard ; c'est déjà énorme, mais cela ne dit rien de la qualité du modèle.
+
+Le troisième pilier est le plus souvent négligé : la donnée elle-même. Un modèle est la function de trois entrées — code, environnement, données — et versionner les deux premières ne sert à rien si la troisième dérive. Si votre script relit à chaque exécution un entrepôt dont on peut réinsérer, corriger ou supprimer une ligne, alors votre résultat n'est pas reproductible, il est simplement coincé à une date. C'est pourquoi la section suivante est consacrée au versionnage des données : sans lui, la graine et le verrou d'environnement ne fabriquent qu'une reproductibilité de façade.
+
+## Versionner les données : Git ne suffit plus
+
+Git est un outil merveilleux pour du texte, et parfaitement inadapté aux données d'entraînement. Un jeu de crédit de quelques gigaoctets dépasse très vite les limites pratiques du dépôt ; un fichier binaire ne se diffume pas ligne à ligne, donc l'historique devient illisible ; surtout, des données clients contiennent souvent des informations personnelles qu'aucune configuration ne doit faire voyager dans un dépôt public. On ne met donc pas les données dans Git, mais on leur applique exactement la même discipline : chaque état reçoit une référence unique, chaque changement est tracé, chaque version est restaurable.
+
+Le principe le plus simple, et souvent le plus suffisant, est l'empreinte. On calcule une somme de contrôle sur chaque fichier — SHA-256 pour les fichiers, somme des empreintes pour un dossier — et on enregistre cette valeur dans un manifeste versionné avec le code. Si une seule ligne change, l'empreinte change, et le manifeste le dit. Le modèle peut alors déclarer non pas « entraîné sur les données du jour » mais « entraîné sur le jeu dont l'empreinte est 9f2c… », ce qui est vérifiable, comparable et définitif.
+
+```bash
+# Empreinte d'un jeu de donnees et enregistrement dans le manifeste
+sha256sum data/credit_train.csv > data/credit_train.sha256
+git add data/credit_train.sha256 train.py requirements.lock
+git commit -m "jeu d'entrainement v3 + scripts associés"
+
+# Avec un outil de versionnage de donnees (DVC) : le fichier part au stockage
+# distant, le depot Git ne garde que le pointeur et le pipeline
+dvc add data/credit_train.csv
+dvc push
+dvc dag                     # graphique des dependances data -> modele
+dvc exp run -S modele.depth=12   # experiment avec parametres traces
+dvc exp show                # tableau des metriques par experience
+```
+
+La distinction à retenir entre Git et un outil comme DVC tient en une phrase : Git versionne le texte, l'outil de versionnage de données place les gros fichiers dans un stockage distant et ne laisse dans le dépôt qu'un petit fichier pointeur. Vous gardez donc l'historique lisible, la collaboration sur le code, et en même temps la capacité à restaurer n'importe quel jeu d'entraînement, y compris celui d'il y a dix-huit mois, utilisé par un modèle toujours en service.
+
+Au-delà du mécanisme, c'est la sémantique qui compte. Versionner n'est utile que si l'on sait quoi regarder. Quatre informations doivent accompagner tout jeu utilisé pour entraîner un modèle en production, et leur absence se paie toujours tôt ou tard.
+
+```table
+| Information | Forme concrète | Question à laquelle elle répond |
+|---|---|---|
+| Empreinte | SHA-256 du fichier ou du dossier | Ce fichier a-t-il changé depuis la dernière fois ? |
+| Périmètre | Filtres, plage de dates, sélection de colonnes | Quelles lignes entrent réellement dans l'apprentissage ? |
+| Découpage | Indices ou clés d'affectation entraînement, validation, test | Un échantillon a-t-il fui d'un ensemble à l'autre ? |
+| Origine | Système source, date d'extraction, responsable | Où aller chercher les données manquantes ? |
+```
+
+
+Le découpage mérite une insistance particulière, parce qu'il est la source d'une famille entière d'erreurs silencieuses. Si vous redécoupez aléatoirement votre jeu à chaque exécution, l'échantillon de test change, la métrique de référence bouge, et vous finissez par comparer deux modèles sur deux examens différents. Le découpage doit être une fonction déterministe de la clé primaire de l'observation — un hachage de l'identifiant, par exemple — de sorte que chaque client appartienne toujours au même ensemble, quelle que soit la date d'extraction. Cette seule mesure élimine la contamination entre entraînement et test, qui gonfle systématiquement les métriques et fait apparaître des gains qui n'existent pas.
+
+Un dernier point sur la durée de vie des données. Un jeu d'entraînement n'est pas une archive morte : tant qu'un modèle entraîné dessus sert encore, ce jeu reste un élément de production, avec ses contraintes de confidentialité et de disponibilité. Il faut donc décider, à l'avance, de la durée de rétention et de la manière de le restaurer, y compris après le départ de la personne qui l'a créé. Testez cette restauration dès maintenant, sur un jeu ancien : si vous n'arrivez pas à le récupérer en dix minutes, votre registre de modèles est une vitrine, pas une garantie.
+
+## Un pipeline de bout en bout
+
+Un pipeline est une suite d'étapes ordonnées, chacune dotée d'une entrée explicite, d'une sortie explicite et d'un résultat vérifiable. Sa qualité ne se juge pas à sa longueur mais à trois propriétés : il est déterministe, on obtient la même sortie pour la même entrée ; il est idempotent, on peut le relancer après un échec sans produire un état corrompu ; il est observable, à chaque exécution on sait quelle étape tourne, combien de temps elle prend et pourquoi elle échoue. Ces trois propriétés ne sont pas des raffinements d'architecte, ce sont les conditions de sommeil tranquille de l'équipe.
+
+Détaillons les étapes de la chaîne que nous allons assembler pour le modèle de crédit, car chacune remplit un rôle qu'aucune autre ne peut absorber. L'extraction récupère les observations brutes sur la période retenue. La validation vérifie qu'elles respectent le contrat de données avant qu'on ne fasse quoi que ce soit d'autre. La préparation construit les variables à partir des règles versionnées. L'entraînement fit le modèle sur le jeu d'apprentissage. L'évaluation le confronte au jeu de test et aux coupes sensibles. L'enregistrement verse l'artefact, ses métriques et son empreinte dans le registre. La publication change son état, puis le déploiement progressif le met devant le trafic. Chaque étape écrit ses sorties sur un stockage adressable, jamais dans un dossier écrasé.
+
+```table
+| Étape | Entrée | Sortie | Garantie attendue |
+|---|---|---|---|
+| Extraction | Entrepôt, plage de dates | Jeu brut horodaté | Empreinte enregistrée |
+| Validation | Jeu brut | Jeu accepté ou rejeté | Contrat de données respecté |
+| Préparation | Jeu accepté | Matrice de variables | Règles versionnées, sans fuite |
+| Entraînement | Matrice, paramètres | Modèle, métriques | Reproductible, graine fixée |
+| Évaluation | Modèle, jeu de test | Rapport, verdict | Seuils de publication respectés |
+| Enregistrement | Modèle, rapport | Entrée au registre | Lien code, données, métriques |
+| Déploiement | Entrée du registre | Service en ligne | Retour arrière possible |
+```
+
+
+La question du déclenchement vient juste après celle des étapes. Trois modes se complètent dans la pratique. Le déclenchement temporel convient aux entraînements réguliers : chaque lundi à six heures, le modèle est réappris sur la dernière fenêtre glissante. Le déclenchement par données convient quand c'est le volume qui compte : un nouveau lot arrive, on réactive la chaîne. Le déclenchement manuel reste indispensable pour tout ce qui touche à la publication, car publier est une décision, pas une conséquence automatique du calendrier. Un pipeline qui ne distingue pas ces trois modes finit par déployer dans la nuit un modèle que personne n'a regardé.
+
+L'orchestration consiste à décrire ces étapes comme un graphe orienté acyclique, puis à laisser un moteur s'occuper des rappels, des dépendances, des caches et des journaux. On parle de graphe parce qu'une étape peut dépendre de plusieurs autres, et de acyclique parce qu'une boucle dans une chaîne de traitement n'a aucun sens opérationnel. Les outils se ressemblent tous sur l'essentiel — déclaration des étapes, état de chaque exécution, relance à partir de l'échec — et diffèrent sur l'habillage : certains tournent en conteneur léger sur un serveur unique, d'autres s'appuient sur un orchestrateur de grappe. Choisissez-les pour la lisibilité de leurs journaux, pas pour la longueur de leur liste de fonctionnalités.
+
+Le conteneur est le maillon qui rend l'environnement réellement portable. Plutôt que d'installer les dépendances sur la machine qui exécute, on construit une image : un système de base, l'interpréteur, les bibliothèques verrouillées, le code du projet. Cette image porte une version, elle est la même sur le poste de développement, sur le serveur d'entraînement et sur le service de prédiction. C'est la réponse concrète à la deuxième source de non-reproductibilité identifiée en début de chapitre : si l'image ne change pas, l'environnement ne change pas.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/docker-container.png
+| Un conteneur Docker : l'application, ses bibliothèques et leur version voyageant ensemble, de la machine de développement jusqu'au serveur de production.
+```
+
+Le bloc suivant montre la déclaration d'un tel pipeline, sous la forme déclarative la plus courante : les étapes, leurs dépendances, leurs commandes et leurs artefacts. Lisez-le comme un plan de chantier, pas comme un script : on y décrit ce qui doit être vrai à la fin de chaque étape, et c'est le moteur qui décide dans quel ordre exécuter.
+
+```yaml
+stages:
+  - name: extract
+    cmd: python src/extract.py --start 2026-01-01 --out data/raw
+    deps: [src/extract.py]
+    outs: [data/raw/credit.csv]
+
+  - name: validate
+    cmd: python src/validate.py data/raw/credit.csv
+    deps: [data/raw/credit.csv, contracts/credit.yaml]
+    metrics: [reports/validation.json]
+
+  - name: train
+    cmd: python src/train.py --seed 42 --data data/raw/credit.csv
+    deps: [src/train.py, data/raw/credit.csv, requirements.lock]
+    outs: [models/model.pkl]
+    metrics: [reports/train_metrics.json]
+
+  - name: evaluate
+    cmd: python src/evaluate.py models/model.pkl --baseline 0.81
+    deps: [models/model.pkl, data/credit_test.csv]
+    outs: [reports/evaluation.json]
+
+  - name: register
+    cmd: python src/register.py reports/evaluation.json
+    deps: [reports/evaluation.json, models/model.pkl]
+    outs: [reports/registry_entry.json]
+```
+
+Trois détails de cette déclaration méritent votre attention, car ils séparent un pipeline robuste d'un empilement de commandes. D'abord, les dépendances sont déclarées fichier par fichier : si seule l'étape de préparation change, l'entraînement est relancé, mais l'extraction, dont la sortie est inchangée, est mise en cache. Ensuite, l'empreinte des données et le verrou d'environnement figurent parmi les dépendances : modifier une bibliothèque rend la sortie obsolète et force un nouvel entraînement, ce qui est exactement le comportement voulu. Enfin, les métriques sont produites comme des fichiers à part, ce qui permet de comparer deux exécutions sans rouvrir de notebook.
+
+Notez enfin que le pipeline s'arrête tout seul. L'étape d'évaluation porte un seuil — une métrique au moins égale à celle du modèle en service — et si elle n'est pas atteinte, la publication n'est pas déclenchée. Ce garde-fou est ce qui distingue l'usine du toboggan : dans un toboggan, ce qui entre sort toujours ; dans une usine, un produit non conforme ne passe pas l'étape suivante, et le constat est écrit quelque part.
+
+## Le registre de modèles
+
+Au chapitre 7, vous avez fabriqué un registre à la main : un numéro de version, une empreinte, un fichier de métadonnées posé à côté du modèle. Ce dispositif fonctionne, et il reste la bonne réponse tant qu'une seule personne publie. Dès que plusieurs équipes publient plusieurs modèles, la même question — quel modèle sert, depuis quand, avec quelles données — devient ingérable sans un registre central, c'est un catalogue partagé dans lequel chaque modèle entre, circule et sort, avec son historique complet.
+
+Un registre ne stocke pas seulement des fichiers : il stocke des relations. À chaque version, il relie l'artefact, la signature de ses entrées, les métriques d'évaluation, l'empreinte du jeu d'entraînement, le commit du code, le verrou d'environnement, l'auteur et la raison de la publication. Cette chaîne, qu'on appelle lignée, est ce qui permet de répondre en une requête à la question redoutée : ce modèle qui refuse un dossier ce matin, sur quoi a-t-il été appris, et qui a décidé de le mettre en ligne ?
+
+Les outils de registre partagent un vocabulaire d'états qu'il vaut mieux apprendre une fois pour toutes. Le modèle commence en brouillon, personne ne le consomme. Il passe en préparation quand il a réussi les tests et attend une validation humaine. Il passe en production quand un responsable l'a approuvé, et c'est cet état, et lui seul, qui est servi aux applications clientes. Il est archivé quand un successeur l'a remplacé, mais il reste consultable, parce qu'un incident survenu hier peut porter sur un modèle retiré aujourd'hui.
+
+```table
+| État | Qui le consulte | Condition de passage | Conséquence |
+|---|---|---|---|
+| Brouillon | Son auteur seulement | Enregistrement initial | Aucun trafic |
+| Préparation | L'équipe, l'intégration continue | Tests et métriques validés | Sert aux tests de bout en bout |
+| Production | Les utilisateurs et services | Approbation humaine enregistrée | Reçoit du trafic réel |
+| Archivé | Personne, sauf investigation | Remplacement ou incident | Retiré, historique conservé |
+```
+
+
+Les commandes suivantes sont celles que vous utiliserez chaque semaine. Elles montrent le cycle complet : entraîner, enregistrer, consulter, puis basculer le pointeur de production vers la nouvelle version — et, si besoin, le ramener à l'ancienne.
+
+```bash
+# Enregistrer un modele avec ses metriques et sa signature d'entrees
+mlflow experiments create -n credit-scoring
+mlflow run . -P seed=42 -P depth=12
+mlflow models log-model --name credit-scoring --path models/model.pkl
+
+# Consulter l'historique : versions, metriques, auteur, etat
+mlflow models list --name credit-scoring
+mlflow runs search --experiment credit-scoring --order-by "metrics.auc DESC"
+
+# Basculer la production, puis verrou par empreinte
+mlflow models transition-stage --name credit-scoring --version 12 --stage Production
+mlflow models transition-stage --name credit-scoring --version 11 --stage Archived
+
+# Retour arriere immediat : le pointeur repart vers la version precedente
+mlflow models transition-stage --name credit-scoring --version 11 --stage Production
+```
+
+Deux pratiques renforcent considérablement l'utilité de cette table. La première est la signature de modèle : décrire les colonnes attendues, leur type et leur ordre, de sorte qu'une requête dont le schéma diffère soit refusée au bord du service plutôt que traitée à l'aveugle. La seconde est l'étiquette d'alias, une lecture publique du type production courant ou candidate, à laquelle vos services s'adressent ; au lieu de codifier en dur le numéro de version, ils résolvent l'alias, et le changement de modèle devient une ligne de commande sans redéploiement applicatif. Le retour arrière, lui, consiste exactement à repointer cet alias : c'est pourquoi il doit prendre secondes, et non heures.
+
+Le registre rend également possible une comparaison honnête. Enregistrer une métrique sans son contexte ne sert à rien : un taux de rappel de 0,84 ne dit rien tant qu'on ignore le jeu, la période, le seuil de décision et la valeur du modèle précédent. Chaque enregistrement porte donc systématiquement la référence du modèle qu'il prétend améliorer, et l'évaluation est toujours un écart, jamais un nombre isolé. C'est cette discipline qui transforme un tableau de bord en historique exploitable.
+
+## Tester avant de publier : données, code, modèle
+
+Dans le logiciel classique, on teste du code. Dans le machine learning, on teste trois choses différentes, qui échouent de façons différentes et exigent trois réponses distinctes : les données, qui peuvent être fausses sans être invalides ; le code, qui peut être correct mais branché sur le mauvais fichier ; le modèle, qui peut être parfaitement entraîné sur un problème que la situation d'origine n'est plus. Une chaîne qui ne teste qu'une seule de ces familles a une couverture illusoire.
+
+Les tests de données portent sur la forme et le fond. On vérifie le schéma : colonnes présentes, types conformes, clé primaire unique. On vérifie les bornes : un revenu négatif, un âge supérieur à cent-vingt ans, un taux supérieur à un, sont des erreurs de saisie qui dégraderont le modèle en silence. On vérifie les taux de remplissage et la fraîcheur : une colonne qui se vide à dix pour cent du jour au lendemain signale une panne en amont. On vérifie enfin la fuite d'information : une variable qui n'existe qu'après la survenance du défaut doit être écartée, sinon vos métriques seront spectaculaires et vos décisions calamiteuses.
+
+Les tests de code suivent les règles connues : unitaires sur les transformations de variables, car c'est là que se cachent les fautes les plus coûteuses ; d'intégration sur la chaîne complète, en envoyant un dossier d'exemple dont on connaît la réponse attendue ; de non-régression sur la signature de l'API, pour qu'un changement de format ne se révèle qu'au premier client. Le point propre au machine learning est le dossier de référence : quelques observations, figées, dont la prédiction est connue et comparée à chaque exécution.
+
+Les tests de modèle sont des tests de seuil, pas de vérité. On ne teste pas que le modèle est bon, on teste qu'il n'est pas devenu pire que ce que l'on accepte. Trois familles reviennent : une métrique globale au moins égale à celle du modèle en service, des métriques par coupe — âge, région, montant — pour qu'une amélioration moyenne ne cache pas une régression sur un sous-groupe, et des contraintes opérationnelles comme la latence maximale ou la taille de l'artefact. Le bloc suivant est un jeu de tests de ce type, exécutable tel quel avec pytest.
+
+```python
+import json
+import joblib
+import numpy as np
+import pytest
+
+SEUIL_AUC = 0.81          # metrique du modele actuellement en production
+ENTREES = ["revenu", "anciennete", "dette", "historique"]
+
+
+@pytest.fixture(scope="module")
+def modele():
+    return joblib.load("models/model.pkl")
+
+
+def test_signature_conforme(modele):
+    assert list(modele.feature_names_in_) == ENTREES
+
+
+def test_auc_au_moins_egale_au_referentiel(modele, jeu_test):
+    rapport = json.load(open("reports/evaluation.json"))
+    assert rapport["auc"] >= SEUIL_AUC, f"AUC {rapport['auc']} < {SEUIL_AUC}"
+
+
+def test_auc_par_tranche_de_revenu(modele, jeu_test):
+    rapport = json.load(open("reports/evaluation.json"))
+    for tranche, valeur in rapport["auc_par_tranche"].items():
+        assert valeur >= SEUIL_AUC - 0.05, f"regression sur {tranche} : {valeur}"
+
+
+def test_prediction_nulle_ni_positive_ni_un():
+    sorties = modele.predict_proba(np.array([[45000, 3, 0.3, 1]]))[:, 1]
+    assert np.all((sorties > 0) & (sorties < 1))
+
+
+def test_latence_inferieure_au_contrat(modele, jeu_test):
+    import time
+    debut = time.perf_counter()
+    modele.predict_proba(jeu_test)
+    par_appel = (time.perf_counter() - debut) / len(jeu_test)
+    assert par_appel < 0.002, f"latence {par_appel:.4f} s par dossier"
+```
+
+Ces tests ont une caractéristique qu'il faut assumer : ils échoueront parfois à tort. Un seuil trop serré déclenchera des alertes pour un écart insignifiant, et l'équipe finira par les ignorer, ce qui est pire que de ne pas en avoir. À l'inverse, un seuil trop souple ne détecte rien. Réglez-les comme on règle une alarme : en observant pendant quelques semaines la variation naturelle d'une métrique en l'absence de changement, puis en plaçant le seuil nettement au-delà de cette variation.
+
+```table
+| Type de test | Exemple concret | Bloquant ? | Réaction en cas d'échec |
+|---|---|---|---|
+| Schéma de données | Colonne revenu absente ou texte | Oui | Arrêt du pipeline, alerte sur la source |
+| Bornes métier | Taux supérieur à 100 % | Oui | Arrêt, investigation de la saisie |
+| Code unitaire | Transformation de variable | Oui | Correction avant fusion de la branche |
+| Dossier de référence | Prédiction connue inchangée | Oui | Rejet du modèle proposé |
+| Métrique globale | AUC sous le modèle en service | Oui | Publication refusée |
+| Métrique par coupe | Dégradation sur une tranche | Oui si critique | Investigation obligatoire |
+| Latence et taille | Réponse au-delà du contrat | Non, avertissement | Signalement dans le rapport |
+```
+
+
+La dernière pièce de cette mécanique est le moment où les tests s'exécutent. Les tests de données vont le plus tôt possible, dès l'extraction, parce qu'il est absurde d'entraîner un modèle sur des entrées qu'on sait invalides. Les tests de code vont à chaque fusion de branche. Les tests de modèle vont avant chaque enregistrement au registre, et de nouveau après le déploiement, sur le service réel, avec les données réelles : c'est le seul endroit où l'on peut vérifier que la chaîne complète, du formulaire à la réponse, se comporte comme en laboratoire.
+
+## Déployer sans risque : shadow, canary et retour arrière
+
+Publier un modèle n'est pas un événement, c'est une progression. Le réflexe naturel consiste à remplacer l'ancienne version par la nouvelle, à constater le lendemain si quelqu'un se plaint, et à découvrir une semaine plus tard que les décisions ont changé de sens sans que personne ne l'ait décidé. L'industrie a remplacé cette séquence par des stratégies de mise en service qui ont toutes le même principe : faire courir l'ancien et le nouveau en parallèle, comparer, puis augmenter la part du nouveau tant que la comparaison reste favorable.
+
+Le mode silencieux, souvent appelé shadow pour ombre, est la première étape et la plus prudente. Le trafic réel est dupliqué : une copie part vers le nouveau modèle, qui calcule et journalise sa réponse, mais seule l'ancienne réponse est rendue à l'utilisateur. Le coût est purement computationnel, l'impact utilisateur est nul, et l'on gagne quelque chose d'inappréciable : des jours de prédictions réelles, sur des entrées réelles, que l'on pourra comparer ligne à ligne aux réponses du modèle en service quand les étiquettes de vérité arriveront. Le mode silencieux est idéal pour valider une chaîne technique ; il est insuffisant pour valider un comportement métier, puisque personne n'en subit les effets.
+
+Le déploiement canary, du nom de l'oiseau minier dont les premiers individus envoyés dans les galeries détectaient le gaz, pousse le modèle devant une fraction du trafic réel. On commence par un pourcent, quelques requêtes seulement, puis cinq, puis vingt-cinq, chaque palier étant conditionné à des critères mesurés : taux d'erreur, latence, et les indicateurs métier qui peuvent l'être en continu. Si un palier échoue, le retour arrière est automatique et immédiat ; si les paliers passent, la mise à zéro cent pour cent devient une formalité. Le déploiement canary transforme un pari en séquence d'expériences, chacune réversible.
+
+```text
+  Deploiement progressif d'une version 12 du modele de credit
+
+  1. version 12 enregistree, etat "preparation", tests verts
+  2. mode silencieux 24 h      : 100 % du trafic simule, 0 % servi
+       -> 12 400 comparaisons, ecart moyen de score +0.01, aucun incident
+  3. canary 1 %   (lundi 08h)  : portee critique de l'API au vert
+  4. canary 5 %   (lundi 12h)  : latence 95e percentile 41 ms, erreurs 0,02 %
+  5. canary 25 %  (mardi 09h)  : taux d'accord metier stable, PSI entrees 0.04
+  6. mise a 100 %  (mercredi)  : version 11 enregistree comme "archive"
+  7. retour arriere teste      : version 11 servie en 8 s, sans coupure
+```
+
+Le blue-green est la troisième stratégie, et la plus coûteuse : deux environnements complets coexistent, l'un en production, l'autre en attente, et le basculement se fait d'un coup, en reparamétrant l'équilibreur de charge. Sa vertu est un retour arrière instantané, sans calcul, puisqu'il suffit de repointer vers l'autre environnement ; son défaut est de doubler l'infrastructure. Il convient aux services dont la version doit changer d'un seul bloc, applicatives et modèle compris, et il devient pénible quand la mémoire réservée aux modèles se compte en gigaoctets.
+
+Quand les modèles sont empaquetés en conteneurs, c'est un orchestrateur qui assure la progression. Il gère le démarrage des nouvelles instances, leur passage à santé saine, la réduction progressive des anciennes, et l'arrêt net d'un déploiement qui ne répond pas. Le logo suivant est celui de l'outil le plus répandu pour ce travail.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/kubernetes.png
+| Kubernetes orchestre le déploiement progressif : les anciennes instances restent en service pendant que les nouvelles démarrent et passent leur contrôle de santé.
+```
+
+Quel que soit l'outil, la mécanique de bascule reste la même, et vaut la peine d'être écrite à la main une fois pour comprendre ce que les tableaux de bord cachent. Le bloc ci-dessous montre la séquence réelle d'une montée de version, y compris la dernière ligne, celle que l'on espère ne jamais exécuter et que l'on teste pourtant chaque trimestre.
+
+```bash
+# 1. Mise en place de la nouvelle image, sans extinction des anciennes
+kubectl set image deployment/credit-api api=registry.local/credit-api:12
+kubectl rollout status deployment/credit-api --timeout=180s
+
+# 2. Reduction progressive de l'ancienne version (palier de 5 %)
+kubectl scale deployment/credit-api-v11 --replicas=1
+kubectl wait --for=condition=available deployment/credit-api-v11 --timeout=60s
+
+# 3. Verification : metriques de palier consultees avant d'aller plus loin
+#    latence p95, taux d'erreur, part de reponses classees "accord"
+
+# 4. Retour arriere : la version precedente reprend la totalite du trafic
+kubectl rollout undo deployment/credit-api
+kubectl rollout status deployment/credit-api --timeout=60s
+```
+
+La comparaison des stratégies se lit en un coup d'œil. Aucune n'est supérieure aux autres : chacune achète un niveau de risque avec un niveau de ressources.
+
+```table
+| Stratégie | Trafic exposé au nouveau | Coût d'infrastructure | Retour arrière | Quand la choisir |
+|---|---|---|---|---|
+| Remplacement direct | 100 % d'un coup | Faible | Lent, manuel | Rien de critique, testé partout |
+| Mode silencieux | 0 %, réponses simulées | Double calcul | Immédiat | Valider la chaîne, pas le métier |
+| Canari | 1 % à 100 %, par paliers | Légère hausse | Automatique à chaque palier | Modèle à impact métier |
+| Blue-green | 0 % puis 100 % | Double | Instantané | Version applicative et modèle liées |
+```
+
+
+Un dernier point décide de la crédibilité de toute cette mécanique : les critères de palier doivent être décidés avant le premier pourcent, pas inventés pendant l'observation. Décrivez-les dans le même fichier que le pipeline — latence maximale, taux d'erreur maximal, fenêtre d'observation, durée minimale de chaque palier — et faites-en une étape automatique. Un palier que l'on peut sauter parce que le vendredi approche n'est pas un garde-fou, c'est une formalité.
+
+## Dérive : données, concept, et ce qui les sépare
+
+La surveillance commence par un vocabulaire exact, car trois situations très différentes partagent le même mot dans le langage courant. La dérive désigne toute évolution d'une distribution entre deux périodes. On la découpe en trois familles, et confondre les deux premières conduit à prendre les mauvaises décisions : réentraîner quand il faut changer le problème, ou changer le problème quand un réentraînement aurait suffi.
+
+La dérive de données, dite aussi dérive de covariables, se produit quand la distribution des entrées change alors que la relation entre entrées et cible reste la même. Le porteur type est un changement de collecte : un formulaire qui demande désormais le revenu annuel au lieu du revenu mensuel, un canal d'acquisition qui apporte une clientèle plus jeune, une nouvelle région ouverte avec des profils différents. Le modèle n'a pas tort, il est simplement sollicité sur une zone de l'espace qu'il a peu vue. C'est le cas le plus favorable, et un réentraînement sur les données récentes le répare généralement bien.
+
+La dérive de concept est plus grave : c'est la relation entre entrées et cible qui change, à entrées identiques. Après une hausse brutale des taux, un dossier dont la mensualité pèse trente-cinq pour cent du revenu passe du bon payeur au risqué, sans qu'une seule variable d'entrée n'ait bougé. Après une réforme réglementaire, certains comportements deviennent interdits ou encouragés. Après une campagne de fraude massive, la signature de la fraude se déplace. Aucun réentraînement automatique ne suffit tant que les nouvelles étiquettes n'ont pas été observées, et le modèle reste trompeur pendant toute la période de latence.
+
+La dérive de prédictions est le symptôme le plus rapide à observer : c'est la distribution des sorties du modèle qui bouge. Si la part de dossiers classés à risque double en une semaine, quelque chose a changé — les entrées, la relation, ou le modèle lui-même après une modification de prétraitement. Elle ne dit pas quoi, seulement où regarder, ce qui en fait un excellent signal d'alerte précoce et un très mauvais diagnostic posé seul.
+
+```table
+| Type de dérive | Ce qui change | Ce qui ne change pas | Détection typique | Réponse attendue |
+|---|---|---|---|---|
+| Covariables (données) | Distribution des entrées | Relation entrées, cible | PSI, KS par variable | Réentraînement sur fenêtre récente |
+| Concept | Relation entrées, cible | Parfois les entrées | Étiquettes différées, métrique en ligne | Reproblématisation, réentraînement complet |
+| De prédictions | Distribution des sorties | Tout, parfois | Histogramme des scores | Investigation de la cause |
+| De labels | Distribution de la cible | Entrées | Taux de défaut observé | Réévaluation du seuil de décision |
+| Amont (schéma) | Forme ou code des données | Sens métier | Contrat de données | Réparation de la source |
+```
+
+
+Le schéma suivant illustre ce qui se joue dans le cas de concept : les poids du réseau ont figé une frontière entre classes, apprise à une époque donnée. Quand la frontière bouge dans le monde réel, les poids, eux, restent exactement où ils étaient.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/neural-net.png
+| Un réseau de neurones aux couches colorées : ses poids figent la frontière apprise à l'entraînement, qui ne suit pas tout seul le déplacement de la réalité.
+```
+
+Prenons le cas concret qui nous suit depuis le début. Le modèle de crédit est remis en production chaque semaine, et plusieurs mécanismes de dérive y jouent en même temps. La collecte évolue : le partenaire qui fournit les dossiers ajoute un partenaire bancaire, dont les relevés ont un format voisin mais des colonnes renseignées autrement. Le portefeuille vieillit : les emprunteurs souscrits il y a trois ans voient leur endettement monter naturellement. Enfin le contexte change : une variation des taux modifie le comportement de remboursement sans modifier les fiches. Trois causes, trois réponses possibles, et aucun d'entre eux n'est un bug.
+
+La mise en place de la surveillance, elle, obéit à une règle que le chapitre 7 a déjà posée : on ne compare jamais la production au jeu d'entraînement brut. On compare une fenêtre récente à une fenêtre de référence représentative de la période pendant laquelle le modèle s'est comporté correctement. La fenêtre de référence est versionnée avec le modèle ; elle est trop petite, la mesure bruitera, trop grande, elle noiera un changement réel dans une moyenne ancienne. Pour un flux hebdomadaire, une référence de quatre à huit semaines et une fenêtre courante de sept jours donnent des comparaisons lisibles.
+
+Deux écueils structurent le reste du travail. Le premier est la saisonnalité : les dossiers du lundi ne ressemblent pas à ceux du dimanche, et comparer un lundi à une moyenne de sept jours fabriquerait une dérive fantôme chaque semaine ; la correction consiste à comparer jour à jour ou à agréger sur des cycles complets. Le second est la multiplicité : surveiller cent variables avec un seuil chacune, c'est recevoir des alertes au hasard, même en l'absence de changement ; il faut donc une politique d'alerte — seuils plus stricts sur les variables critiques, confirmation sur deux périodes consécutives, et un niveau de synthèse global en plus du détail variable par variable.
+
+## Mesurer : PSI et test de Kolmogorov-Smirnov
+
+Deux mesures dominent la surveillance univariée, et il faut savoir ce que chacune mesure réellement pour ne pas les opposer à tort. L'indice de stabilité de population, ou PSI, découpe la distribution de référence en classes — dix quantiles le plus souvent — puis compare, classe par classe, la part observée récemment à la part attendue. Il agrège les écarts en un seul nombre, pondéré par le logarithme du rapport, ce qui pénalise surtout les classes où la masse a fortement bougé.
+
+Les seuils usuels sont stables dans l'industrie et méritent d'être mémorisés : en dessous de 0,10, la variable est considérée stable ; entre 0,10 et 0,25, elle appelle la vigilance ; au-delà, la dérive est avérée. Le chapitre 7 retenait 0,20 comme seuil d'alerte pour une variable critique du modèle de crédit, et cette valeur reste une bonne borne de départ, à condition de la fixer avant de voir les données, jamais après.
+
+Le test de Kolmogorov-Smirnov aborde le problème autrement : au lieu de classes, il compare les deux fonctions de répartition empiriques et retient la plus grande distance verticale entre elles. Il ne dépend donc pas du découpage, ce qui le rend plus propre quand les distributions sont continues, et il est sensible à toute forme d'écart, déplacement, élargissement ou modification de forme. On lui associe souvent une valeur de probabilité, mais sur de grands échantillons cette valeur devient minuscule pour des écarts insignifiants : c'est la taille de l'échantillon qui parle, pas l'importance du changement.
+
+```table
+| Mesure | Ce qu'elle compare | Seuil usuel | Force | Limite |
+|---|---|---|---|---|
+| PSI | Masses par classe entre deux périodes | 0,10 et 0,25 | Un chiffre unique, interprétable | Dépend du découpage |
+| KS | Distance maximale entre fonctions de répartition | 0,05 à 0,10 selon le domaine | Indépendante du découpage | Aveugle aux queues extrêmes |
+| Chi-deux | Écarts relatifs aux effectifs attendus | Valeur de probabilité | Adaptée aux classes discrètes | Sensible aux petites classes |
+| Wasserstein | Distance de transport entre distributions | Échelle de la variable | Utilise l'échelle réelle | Difficile à comparer d'une variable à l'autre |
+| Jensen-Shannon | Divergence symétrique entre deux lois | 0,10 environ | Bornée, symétrique | Moins répandue dans les outils métier |
+```
+
+
+Le bloc ci-dessous implémente le PSI et le KS en pur Python, sans bibliothèque externe, afin que vous puissiez les relire ligne à ligne et les emporter partout. Les classes de référence sont calculées sur la fenêtre de référence, puis réutilisées telles quelles sur la fenêtre surveillée : c'est ce détail qui rend la comparaison honnête.
+
+```python
+import math
+from bisect import bisect_left
+
+def bornes_quantiles(valeurs, classes=10):
+    trie = sorted(valeurs)
+    points = []
+    for i in range(1, classes):
+        position = i * len(trie) // classes
+        points.append(trie[min(position, len(trie) - 1)])
+    return points
+
+def repartition(valeurs, bornes):
+    compteurs = [0] * (len(bornes) + 1)
+    for valeur in valeurs:
+        compteurs[bisect_left(bornes, valeur)] += 1
+    total = max(len(valeurs), 1)
+    return [compteur / total for compteur in compteurs]
+
+def psi(reference, courant, classes=10):
+    bornes = bornes_quantiles(reference, classes)
+    attendu = repartition(reference, bornes)
+    observe = repartition(courant, bornes)
+    somme = 0.0
+    for p, q in zip(attendu, observe):
+        p = max(p, 1e-6)
+        q = max(q, 1e-6)
+        somme += (q - p) * math.log(q / p)
+    return somme
+
+def kolmogorov(reference, courant):
+    ref = sorted(reference)
+    cur = sorted(courant)
+    n, m = len(ref), len(cur)
+    i = j = 0
+    distance = 0.0
+    while i < n and j < m:
+        if ref[i] <= cur[j]:
+            i += 1
+        else:
+            j += 1
+        distance = max(distance, abs(i / n - j / m))
+    return distance
+
+reference = [42000, 43500, 45000, 47000, 48500, 51000, 53000, 55500] * 12
+recent =   [31000, 33000, 35500, 38000, 47000, 52000, 58000, 61000] * 12
+print("PSI revenu :", round(psi(reference, recent), 4))
+print("KS  revenu  :", round(kolmogorov(reference, recent), 4))
+```
+
+Pour lire le résultat, appliquez la règle du trois niveaux. Un PSI inférieur à 0,10 sur toutes les variables : on continue, rien à faire. Un PSI entre 0,10 et 0,25 sur une variable non critique : on note, on observe la période suivante, et on confirme avant d'alerter. Un PSI supérieur à 0,25 sur une variable importante du modèle, ou deux périodes consécutives au-dessus de 0,10 : on déclenche l'alerte, on regarde la fenêtre de récentes à la main, et on décide de la suite avec quelqu'un qui porte la responsabilité métier.
+
+Trois limites doivent être connues pour ne pas trop faire confiance à ces nombres. D'abord, toute mesure est univariée : un modèle peut subir une dérive multivariée — des relations entre variables qui changent sans que aucune seule ne bouge suffisamment — que ni le PSI ni le KS ne verront ; les détecteurs appris, entraînés à distinguer référence et production, existent pour cela et complètent l'arsenal. Ensuite, les variables à faible effectif, catégories rares ou valeurs manquantes nombreuses, produisent des mesures instables : agrégez ou écartez-les. Enfin, la mesure doit être accompagnée d'un contexte : un PSI de 0,30 causé par une nouvelle source de données légitime n'appelle pas la même réponse qu'un PSI de 0,30 causé par une erreur de conversion d'unité.
+
+La fréquence, elle, se décide sur deux contraintes simultanées : il faut assez d'observations pour que la mesure soit stable, et assez souvent pour que l'alerte arrive avant le préjudice. Pour un flux de dossiers traités chaque jour, une mesure quotidienne sur sept jours glissants, complétée par un rapport hebdomadaire de synthèse, donne le meilleur compromis : l'alerte tombe au plus tôt après quelques centaines d'observations, le rapport donne le recul nécessaire pour décider.
+
+## La qualité des données en production
+
+La qualité des données n'est pas la validation de schéma, même si les deux se confondent souvent. Le contrôle de schéma vérifie que la forme est bonne : colonnes, types, cardinalité. La qualité interroge l'aptitude de la donnée à répondre à la question posée : les revenus sont-ils renseignés, les dates sont-elles cohérentes, le fichier de la nuit est-il complet ou tronqué ? Un fichier parfaitement conforme en colonnes peut être totalement impropre à l'entraînement.
+
+La première étape consiste donc à écrire un contrat, un document versionné qui décrit ce que la source promet : colonnes et types, plages admises, règles de dépendance entre champs, taux de remplissage minimal, fréquence d'arrivée. Il se place dans le dépôt, à côté du code, et se teste à chaque extraction. Il devient le point de négociation entre qui produit les données et qui les consomme : on ne discute plus de ressenti, mais d'une ligne de contrat passée au rouge.
+
+Six familles de contrôles couvrent l'essentiel, chacune avec sa réaction propre. La complétude compte les valeurs absentes par colonne, la validité vérifie les bornes et les formats, l'unicité repère les doublons, la fraîcheur mesure l'écart entre la date la plus récente et l'extraction, le volume compare le nombre de lignes à la moyenne des périodes précédentes. La distribution, enfin, est l'objet même de ce chapitre : elle relie la qualité des données à la surveillance de dérive.
+
+```table
+| Contrôle | Question posée | Exemple au crédit | Sévérité |
+|---|---|---|---|
+| Complétude | Les champs obligatoires sont-ils remplis ? | Revenu renseigné dans plus de 99 % des dossiers | Bloquante en dessous de 95 % |
+| Validité | Les valeurs sont-elles dans les bornes ? | Taux entre 0 et 1, âge entre 18 et 95 | Bloquante |
+| Unicité | Le dossier est-il déjà présent ? | Identifiant de dossier en double | Bloquante |
+| Fraîcheur | Le flux arrive-t-il à l'heure ? | Dernier dossier daté de moins de 26 heures | Bloquante après un retard |
+| Volume | Le débit est-il normal ? | Entre 80 % et 120 % du volume médian | Avertissement |
+| Distribution | La population est-elle la même qu'avant ? | PSI des variables critiques inférieur à 0,20 | Avertissement, puis alerte |
+```
+
+
+La réaction à un contrôle en échec est une décision de conception, pas un détail d'implémentation. On peut tout rejeter, ce qui protège le modèle mais arrête la chaîne ; isoler les lignes fautives dans une quarantaine, ce qui perd du volume en silence ; ou laisser passer et signaler, ce qui expose le modèle à des entrées douteuses. Le bon choix dépend de la nature de la faute : un champ vide sur une variable non critique se quarantaine, une colonne entière absente arrête tout, et une incohérence de format systématique se traite en amont, pas en aval.
+
+```python
+CONTRAT = {
+    "revenu":        {"type": "nombre", "min": 0,      "max": 500000, "rempli": 0.99},
+    "anciennete":    {"type": "nombre", "min": 0,      "max": 40,     "rempli": 0.99},
+    "dette":         {"type": "nombre", "min": 0,      "max": 1,      "rempli": 0.97},
+    "historique":    {"type": "nombre", "min": 0,      "max": 1,      "rempli": 0.99},
+    "date_dossier":  {"type": "date",   "max_jours": 2},
+}
+
+def controler(lignes, contrat=CONTRAT):
+    """Renvoie (rapport, bloquant). Chaque colonne est jugee par le contrat."""
+    rapport, bloquant = [], False
+    total = max(len(lignes), 1)
+    for colonne, regle in contrat.items():
+        valeurs = [l.get(colonne) for l in lignes]
+        renseignees = [v for v in valeurs if v is not None and v != ""]
+        taux = len(renseignees) / total
+        if taux < regle.get("rempli", 1.0):
+            rapport.append((colonne, "remplissage", round(taux, 4)))
+            bloquant = True
+        if regle["type"] == "nombre":
+            hors_bornes = 0
+            for v in renseignees:
+                try:
+                    x = float(v)
+                except (TypeError, ValueError):
+                    hors_bornes += 1
+                    continue
+                if not (regle["min"] <= x <= regle["max"]):
+                    hors_bornes += 1
+            if hors_bornes:
+                rapport.append((colonne, "valeurs hors bornes", hors_bornes))
+                bloquant = True
+    return rapport, bloquant
+```
+
+Un point souvent oublié : la qualité s'apprécie aussi par rapport à l'entraînement, pas seulement en valeur absolue. On appelle écart entraînement-service le cas où le service reçoit des données préparées autrement que celles qui ont servi à apprendre — unités différentes, codage différent de la variable catégorielle, ordre des colonnes permuté. Le contrôle le plus économique consiste à faire passer, à chaque déploiement, le même dossier de référence par la chaîne d'entraînement puis par le service, et à exiger des sorties identiques à la décimale.
+
+Enfin, la qualité des données a un propriétaire : un contrôle dont personne ne reçoit l'alerte n'existe pas, et un contrôle qui alerte sans indiquer à qui écrire produit de la résignation. Associez chaque famille à un canal, à un nom et à un délai de prise en charge, puis publiez ce tableau avec le contrat : la donnée est un service comme un autre.
+
+## L'intégration et la livraison continues pour le machine learning
+
+L'intégration continue classique exécute des tests à chaque fusion de branche, construit un livrable, le teste et le prépare à la livraison. Le machine learning n'abandonne rien de cette discipline, mais il y ajoute trois complications qui changent la mise en œuvre : les artefacts sont multiples — code, données, modèle, image — ; une partie des tests est statistique et donc intrinsèquement seuillée ; et une exécution complète demande parfois des heures, ce qui interdit de tout placer devant la fusion d'une branche.
+
+On décrit couramment trois lettres. L'intégration continue vérifie le code et les données : analyse de style, tests unitaires, contrôles de contrat, et un entraînement échantillon rapide qui prouve que la chaîne tient debout. La livraison continue construit et publie : image du service, modèle inscrit au registre en état de préparation, puis déploiement sur l'environnement de recette avec des tests de bout en bout. La formation continue est la nouveauté : elle répète, sur un calendrier ou sur événement de données, l'entraînement et l'évaluation, puis propose un modèle sans que quiconque touche au code.
+
+La question de la vitesse se règle par la hiérarchie des tests. Ce qui doit répondre en quelques minutes — style, unitaires, contrat de données sur un échantillon — bloque la fusion. Ce qui prend du temps — entraînement complet, évaluation par coupe, test de latence réelle — s'exécute la nuit et bloque la publication, pas l'écriture : le développeur garde un retour rapide, la mise en production reste protégée par l'examen complet.
+
+```yaml
+name: pipeline-credit
+on:
+  push: {branches: [main]}
+  schedule: [{cron: "0 5 * * 1"}]   # entrainement hebdomadaire, lundi 05h
+
+jobs:
+  verifications:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environnement fige
+        run: uv pip install -r requirements.lock
+      - name: Analyse et tests unitaires
+        run: pytest tests/unit -q
+      - name: Contrat de donnees
+        run: python src/validate.py data/raw/credit.csv --contract contracts/credit.yaml
+
+  entrainement:
+    needs: verifications
+    runs-on: ubuntu-latest
+    steps:
+      - name: Entraine, evalue, enregistre
+        run: python src/train.py --seed 42 && python src/evaluate.py --baseline 0.81
+      - name: Publication en preparation
+        if: success()
+        run: python src/register.py --stage staging
+
+  recette:
+    needs: entrainement
+    runs-on: ubuntu-latest
+    environment: recette
+    steps:
+      - name: Tests de bout en bout sur le service
+        run: pytest tests/e2e -q
+      - name: Verification de la latence et du schema
+        run: python src/slo_check.py --url http://credit-api.recette
+
+  production:
+    needs: recette
+    runs-on: ubuntu-latest
+    environment: production   # validation humaine exigee par la plateforme
+    steps:
+      - name: Deploiement canary 5 %
+        run: python src/deploy.py --canary 5 --gate reports/evaluation.json
+```
+
+Cette déclaration contient les trois garnitures qui séparent un pipeline fiable d'un script fragile : les dépendances entre emplois imposent l'ordre sans intervention humaine ; l'environnement nommé production exige un clic de quelqu'un, ce qui n'est pas de la méfiance mais de la responsabilité ; le verrou d'environnement figure parmi les entrées, si bien qu'une modification de dépendance repasse tous les examens.
+
+Les secrets méritent une règle absolue : aucune clé d'accès n'est écrite dans le dépôt ni dans les journaux. Elle est injectée à l'exécution, depuis le coffre à secrets de la plateforme, avec une durée de vie courte et un périmètre réduit à l'emploi concerné. Une clé fuitée dans un journal d'intégration est un incident de sécurité, et il se traite comme tel.
+
+```table
+| Sujet | Intégration continue classique | Intégration continue pour le machine learning |
+|---|---|---|
+| Artefact principal | Paquet logiciel ou image | Image, modèle et jeu de données |
+| Tests de référence | Assertions exactes | Seuils sur métriques statistiques |
+| Déclencheur | Chaque fusion de branche | Fusion, calendrier, arrivée de données |
+| Durée typique | Quelques minutes | Minutes pour les tests, heures pour l'entraînement |
+| Validation humaine | Rare | Systématique avant la production |
+| Échec le plus fréquent | Code cassé | Métrique sous le seuil ou contrat de données |
+| Retour arrière | Redéploiement du paquet | Repointage de l'alias du registre |
+```
+
+
+Mesurez enfin l'équipe elle-même : fréquence de publication des modèles, délai entre une modification de code et sa présence en production, temps moyen de retour à un état fonctionnel après incident. Sans ces trois nombres, vous ignorez où vous en êtes, quel que soit le nombre d'outils installés.
+
+## Le cas concret : un crédit remis en production chaque semaine
+
+Réunissons maintenant tout ce que ce chapitre a posé, sur le modèle de crédit qui nous sert de fil rouge. La semaine suit un rythme fixe, et c'est précisément ce rythme qui constitue l'industrialisation : plus personne ne décide le matin même de réentraîner, plus personne ne cherche l'adresse du fichier du mois dernier, plus personne n'improvise le seuil d'alerte.
+
+```table
+| Moment | Activité | Responsable | Porte de sortie |
+|---|---|---|---|
+| Lundi 05h | Extraction et contrôle de contrat | Automate | Contrat vert ou alerte |
+| Lundi 06h | Entraînement avec graine fixe | Automate | Empreinte et métriques |
+| Lundi 07h | Évaluation contre le modèle en service | Automate | Seuil atteint ou publication refusée |
+| Lundi 08h | Inscription au registre, état de préparation | Automate | Entrée consultable |
+| Lundi 09h | Revue du rapport, validation humaine | Responsable modèle | Passage en production |
+| Mardi 09h | Mode silencieux terminé, canari à 5 % | Automate | Palier vert ou retour arrière |
+| Mercredi | Passage à cent pour cent | Automate | Ancienne version archivée |
+| Vendredi | Rapport hebdomadaire de dérive et de qualité | Équipe | Décisions pour la semaine suivante |
+```
+
+
+Le bloc suivant est un extrait de journal : chaque ligne nomme l'étape, son verdict et la référence qui la rend vérifiable, relisible un an plus tard sans explication orale.
+
+```text
+2026-10-05 05:00:12 extract    OK    lignes=18422 empreinte=9f2c41a7 dates=2026-09-28..2026-10-04
+2026-10-05 05:00:41 validate   OK    contrat=credit.yaml v3 rejetes=14 remplissage_min=0.973
+2026-10-05 05:01:02 quarantine WARN  colonne=anciennete_revenu valeurs_illisibles=6
+2026-10-05 05:07:55 train      OK    graine=42 environnement=3f81 auc=0.8432 duree=412s
+2026-10-05 05:09:10 evaluate   OK    auc=0.8432 seuil=0.8100 ecart=+0.0332 coupes=4/4 vertes
+2026-10-05 05:09:12 register   OK    version=12 stage=staging auteur=pipeline hebdo
+2026-10-05 09:14:31 approve    OK    version=12 stage=production valide_par=martin.revy
+2026-10-06 09:00:05 canary     OK    palier=5pct latence_p95=41ms erreurs=0.0002
+2026-10-06 09:00:07 drift      OK    psi_max=0.061 (revenu) ks_max=0.048 (dette)
+2026-10-07 09:00:03 rollout    OK    palier=100pct version_11=archivee retour_arriere_teste=8s
+```
+
+Le vendredi, l'équipe passe en revue deux rapports : celui de la dérive, variable par variable, et celui de la qualité, contrôle par contrôle. C'est aussi le moment où l'on traite les cas qui demandent un jugement. Reprenons l'incident que la surveillance est faite pour attraper : le partenaire qui fournit les dossiers bascule une colonne de revenu mensuel vers un revenu annuel, sans prévenir, un jeudi matin.
+
+La chaîne réagit en séquence, et chacun des maillons a été prévu. Le contrôle de contrat ne bascule pas — le type reste numérique — mais la distribution explose : PSI de 0,31 sur le revenu, KS de 0,44, volume inchangé. L'alerte part au canal de l'équipe, pas à une boîte générique. La personne d'astreinte ouvre le rapport, compare dix dossiers bruts et constate le facteur douze. La décision est immédiate : on coupe la source, on rejoue la période depuis la dernière extraction saine, on corrige le contrat pour exiger l'unité dans le nom de colonne, et on relance la chaîne. Aucun modèle n'a été réentraîné, parce que le problème n'était pas dans le modèle.
+
+Cette histoire illustre la distinction la plus utile du chapitre : la surveillance de dérive est un détecteur de causes, pas un bouton de réentraînement. Automatiser l'alerte, oui ; automatiser la décision, seulement quand la cause est connue et répétitive.
+
+Un défi propre au crédit vient compliquer l'évaluation : l'étiquette arrive tard. Le défaut se constature soixante-dix à quatre-vingt-dix jours après la décision, si bien que tout modèle est toujours jugé sur ce qu'il faisait il y a trois mois. On compense par trois pratiques : un jeu de référence figé pour comparer deux modèles dans les mêmes conditions, des indicateurs de substitution observables le jour même — calibrage, part d'accord entre modèles, stabilité du taux d'approbation — et le modèle précédent conservé en mode silencieux, de sorte que la comparaison soit déjà écrite quand les étiquettes finissent par arriver.
+
+Enfin, l'industrialisation se jauge à ce que l'équipe ne fait plus : personne ne reprend un fichier Excel pour vérifier un chiffre, personne ne cherche le bon modèle puisque l'alias du registre répond en une requête, personne ne redoute le vendredi après-midi puisque le retour arrière a été testé et prend huit secondes. C'est à cette liste négative, et non au nombre d'outils installés, que l'on reconnaît une chaîne devenue une usine.
+
+## À retenir
+
+- Un modèle qui ne se reproduit pas n'est pas un modèle, c'est un coup de chance ; la reproductibilité combine graine, environnement verrouillé et données versionnées.
+- La graine se pose avant l'import des bibliothèques, sur chaque estimateur, et l'entraînement séquentiel évite les divergences liées au parallélisme ; deux empreintes identiques prouvent le déterminisme, jamais la qualité.
+- Git versionne le texte, un outil de versionnage de données place les gros fichiers en stockage distant et n'en garde qu'un pointeur.
+- Le découpage entraînement, validation, test doit être une fonction déterministe de la clé d'observation, sinon les métriques ne sont jamais comparables.
+- Un pipeline se juge à son déterminisme, à son idempotence et à son observabilité ; il s'arrête de lui-même quand une étape échoue.
+- Le registre relie modèle, signature, métriques, empreinte des données, commit et responsable ; l'alias de production rend le retour arrière instantané.
+- Trois familles de tests précèdent toute publication : données, code, modèle — avec des seuils décidés avant l'observation.
+- Le mode silencieux valide la chaîne, le canary valide le métier ; aucun des deux ne remplace une fenêtre d'observation et des critères écrits à l'avance.
+- La dérive de données se répare par un réentraînement, la dérive de concept exige une réflexion sur le problème ; agir dans le mauvais sens coûte des semaines.
+- Un PSI inférieur à 0,10 se surveille, entre 0,10 et 0,25 il s'observe, au-delà de 0,20 sur une variable critique il déclenche l'alerte.
+- Une alerte ouvre une investigation : le réentraînement automatique n'est qu'une issue parmi plusieurs, jamais la réponse par défaut.
+
+## Erreurs fréquentes
+
+- Enregistrer une graine sans figer les versions des bibliothèques, et croire la reproductibilité acquise.
+- Comparer deux métriques obtenues sur deux découpages différents du même jeu, et conclure à un progrès.
+- Mettre les données dans Git « pour aller vite », jusqu'au dépôt devenu ingérable ou à la fuite d'informations personnelles.
+- Écraser le fichier du modèle à chaque entraînement, ce qui rend tout retour arrière impossible au moment où on en a besoin.
+- Publier en remplaçant l'ancienne version d'un bloc, sans mode silencieux, sans palier et sans critère de repli.
+- Fixer les seuils d'alerte après avoir regardé les courbes, jusqu'à ce que plus rien ne se déclenche.
+- Alimenter la surveillance en comparant la production au jeu d'entraînement brut, ce qui fabrique une dérive permanente artificielle.
+- Déclencher un réentraînement dès la première alerte, alors que la cause est le plus souvent une erreur de format ou d'unité en amont.
+- Oublier de tester le retour arrière, qui échoue précisément lorsqu'on en a besoin un vendredi soir.
+- Laisser une alerte sans destinataire nommé ni délai de prise en charge, ce qui revient à ne pas surveiller du tout.
+
+## Pour aller plus loin
+
+Trois ressources suffisent à ancrer ce chapitre dans la pratique. La documentation de MLflow, sur mlflow.org, décrit le registre de modèles, la signature des entrées, les transitions d'état et le suivi d'expériences : c'est la référence la plus directe pour transformer un dossier de fichiers en un catalogue consultable. Le guide d'Evidently, sur docs.evidentlyai.com, montre la construction de rapports de dérive et de qualité, avec les formules des indices et des modèles de rapports prêts à l'emploi ; il est idéal pour passer de la formule de cette leçon à un rapport hebdomadaire automatique. Enfin, le parcours MLOps d'AWS, sur aws.amazon.com/sagemaker/mlops, décrit une chaîne complète de bout en bout — pipeline, registre, déploiement, surveillance — dans un environnement managé, ce qui aide à situer les pièces que vous avez montées à la main.
+
+Au-delà de ces trois lectures, deux habitudes valent mieux que dix outils supplémentaires. Écrivez, avant tout déploiement, la réponse exacte à trois questions : quelle version tourne, sur quelles données a-t-elle été apprise, en combien de temps peut-on revenir en arrière. Si l'une des trois demande plus de quelques minutes à trouver, votre chaîne a un trou, quel que soit son niveau d'automatisation. Rejouez ensuite, une fois par trimestre, un incident fictif — une source qui cesse d'arriver, un format qui change, une métrique qui chute — et chronométrez la réaction : ce que l'on n'a jamais exercé ne fonctionne pas le jour où c'est grave.
+
+## Et maintenant : mettez votre chaîne à l'épreuve
+
+Vous avez les pièces ; il reste à les assembler sur votre propre terrain. Prenez le modèle que vous avez déployé au chapitre 7, ou un entraînement que vous connaissez bien, et écrivez la chaîne minimale qui vous donne les trois certitudes de la section précédente : un verrou de dépendances commité, un script d'entraînement qui lit ses données par empreinte et écrit ses métriques dans un rapport, et un manifeste qui relie le tout. Exécutez-le deux fois de suite et comparez les empreintes des modèles produits : si elles diffèrent, vous venez de localiser votre première source de non-reproductibilité.
+
+Ensuite, ajoutez la surveillance. Mesurez le PSI et le KS de chaque variable entre une fenêtre de référence que vous figez aujourd'hui et les données récentes, puis observez une période sans changement pour connaître le bruit de fond de vos propres mesures : c'est cette valeur, et non un seuil recopié dans un tableau, qui doit décider de votre premier seuil d'alerte. Puis déclenchez-le volontairement, en modifiant une variable de quelques dizaines de pourcents, et vérifiez que l'alerte arrive au bon endroit, avec le bon nom.
+
+Terminez par la partie que tout le monde repousse : le retour arrière. Écrivez la commande qui remet la version précédente, exécutez-la, mesurez le temps, puis consignez-le dans le pipeline. Vous n'avez plus un modèle en production : vous avez un service, c'est-à-dire un modèle que l'on peut changer sans trembler. C'est la dernière compétence du parcours, et la première d'un métier.

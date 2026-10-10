@@ -1,0 +1,93 @@
+Bienvenue dans le premier chapitre du parcours DevOps, consacré à Linux et à l'automatisation de base. Le système Linux n'est pas un système d'exploitation parmi d'autres : c'est l'infrastructure silencieuse sur laquelle reposent la grande majorité des serveurs, des conteneurs, des routesurs d'entreprise et des chaînes de déploiement. Que vous visiez un poste d'administrateur systèmes, d'ingénieur plateforme, ou simplement le statut de développeur capable de comprendre ce qui se passe sous le capot de sa machine, la maîtrise du shell n'est pas une option décorative. C'est la compétence qui sépare celui qui clique sur une interface de celui qui sait exactement quelle commande exécuter, quel fichier modifier et pourquoi le service ne démarre pas.
+
+Au terme de ce chapitre, vous saurez lire une ligne de commande comme une phrase dont chaque mot a une fonction précise. Vous manipulerez les chemins de fichiers sans hésiter, vous lirez et filtrerez des journaux volumineux, vous composerez des commandes simples en pipelines, vous attribuerez des permissions avec discernement, puis vous écrirez vos premiers scripts bash dotés de variables et de conditions. Vous découvrirez ensuite le système de services systemd, l'art de consulter les journaux avec journalctl, et les fondamentaux d'une connexion SSH correctement sécurisée. Chaque notion est immédiatement applicable sur une machine réelle, et aucune ne demande de connaissances préalables en programmation.
+
+Un conseil sur la manière d'aborder ce cours. Le shell s'apprend comme apprend une langue étrangère : en la parlant, pas en la lisant. Ouvrez un terminal, créez un répertoire de travail jetable, et recopiez chaque commande des exemples avant de la modifier. La compréhension vient après le geste, rarement avant. Les blocs de code de cette leçon sont faits pour être exécutés tels quels, puis détournés : changez un nom de fichier, ajoutez une option, observez ce que cela produit. Nous avancerons en alternant des explications détaillées, des sessions de commandes commentées et des mises en garde sur les pièges classiques, qui sont nombreux dans ce domaine.
+
+Enfin, une remarque sur l'environnement de travail et sur la prudence. Pour suivre ce chapitre en toute sécurité, privilégiez une machine virtuelle, un conteneur ou une distribution d'essai : les commandes montrées ici sont inoffensives dans un répertoire de travail isolé, mais certaines, nous le verrons, modifient des permissions ou des fichiers de configuration de bout en bout. Le réflexe à acquérir dès la première ligne est le suivant : lire la commande, comprendre ce qu'elle modifie, puis exécuter. Ce chapitre vous donnera les mots pour comprendre ; il vous appartiendra de contracter l'habitude de ne jamais taper une commande dont vous ne savez pas ce qu'elle fait.
+
+## Le shell, ce dialogue entre vous et le noyau
+
+Le shell est un programme qui reçoit les commandes que vous tapez au clavier, les interprète, puis les transmet au noyau Linux sous forme d'appels système. Il joue le rôle d'interprète entre vous et le matériel : vous écrivez du langage humain structuré, il traduit en ordres binaires. Il existe plusieurs shells, bash restant le plus répandu sur les distributions serveur, au côté de zsh, dash et fish. Quel que soit celui que vous utilisez, la grammaire de base reste identique : une commande, suivie d'options, suivies d'arguments, le tout séparé par des espaces.
+
+```bash
+commande [options] [arguments]
+ls -l /var/log
+grep -i "erreur" fichier.txt
+```
+
+Les options, aussi appelées drapeaux, modifient le comportement de la commande. Certaines se présentent sous forme compacte, comme -l -a -h, que l'on combine souvent en -lah ; d'autres prennent une valeur, comme -n 20 pour demander vingt lignes. La distinction est importante : une option sans argument se cumule, une option avec argument consomme le mot qui la suit. Cette grammaire, une fois assimilée, vous permet d'extrapoler la syntaxe de presque n'importe quel outil en ligne de commande, y compris ceux que vous n'avez jamais rencontrés.
+
+Avant d'aller plus loin, il faut comprendre d'où viennent les commandes que vous tapez. Le shell ne les connaît pas toutes par magie : il les cherche dans une liste de répertoires indiqués par une variable d'environnement, dont la conventionnelle contient les dossiers de programmes système. La commande type vous dit si une commande est un alias, une fonction, un shell résident ou un programme externe, tandis que which indique le chemin exact du binaire qui sera lancé. Cette distinction a une conséquence pratique : lorsqu'un script fonctionne dans votre terminal mais échoue lancé par un planificateur de tâches, la cause la plus fréquente est un chemin différent, et non un défaut de logique.
+
+Deux commandes vous accompagnent partout : man et --help. La première affiche le manuel complet d'un utilitaire, la seconde son résumé pratique. Lire un manuel peut sembler intimidant au début, car les pages sont denses et rédigées pour des lecteurs avertis, mais une habitude simple suffit : chercher d'abord la section des options, repérer celles qui vous intéressent, puis revenir aux exemples en fin de page. Un utilisateur expérimenté ne mémorise pas toutes les commandes, il sait où les trouver vite.
+
+Le shell conserve aussi un état que vous devez apprendre à interroger. Chaque commande renvoie un code de sortie, accessible avec l'instruction echo $? : zéro signifie succès, tout autre valeur signifie un type d'échec précis. Cette convention, qui paraît anodine, est la pierre angulaire de toute automatisation : un script s'appuie sur ces codes pour décider de la suite. Il faut donc résister à la tentation d'ignorer les erreurs, car ignorer un code de retour non nul revient à laisser une panne se propager silencieusement dans une chaîne de traitement.
+
+Enfin, le shell offre un confort d'usage qui change radicalement la productivité. La touche tabulation complète les noms de fichiers et de commandes, la flèche haute parcourt l'historique, la combinaison control et r lance une recherche dans cet historique, control et c interrompt une commande bloquée, control et l nettoie l'écran. Ces raccourcis ne sont pas des gadgets : ils réduisent les fautes de frappe, qui sont la première cause d'erreurs en ligne de commande, et ils vous permettent de rester concentré sur la logique plutôt que sur la mécanique.
+
+## Autour de vous : pwd, ls, cd et l'art des chemins
+
+Toute action dans un système de fichiers commence par la position. La commande pwd affiche le répertoire courant, c'est-à-dire l'endroit exact où vous vous trouvez dans l'arborescence. Deux notions de chemins structurent tout le reste. Un chemin absolu part toujours de la racine, indiqué par une barre oblique, et ne dépend pas de votre position : /var/log/nginx est absolu. Un chemin relatif part de votre répertoire courant : log/nginx ne signifie quelque chose que si l'on sait où vous êtes. La confusion entre les deux est l'origine d'une bonne partie des erreurs de débutant.
+
+```bash
+pwd
+cd /etc
+ls -la
+cd ../var/log
+```
+
+La commande cd vous déplace. Elle accepte plusieurs raccourcis utiles : cd sans argument ramène au dossier personnel, cd - revient au répertoire précédent, cd .. remonte d'un niveau, et tilde désigne votre home directory. Les deux points et le point seul désignent respectivement le répertoire parent et le répertoire courant. Préférez toujours des chemins explicites dans vos scripts : un cd relatif dans un script exécuté par cron ou par un service s'exécute dans un répertoire que vous ignorez probablement, et le script échouera sans raison apparente.
+
+La commande ls est votre principal outil d'inspection. L'option -l affiche la liste détaillée, avec le propriétaire, le groupe, les permissions en notation symbolique, la taille et la date de modification. L'option -a révèle les fichiers cachés, ceux dont le nom commence par un point, et qui concentrent souvent la configuration d'une application. L'option -h rend les tailles lisibles par un humain, en kilo ou méga octets. Combinées, ces options deviennent -lah, l'une des commandes les plus tapées au monde.
+
+Les motifs de correspondance, ou jokers, élargissent considérablement votre champ d'action. L'astérisque remplace n'importe quelle séquence de caractères, le point d'interrogation un seul caractère, et les crochets une liste de caractères possibles. Ainsi, ls *.log liste les fichiers journaux du répertoire courant, et rm ancien?.txt cible les fichiers courts dont le nom commence par ancien suivi d'un caractère. Attention cependant : un astérisque mal placé dans une commande de suppression peut viser bien plus que prévu, ce qui justifie à nouveau le réflexe de lire avant d'exécuter.
+
+L'affichage détaillé mérite une lecture méthodique, car il concentre une quantité énorme d'information sur une seule ligne. Vient d'abord le type, d pour un répertoire, tiret pour un fichier ordinaire, l pour un lien symbolique, puis les permissions, le nombre de liens durs, le propriétaire, le groupe, la taille en octets et la date de dernière modification. Une taille qui semble absurde sur un petit fichier, comme quarante ou cent vingt-huit octets, reflète l'espace réellement occupé sur le disque et non la quantité de données écrites. Apprenez à lire cette ligne d'un coup d'œil : elle vous dira presque toujours si un fichier est à sa place, sain et accessible à qui il le doit.
+
+Pour aller au-delà de l'inspection locale, retenez l'existence de find, qui recherche des fichiers selon le nom, la date ou la taille, et de tree, qui dessine l'arborescence. Ces outils complètent ls sans le remplacer : ls décrit un répertoire, find interroge tout un sous-arbre. Cette différence entre décrire et chercher vous sera utile dès que vous manipulerez des serveurs dont la structure de fichiers vous sera inconnue, car la première tâche de l'administrateur est toujours de comprendre où il se trouve.
+
+## Lire et chercher : cat, less, head, tail et grep
+
+Un fichier de texte se lit de plusieurs manières, et le choix de l'outil dépend de sa taille et de votre intention. cat affiche un fichier en entier d'un seul mouvement : il est parfait pour un petit fichier de configuration, dangereux pour un journal de dix gigaoctets qui noiera votre écran. less, lui, ouvre une vue paginée dans laquelle vous vous déplacez avec les flèches et la touche q pour quitter. Règle simple : si vous ne connaissez pas la taille du fichier, commencez toujours par less.
+
+```bash
+cat /etc/hostname
+less /var/log/syslog
+tail -n 50 /var/log/syslog
+tail -f /var/log/syslog
+head -n 20 config.yml
+wc -l config.yml
+```
+
+Les commandes head et tail extraient respectivement le début et la fin d'un fichier, avec un nombre de lignes configurable. L'option -f de tail transforme l'affichage en direct : elle reste ouverte et imprime chaque ligne au fil de sa création. C'est l'outil de référence pour observer un service en fonctionnement, car il vous montre l'effet d'une action en temps réel. La commande wc -l compte les lignes, wc -c les octets, une information pratique pour vérifier qu'un fichier n'est pas vide avant de le traiter.
+
+La commande grep est le couteau suisse de la recherche dans du texte. Elle filtre les lignes correspondant à un motif et les affiche numérotées avec -n, ignore la casse avec -i, inverse la sélection avec -v, et remonte récursivement dans les sous-répertoires avec -r. Dans la pratique quotidienne, la moitié du travail d'investigation consiste à chercher une chaîne précise dans un arbre de fichiers : un nom d'hôte dans des configurations, un code d'erreur dans des journaux, un mot de passe oublié dans un script. grep fait ce travail en une fraction de seconde.
+
+Les motifs de grep acceptent des expressions régulières, dont les plus utiles sont le point, qui remplace n'importe quel caractère, l'astérisque, qui répète l'élément précédent, et les ancres début et fin de ligne. Commencez par les chercher littéralement, puis enrichissez progressivement : beaucoup d'utilisateurs passent des années sans découvrir qu'un motif entre guillemets peut être une expression régulière complète. N'oubliez pas non plus que grep renvoie un code de sortie différent selon qu'il a trouvé ou non, ce qui en fait un excellent filtre dans un script conditionnel.
+
+La sortie de grep s'adapte aussi au contexte d'affichage. Redirigée vers un fichier, elle devient un rapport ; poussée dans un paginateur, elle reste navigable ; laissée telle quelle, elle défile trop vite pour être lue. Un réglage simple consiste à écrire les résultats dans un fichier temporaire, puis à l'ouvrir avec less : vous gardez la possibilité de chercher à l'intérieur du résultat avec la touche barre oblique, de vous déplacer de page en page, et de quitter sans rien perdre. Cette séquence filtrer, enregistrer, consulter constitue la boucle de travail de base de tout diagnostic sur serveur.
+
+Un réflexe de méthode s'impose avant toute recherche : reformuler ce que vous cherchez en termes que la machine peut reconnaître. Si vous cherchez pourquoi un service échoue, tapez d'abord grep -i error sur son journal, puis affinez avec le nom du service, puis avec la date. Cette approche en entonnoir, du général au précis, est infiniment plus efficace que de faire défiler un journal de méga-octets à l'œil nu. Elle constitue d'ailleurs la première étape de tout diagnostic d'incident en production.
+
+## Redirection : faire circuler les flux d'un programme
+
+Chaque commande possède trois canaux : une entrée standard, numérotée zéro, une sortie standard, numérotée un, et une sortie d'erreurs, numérotée deux. Par défaut, l'entrée vient du clavier et les deux sorties vont à votre écran. La redirection permet de rebrancher ces canaux vers des fichiers ou d'autres commandes, et c'est précisément ce mécanisme qui rend le shell si puissant : un programme qui écrit sur sa sortie standard peut alimenter un fichier, un autre programme ou un archivage, sans jamais savoir ce qu'il y a de l'autre côté.
+
+```bash
+grep -i "erreur" app.log > resultats.txt
+grep -i "erreur" app.log >> resultats.txt
+ls nosuchfile 2> erreurs.txt
+commande 2>&1 > sortie.txt
+commande > /dev/null 2>&1
+```
+
+L'opérateur de redirection simple écrase le fichier de destination à chaque exécution, tandis que l'opérateur double chevron ajoute en fin de fichier. Cette différence est l'une des plus coûteuses à découvrir a posteriori : un script qui utilise la mauvaise forme efface silencieusement des données accumulées depuis des mois. La bonne habitude consiste à écrire dans un fichier temporaire, à vérifier le résultat, puis à déplacer le fichier à sa place définitive.
+
+La sortie d'erreurs se redirige séparément, ce qui permet de conserver le journal propre tout en affichant les erreurs à l'écran. L'ordre des opérateurs compte : rediriger d'abord la sortie vers un fichier, puis la redirection d'erreur vers la sortie, n'a pas le même effet que l'inverse. Composez cette séquence avec soil, ou utilisez la forme équivalente qui fusionne les deux flux en un seul, une formulation plus lisible et plus courante dans les scripts modernes.
+
+Le fichier spécial /dev/null mérite une mention particulière. Il absorbe tout ce qu'on lui envoie, sans le conserver ni le remplir. On l'utilise pour supprimer une sortie inutile, pour vider un fichier d'un seul geste, ou pour tester qu'une commande s'exécute sans se soucier de son affichage. Attention à ne jamais l'inverser : rediriger /dev/null vers un fichier réel remplace son contenu par rien, de manière définitive et silencieuse. C'est un classique des dégâts causés par la précipitation.
+
+La commande tee illustre une troisième possibilité, à mi-chemin des deux : elle reçoit un flux, l'affiche à l'écran pour que vous le voyiez défiler, et l'écrit simultanément dans un fichier. On l'utilise quand on veut à la fois suivre une opération en direct et conserver la trace de ce qui s'est passé, par exemple pendant une installation ou une restauration. Combinée à l'opérateur qui ajoute au fichier, elle permet même d'accumuler plusieurs exécutions dans un même journal, une manière élégante de constituer un historique d'exploitation.
+
+La dernière grande redirection est l'entrée standard alimentée par un fichier, qui permet de traiter des données sans passer par le clavier. On l'associe souvent à la saisie en bloc, qui marque le début et la fin d'un texte multi-lignes fourni à une commande. Ce mécanisme est au cœur de la génération automatique de fichiers de configuration, et il vous sera utile dès que vous automatiserez l'installation d'un service. Il referme le chapitre sur un point essentiel : dans le shell, tout est flux, et maîtriser les flux, c'est maîtriser l'automatisation.

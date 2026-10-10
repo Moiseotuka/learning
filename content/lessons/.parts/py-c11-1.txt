@@ -1,0 +1,96 @@
+Vous voici au onzième et dernier chapitre du parcours « Python : du premier script au projet complet ». Dix chapitres vous ont mené du premier print à un projet structuré : les bases, les décisions et les boucles, les fonctions, les structures de données, les fichiers, les exceptions, les modules et les packages, puis la mise en forme d'un projet complet au chapitre huit. Les chapitres neuf et dix ont changé de registre : l'asynchrone vous a appris à faire plusieurs choses en même temps sans perdre le fil, l'architecture et les tests vous ont appris à faire durer le code. Ce dernier chapitre achève le parcours sur une compétence que l'on attend d'un développeur confirmé : savoir répondre à la question « pourquoi est-ce lent ? » avec une mesure, et jamais avec une intuition.
+
+La performance a mauvaise réputation, et à tort. Elle est souvent associée à des micro-optimisations mystérieuses, à des astuces de concours, à un style de code tordu que personne n'ose relire. D'un autre côté, une idée répandue veut que Python soit « trop lent » et qu'il faille donc réécrire en C dès le premier ralentissement. Les deux extrêmes se rejoignent sur un même défaut : ils n'ont jamais mesuré quoi que ce soit. Un programme rapide n'est pas un programme écrit avec des techniques rares, c'est un programme dont on a identifié le goulot d'étranglement, corrigé ce goulot, puis vérifié le gain. Rien de plus, rien de moins. La lisibilité que vous avez appris à soigner aux chapitres trois et huit reste un actif : une optimisation qui rend le code illisible doit se justifier par un gain mesuré, chiffré, et écrit noir sur blanc.
+
+Nous allons suivre un cas unique du début à la fin, celui d'un logiciel de vie scolaire dont les rapports ralentissent. Dans un collège de six cents élèves, la secrétaire demande chaque trimestre le relevé de notes par classe, puis le tableau de bord des assiduités, puis la liste des absences à signaler aux familles. Au départ, le rapport de notes de la classe de cinquième B sort en trois secondes : personne ne se plaint. Six mois plus tard, avec quatre fois plus d'élèves et des colonnes supplémentaires, le même rapport met quarante-deux secondes, l'interface bloque pendant ce temps, et la secrétaire rafraîchit la page en croyant que le logiciel est tombé. Ce chapitre retrace ce diagnostic : mesurer, localiser, corriger, remesurer, avec à chaque étape l'outil approprié et le chiffre qui le justifie.
+
+La méthode de la leçon est aussi simple que sévère. Chaque section présente un outil ou un choix de structure, montre la commande exacte à taper, donne le résultat attendu et ce qu'il signifie. Les blocs de code sont faits pour être copiés chez vous, sur vos propres données ; les tableaux de complexité sont faits pour être gardés à portée de main quand vous écrirez votre prochaine fonction. Et la règle d'or, que vous relirez à chaque section : on mesure avant de modifier, on change une seule chose à la fois, puis on remesure dans des conditions identiques. Aucune optimisation n'entre dans un projet sans chiffre avant, sans chiffre après et sans test qui empêche la performance de dériver.
+
+## Pourquoi mesurer avant d'optimiser
+
+L'optimisation sans mesure repose sur trois illusions. La première est celle de l'intuition : « c'est sûrement la boucle imbriquée », dit-on, alors que le profilage montrera que la boucle consomme 4 % du temps et que le reste part dans une lecture de fichier faite ligne par ligne. La deuxième est celle de la lisibilité perçue : une ligne écrite d'une certaine façon « paraît » rapide, alors que le Python est compilé en bytecode puis exécuté par une machine virtuelle, et que le coût réel d'une ligne dépend du nombre d'appels de méthode et d'allocations qu'elle déclenche, pas de son élégance. La troisième est celle du gain espéré : on passe une heure à remplacer une compréhension de liste par une boucle explicite pour gagner vingt millisecondes sur un programme qui en consomme quarante mille. Heure perdue, code appauvri, résultat invisible.
+
+Mesurer, c'est répondre à trois questions dans un ordre strict. D'abord où part le temps : quelle fonction, appelée combien de fois, cumule combien de secondes. Ensuite où part la mémoire : quels objets grossissent, quand, et à quelle vitesse. Enfin comment le coût croît avec la taille des données : double-t-on le nombre d'élèves, double-t-on le temps, ou le multiplie-t-on par quatre. La première question appelle le profilage, la deuxième l'inventaire de mémoire, la troisième l'analyse de complexité. Répondre à la troisième avant les deux premières est une erreur classique : une complexité O(n²) sur douze élèves ne se voit jamais, elle se voit sur quatre cents.
+
+Le tableau suivant sert de répertoire : à chaque symptôme observé par un utilisateur, l'outil qui y répond et la question précise qu'il résout. Servez-vous-en pour choisir votre instrument avant d'ouvrir l'éditeur, car ouvrir l'éditeur est précisément ce qu'il ne faut pas faire en premier.
+
+| Symptôme rapporté | Outil de mesure | Question à laquelle il répond |
+|---|---|---|
+| Le rapport met longtemps, quelle que soit la taille des données | cProfile | Où part le temps d'exécution ? |
+| Deux écritures du même calcul coexistent | timeit | Laquelle est la plus rapide, et de combien ? |
+| La mémoire monte jusqu'à faire tomber le service | tracemalloc | Quels objets retiennent les octets ? |
+| Le temps explose quand les données grandissent | Complexité des structures | Quelle est la croissance du coût ? |
+| Un calcul numérique parcourt des millions de valeurs | NumPy et vectorisation | Combien gagne-t-on en sortant la boucle de Python ? |
+
+L'instrument de mesure a lui-même un coût, et c'est la première limite à connaître. Un profileur ajoute un suivi à chaque appel de fonction : sur un programme de vingt secondes, cela se voit à peine ; sur une boucle de trois millisecondes, l'instrumentation peut être plus chère que le code mesuré. Deux conséquences pratiques. Mesurez toujours dans des conditions reproductibles : même machine, même interpréteur, même jeu de données, série préalablement réchauffée, plusieurs exécutions dont on retient la médiane plutôt que le minimum. Et méfiez-vous des chronométrages posés à la main avec time.time autour de quelques lignes : la résolution, la collecte des déchets et les tâches d'arrière-plan de la machine ajoutent un bruit plus grand que l'effet cherché.
+
+Le cas du collège illustre parfaitement le piège de l'optimisation opportuniste. Le premier développeur pressé, voyant le rapport de quarante-deux secondes, a réécrit l'affichage des notes en concaténant des chaînes « plus proprement », puis a remplacé trois f-strings par un formatage ancien. Le rapport est passé de quarante-deux secondes à quarante et une virgule huit. Il avait optimisé une part infime du coût total, sans savoir où allait le reste. Deux heures plus tard, un profilage sérieux révélait que trente-quatre secondes partaient dans une seule fonction, construire_lignes, dont le travail consistait à vérifier, pour chaque note, si l'élève figure dans une liste d'inscrits parcourue de haut en bas. La correction a pris douze lignes ; le gain a été de trente-neuf secondes.
+
+Une précision s'impose avant d'aller plus loin, car elle trompe souvent les débutants : le temps que l'utilisateur perçoit n'est pas le temps que le profileur mesure. Votre rapport peut consommer une seconde de processeur et mettre huit secondes à apparaître, si les données voyagent depuis une base distante, si une image se télécharge, si le navigateur attend qu'une requête expire. cProfile vous montre le travail effectué par votre processus ; il ne voit ni le réseau, ni l'attente d'un autre service, ni la file d'attente du serveur. Avant de conclure « mon code est rapide donc le problème est ailleurs », chronométrez l'expérience complète de bout en bout avec un chronomètre mural, puis entrez dans le détail avec le profileur. Les deux mesures sont complémentaires, et les confondre conduit à optimiser la mauvaise couche.
+
+Une deuxième confusion est fréquente : celle entre temps processeur et temps d'attente, que les outils modernes distinguent nettement. Un service web dont le traitement prend deux cents millisecondes mais qui attend une base de données pendant trois secondes n'a pas un problème de Python, il a un problème de requête ou de latence. Dans ce cas, la priorité passe aux index de la base, à la mise en cache du résultat ou à l'exécution asynchrone que vous avez étudiée au chapitre neuf, plutôt qu'à une réécriture du calcul. C'est pourquoi le premier réflexe reste toujours le même : mesurer l'ensemble, puis descendre d'un cran dans le détail jusqu'à isoler la couche fautive.
+
+Il existe une limite théorique à tout effort d'optimisation, formulée il y a plus de cinquante ans et toujours d'actualité : si une portion du programme ne représente que 5 % du temps total, la rendre deux fois plus rapide fait gagner 2,5 % à l'ensemble, quoi que vous fassiez. C'est la loi d'Amdahl, et elle justifie à elle seule l'ordre des opérations que nous suivrons : d'abord localiser la part dominante, ensuite l'attaquer, enfin seulement envisager de compliquer le code ailleurs. Un gain de deux sur quatre-vingt-dix-six pourcent du temps ne mérite aucune dette technique.
+
+Voici la métaphore qui doit vous rester. Un mécanicien qui entend un bruit anormal ne démonte pas le moteur au hasard : il branche un instrument, il écoute, il repère le cylindre, puis il démonte. L'oscilloscope du laboratoire joue ce rôle pour l'électronicien : il transforme une impression en une courbe lisible, avec une échelle. Le profileur fait de même pour votre programme.
+
+```image
+oscilloscope
+| Un oscilloscope affiche une mesure au lieu d'une supposition : c'est exactement l'état d'esprit à appliquer à un programme Python lent.
+```
+
+La conséquence pratique de tout ce qui précède tient en trois réflexes. Avant d'écrire une ligne d'optimisation, exécutez votre programme sous profileur et notez le nom de la fonction dominante. Avant de comparer deux variantes, écrivez un banc d'essai mesurable, fiable et jetable. Avant de valider votre correction, remesurez dans les mêmes conditions et consignez les deux chiffres dans le commentaire du correctif ou dans le ticket. Un gain non mesuré n'existe pas ; un gain mesuré une fois, sans être protégé par un test, disparaîtra au prochain refactor.
+
+## cProfile : voir où part le temps
+
+cProfile est le profileur livré avec l'interpréteur, et il suffit largement pour l'essentiel du travail. Il s'installe avec Python, il ne demande aucune dépendance, et il produit un tableau à trois colonnes : le nombre d'appels de chaque fonction, le temps qu'elle consacre exclusivement à son propre corps, et le temps cumulé qui inclut tout ce qu'elle appelle. La distinction entre temps propre et temps cumulé est la clé de lecture : une fonction dont le temps propre est élevé fait elle-même du travail ; une fonction dont le temps propre est minuscule mais dont le temps cumulé est énorme est un simple tour de passe-passe qui délègue à d'autres.
+
+Le lancement le plus simple ne demande aucune modification du code : on passe le script sur la ligne de commande et on demande un tri. L'option -s cumtime trie par temps cumulé décroissant, ce qui fait remonter les fonctions maîtresses ; l'option -s tottime trie par temps propre, ce qui fait remonter les fonctions qui calculent réellement. Toute la subtilité tient dans ce choix de tri, et il faut souvent faire les deux.
+
+```text
+$ python -m cProfile -s cumtime rapport.py classe=5eB trimestre=2
+```
+
+Le résultat tient sur un écran quand on limite le nombre de lignes, et il ressemble à ceci pour notre rapport scolaire, une fois la sortie tronquée aux douze premières fonctions :
+
+```text
+         1284731 function calls in 41.742 s
+
+   Ordered by: cumulative time
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.012     0.012   41.742   41.742 rapport.py:192(genérer_rapport)
+  400128   33.918    0.000   34.006    0.000 rapport.py:87(construire_lignes)
+  400128    6.411    0.000    6.411    0.000 <string>:1(<listcomp>)
+  400128    1.204    0.000    1.204    0.000 models.py:54(trouver_inscrit)
+      742    0.051     0.000    0.188    0.000 db.py:31(exécuter)
+        1    0.009     0.009    0.104    0.104 rapport.py:31(charger_effectif)
+```
+
+Lecture immédiate : le rapport consomme 41,742 secondes ; construire_lignes en explique 34,006 ; et surtout, elle est appelée 400 128 fois, avec un temps propre de 33,9 secondes, soit 0,000085 seconde par appel, ce qui paraît minuscule jusqu'à ce qu'on multiplie. La fonction trouver_inscrit est appelée exactement le même nombre de fois, signe mécanique d'une recherche effectuée à l'intérieur d'une boucle. À ce stade, le diagnostic n'est pas terminé, mais la direction est donnée : il faudra supprimer une recherche linéaire répétée quatre cent mille fois, pas réécrire l'affichage.
+
+Pour creuser sans rouvrir le script, on enregistre le profil dans un fichier puis on l'inspecte avec pstats, qui sait filtrer et trier. Le fragment suivant conserve les seules fonctions de votre projet, écarte les fonctions de la bibliothèque standard qui encombrent le tableau, et limite l'affichage à dix lignes :
+
+```python
+import pstats
+
+stats = pstats.Stats("rapport.prof")
+(
+    stats.strip_dirs()
+    .sort_stats("cumulative")
+    .print_stats(r"rapport|models", 10)
+)
+```
+
+Quand le script n'est pas exécutable directement, ou que vous voulez profiler une fonction précise plutôt que tout le programme, on recourt au module profile, qui fait le même travail en Python pur, avec un surcoût plus élevé mais une intégration plus souple. On place l'appel dans un bloc conditionnel de débogage, on le retire aussitôt après lecture, et surtout on ne le laisse jamais actif en production : un profileur permanent transforme un ralentissement en panne.
+
+```python
+import cProfile
+
+cProfile.run("genérer_rapport('5eB', 2)", "rapport.prof")
+```
+
+Trois usages professionnels méritent d'être connus dès maintenant. Le premier est l'intégration programmatique : la classe Profile du module profile s'utilise dans un test pour vérifier qu'une fonction dominante n'a pas repris du temps. Le second est la comparaison de deux exécutions : on profile la version d'avant, on profile la version d'après, et l'on compare les tableaux plutôt que de se fier à une impression de rapidité. Le troisième est la mise en garde inverse : un tableau dominé par des fonctions de la bibliothèque standard, comme json.dumps ou un appel réseau, indique que le goulot n'est pas dans votre code mais dans une dépendance, et qu'il faudra alors changer d'approche, par exemple en sérialisant moins ou en asynchrone.
+
+Les limites de cProfile doivent être connues pour ne pas le surinterpréter. Il mesure le temps processeur consommé par le processus Python : un appel réseau long ou une attente sur disque n'apparaîtra pas comme du temps propre, mais comme du temps cumulé dans la fonction qui attend. Son surcoût d'instrumentation rend ses chiffres inutilisables en valeur absolue sur des micro-boucles, seul le classement est exploitable. Et il ne dit rien de la mémoire : une fonction qui va vite mais qui alloue huit cents mégaoctets passera inaperçue, d'où la nécessité de l'outil suivant.
+
+La dernière discipline à installer avant de passer à la suite est celle de la trace écrite. Conservez la sortie du profilage dans le dossier du projet, avec la date, la taille du jeu de données et la version du code, puis reproduisez-la après correction. Un diagnostic qui ne laisse pas de trace se redécouvre à chaque réclamation, et personne ne peut prouver qu'un gain a réellement eu lieu. Dans le cas du collège, ce fichier, nommé profil-avant.txt, a été joint au ticket d'anomalie : trois mois plus tard, il a servi à vérifier qu'une évolution récente n'avait pas fait revenir la lenteur.

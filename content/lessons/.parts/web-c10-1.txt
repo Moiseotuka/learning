@@ -1,0 +1,123 @@
+Depuis le premier chapitre, le site de l'atelier de la Médiathèque des Lilas a cessé d'être une démonstration. Vous en avez écrit la structure sémantique, habillé les styles, programmé les comportements, récupéré les données, versionné les fichiers ; les chapitres précédents ont reconstruit l'interface en React, ajouté des hooks, mutualisé l'état dans un contexte partagé et porté une attention réelle à la performance. Le résultat fonctionne : la liste des ateliers s'affiche, le formulaire d'inscription enregistre une demande, un message d'erreur apparaît quand le serveur ne répond pas. C'est un acquis considérable. Ce n'est pas encore une garantie, parce qu'aucun mécanisme du projet ne s'oppose à ce que la prochaine modification casse silencieusement ce qui marchait la veille.
+
+C'est exactement l'idée que ce chapitre va installer : la qualité front n'est pas une couche de politesse ajoutée à la fin, c'est un ensemble de contrôles qui transforment vos attentes implicites en artefacts vérifiables — un test qui échoue, un message du compilateur, une alerte d'audit. Trois contrôles, trois familles de défauts différentes. Un test de composant détecte une régression de comportement : le bouton ne fait plus ce qu'il promet. Le typage strict détecte une incohérence de données avant même l'exécution : la propriété demandée n'existe pas sur cet objet. Un audit d'accessibilité détecte une barrière : la personne qui navigue au clavier ne peut pas atteindre ce champ, celle qui lit l'écran n'entend pas le libellé. Les trois se relisent : un composant mal typé est presque toujours un composant mal testé, et un composant jamais testé est rarement vérifié au clavier.
+
+Les objectifs de ce chapitre sont au nombre de trois et vous les verrez dans cet ordre. Le premier consiste à écrire des tests de composant orientés comportement, c'est-à-dire des tests qui vérifient ce que l'utilisateur voit et fait, et non l'organisation interne de votre code. Le deuxième consiste à typer un composant et ses props sans laisser de `any` traîner, en tirant parti du compilateur plutôt qu'en le court-circuitant. Le troisième consiste à lire un rapport d'accessibilité, à le trier par gravité et à corriger les erreurs qu'il signale, jusqu'à ce que la page soit réellement utilisable au clavier comme au lecteur d'écran.
+
+La manière d'aborder ce chapitre mérite un avertissement : ce sont des exercices de rigueur, pas de découverte. Vous n'y apprendrez presque aucune notion nouvelle ; vous y apprendrez à ne plus laisser passer celles que vous connaissez déjà. Chaque section alterne explications, cas concrets repris sur le site de l'atelier, tableaux de synthèse et blocs de code à exécuter. Exécutez-les : un test qu'on lit sans le lancer ne dit rien de ce qu'il ferait échouer. Conservez enfin vos résultats — liste de tests verts, sortie du compilateur, rapport d'audit d'origine et rapport corrigé — à côté du dépôt : ils constituent la preuve, trois semaines plus tard, que l'exigence était bien en place.
+
+## Pourquoi tester un composant, et ce qu'un test doit dire
+
+Un test automatisé n'est pas un exercice de copie : c'est une phrase écrite dans un langage exécutable, qui dit : je m'attends à ceci, dans ces conditions. Si l'attente n'est pas remplie, le test devient rouge et le travail s'arrête. Tout le reste — le moteur d'exécution, la couverture de code, la vitesse de la suite — n'est que l'outillage autour de cette phrase. Avant d'écrire la moindre ligne, demandez-vous donc quelle affirmation vous voulez figer : si vous ne parvenez pas à la formuler en français clair, vous n'êtes pas prêt à la coder, et le test que vous écririez au jugé serait opaque pour vous comme pour vos relecteurs.
+
+Sur le front, on distingue couramment quatre échelons de test. Le test unitaire isole une fonction pure : un calcul de prix, un formateur de date, une fonction de validation d'adresse électronique. Le test de composant rend un élément d'interface dans un environnement simulé, déclenche une interaction et observe le résultat affiché : c'est celui que ce chapitre étudie. Le test d'intégration couvre un parcours à travers plusieurs composants, un contexte et un appel réseau simulé. Le test de bout en bout pilote un vrai navigateur sur une application réellement lancée, avec un vrai serveur. Chaque échelon est plus lent, plus riche et plus fragile que le précédent ; le bon plan consiste à concentrer l'effort là où le retour est le meilleur, ce qui, sur une interface React, est le test de composant.
+
+La distinction capitale est celle entre un test de comportement et un test d'implémentation. Le premier décrit ce que l'utilisateur constate : après avoir saisi une adresse électronique invalide et validé le formulaire, un message nomme le champ fautif. Le second décrit comment le code est organisé : la fonction de validation a été appelée une fois, telle prop interne a changé, l'état a été mis à jour dans tel ordre. Le test de comportement survit à une réécriture complète du composant ; le test d'implémentation tombe au moindre refactoring, et l'équipe finit par le neutraliser. Un test qu'on neutralise est un test qui ne protège plus rien, mais qui continue pourtant d'afficher vert.
+
+Sur le site de l'atelier, le périmètre à tester est plus étroit qu'il n'y paraît. L'inscription à un atelier mérite au minimum cinq scénarios : saisie d'un courriel sans arobase, envoi en double d'une demande déjà enregistrée, état de chargement visible pendant l'envoi, confirmation affichée quand le serveur répond, message de secours quand il ne répond pas. La liste des inscrits mérite quatre autres : affichage pendant le chargement, état vide explicite quand aucun inscrit n'existe, apparition de l'inscription fraîche, disparition après désinscription. Neuf scénarios, neuf phrases exécutables, et la majeure partie du risque fonctionnel du projet se trouve couverte avant même d'avoir parlé de couverture de code.
+
+Le tableau suivant situe chaque échelon par la question à laquelle il répond, par l'outil que vous utiliserez dans ce parcours et par la fréquence à laquelle il mérite d'être exécuté. Serves-en-vous comme d'un repère : si une vérification ne se classe dans aucune ligne, c'est probablement qu'elle n'est pas un test, mais une inspection humaine.
+
+| Échelon | Question à laquelle il répond | Outil dans ce parcours | Fréquence |
+|---|---|---|---|
+| Unité | Cette fonction calcule-t-elle le bon résultat ? | Vitest, sans rendu | À chaque modification |
+| Composant | Le composant affiche-t-il et réagit-il comme prévu ? | Vitest et Testing Library | À chaque validation |
+| Intégration | Le parcours complet fonctionne-t-il avec le contexte et les données simulées ? | Vitest, plusieurs composants ensemble | Avant chaque fusion |
+| Bout en bout | L'application réelle, servie par le serveur, permet-elle la tâche ? | Pilote de navigateur | Avant une livraison |
+| Inspection humaine | Le clavier, le contraste et les libellés sont-ils corrects ? | Audit et test manuel | Avant chaque livraison |
+
+Il reste la question du coût. Un test coûte à écrire, à lire et à maintenir ; il rapporte surtout quand la zone testée change souvent ou quand son dysfonctionnement est cher et discret. Votre formulaire d'inscription change à chaque événement programmé et son défaut passe inaperçu jusqu'à la semaine de l'atelier : c'est le bon candidat. La couleur exacte d'un lien de navigation ne change presque jamais et son défaut saute aux yeux : laissez-la au style. Enfin, une suite de tests bien écrite remplace une partie de la documentation : un contributeur qui découvre le dépôt lit les titres des tests et comprend en dix minutes quelles promesses l'interface fait à ses utilisateurs, sans même ouvrir le composant.
+
+## Installer la chaîne de tests : Vitest, Testing Library, jsdom
+
+La chaîne de tests d'un composant React moderne tient en quatre pièces, et chacune a un rôle qu'il ne faut pas confondre. Un moteur d'exécution reçoit vos fichiers de test, les exécute et rend compte des réussites et des échecs : Vitest est aujourd'hui le choix le plus courant sur un projet React, parce qu'il partage la configuration du service de développement et démarre sans réglage supplémentaire. Un environnement de navigateur simulé, jsdom, fournit le document, les événements et l'arbre d'accessibilité sans ouvrir de fenêtre. La famille Testing Library — le rendu React, les interactions utilisateur, les assertions de style de composant — rend les composants et interroge ce qui est affiché. Enfin, un paquet d'assertions complémentaires fournit des prédicats lisibles comme toBeInTheDocument ou toHaveAttribute.
+
+```bash
+npm install --save-dev vitest jsdom @testing-library/react @testing-library/dom @testing-library/user-event @testing-library/jest-dom
+```
+
+La commande ci-dessus installe l'ensemble des pièces en une seule fois. Le paquet user-event mérite une attention particulière : il ne se contente pas de fabriquer un événement, il reproduit la séquence que déclencherait une personne — appui, relâchement, frappe, soumission — et c'est précisément ce comportement réaliste qui rendra vos tests robustes face aux éventuels effets de bord de vos gestionnaires. Installez aussi le paquet d'assertions de style : sans lui, chaque test finit par comparer des chaînes de caractères brutes là où une assertion nommée serait plus lisible et plus proche de l'intention.
+
+Le fichier de configuration relie ces pièces. Dans un projet Vite, on réutilise la configuration existante, on ajoute le plug-in React et on déclare l'environnement de test. Le fichier d'installation, lui, charge les assertions de style et garantit que le document est nettoyé après chaque test : sans ce nettoyage, un composant oublié dans le DOM d'un test contamine le suivant et provoque les fameux éléments trouvés plusieurs fois.
+
+```ts
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/tests/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
+  },
+});
+```
+
+```ts
+// src/tests/setup.ts
+import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { afterEach } from "vitest";
+
+afterEach(() => {
+  cleanup();
+});
+```
+
+La convention de placement compte autant que la configuration. Rangez chaque fichier de test à côté du composant qu'il couvre, sous le nom qui annonce son sujet : InscriptionForm.test.tsx vivra dans le même dossier qu'InscriptionForm.tsx. Ce voisinage a trois avantages : on trouve le test d'un composant sans chercher, on déplace les deux ensemble, et la simple présence du fichier rappelle à quiconque modifie le composant qu'une suite de vérifications existe. Évitez au contraire d'accumuler tous les tests dans un dossier lointain : la distance fait oublier, et l'oubli fait supprimer.
+
+Ce que jsdom ne fait pas est aussi important que ce qu'il fait. Il n'applique aucune mise en page : ni largeur réelle, ni chevauchement, ni calcul de contraste à partir de la police effective. Il n'exécute pas certaines API maison : l'appel à scrollIntoView, l'observateur de redimensionnement ou l'observateur d'intersection doivent être simulés si votre composant les utilise. Il n'a ni onglet réel, ni historique complet, ni clavier physique. Deux conséquences pratiques s'imposent : les tests de composant ne vérifient ni le pixel ni la performance, et une caractéristique qui dépend du vrai rendu — le débordement d'une infobulle, la troncature d'un titre — se vérifie à l'échelon navigateur, pas ici.
+
+Ajoutez enfin les commandes d'exécution, et distinguez-en deux. La première exécute la suite une fois puis rend la main, c'est celle de l'intégration continue et de la pré-validation : elle doit être non interactive et se terminer par un code d'échec explicite. La seconde surveille les fichiers et relance au fur et à mesure de vos modifications, c'est votre boucle de travail quotidienne. Gardez les deux à portée de main : la seconde vous fait gagner du temps, la première vous dit la vérité.
+
+```json
+{
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  }
+}
+```
+
+Le logo de React, cercle bleu au centre et ellipses en orbite autour, rappelle que la bibliothèque de tests que vous venez d'installer appartient à cet écosystème précis : elle sait rendre un composant, gérer son cycle de vie et attendre ses mises à jour, mais elle ignore tout du reste du monde — du serveur, du style réel, du lecteur d'écran.
+
+```image
+react-logo
+| Le logo de React : un cercle bleu au centre, entouré de trois ellipses en orbite, emblème de la bibliothèque dont dépend l'outillage de test installé.
+```
+
+## Sélecteurs : getByRole avant tout le reste
+
+Testing Library repose sur une thèse : votre test doit interroger la page comme le ferait une personne qui la voit ou qui l'écoute. Pour cela, la bibliothèque s'appuie sur l'arbre d'accessibilité du document — la représentation que naviguent le clavier, le lecteur d'écran et les technologies d'assistance — et vous propose d'y chercher des rôles plutôt que des motifs de mise en forme. Un bouton est un bouton parce qu'il porte le rôle de bouton, pas parce qu'il a la classe .valider ; un champ de saisie est identifié par l'étiquette qui lui est rattachée, pas par son attribut de nom technique. Si le test trouve l'élément, une personne utilisant un lecteur d'écran le trouvera aussi ; si le test ne le trouve pas, cette personne aura le même problème que votre test.
+
+L'ordre de préférence des sélecteurs n'est pas une préférence esthétique : il suit le degré de certitude que le test porte sur l'expérience réelle. Le tableau ci-dessous vous sert de hiérarchie à appliquer sans exception, sauf cas rarement justifié.
+
+| Priorité | Méthode | Quand l'utiliser | Exemple sur le site de l'atelier |
+|---|---|---|---|
+| 1 | getByRole | Un élément possède un rôle et un nom accessible | Un bouton, un lien, un titre, un champ |
+| 2 | getByLabelText | Un champ possède une étiquette associée | Le champ de courriel du formulaire |
+| 3 | getByText | Un texte visible porte l'information | Un message de confirmation, un intitulé |
+| 4 | getByDisplayValue | La valeur saisie caractérise l'élément | Un champ déjà rempli avant correction |
+| 5 | getByTitle / getByAltText | L'attribut porte lui seul l'information | Une image dont l'alternative décrit la scène |
+| Dernier recours | getByTestId | Aucun rôle, aucune étiquette raisonnable | Une zone de tracé, une tuile de graphique |
+
+L'attribut data-testid est la sortie de secours, pas la route principale. Il lie le test à un détail d'implémentation que l'utilisateur ignore, il n'apparaît pas dans l'arbre d'accessibilité, et il se multiplie dès qu'une équipe ne prend plus le temps de chercher le bon rôle. Réservez-le aux éléments dépourvus de rôle et d'étiquette raisonnable, et documentez l'exception à même le test. La recherche par chemin CSS est interdite au même titre : querySelector(".carte .titre") casse au premier changement de style et, surtout, ne dit rien de ce que l'utilisateur perçoit — la classe la plus stable du monde reste invisible à l'écran.
+
+La distinction entre présence et absence structure presque tous les tests. Les méthodes qui commencent par get lèvent une erreur explicite quand elles ne trouvent rien : c'est ce que vous voulez quand l'élément doit être là. Les méthodes qui commencent par query retournent null en cas d'échec : c'est ce qu'il faut pour vérifier qu'un élément a disparu, par exemple le message d'erreur une fois la saisie corrigée. Les méthodes qui commencent par getAll retournent une collection, utile pour compter les créneaux proposés. À ces familles s'ajoutent les variantes find, qui attendent l'apparition d'un élément asynchrone et constituent la porte d'entrée des rendus différés que la section suivante détaillera.
+
+Le contraste entre une mauvaise et une bonne interrogation se lit en deux lignes sur le formulaire d'inscription. La première écrit lit le dessin : elle suppose une structure de classes qui peut changer demain sans que l'expérience change. La seconde écrit l'usage : elle demande un bouton nommé, ce qui oblige le composant à porter un nom accessible et transforme le test en contrôle d'accessibilité gratuit.
+
+```tsx
+// À éviter : le test connaît le dessin, pas l'usage
+expect(container.querySelector(".formulaire .bouton-primaire")).not.toBeNull();
+
+// Attendu : rôle accessible et nom affiché interrogés ensemble
+const bouton = screen.getByRole("button", { name: "S'inscrire à l'atelier" });
+expect(bouton).toBeEnabled();
+```
+
+Dernier point de cette section, et non le moindre : simuler un clic n'est pas appuyer sur une touche. fireEvent envoie un événement synthétique directement au nœud, sans le reste de la chaîne. user-event reproduit la séquence réelle — appui, relâchement, déclenchement, frappe dans le champ, événement de perte de focus — et respecte ce que le navigateur ferait, y compris la soumission implicite d'un formulaire et la navigation au clavier. Utilisez user-event pour toute interaction, gardez fireEvent pour les rares cas où vous voulez isoler précisément un événement sans le reste du comportement du navigateur.

@@ -1,0 +1,532 @@
+Bienvenue dans le dixième et dernier chapitre du parcours Cybersécurité, celui qui transforme ce que vous avez appris à subir en ce que vous allez apprendre à industrialiser. Le chapitre six vous a appris à voir un événement, à le qualifier, à établir une chronologie, à confiner, à éradiquer, à restaurer et à tirer les leçons. Toutes ces notions restent exactes, et vous les réutiliserez à chaque page de ce chapitre. Ce qui change, c'est l'échelle et le rythme : vous ne travaillerez plus sur un incident raconté par un collègue, mais sur un flux continu de signaux émis par des centaines d'équipements. La question n'est plus seulement comment répondre, mais comment faire en sorte que le bon signal soit vu par la bonne personne en moins de cinq minutes, jour et nuit, sans épuiser personne.
+
+Les compétences que vous allez acquérir sont celles d'un centre opérationnel de sécurité, souvent abrégé SOC. Vous saurez écrire une règle de détection qui ne crie pas pour rien : une règle dont le déclenchement signifie réellement qu'un analyste a quelque chose à faire, ce qui suppose de connaître les sources, les champs, les seuils et surtout les exceptions légitimes. Vous saurez corréler plusieurs alertes isolées en un seul incident, c'est-à-dire reconnaître qu'un pic d'échecs de connexion, un compte dormant qui se réveille et une règle de messagerie créée dans la foulée racontent une seule et même histoire. Vous saurez automatiser une partie de la réponse avec un playbook, en choisissant avec soin ce qui peut être exécuté sans humain et ce qui exige une validation. Et vous saurez mesurer ce que vous couvrez réellement, parce qu'une équipe qui ne chiffre ni son temps de détection ni ses angles morts finit par croire qu'elle surveille tout.
+
+Notre fil rouge restera la Médiathèque des Lilas, mais il change de cadre : l'établissement n'a ni les moyens ni le volume pour justifier un centre dédié, il est donc rattaché, comme la mairie dont il partage le réseau, au centre opérationnel de sécurité de la Métropole. Ce centre supervise environ mille deux cents postes, trois mille comptes, une messagerie hébergée, un accès distant pour le personnel, une flotte d'agents de détection sur quatre cents machines et deux pare-feu de périmètre. En moyenne, cent quatre-vingts millions d'événements arrivent chaque jour, avec des pics voisins de trois mille par seconde le matin. À cette échelle, le problème n'est pas l'absence de données : il est exactement l'inverse. Toute la difficulté consiste à faire remonter les quelques dizaines de faits qui méritent une action humaine.
+
+Une dernière recommandation sur la manière d'aborder ce chapitre : il se travaille au clavier, pas en lecture passive. Vous recopierez des règles, vous les rejouerez sur les extraits de journaux fournis, vous compterez les déclenchements sur une fenêtre d'une semaine et vous corrigerez. Quand un chiffre vous paraîtra arbitraire, cherchez la justification écrite à côté de la règle elle-même : une détection sans rationale documentée devient incompréhensible six mois plus tard, et c'est précisément ce type d'incompréhension qui fait supprimer une règle utile un vendredi soir.
+
+## Du chapitre 6 au métier de centre opérationnel
+
+Reprenez la distinction du chapitre six : un événement est une observation, un incident est un enchaînement qui menace la confidentialité, l'intégrité ou la disponibilité. Cette distinction suffisait quand une seule personne lisait les journaux d'un réseau de trente machines, une fois par jour, entre deux autres tâches. Elle ne suffit plus dès que le flux est permanent et que plusieurs équipes se relaient sans se voir. Le centre opérationnel ajoute alors trois exigences que la pratique individuelle n'avait pas. La continuité, puisqu'il faut être couvert à trois heures du matin un dimanche. La traçabilité, puisque la décision de l'analyste de garde doit être lisible par celui qui reprend la main à six heures. Et la mesure, puisqu'on ne peut pas améliorer ce que l'on ne chiffre pas.
+
+Cette continuité transforme le travail en trois métiers distincts. L'analyste de premier niveau ne décide pas : il trie. Il reçoit des alertes déjà qualifiées, applique une procédure écrite, classe comme sans suite ou escalade. L'analyste de deuxième niveau enquête : il rassemble les sources, cherche l'entité pivot, tranche la gravité, propose le confinement. Le troisième niveau, la chasse, part d'une hypothèse sans alerte préalable — un compte administrateur utilisé depuis un poste qui ne le devrait jamais — et va chercher ce que les règles existantes ne voient pas. À côté de ces rôles, l'ingénieur de détection écrit, teste et maintient les règles : c'est un métier d'auteur autant que d'analyste, et c'est celui que ce chapitre vous prépare à exercer.
+
+Le tableau suivant donne les cinq rôles que vous retrouverez dans tout centre, quelle que soit sa taille. Servez-vous-en comme d'une vérification : si une même personne chez vous endosse les cinq, votre organisation est fragile, et le premier congé malgré tout révélera l'absence de relève.
+
+```table
+| Rôle | Question quotidienne | Indicateur qui le décrit |
+| --- | --- | --- |
+| Analyste de premier niveau | Cette alerte est-elle attendue ou non ? | Temps moyen de traitement d'une alerte |
+| Analyste de deuxième niveau | Que s'est-il réellement passé, sur quel périmètre ? | Temps moyen avant qualification d'incident |
+| Chasseur ou niveau 3 | Où regarder pour ce que personne n'a alerté ? | Hypothèses testées par mois |
+| Ingénieur de détection | Ma règle détecte-t-elle encore sans crier pour rien ? | Taux de pertinence et délai de revue des règles |
+| Responsable du centre | Couvrons-nous ce qui nous menace vraiment ? | Couverture des scénarios prioritaires, temps de détection et de réponse |
+```
+
+La conséquence la plus importante de ce métier est le passage de la détection au statut de code. Une règle de détection se versionne, se relit par un pair, se teste sur un historique avant toute mise en production, se déploie d'abord en mode observation, puis se surveille. Elle possède un auteur, une date, une justification, un niveau de gravité et une procédure associée. Quand quelqu'un modifie un seuil, le changement est daté et motivé ; quand une règle sonne cent fois par jour sans jamais conduire à une action, elle est soit corrigée, soit remise en observation, jamais laissée telle quelle. Cette discipline est la seule différence durable entre un centre qui s'améliore et un centre qui accumule du bruit.
+
+Le rythme fait le reste. Un centre qui ne se cadence pas retombe dans le réactif : on ouvre la console le matin, on éteint les alertes, on referme, et la semaine suivante on recommence. Le rythme correct tient en quatre temps. Un tri d'alertes à heure fixe, plusieurs fois par jour. Une revue hebdomadaire des règles qui ont le plus sonné. Une revue mensuelle de la couverture, qui redemande quel scénario de menace n'a aucune détection. Et au moins un exercice de simulation par trimestre, où l'on produit volontairement les signaux d'une attaque pour vérifier qu'ils remontent bien. Sans ce calendrier, la couverture dérive vers le bas tandis que le volume d'alertes monte, et personne ne s'en aperçoit avant l'incident.
+
+Le mur d'écrans d'un centre, souvent la première image qui vient à l'esprit, n'est pas un décor : il rend visibles trois choses qui, sinon, se perdent dans les onglets — le flux d'alertes en direct, l'état de la collecte elle-même et la chronologie des incidents ouverts. Regardez cette photographie en cherchant ce qui compte réellement : non pas le nombre d'écrans, mais le fait que chacun répond à une question distincte. Un centre sans cette vue d'ensemble fonctionne au hasard des recherches manuelles, et une recherche manuelle arrive toujours après le fait.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/soc-console.jpg
+| Salle d'opérations de sécurité : un mur d'écrans rassemble le flux d'alertes, l'état de la collecte et la chronologie des incidents en cours.
+```
+
+- Le centre ajoute trois exigences à la pratique individuelle : continuité, traçabilité, mesure.
+- Cinq rôles, cinq questions différentes : trier, enquêter, chasser, écrire les règles, arbitrer la couverture.
+- Une règle de détection se traite comme du code : versionnée, relue, testée, mise en observation.
+- Un calendrier de revues empêche la couverture de dériver pendant que le bruit monte.
+- Le centre ne remplace pas la prévention, il en mesure les insuffisances.
+
+## Collecter : les sources de journaux qui font la différence
+
+Aucune règle ne vaut mieux que la source qui la nourrit. Une détection brillante posée sur des journaux incomplets est une caméra braquée sur un parking dont la moitié est hors champ. La première tâche d'un centre n'est donc pas d'écrire des règles, c'est de décider quelles traces il veut collecter, combien de temps il veut les garder et à quel prix. La règle d'économie est simple : on ne collecte pas tout, on collecte ce qui sert à répondre à une question précise. Chaque source doit donc arriver avec sa justification écrite — qu'est-ce que je détecte grâce à toi — sinon elle ne consomme que du stockage et de la recherche.
+
+La source la plus rentable reste l'identité : annuaire, contrôleur de domaine, point d'entrée unique vers les applications. Pour un coût de collecte quasi nul, elle raconte qui a tenté d'entrer, avec quel compte, depuis quelle machine, à quelle heure, et si la tentative a réussi. Les événements de connexion échouée, de verrouillage de compte, de réinitialisation de mot de passe, d'ajout à un groupe d'administration et de changement de politique de mot de passe suffisent à détecter l'essentiel des campagnes de force brute et des comptes compromis. C'est cette source que vous verrez revenir dans toutes les règles de ce chapitre, parce qu'elle est universelle : elle existe dans presque toutes les structures, y compris les plus modestes.
+
+La messagerie et les applications hébergées apportent eux ce que l'annuaire ne voit pas : le comportement après compromise. Une connexion réussie depuis un pays inhabituel, une règle de transfert automatique créée en dehors des heures ouvrables, une délégation accordée à une application inconnue, un export massif de contacts. Ces événements sont souvent disponibles dans la console du fournisseur sous forme de journaux d'audit téléchargeables ; l'erreur classique consiste à les laisser à la durée de conservation par défaut, parfois trente jours seulement, alors qu'un incident est découvert avec du retard. Exigez l'export vers votre collecteur, pas seulement l'affichage dans une interface que personne n'ouvre.
+
+Le réseau et les postes ferment la liste des sources prioritaires. Le pare-feu et le proxy fournissent les refus et les autorisations, c'est-à-dire la carte de ce que les gens essaient de faire réellement ; le VPN fournit les connexions distantes, avec l'adresse source et la durée de session ; l'agent de détection sur poste fournit le processus exécuté, la commande ligne, le fichier touché et la connexion ouverte par un programme, ce que rien d'autre ne donne avec la même précision. S'y ajoutent, quand elles existent, les journaux du service web, les journaux d'audit du cloud et, pour croiser la présence physique avec la session technique, les journaux de badge aux entrées sensibles.
+
+```text
+# Extrait — collecteur central, 4 novembre 2026, sources brutes non normalisées
+
+# 1) annuaire : Événement Security, message en clair, compte et adresse dans le texte
+04:12:07+01:00 dc01.securite.lilas.local Security 4625 "An account failed to log on.
+   Account Name: stage.accueil    Source Network Address: 91.240.118.44"
+
+# 2) passerelle d'accès distant : syslog, champs nommés, heure locale
+04:12:09+01:00 vpn01.mairie.lilas.local VPN AUTH_FAIL user="stage.accueil" peer="91.240.118.44" reason="bad_password"
+
+# 3) pare-feu de périmètre : syslog tabulaire, adresses en position variable
+04:12:11+01:00 fw-edge01 denypkt proto=tcp dst=10.30.4.12 dport=443 src=91.240.118.44 rule=118
+
+# 4) agent de poste : événement de processus, chemin Windows entre guillemets
+04:12:15+01:00 POSTE-ACC-07 procstart image="C:\Users\stage.accueil\AppData\Roaming\update.js" parent="wscript.exe"
+```
+
+La qualité de la donnée se juge sur quatre points, dans cet ordre. L'horodatage d'abord : tous les équipements doivent pointer sur la même source de temps, avec le fuseau transporté explicitement, sinon votre chronologie sera un montage où une cause peut précéder son effet. La conservation ensuite : retenez au moins quatre-vingt-dix jours de recherche en accès direct, ce qui couvre la découverte tardive d'un incident. La protection ensuite : les journaux doivent être écrits sur un emplacement que la machine compromise ne peut pas réécrire, sinon l'attaquant referme la porte derrière lui. La complétude enfin : une source qui cesse d'envoyer doit déclencher une alerte sur l'état de la collecte elle-même.
+
+```table
+| Source | Événements clés à collecter | Ce que cela permet de détecter | Conservation conseillée |
+| --- | --- | --- | --- |
+| Annuaire et contrôleur de domaine | Échecs, verrouillages, réinitialisations, ajouts de droits | Force brute, compte volé, élévation de privilèges | 90 jours en accès direct, 13 mois au-delà |
+| Messagerie hébergée | Connexions inhabituelles, règles de transfert, délégations | Compromission de boîte, exfiltration, hameçonnage interne | 90 jours minimum, exports mensuels |
+| Passerelle d'accès distant | Connexions, adresses sources, durées, échecs | Compte utilisé hors habitude, partage de crédentiels | 90 jours |
+| Pare-feu et proxy | Refus, autorisations, destinations, volumes | Balayage, télémétrie, accès à des services indésirables | 30 à 90 jours selon le volume |
+| Agent de poste | Processus, commandes, fichiers touchés, connexions | Exécution malveillante, chiffrement, persistance | 90 jours |
+| Journaux applicatifs | Erreurs, requêtes sensibles, modifications de données | Injection, abus fonctionnel, accès anormal aux données | 90 jours |
+```
+
+La contrainte de budget vient en dernier : la collecte coûte, en stockage comme en licences. La bonne réponse n'est pas de tout garder, elle est de hiérarchiser. Gardez en accès direct ce qui sert aux investigations courantes, archivez le reste sur un support moins coûteux, et surtout filtrez à la source ce qui ne contient aucune information de sécurité — la supervision de santé des équipements, les événements de routine que vous ne consulterez jamais. Un filtre appliqué à la source vous fait gagner du volume sans rien perdre, tandis qu'une exclusion appliquée trop loin en amont vous fait perdre des preuves que vous découvrirez seulement au moment d'en avoir besoin.
+
+- Une source n'a de valeur que si elle répond à une question écrite.
+- L'identité est la première source à équiper : c'est la plus rentable.
+- Horodatage commun, conservation d'au moins quatre-vingt-dix jours, écriture non réécritable.
+- Une source qui s'arrête doit déclencher une alerte sur la collecte elle-même.
+- Filtrez le bruit à la source, archivez le reste, n'excluez jamais ce qui pourra servir à une investigation.
+
+## Normaliser : un langage commun pour tous les équipements
+
+Le centre reçoit des constructeurs, des versions et des langages différents. Le même fait — une connexion refusée — s'écrit Security 4625 dans un annuaire, AUTH_FAIL sur une passerelle d'accès distant, denypkt sur un pare-feu et une ligne libre dans un journal applicatif. Si chaque règle doit connaître la syntaxe de chaque source, votre effort croît comme le produit des deux, et une seule règle devient dix écritures à maintenir. La normalisation consiste à traduire chaque source vers un vocabulaire interne unique, pour que la question « quelles tentatives d'connexion a connues ce compte hier » se pose une seule fois et s'exécute partout.
+
+Le principe tient en une phrase : un concept, un champ, quel que soit l'équipement d'origine. Vous définissez un schéma interne — celui de votre plateforme, ou une norme publique comme le schéma commun utilisé par les outils d'exploration — et vous y rangez l'instant de l'événement en temps universel, l'adresse source, le compte, la machine cible, l'action tentée, le résultat et l'observateur qui a produit l'événement. Chaque source possède alors sa table de mapping, écrite une fois, testée à chaque mise à jour du fournisseur. Les valeurs figées y ont leur place : quand une source nomme mal une action, la table corrige le nom plutôt que de propager la maladresse dans toutes les règles.
+
+La normalisation n'est pas de l'esthétique, c'est ce qui rend possible trois opérations. La recherche transverse, puisqu'une seule expression trouve les événements dans toutes les sources. La corrélation, puisqu'on ne peut agréger que des champs qui portent le même sens — c'est le sujet central de ce chapitre, et il repose entièrement sur ce travail préalable. Et la statistique, puisqu'un taux d'échecs calculé sur des formats hétérogènes n'est pas comparable, donc pas exploitable pour fixer un seuil. Sans schéma, vous écrivez dix règles fragiles ; avec schéma, vous écrivez une règle qui survit à l'arrivée d'un nouvel équipement.
+
+```yaml
+# Table de mapping pour la source vpn01 (extrait commenté)
+# Un champ du schéma interne, un chemin dans la source brute.
+champs:
+  "@timestamp":    "$.time"           # converti en temps universel, fuseau conservé
+  "source.ip":     "$.peer"           # champ d'origine : peer
+  "user.name":     "$.user"           # champ d'origine : user
+  "host.name":     "$.device"         # nom logique de l'équipement émetteur
+  "event.action":  "authentication_failure"   # valeur figée : la source nomme mal l'action
+  "event.outcome": "failure"                  # dérivé de l'action ci-dessus
+  "observer.vendor": "acme-vpn"                # figé, pour les recherches par éditeur
+
+controles:
+  - si "source.ip" est vide sur plus de 1 % des evenements de la source -> alerte de collecte
+  - si l'horodatage recule ou avance de plus de 5 minutes -> alerte d'horloge
+  - si le compte ne porte pas de domaine -> normaliser en compte local, jamais inventer de domaine
+```
+
+Les pièges sont connus, et il faut les écrire avant d'écrire les règles. Le fuseau horaire d'abord : on stocke en temps universel et on affiche dans l'heure locale de l'utilisateur, sans jamais faire reposer une comparaison de fenêtre sur une heure locale ambiguë. Les adresses ensuite : une adresse IPv6, une adresse privée traduite en adresse publique par le réadressage de port et une adresse de sortie de proxy doivent être distinguées, sinon vous accuserez le mauvais système. Les identités ensuite : un compte local et un compte de domaine portant le même nom sont deux entités différentes, et un compte de service ressemble à un utilisateur jusqu'à ce que vous le marquiez comme tel. Le message libre enfin : beaucoup de sources n'ont qu'une phrase non structurée ; la parser est un pis-aller coûteux et sujet à échouer, à réserver aux sources que vous ne pouvez pas autrement acquérir.
+
+Un contrôle mérite d'être installé dès le début, avant toute règle : l'alerte sur la santé de la collecte. Si une source cesse d'envoyer, si le volume d'événements chute de moitié, si le taux d'événements sans adresse IP ou sans compte dépasse un seuil, le centre doit le savoir le jour même. Une détection qui repose sur des données manquantes produit des faux négatifs silencieux, c'est-à-dire le type d'échec le plus difficile à constater, puisque rien ne sonne. Vous ne verrez jamais l'incident que vos journaux ne contiennent pas ; vous ne pouvez donc pas vous permettre d'apprendre la perte de collecte par hasard.
+
+```table
+| Champ du schéma interne | Noms rencontrés dans les sources | Usage direct |
+| --- | --- | --- |
+| @timestamp | time, EventTime, Timestamp, @ingest_time | Fenêtres de corrélation et chronologie |
+| source.ip | peer, srcip, SourceAddress, caller_address | Pivot d'attaque et listes de blocage |
+| user.name | user, Account Name, username, principal | Compte visé, propriétaire à prévenir |
+| host.name | device, Computer, host, endpoint | Poste ou serveur concerné |
+| event.action | reason, Event ID, action, operation | Nature du fait observé |
+| event.outcome | result, status, success, error_code | Réussite ou échec, pour les seuils |
+```
+
+
+Vous avez maintenant la chaîne complète de l'entrée du signal : une source choisie pour une raison, un format protégé et horodaté, une traduction vers un vocabulaire unique. Tout ce qui suit — règles, corrélation, playbooks, indicateurs — n'est qu'une exploitation de ce socle. Vérifiez-le sur trois points avant d'aller plus loin : vos sources envoient-elles toutes, vos horloges sont-elles alignées, vos champs pivot sont-ils remplis. Trois questions, dix minutes de contrôle, et vous saurez si le terrain est prêt.
+
+## Écrire une règle de détection : la méthode Sigma
+
+Une règle de détection est un ensemble de conditions posées sur des événements normalisés : si ce patron se produit, un analyste doit regarder. Le premier obstacle, dans un parc hétérogène, est que chaque plateforme possède son propre langage de recherche. Réécrire la même intention pour quatre moteurs, c'est quatre fois plus de travail, quatre fois plus de bugs et quatre versions qui divergent à la première modification. Le format Sigma répond à cela : il s'agit d'une règle écrite en YAML, volontairement neutre, qui décrit l'intention et que l'on convertit vers la syntaxe de la plateforme cible avec un outil de conversion. Vous écrivez une fois, vous déployez partout, et votre règle reste lisible par un humain dans cinq ans.
+
+Une règle se lit comme une recette, dans un ordre fixe. L'en-tête donne le titre, une description en français qui dit ce qu'on cherche, un statut, des références et des étiquettes. Le bloc d'origine indique la source logique, c'est-à-dire le produit, le service ou la catégorie de journal à interroger. Le bloc de détection contient les sélections — des jeux de valeurs attendues sur des champs — et une condition qui dit lesquelles combiner. S'y ajoutent les faux positifs attendus, écrits avant même le premier déclenchement, et la liste des champs à afficher à l'analyste pour qu'il n'ait pas à chercher. Une règle sans faux positifs annoncés est une règle dont personne n'a réfléchi au terrain.
+
+La méthode d'écriture tient en six étapes, et l'ordre n'est pas décoratif. Partez d'un comportement réellement observé ou réellement documenté, jamais d'une envie abstraite de couvrir un sigle. Identifiez la source qui l'enregistre et les champs que cette source fournit réellement — un champ inexistant vous mènera à une règle qui ne tombe jamais. Écrivez la sélection, puis soustrayez le normal : script de sauvegarde, poste de maintenance, fenêtre d'exploitation connue. Rejouez la règle sur sept à trente jours d'historique et comptez les déclenchements. Enfin, attribuez un statut et un niveau, puis déployez en mode observation avant toute alerte réelle.
+
+```yaml
+title: Rate d'echecs de connexion anormal sur un compte de l'annuaire
+id: 7f2a1c4e-9b3d-4c6a-8e51-2d7f0a9b4c11
+status: test
+description: >-
+  Plusieurs echecs de connexion sur un meme compte en peu de temps,
+  phenomene typique d'un essai de mots de passe ou d'un spray de mots de passe.
+date: 2026/11/04
+references:
+  - https://attack.mitre.org/techniques/T1110/
+author: centre operationnel de la Metropole
+tags:
+  - attack.credential_access
+  - attack.t1110.001
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+    TargetUserName|endswith:
+      - '@metropole.fr'
+      - '.LILAS'
+  filter_sauvegarde:
+    WorkstationName: 'SRV-BKP*'
+  condition: selection and not filter_sauvegarde
+falsepositifs:
+  - utilisateur oubliant son mot de passe a trois reprises le matin
+  - poste de maintenance qui reconnecte un compte de service
+fields:
+  - TargetUserName
+  - SourceNetworkAddress
+  - WorkstationName
+  - TimeCreated
+level: medium
+```
+
+Le test sur historique est l'étape que tout le monde saute et qui fait toute la qualité d'une règle. Deux vérifications suffisent. Première : combien de fois la règle sonne-t-elle sur la période, et sur quels événements ? Si elle sonne deux cents fois, elle partira en production telle quelle et sera filtrée par les analystes en trois jours. Deuxième : tombe-t-elle sur un incident avéré dont vous détenez les journaux ? C'est le test de non-régression : si une règle que vous croyez utile reste muette devant un compromission réelle, elle ne détecte rien de ce qui compte. Cette vérification se fait le plus souvent depuis une ligne de commande, en appliquant la conversion puis en comptant les résultats sur un extrait de journal.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/linux-terminal.png
+| Terminal Linux : la règle convertie et rejouée sur un extrait de journaux permet de compter les déclenchements avant la mise en production.
+```
+
+Le statut et le niveau protègent du reste. Le statut dit où en est la règle : expérimentale, c'est-à-dire en cours d'écriture ; testée, c'est-à-dire vérifiée sur historique ; stable, c'est-à-dire suivie dans la durée avec un taux de pertinence mesuré. Le niveau dit ce qu'elle exige de l'analyste : faible ou moyen pour une règle traitée dans le flux courant, élevé ou critique pour une règle qui déclenche une procédure d'urgence et une notification. Une règle critique sans procédure attachée est un défaut de conception ; une règle stable sans date de revue est de la dette. Relisez une règle que vous héritez en cherchant trois choses : sa justification, son niveau et son dernier test.
+
+- Écrivez la règle dans un format neutre, convertissez-la vers votre plateforme.
+- Une règle contient toujours : intention, source, sélection, condition, faux positifs attendus, niveau.
+- Soustrayez le normal avant d'écrire le niveau, jamais après.
+- Rejouez sur sept à trente jours et vérifiez que la règle tombe sur un incident connu.
+- Un statut et un niveau sans date de revue ne valent rien.
+
+## Une règle sans faux positifs : filtres, exceptions et statut
+
+Objectif posons-nous franchement : une règle sans aucun faux positif n'existe pas, et courir après zéro fausse alerte conduit à élargir les conditions jusqu'à ne plus détecter. Ce qui est atteignable, c'est une règle sans faux positif inutile, c'est-à-dire une alerte que l'analyste peut traiter en appliquant une procédure sans douter une seconde de sa légitimité. La différence est de taille. Le coût d'un faux positif n'est pas la minute perdue à le classer : c'est la confiance érodée dans toutes les alertes de la même règle, puis dans celles des règles voisines. Une règle qui crie trois fois pour rien ne sera plus lue la quatrième fois, alors qu'elle annoncera peut-être une réelle compromission.
+
+Trois origines produisent l'essentiel des fausses alertes. Le normal non soustrait : le script de sauvegarde qui modifie massivement des fichiers, le scan d'infrastructure autorisé du lundi matin, l'administrateur qui tape trois fois un mot de passe oublié, la migration de données planifiée. Le seuil mal calibré : dix échecs en dix minutes sur un service qui en produit cent par jour sans qu'aucun humain n'y touche. Et l'entité mal identifiée : un compte de service, une imprimante, un agent de supervision traités comme des utilisateurs, alors que leur comportement est par nature inhabituel. Chacune de ces origines appelle un remède différent, et confondre les trois conduit à supprimer la règle plutôt que à la corriger.
+
+Le premier remède est l'exception documentée, posée sur la bonne entité. On exclut un compte de service précis, pas tous les comptes ; on exclut une fenêtre de 22 h à 23 h 30 du dimanche, pas toute la nuit ; on exclut un hôte de supervision dédié, pas un sous-réseau entier. L'écrit compte autant que la technique : chaque exception porte un motif, un auteur, une date et une condition de suppression, sinon elle survivra trois ans après être devenue obsolète. Le deuxième remède est le seuil doublé d'une fenêtre, la borne de quantité et la borne de temps toujours ensemble. Le troisième est le groupement : au lieu de lever dix alertes sur dix comptes visés, on en lève une par adresse source et par fenêtre, et l'analyste voit l'ampleur d'un coup d'œil.
+
+```text
+# Pseudo-code — évaluation d'une règle sur l'historique avant mise en production
+ENTRÉE : règle R, journaux normalisés sur 30 jours, incidents avérés connus
+SORTIE : nombre de déclenchements, taux de pertinence, verdict
+
+événements ← appliquer(R.sélection, R.condition, journaux)
+groupes ← regrouper(événements, par : R.entité, fenêtre : R.fenêtre)
+
+pour chaque groupe :
+    si groupe correspond à une exception documentée : marquer "attendu", continuer
+    sinon : compter comme alerte potentielle
+
+pertinents ← alertes pouvant être reliées à un incident avéré ou à un fait métier confirmé
+taux ← pertinents / total des alertes potentielles
+
+VERDICT :
+    taux ≥ 0,75 et alertes ≤ 5 par jour   -> déployer en production
+    taux ≥ 0,75 et alertes > 5 par jour   -> resserrer la fenêtre ou l'entité
+    taux < 0,25                           -> la sélection est trop large, réécrire
+    aucun incident connu couvert          -> la règle ne sert à rien, réécrire
+```
+
+La mesure tranche les discussions interminables. Comptez chaque mois le nombre d'alertes levées et le nombre de celles qui ont conduit à une action réelle : un compte désactivé, un poste isolé, un propriétaire prévenu, un incident ouvert. Ce taux de pertinence est l'indicateur de santé de la règle. Autour des trois quarts, elle est bien réglée. En dessous d'un quart, elle consomme du temps sans produire de la sécurité. Au-dessus, surveillez l'inverse : une règle trop étroite peut passer à zéro alerte parce qu'elle ne détecte plus rien, et ce silence ressemble à de la tranquillité. Un bon centre regarde donc les deux extrémités du compteur.
+
+```table
+| Origine du faux positif | Exception correcte | Risque d'une exception mal rédigée |
+| --- | --- | --- |
+| Script de sauvegarde nocturne | Compte de service nommé et fenêtre de 22 h à 23 h 30 | Exclure tout le service des sauvegardes masque un chiffrement |
+| Scan d'infrastructure | Plage de l'outil de scan et fenêtre de maintenance | Exclure un sous-réseau entier crée un angle mort pour l'attaquant qui s'y installe |
+| Compte de service | Marquage explicite de l'entité comme service | Traiter un service comme un utilisateur fausse tous les taux |
+| Administrateur récidiviste | Seuil élevé sur son compte, avec alerte douce | Exclure l'administration, c'est exclure l'élévation de privilèges |
+| Adresse IP changeante | Blocage sur la séquence, pas sur l'adresse | Exclure une adresse publique, l'attaquant en change à la prochaine vague |
+```
+
+
+Les anti-patterns sont à connaître de mémoire, parce qu'ils sont toujours séduisants le vendredi soir. Supprimer la règle après un déclenchement inutile : on gagne du silence, on perd la détection. Exclure une plage entière plutôt qu'une entité : on déplace l'angle mort sans le réduire. Abaisser le niveau au lieu de corriger la sélection : l'alerte continue d'arriver, mais plus personne ne la traite. Ne jamais revoir une règle : dans deux ans, les exceptions posées sur un poste remplacé seront de la fiction. Et enfin, attendre la perfection avant de déployer : une règle testée, en observation, avec un taux mesuré à soixante pour cent, vaut mieux qu'une règle parfaite encore dans un brouillon.
+
+Le dernier levier, que nous explorerons dans la section suivante, est la corrélation. Beaucoup de faux positifs disparaissent d'un coup quand on cesse d'isoler les événements : un échec de connexion n'est rien, un échec sur trente comptes depuis une même adresse en quatre minutes est une campagne, et c'est cet agrégat, non la ligne isolée, qui doit remonter. Vous réduisez alors le volume d'alertes tout en augmentant ce que vous détectez, ce qui est exactement l'inverse du réflexe qui consiste à élargir les conditions pour faire taire la console.
+
+- Visez l'absence de faux positif inutile, pas le zéro absolu.
+- Exception posée sur une entité précise, avec motif, auteur, date et condition de fin.
+- Seuil et fenêtre vont toujours ensemble ; le groupement remplace l'alerte isolée.
+- Mesurez le taux de pertinence chaque mois et agissez aux deux extrémités.
+- Ne supprimez jamais une règle : corrigez-la, remettez-la en observation, puis décidez.
+
+Voici la campagne que nous allons suivre, car la corrélation s'apprend sur un cas raconté, pas sur une définition. Entre le 3 et le 5 novembre 2026, des adresses publiques ont essayé de deviner des mots de passe sur la messagerie hébergée et la passerelle d'accès distant de la Métropole : mille huit cents tentatives, douze comptes visés, quatre adresses sources qui tournaient. Une seule tentative a réussi, celle visant le compte stage.accueil, créé pour un stage de l'été et jamais désactivé. Ce détail, anecdotique en apparence, commande toute la suite de l'histoire.
+
+La chronologie se lit en trois temps. Le 3 novembre à 4 h 12, les premiers échecs tombent sur la passerelle, à raison de trois à cinq par minute, sans que personne ne soit là pour les lire. Le 4, la vague se poursuit, change d'adresse source et élargit la liste des comptes. Le 5 à 6 h 41, une connexion réussie s'enregistre depuis l'une des adresses déjà utilisées, puis, en dix-sept minutes, une règle de transfert est créée sur la boîte stage.accueil et les contacts sont exportés. À 7 h 03, une documentaliste signale qu'elle ne reçoit plus aucun courriel du service : sans ce signalement humain, l'incident aurait été découvert plusieurs jours plus tard.
+
+Considérez maintenant ce que chaque alerte isolée aurait produit. La règle d'échecs de connexion, réglée sur vingt échecs par heure, se serait déclenchée quarante fois, chacune classée de niveau moyen. La règle de compte dormant réveillé se serait déclenchée une fois, niveau faible : un ancien stagiaire qui se connecte, après tout. La règle de création de règle de messagerie se serait déclenchée une fois, à 7 h, quand la boîte est déjà pleine. Quarante-deux alertes, trois histoires tronquées, aucune qui dise ce qui se joue. L'analyste de nuit les aurait classées sans suite à 5 h du matin.
+
+```text
+# Extrait réuni — 5 novembre 2026, temps universel affiché en heure locale
+
+# passerelle d'accès distant (source vpn01)
+06:38:11+01:00 vpn01 AUTH_FAIL user="stage.accueil" peer="185.220.101.19" reason="bad_password"
+06:41:09+01:00 vpn01 AUTH_OK   user="stage.accueil" peer="45.129.9.83"    session="9f21" duration="0"
+
+# annuaire (dc01, Événement 4740 : compte verrouillé puis déverrouillé)
+06:41:15+01:00 dc01 Security 4740 "A user account was locked out. Account Name: stage.accueil"
+
+# messagerie hébergée (journal d'audit, règles et exports)
+06:47:58+01:00 messagerie InboxRuleCreated     user="stage.accueil" name="jav" forward="util.retour@messagerie-extranger.net"
+06:53:12+01:00 messagerie MailItemsAccessed    user="stage.accueil" access="5214" folder="Contacts"
+07:03:40+01:00 messagerie TransportThrottling  user="stage.accueil" action="rate_limited"
+
+# pare-feu de périmètre (connexion sortante vers la destination du transfert)
+06:48:03+01:00 fw-edge01 allowpkt proto=tcp dst=195.181.160.14 dport=443 src=10.30.7.24 bytes=842113
+```
+
+La corrélation ne change aucun de ces faits, elle change l'ordre dans lequel on les voit. Rapprochés sur l'entité pivot, le compte stage.accueil, et sur une fenêtre de trente minutes, ils forment une phrase : essais répétés, réussite, déverrouillage du compte, règle de transfert, export des contacts, débit anormal. Une seule alerte remonte alors, de niveau élevé, avec les six faits et leurs sources. Le volume passe de quarante-deux alertes à une ; le temps de détection passe de plusieurs jours, si l'on attend le signalement utilisateur, à quatre minutes après la première connexion réussie.
+
+Le traitement n'est plus le même non plus. L'analyste ouvre un dossier unique qui contient déjà la séquence, les adresses sources, les journaux extraits et le propriétaire du compte ; il qualifie l'incident en quelques minutes. L'incident est déclaré majeur : accès à une boîte professionnelle, export de contacts, filtrage probable du courriel entrant. Les décisions suivent un ordre écrit : bloquer les quatre adresses au pare-feu, révoquer les sessions du compte, réinitialiser le mot de passe en présence du propriétaire, conserver les journaux de la boîte. C'est cette séquence que la section sur les playbooks transformera en exécution automatisée.
+
+- Une campagne se lit sur l'entité, pas sur l'événement isolé.
+- Quarante-deux alertes isolées deviennent une seule alerte corrélée, avec sa séquence, et le test sur historique reste obligatoire.
+
+## Corréler : de l'alerte isolée à l'incident
+
+Corrélier, c'est substituer à des lignes éparses un récit vérifiable. Concrètement, une règle de corrélation applique l'un des quatre motifs qui couvrent la quasi-totalité des cas pratiques. La cardinalité, qui compte : plus de cinquante échecs en cinq minutes. La fenêtre, qui borne un événement dans le temps. La séquence, qui impose un ordre : échecs, puis réussite, puis ouverture d'un dossier sensible. Et la cooccurrence, qui exige deux faits sur la même entité dans un intervalle donné : un poste qui reçoit un courriel puis exécute une macro. Un playbook ne corrige rien à cela : il consomme l'alerte que ces motifs produisent.
+
+Le choix de l'entité pivot fait toute la qualité du résultat. Compte, adresse, poste, application, dossier : la bonne entité est celle que l'attaquant doit toucher plusieurs fois pour réussir. Sur notre campagne, pivoter sur l'adresse source aurait donné une alerte par vague ; pivoter sur le compte a donné une histoire complète. L'enrichissement vient ensuite, avant l'affichage : propriétaire, service, sensibilité de la boîte, sessions ouvertes, pays et historique de l'adresse. Une alerte sans enrichissement reporte du travail sur l'analyste ; une alerte enrichie commence déjà l'investigation.
+
+Les fenêtres se choisissent à partir du comportement à détecter, jamais à partir de la commodité de l'outil. Trois minutes suffisent pour un essai de mots de passe rapide ; trente minutes pour un ressaisi distrait ; vingt-quatre heures pour le réveil d'un compte dormant ; quinze minutes pour la séquence tentative, réussite, action post-authentification. Trop large, la fenêtre agrège des faits sans rapport et produit des faux positifs ; trop étroite, elle découpe une campagne en alertes successives et vous retrouvez le problème de départ. À chaque fenêtre, écrivez à côté de la règle le fait métier qui la justifie.
+
+Le pare-feu apporte à cette mécanique une matière première que les journaux d'application ne donnent pas : le refus et l'autorisation. Un balayage se voit comme une série de refus vers des ports jamais touchés ; une connexion établie vers une destination inconnue se voit comme une autorisation sans antécédent ; un poste qui tente d'atteindre un lecteur de sauvegarde se voit comme un refus à répétition. Ces lignes, prises isolément, sont du bruit ; agrégées sur une adresse ou un poste pendant quelques minutes, elles deviennent le premier maillon d'une séquence que les sources d'identité confirment ensuite.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/parefeu-reseau.png
+| Pare-feu de périmètre : ses journaux de refus et d'autorisation fournissent au centre le premier maillon des corrélations d'attaques réseau.
+```
+
+La règle de corrélation elle-même tient en peu de lignes, à condition d'être écrite sur des champs déjà normalisés. Voici la forme que prend notre campagne une fois traduite : compter les échecs par compte et par adresse, exiger plusieurs comptes touchés depuis une même adresse, imposer l'ordre des faits, puis joindre les actions post-authentification. Le résultat s'affiche avec une gravité, un propriétaire et une procédure, exactement comme une règle simple.
+
+```yaml
+title: Campagne d'essai de mots de passe avec succes posterieur
+id: c4e88b2d-1f57-4a0e-9c31-77a0b5e2d934
+status: test
+logsource:
+  category: authentication
+detection:
+  echecs:
+    event.outcome: failure
+    event.action: authentication_failure
+  reussite:
+    event.outcome: success
+    event.action: authentication_success
+  post_auth:
+    event.action:
+      - inbox_rule_created
+      - mailbox_permission_added
+  selection:
+    SelectionEchecs: echecs
+    SelectionReussite: reussite
+    SelectionPost: post_auth
+  condition: selection
+groupby:
+  - user.name
+  - source.ip
+threshold:
+  count: 3           # 3 comptes distincts par adresse, fenêtre de 30 minutes
+  order: "echecs puis reussite puis post_auth"
+fields:
+  - user.name
+  - source.ip
+  - host.name
+level: high
+```
+
+Quatre pièges reviennent dans toutes les corrélations que l'on hérite. Une corrélation posée sur une seule source, qui ignore ce que les autres racontent — c'est une agrégation, pas une corrélation. Une corrélation sans enrichissement, où l'analyste doit reconstituer seul le contexte du compte. Une corrélation dont la fenêtre n'a jamais été testée sur historique. Enfin une corrélation qui ouvre un ticket par alerte levée : le volume revient par la fenêtre de ticket. Le remède commun est le regroupement par entité, une seule alerte et un seul dossier par séquence, et un test qui simule une campagne avant la mise en production.
+
+- Quatre motifs suffisent : cardinalité, fenêtre, séquence, cooccurrence.
+- Pivotez sur l'entité que l'attaquant doit toucher plusieurs fois, puis enrichissez avant d'afficher ; une alerte corrélée doit ouvrir un dossier unique, sinon le bruit revient par la porte des tickets.
+
+## Se repérer dans MITRE ATT&CK
+
+MITRE ATT&CK est un référentiel public qui décrit, sous forme de matrice, les comportements observés chez de vrais adversaires : les tactiques, c'est-à-dire les objectifs successifs d'une attaque, et pour chacune les techniques qui servent à les atteindre. Il se lit de gauche à droite comme une chaîne — accès initial, exécution, persistance, mouvement latéral, collection, exfiltration, impact — et chaque case se détaille en variantes plus fines. Il ne s'agit ni d'un standard à certifier ni d'une liste à cocher : c'est un vocabulaire commun qui permet à un centre et à sa direction de parler de la même chose sans ambiguïté.
+
+Son utilité opérationnelle tient en quatre emplois très concrets. Nommer : dire « nous ne couvrons aucune technique de mot de passe deviné » est plus exploitable que dire « notre détection des mots de passe est moyenne ». Communiquer : une matrice colorée se lit en deux minutes en réunion de direction, à condition d'expliquer ce que la couleur mesure. Prioriser : croiser les techniques couvertes avec les menaces réellement documentées contre votre secteur indique où investir le prochain mois de travail. Et éviter les doublons : deux règles couvrant la même technique sur des sources différentes sont souvent le signe d'un travail mal réparti.
+
+Deux précisions de lecture évitent les contresens. D'abord, chaque technique possède ses sources de données, c'est-à-dire les journaux dans lesquels elle laisse une trace : sans ces sources collectées, la technique ne peut pas être détectée. Ensuite, les techniques se détaillent en variantes fines, et c'est là que se joue la précision : deviner un mot de passe, pulvériser le même mot de passe sur plusieurs comptes et réutiliser une combinaison volée relèvent de trois variantes, avec trois signaux et trois règles. Cartographier au niveau trop grossier donne une fausse impression de complétude.
+
+```table
+| Tactique | Technique de notre campagne | Signal disponible | Détection existante | État |
+| --- | --- | --- | --- | --- |
+| Accès initial | Force brute sur un compte externe | Échecs d'authentification, refus VPN | Règle d'échecs par compte | Couvert |
+| Accès initial | Réutilisation d'un ancien compte | Compte dormant réveillé | Règle de compte inactif | Couvert partiellement |
+| Exécution | Exécution d'une commande après connexion | Journal de processus sur poste | Aucune | Angle mort |
+| Persistance | Création d'une règle de messagerie | Journal d'audit messagerie | Règle de règle créée | Couvert |
+| Exfiltration | Transfert du courriel vers un domaine externe | Journal de transport, trafic sortant | Aucune | Angle mort |
+| Impact | Filtrage du courriel entrant | Règles masquantes, plainte utilisateur | Signalement humain | Non couvert |
+```
+
+La table ci-dessus est le vrai produit du référentiel : une carte de couverture qui dit, ligne par ligne, ce qui est surveillé, ce qui l'est partiellement et ce qui ne l'est pas. Notez que trois lignes sur six ne sont pas couvertes par un outil, dont deux angles morts qui auraient permis d'agir plus tôt. Chaque case vide devient un chantier daté, avec un responsable, plutôt qu'une inquiétude générale.
+
+Une mise en garde s'impose, parce que l'abus est fréquent : cocher une technique ne signifie pas la détecter. Une règle en observation qui ne sonne jamais, une source collectée sans règle, un événement jamais interrogé — autant de cases colorées qui ne protègent rien. Trois niveaux d'assertion doivent être distingués dans votre carte : donnée disponible, règle écrite, détection vérifiée par simulation. Seul le troisième niveau mérite d'être présenté comme une couverture. Le référentiel vous donne le vocabulaire et la structure ; il ne vous donne pas la preuve.
+
+- ATT&CK fournit un vocabulaire commun : tactiques, techniques, variantes.
+- Distinguez trois états : donnée disponible, règle écrite, détection vérifiée.
+- Une case colorée non testée reste un angle mort avec un joli nom.
+
+## Playbooks et SOAR : automatiser la réponse
+
+Un playbook est une procédure d'incident écrite pas à pas, avec ses conditions, ses responsabilités et ses points de contrôle, que l'exécuteur soit un humain ou un programme. La plateforme d'orchestration qui l'exécute — l'acronyme SOAR désigne ce type d'outil — n'ajoute rien à la logique : elle ajoute la vitesse et la régularité. Distinguez deux régimes. La réponse assistée, où l'outil prépare tout — enrichissement, extraits de journaux, ticket pré-rempli — et laisse l'humain appuyer. La réponse automatisée, où l'outil exécute des actions réelles sans attendre. Le premier régime est sans risque et se déploie dès le premier jour ; le second se mérite.
+
+La structure d'un playbook tient en huit éléments, et l'absence d'un seul produit des dérives. Un déclencheur qualifié, c'est-à-dire une alerte de corrélation et non une ligne isolée. Des prérequis, dont une liste explicite de ce qu'il ne faut jamais faire. Un enrichissement automatique. Des décisions formulées en conditions testables. Des actions ordonnées, avec pour chacune son effet réversible ou non. Une notification, qui dit à qui, sur quel canal, avec quel niveau d'urgence. Un journal d'exécution horodaté, pièce du dossier. Et une clôture, qui impose de dire ce qui a été fait et ce qui reste à faire.
+
+Le principe de sélection tient en une phrase : on automatise d'abord ce qui est réversible et ce qui fait gagner du temps sans décider. Collecter les journaux, enrichir l'alerte, ouvrir le ticket, notifier le propriétaire, révoquer les sessions ouvertes : des actions à effet limité, dont l'absence coûte des minutes précieuses. On réserve à l'humain ce qui retire un service, supprime une donnée ou touche à un compte partagé. Entre les deux, un seuil de confiance : si l'alerte vient de deux sources indépendantes et d'un compte sensible, l'automatique va plus loin ; sinon, il s'arrête et demande une validation.
+
+```yaml
+# Pseudo-code de playbook — "compte professionnel compromis" (extrait)
+playbook: compte_compromis_detecte
+declencheur:
+  alerte: campagne_essai_mots_de_passe_avec_reussite
+  niveau_min: high
+  exigences: [alerte sur deux sources independantes, compte marque sensible]
+
+etapes:
+  1 - enrichir:      recuperer(titulaire, service, sessions, historique_30j)
+  2 - verrouiller:    revoquer_sessions(compte)            # reversible
+  3 - preuves:        exporter(journaux_compte, 30 jours, dossier INC)
+  4 - bloquer:        ajouter_liste_blocage(adresses_sources, pare-feu, duree=24h)
+  5 - decider:
+       si compte.service ou poste_de_production == vrai:
+            arreter(); demander_validation(analyste_niveau_2)
+       sinon:
+            desactiver_compte(compte, motif="incident", ticket=INC)
+            imposer_reset_mdp_au_titulaire(compte)
+  6 - notifier:       canal=email_titulaire + canal=equipe, modele=incident_majeur
+  7 - journaliser:    ecrire_audit(horodatage, etape, resultat, auteur="soar")
+  8 - cloturer:       si confirmation_humaine: fermer(INC) avec compte rendu
+
+gardefous:
+  - jamais de suppression de donnees ni de reinitialisation d'appareil
+  - chaque etape reversible dispose d'une etape opposee en une commande
+  - mode observation pendant 14 jours, puis journal non modifiable par la plateforme
+```
+
+Appliquons ce squelette à notre campagne. Sur le cas stage.accueil, l'exécution assistée seule aurait déjà fait gagner les huit minutes pendant lesquelles un analyste rassemble les journaux de trois sources. L'exécution automatisée ajoute la révocation des sessions et le blocage des quatre adresses avant la vague suivante. Elle n'ajoute rien, en revanche, à la décision de désactiver le compte : celle-ci appartient encore à l'humain.
+
+Remplissez ce tableau ensemble, une fois, avant le premier déploiement, plutôt que de trancher chaque cas le jour où l'alerte sonne pour la première fois.
+
+```table
+| Action | Automatisable | Garde-fou exigé |
+| --- | --- | --- |
+| Révoquer les sessions ouvertes | Oui, avec seuil de confiance | Journal d'exécution, nouvelle connexion contrôlée |
+| Bloquer une adresse au pare-feu | Oui, durée limitée | 24 heures maximum, renouvellement non automatique |
+| Désactiver un compte | Selon le compte | Validation humaine hors activité critique |
+| Isoler un poste du réseau | Partiellement | Confirmation de niveau 2, prévenir le titulaire |
+| Effacer une donnée ou réinitialiser un appareil | Non | Toujours un humain |
+```
+
+
+Les limites se connaissent avant de les rencontrer. Un faux positif corrélé déclenche une réponse automatique : c'est le prix à payer, et il impose des actions réversibles. Une interface de pare-feu qui tombe au milieu d'une exécution laisse un playbook à moitié fini : le journal doit dire où il s'est arrêté. Une plateforme qui exécute sans laisser de trace rend l'incident inexploitable. Enfin, un playbook écrit mais jamais exercé n'existe pas : simulez-le sur un compte de test, chronométrez-le, corrigez les étapes fausses, puis seulement mettez-le en mode réel. Le gain, une fois vérifié, se mesure simplement : vingt-cinq minutes de manipulation manuelle contre quatre minutes d'exécution assistée.
+
+- Un playbook est une procédure écrite ; l'orchestration n'ajoute que la vitesse.
+- Automatisez d'abord l'enrichissement, la collecte de preuves et la notification.
+- Conservez à l'humain ce qui retire un service ou supprime une donnée, et exercez le playbook sur un compte de test avant toute exécution réelle.
+
+Une équipe de détection qui ne chiffre rien finit par se raconter des histoires : elle croit être rapide parce qu'elle se souvient des incidents bien traités, elle croit être complète parce qu'elle ne connaît pas ceux qu'elle n'a pas vus. Deux familles de mesures corrigent ce biais. Les mesures de temps disent combien de temps s'est écoulé entre le fait et sa prise en compte, de la première trace à l'alerte, puis de l'alerte à l'action. Les mesures de couverture disent ce qui serait vu si l'attaque avait lieu demain, indépendamment de tout incident réel. À elles deux, elles répondent aux deux questions que la direction posera : combien de temps, et qu'est-ce qui vous échappe encore.
+
+Le temps moyen de détection se calcule sur une série d'incidents, jamais sur un cas isolé. Pour chacun, vous relevez l'heure de la première trace laissée par l'attaquant, dans les journaux, puis l'heure à laquelle votre organisation a pris le fait pour acquis — une alerte traitée, un signalement qualifié. La différence, agrégée sur douze incidents, donne une médiane exploitable ; la médiane, ici, vaut mieux que la moyenne, qu'un incident découvert au bout de trois jours déforme. Le piège est ailleurs : les incidents jamais détectés n'apparaissent dans aucune liste, et c'est exactement là que votre chiffre est optimiste. La parade tient en une pratique unique — produire volontairement les signaux d'une attaque simulée et mesurer le temps réel de remontée.
+
+Le temps de réponse, lui, se décompose, parce qu'un seul chiffre masque des réalités très différentes. Le délai d'accusé de réception mesure le moment où un humain a pris la main. Le délai de confinement mesure l'arrêt de l'aggravation. Le délai d'éradication mesure la disparition de la cause. Le délai de restauration mesure le retour au service normal. Un centre qui affiche un temps global de quatre heures peut contenir en douze minutes et passer trois heures à rétablir : sans décomposition, on traite le mauvais maillon. Rappelez-vous du chapitre six : ces quatre moments existaient déjà dans la méthode ; ici, on les rend comparables d'un incident à l'autre.
+
+```text
+# Calcul du temps moyen de détection — incidents INC-01 à INC-05
+# T1 = premiere trace dans les journaux, T2 = prise en compte par le centre
+
+INC-01  T1 04:12  T2 04:16   ->  4 min   (alerte de corrélation automatique)
+INC-02  T1 22:47  T2 23:31  -> 44 min   (alerte de niveau moyen, file d'attente)
+INC-03  T1 09:03  T2 11:40  -> 157 min  (signalement humain seul)
+INC-04  T1 03:21  T1 corrigé  -> non detecte a l'epoque, retrouve 12 jours plus tard
+INC-05  T1 14:58  T2 15:02  ->  5 min   (playbook d'enrichissement + alerte)
+
+mediane sur les 4 incidents detectes : 24 min
+ecart moyen : 62 min   (falsifie par INC-03)
+INC-04 est exclu du calcul mais doit etre compte comme echec de couverture
+```
+
+Les autres indicateurs complètent le tableau, et il en suffit de peu. Le taux d'alertes pertinentes, déjà vu, mesure la confiance que l'équipe accorde à ses propres règles. La charge par analyste, en alertes traitées par jour, mesure la soutenabilité : au-delà d'un certain seuil, le tri se fait à la va-vite. La part des incidents détectés par un outil, par opposition à un humain, mesure la maturité de la détection automatique. Le délai de revue des règles mesure la dette. Et la part des sources dont l'envoi est à jour mesure la santé de la collecte elle-même. Cinq chiffres, relevés mensuellement, suffisent à voir venir une dégradation.
+
+```table
+| Indicateur | Comment le calculer | Cible raisonnable | Piège à éviter |
+| --- | --- | --- | --- |
+| Temps moyen de détection | Médiane de T2 moins T1 sur les incidents | Sous 30 minutes pour un scénario critique | Exclure les incidents jamais vus |
+| Temps avant confinement | Médiane entre qualification et isolation | Sous 2 heures | Compter l'ouverture de ticket comme un confinement |
+| Temps avant restauration | Médiane entre isolation et retour normal | Selon la criticité du service | Annoncer un délai avant de l'avoir mesuré |
+| Taux d'alertes pertinentes | Alertes menant à une action, sur alertes totales | Entre 50 et 75 pour cent | Le pousser à 100 en élargissant les conditions |
+| Couverture vérifiée | Scénarios critiques détectés par simulation | 80 pour cent à 12 mois | Compter une règle non testée comme une couverture |
+```
+
+
+Il faut enfin savoir ce que ces chiffres ne disent pas. Ils ne disent pas si l'analyse était bonne, seulement si elle était rapide. Ils ne disent pas si l'incident aurait pu être évité par une mise à jour. Et ils se retournent contre vous si on les utilise comme objectif de performance individuel : un analyste qui sait que son temps est compté classe plus vite et approfondit moins. Fixez des cibles sur le système, pas sur les personnes, revoyez-les trimestriellement, et accompagnez chaque indicateur d'un commentaire écrit qui dit ce qui a changé dans le mois — sinon vos courbes ne racontent que vos modifications d'outil.
+
+- Deux familles de mesures : le temps, qui réagit, et la couverture, qui anticipe.
+- Le temps de détection se calcule sur une série, en médiane, en incluant les ratés.
+- Décomposez la réponse : accusé de réception, confinement, éradication, restauration.
+- Cinq indicateurs mensuels suffisent : pertinence, charge, détection automatique, revue des règles, santé de la collecte.
+- Mesurez le système, jamais la personne, et annotez chaque courbe d'un fait daté.
+
+## Mini-projet guidé : détecter et traiter la campagne
+
+Le projet de fin de chapitre vous met dans la peau de l'ingénieur de détection qui doit outiller la campagne que vous venez de suivre. Vous disposez des extraits de journaux de la leçon — passerelle d'accès distant, annuaire, messagerie, pare-feu — et d'une semaine d'historique simulé dont voici la répartition : mille huit cent quarante-sept échecs d'authentification, douze comptes visés, quatre adresses sources, une connexion réussie, une règle de messagerie créée, un export de contacts. Vous écrivez, vous testez, vous corrigez. Aucun outil propriétaire n'est exigé : le format de règle, la table de corrélation et le pseudo-code de playbook se rédigent à la main, comme dans la leçon.
+
+Le premier livrable est une règle de détection sur les échecs d'authentification, en YAML, avec son en-tête, son origine de journal, sa sélection, ses exclusions, ses faux positifs attendus et son niveau. Elle doit satisfaire trois critères vérifiables : elle ne se déclenche pas sur le script de sauvegarde de 22 h, elle se déclenche au moins une fois sur l'historique fourni, et son commentaire indique la justification du seuil choisi. Si vous hésitez sur une valeur, écrivez l'alternative testée et pourquoi vous l'avez écartée : c'est cette trace qui fait la différence entre une règle appliquée et une règle réfléchie.
+
+Le deuxième livrable est la règle de corrélation qui remplace les alertes isolées. Vous y désignez l'entité pivot, la fenêtre, la condition de nombre, l'ordre attendu des faits et l'enrichissement à joindre avant affichage. Vous indiquez en une phrase combien d'alertes cette règle remplace sur la période et quelle séquence elle rend visible. Le troisième livrable est le playbook de réponse, en pseudo-code, avec son déclencheur, ses étapes ordonnées, la réversibilité de chacune, ses garde-fous et l'étape exacte où il s'arrête pour demander une validation humaine.
+
+Le quatrième livrable referme le chapitre : une carte de couverture sur six scénarios de votre choix, dont au moins deux angles morts assumés, suivie d'un tableau d'indicateurs que vous rempliriez chaque mois — temps de détection, temps de confinement, taux de pertinence, parts des sources à jour. Ajoutez une ligne de synthèse : si vous ne deviez en mesurer qu'un seul pendant le prochain trimestre, lequel choisiriez-vous et pourquoi. Le but n'est pas d'obtenir la règle la plus stricte possible, mais de produire un ensemble qu'un collègue peut tester sans vous revoir. Prenez le temps de dater chacun de vos choix : règle écrite le 12 novembre, seuil justifié par telle observation, fenêtre réduite de dix à cinq minutes après test.
+
+```table
+| Livrable | Critère de réussite | Référence dans la leçon |
+| --- | --- | --- |
+| Règle de détection YAML | Se déclenche sur l'historique, pas sur la sauvegarde, seuil justifié | Méthode Sigma et filtres |
+| Règle de corrélation | Une alerte par séquence, entité pivot et fenêtre justifiées | Section sur la corrélation |
+| Playbook de pseudo-code | Étapes ordonnées, réversibilité, garde-fous, validation humaine | Section sur l'automatisation |
+| Carte de couverture et indicateurs | Six scénarios, deux angles morts assumés, cinq indicateurs | Sections ATT&CK et mesure |
+```
+
+
+- Recopiez les règles avant de les modifier : c'est en les écrivant qu'on les comprend.
+- Testez chaque règle sur l'historique et comptez les déclenchements.
+- Comptez les alertes que votre corrélation remplace, pas seulement celles qu'elle produit.
+- Faites relire le playbook par quelqu'un qui n'a pas lu la leçon.
+
+## À retenir
+
+- Le centre opérationnel ajoute trois exigences à la pratique individuelle : continuité, traçabilité, mesure.
+- Une source n'a de valeur que si elle répond à une question écrite : identité, messagerie, réseau, poste, application.
+- La qualité de la donnée se juge à quatre points : horodatage commun, conservation, écriture non réécritable, alerte sur la collecte.
+- La normalisation range un concept dans un champ : sans elle, pas de recherche transverse ni de corrélation.
+- Une règle se traite comme du code : en-tête, sélection, condition, faux positifs attendus, niveau, test sur historique.
+- Le format Sigma permet d'écrire une fois et de convertir vers chaque plateforme.
+- Visez l'absence de faux positif inutile, pas le zéro absolu, et posez chaque exception sur une entité précise.
+- Le taux de pertinence mensuel est l'indicateur de santé d'une règle : sous un quart, réécrivez ; au-dessus, surveillez le silence.
+- Corréler, c'est appliquer l'un des quatre motifs : cardinalité, fenêtre, séquence, cooccurrence, sur une entité pivot enrichie.
+- Une campagne de force brute isolée fait des dizaines d'alertes ; corrélée, elle en fait une, avec sa chronologie.
+- MITRE ATT&CK fournit le vocabulaire ; distingué données disponibles, règles écrites, détections vérifiées.
+- Un playbook ordonne la réponse ; on automatise d'abord l'enrichissement, les preuves et la notification.
+- Toute étape automatisée réversible doit pouvoir être contrée, et toute action irréversible reste humaine.
+- Décomposez le temps de réponse : accusé de réception, confinement, éradication, restauration.
+- La couverture se mesure par simulation, jamais par le nombre de règles déployées.
+
+## Erreurs fréquentes
+
+- Piège : écrire une règle pour couvrir un sigle plutôt que pour répondre à un comportement observé → Correction : partez du fait terrain, identifiez la source, puis la règle.
+- Piège : déployer une règle sans l'avoir rejouée sur l'historique → Correction : sept à trente jours de journal, comptage des déclenchements, test sur un incident connu.
+- Piège : supprimer une règle après un faux positif → Correction : corrigez la sélection, ajoutez une exception motivée, remettez en observation.
+- Piège : exclure un sous-réseau ou une plage entière pour faire taire une alerte → Correction : posez l'exclusion sur une entité nommée, avec date de relecture.
+- Piège : laisser chaque source parler son propre vocabulaire → Correction : schéma interne, table de mapping, contrôle des champs pivot vides.
+- Piège : croire qu'une source collectée est une technique couverte → Correction : distinguez donnée disponible, règle écrite, détection vérifiée.
+- Piège : corréler sur une seule fenêtre sans justifier la durée → Correction : écrivez à côté de la règle le fait métier qui fixe la fenêtre.
+- Piège : ouvrir un ticket par alerte levée → Correction : regroupez par entité et par séquence, un seul dossier.
+- Piège : automatiser une action irréversible dès le premier jour → Correction : commencez par l'enrichissement et la notification, gardez l'irréversible à l'humain.
+- Piège : présenter un temps moyen de réponse global sans le décomposer → Correction : quatre temps séparés, médiane sur les incidents, incidents non détectés comptés à part.
+- Piège : donner un indicateur comme objectif individuel → Correction : mesurez le système, annotez les courbes, revoyez les cibles trimestriellement.
+
+## Pour aller plus loin
+
+La première ressource à ouvrir est celle du format de règle lui-même : le site Sigma, à l'adresse https://sigmahq.io/, présente le principe, la syntaxe et les convertisseurs vers les principales plateformes, avec un dépôt communautaire de règles prêtes à l'emploi que vous lirez avant d'écrire les vôtres. Lire vingt règles écrites par d'autres est le moyen le plus rapide de comprendre comment on exprime une exclusion propre, comment on nomme une sélection et comment on documente un faux positif attendu. Attention cependant à la discipline d'usage : une règle téléchargée s'adapte à votre journal et à votre environnement, et son niveau d'origine ne correspond pas à votre réalité tant qu'il n'a pas été revu.
+
+La seconde référence est le référentiel MITRE ATT&CK, consultable sur https://attack.mitre.org/, où vous trouverez la matrice complète, les sources de données associées à chaque technique et les groupes d'adversaires documentés. Passer une heure à cocher, puis à décocher, les cases que vous pensez couvrir est un exercice redoutablement révélateur. Troisièmement, les documentations de plateforme décrivent les mécaniques que vous utiliserez : celles de Microsoft, à l'adresse https://learn.microsoft.com/fr-fr/azure/sentinel/, détaillent la création de règles, la corrélation et les réponses automatiques dans un SIEM managé, et restent lisibles même si vous n'utilisez pas ce produit. Enfin, revenez au site du CISA, sur https://www.cisa.gov/, pour les guides opérationnels de détection et de simulation, et pratiquez : refaites le scénario de la campagne six mois plus tard, en changeant les comptes et les adresses, pour mesurer ce que votre méthode a conservé.
+
+## Et maintenant : passez à l'exercice pratique
+
+Vous avez terminé la partie théorique du dernier chapitre du parcours Cybersécurité fondamentaux. L'étape suivante est l'exercice pratique qui accompagne ce chapitre : on vous remet une semaine d'historique simulé d'une campagne d'essai de mots de passe et vous construisez seul la règle de détection, la règle de corrélation, le playbook de réponse et la carte de couverture avec ses indicateurs. Travaillez sans rouvrir la leçon : c'est dans l'écart entre ce que vous croyez savoir et ce que vous écrivez que la compétence se révèle, puis corrigez avec les modèles fournis. Le quiz de quatre questions qui suit vérifie ensuite, en quelques minutes, les notions essentielles : la différence entre alerte isolée et séquence corrélée, le test de non-régression d'une règle, la limite de l'automatisation et ce que compte réellement la couverture.
+
+Le parcours s'arrête ici, mais votre travail commence : ces dix chapitres ont passé en revue les fondations, les réseaux, les applications, la réponse à incident et maintenant l'ingénierie de détection. Gardez les deux documents que vous avez produits dans vos dossiers — le rapport d'incident du chapitre six et le socle de détection de celui-ci — car ils sont réutilisables tels quels, en changeant les noms, le jour où votre structure devra montrer à un auditeur non seulement ce qu'elle fait, mais comment elle le mesure. La suite naturelle est de répéter l'exercice sur votre propre environnement : une source de journaux, une règle, une corrélation, un playbook, un indicateur, et un relevé daté à côté de chacun.

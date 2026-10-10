@@ -1,0 +1,130 @@
+## Dijkstra étape à étape sur un exemple chiffré
+
+L'algorithme de Dijkstra repose sur une idée gloutonne, correctement encadrée. On maintient pour chaque sommet une distance provisoire, la meilleure longueur de chemin connue depuis le départ : nulle pour le départ, très grande pour les autres. À chaque tour, on choisit parmi les sommets non encore figés celui dont la distance provisoire est la plus petite, on la déclare définitive, puis on examine ses arêtes : si passer par ce sommet améliore la distance d'un voisin, on met cette distance à jour et l'on mémorise le prédécesseur. Le sommet figé ne change plus, et l'algorithme s'arrête quand tous les sommets ont été traités.
+
+Ce choix est juste pour une raison simple à comprendre une fois posée. Quand on sélectionne un sommet, sa distance est la plus petite de toutes celles qui restent ; or tout chemin encore inexploré devra traverser un sommet non figé, dont la distance est au moins aussi grande. Aucun chemin futur ne peut donc battre la valeur déjà trouvée. C'est exactement ce qui échoue avec un poids négatif : la distance d'un sommet déjà figé pourrait être améliorée plus tard et le raisonnement s'effondre. Avec des poids positifs ou nuls, la preuve tient.
+
+Travaillons sur le graphe annoncé dans le volet précédent : six sommets A à F et neuf arêtes non orientées, A-B de 7, A-C de 9, A-F de 14, B-C de 10, B-D de 15, C-D de 11, C-F de 2, D-E de 6, E-F de 9, avec A comme départ. L'initialisation porte la distance de A à zéro et les cinq autres à l'infini. Le premier sommet sélectionné est forcément A, puisque zéro est le plus petit ; sa relaxation fixe B à 7, C à 9 et F à 14. Le tableau ci-dessous tient un journal de bord, une ligne par sélection.
+
+```table
+| Étape | Sommet figé | Améliorations apportées | État des distances |
+| --- | --- | --- | --- |
+| 1 | A, distance 0 | B 7, C 9, F 14 | autres à l'infini |
+| 2 | B, distance 7 | D passe à 22 | C 9, D 22, F 14 |
+| 3 | C, distance 9 | D 20, F 11 | E à l'infini |
+| 4 | F, distance 11 | E passe à 20 | D 20, E 20 |
+| 5 | D, distance 20 | aucune | inchangé |
+| 6 | E, distance 20 | aucune | tous les sommets sont figés |
+```
+
+Trois moments de ce déroulé méritent une relecture attentive. Au tour 2, B propose de joindre D en 7 plus 15, soit 22 ; C reste à 9 parce que passer par B coûterait 17, ce qui est plus cher que la valeur connue. Au tour 3, C améliore D : 9 plus 11 vaut 20, moins que 22 ; il améliore aussi F, car 9 plus 2 vaut 11, moins que le 14 de l'arête directe A-F. Au tour 4, F atteint enfin E pour 11 plus 9, soit 20. D et E valent tous deux 20 : cette égalité ne change rien au résultat, seul l'ordre de traitement varie.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/5/57/Dijkstra_Animation.gif
+| Animation d'un algorithme de Dijkstra : les distances provisoires se mettent à jour arête après arête jusqu'à ce que chaque sommet reçoive sa valeur définitive.
+```
+
+La distance n'est qu'une moitié du résultat, l'autre étant le chemin lui-même. On le reconstruit avec le tableau des prédécesseurs rempli pendant les relaxations : D a pour prédécesseur C, C pour prédécesseur A, d'où le chemin A puis C puis D pour un coût de 20. Pour E, le prédécesseur est F, lui-même issu de C, d'où A puis C puis F puis E, à 9 plus 2 plus 9, soit 20 également. Remonter les prédécesseurs de l'arrivée au départ est un parcours linéaire qui ne peut pas boucler, car un sommet ne reçoit un prédécesseur qu'au moment où il est amélioré.
+
+Pour éviter de balayer tous les sommets à chaque tour, l'implémentation de référence utilise un tas binaire, fourni en Python par le module heapq sous forme de file de priorité où l'on insère des couples distance puis sommet.
+
+```python
+import heapq
+
+def dijkstra(graphe, depart):
+    distances = {s: float("inf") for s in graphe}
+    predecesseurs = {}
+    distances[depart] = 0
+    file = [(0, depart)]
+    while file:
+        d, u = heapq.heappop(file)
+        if d > distances[u]:
+            continue
+        for v, poids in graphe[u]:
+            candidate = d + poids
+            if candidate < distances[v]:
+                distances[v] = candidate
+                predecesseurs[v] = u
+                heapq.heappush(file, (candidate, v))
+    return distances, predecesseurs
+```
+
+Le test qui compare d à distances[u] rejette les entrées périmées du tas : une même distance y figure plusieurs fois, une par amélioration, et seules les plus petites méritent d'être développées.
+
+## Complexités : ce que coûtent BFS, DFS et Dijkstra
+
+Mesurer ces trois algorithmes suppose de reprendre la méthode des chapitres précédents : on compte des opérations, non des secondes, et l'on retient l'ordre de grandeur qui croît le plus vite avec la taille du graphe. Deux lettres suffisent, V pour le nombre de sommets, issu de vertices, et E pour le nombre d'arêtes, issu de edges. Toutes les bornes qui suivent supposent les listes d'adjacence, seule représentation qui permette de n'examiner que les arêtes réellement présentes.
+
+BFS et DFS partagent exactement le même coût. Chaque sommet est inscrit une fois dans la file ou la pile, extrait une fois, et ses voisins sont parcourus une fois. Comme la somme des degrés vaut deux fois le nombre d'arêtes dans un graphe non orienté, le total des examens d'arêtes vaut deux fois E, d'où la borne O de V plus E. Avec une matrice d'adjacence, chaque sommet impose au contraire de balayer une ligne entière, ce qui porte le coût à V au carré indépendamment du nombre réel d'arêtes : sur un graphe clairsemé, c'est un gaspillage considérable.
+
+Dijkstra coûte plus cher, parce qu'il ajoute à chaque tour une recherche de minimum et des mises à jour. Avec un tableau simple où l'on balaie les sommets, le bilan est de V tours multipliés par V examens, soit O de V au carré, formule avantageuse sur les graphes très denses. Avec un tas binaire, chaque sommet est inséré au plus une fois par amélioration et chaque arête déclenche au plus une tentative de relaxation ; chaque insertion et chaque retrait coûtent le logarithme de la taille du tas, d'où la borne O de V plus E le tout multiplié par le logarithme de V. C'est cette seconde formule qui domine pour les graphes ordinaires.
+
+Un point de vocabulaire évite bien des confusions. La complexité décrit une croissance, pas une vitesse mesurée en secondes. Or E est lui-même borné : dans un graphe non orienté, E ne dépasse pas V multiplié par V moins un divisé par deux. Dire O de V plus E revient donc parfois, sur un graphe complet, à dire O de V au carré.
+
+```table
+| Algorithme | Plus court chemin | Coût temporel | Mémoire |
+| --- | --- | --- | --- |
+| BFS | En nombre d'arêtes, si toutes les arêtes se valent | O de V plus E | O de V plus E |
+| DFS | Aucune garantie de minimalité | O de V plus E | O de V en profondeur |
+| Dijkstra, tas binaire | Exact, poids positifs ou nuls | O de V plus E multiplié par log V | O de V plus E |
+```
+
+La mémoire, enfin, reste en O de V plus E pour les trois algorithmes, soit la somme des sommets et des arêtes rangés, auxquels s'ajoute pour Dijkstra l'espace occupé par le tas. Ce coût supplémentaire se paie en vitesse et se justifie dès que la question du plus court chemin se pose : aucun parcours linéaire ne peut le résoudre exactement, et payer un logarithme de plus est le prix de la pondération.
+
+## Applications : GPS, réseaux sociaux, pages web et au-delà
+
+Le système de navigation est l'application la plus visible du chapitre. Le plan d'une ville ou d'un réseau autoroutier est un graphe pondéré et orienté : les carrefours sont les sommets, les tronçons portent un poids qui mesure la distance ou le temps de parcours, et les sens interdits transforment une route à double sens en deux arcs distincts. Calculer un itinéraire revient à lancer Dijkstra depuis votre position, avec des poids qui changent en temps réel à cause des travaux ou des embouteillages. Les moteurs commerciaux précalculent des structures condensées et combinent Dijkstra avec des heuristiques, mais le principe de relaxation reste celui que vous venez d'écrire.
+
+Les réseaux sociaux sont eux aussi des graphes : les sommets sont les profils, les arêtes sont les amitiés, les abonnements ou les collaborations. Le parcours en largeur y travaille en permanence. Compter le nombre de degrés qui vous séparent d'une personne, c'est trouver le niveau de sa découverte dans un BFS lancé depuis votre profil ; regrouper les contacts d'un même cercle, c'est isoler des composantes connexes. Le parcours en profondeur sert à explorer un sous-ensemble cohérent et à détecter des boucles de recommandation, tandis que les mesures d'influence s'appuient sur la structure complète du graphe.
+
+Le web lui-même forme un immense digraphe dont les pages sont les sommets et les liens les arcs. Les robots d'indexation le parcourent selon une stratégie hybride, empruntant la profondeur pour explorer une thématique et la largeur pour ne pas négliger le reste du site. Les protocoles de routage des réseaux informatiques font de même entre les routeurs : ils tiennent une copie locale du graphe et calculent des plus courts chemins pour acheminer chaque paquet, en relançant le calcul dès qu'une liaison tombe. La compilation, la planification de projets et l'analyse de réseaux biologiques emploient les mêmes briques.
+
+La planification de projet illustre pour sa part la vertu de la profondeur. Les tâches forment un graphe orienté acyclique, une flèche signifiant que l'une ne peut commencer avant l'autre ; un parcours en profondeur suffit à en découvrir les cycles, c'est-à-dire les dépendances circulaires qui rendraient le planning impossible, puis à produire un ordre d'exécution valide. Le même principe se retrouve dans la résolution des dépendances d'un gestionnaire de paquets.
+
+Le point commun de toutes ces situations est que la structure précède le traitement. Avant de mesurer une distance, il faut avoir choisi ce qui est un sommet et ce qui est une arête, puis avoir décidé entre une matrice et des listes ; avant de comparer des parcours, il faut savoir quelle question on pose : proximité, exhaustivité, structure. C'est pourquoi ce chapitre a commencé par les représentations. Les trois méthodes que vous venez de voir ne sont pas des recettes isolées, elles forment une boîte à outils dont chaque instrument répond à une question précise.
+
+## À retenir
+
+- Un graphe est un ensemble de sommets reliés par des arêtes, non orientées, ou des arcs, à sens unique, noté G = (S, A).
+- Un graphe est pondéré quand chaque arête porte un poids : distance, durée, coût.
+- La matrice d'adjacence est un tableau carré de n au carré cases : test d'arête en temps constant, listes de voisins en temps linéaire.
+- La liste d'adjacence range pour chaque sommet ses voisins seulement : mémoire de O de V plus E, exploration optimale.
+- On choisit la matrice pour les graphes denses et les nombreuses questions d'existence, les listes sinon.
+- BFS explore par vagues concentriques avec une file et donne le plus court chemin en nombre d'arêtes.
+- DFS plonge au plus loin avec une pile ou la récursion et revient aux embranchements non explorés.
+- Dans les deux parcours, un sommet est marqué au moment de son insertion, jamais au moment de son traitement.
+- BFS et DFS coûtent O de V plus E avec les listes d'adjacence, et O de V au carré avec une matrice.
+- Dijkstra maintient des distances provisoires, fige à chaque tour le sommet le plus proche et relâche ses arêtes.
+- Dijkstra exige des poids positifs ou nuls et coûte O de V plus E multiplié par le logarithme de V avec un tas binaire.
+
+## Erreurs fréquentes
+
+- Piège : marquer un sommet au moment du retrait de la file ou de la pile. Correction : marquez à l'insertion, sinon le sommet entre plusieurs fois.
+- Piège : utiliser BFS pour un plus court chemin pondéré. Correction : dès que les poids varient, passez à Dijkstra.
+- Piège : lancer Dijkstra sur un graphe contenant des poids négatifs, sans message d'erreur. Correction : utilisez l'algorithme de Bellman-Ford.
+- Piège : oublier la boucle sur tous les sommets quand le graphe comporte plusieurs composantes connexes. Correction : relancez le parcours sur chaque sommet encore inconnu.
+- Piège : confondre poids nul et arête absente dans une matrice de pondération. Correction : réservez une valeur sentinelle explicite.
+- Piège : rechercher le voisin le plus proche plutôt que le sommet de distance minimale dans Dijkstra. Correction : figez le sommet à la plus petite distance provisoire.
+- Piège : construire la matrice dans un ordre de sommets différent à chaque exécution. Correction : figez la table nom puis indice.
+- Piège : attendre de DFS un chemin de longueur minimale. Correction : pour la minimale en arêtes, employez BFS.
+- Piège : conclure à la lenteur d'un algorithme sur une petite donnée. Correction : exprimez le coût en O et raisonnez sur la croissance.
+
+## Pour aller plus loin
+
+La première adresse reste Wikipédia, dont les articles en français sur le parcours en largeur et sur l'algorithme de Dijkstra détaillent les preuves de correction, les variantes d'implémentation et les liens avec les autres algorithmes de plus court chemin. Ils se lisent avantageusement après cette leçon, car vous disposez du vocabulaire nécessaire pour suivre les démonstrations. L'article sur la matrice d'adjacence sert de rappel pour la représentation et pour le tableau des coûts. Conservez ces pages comme référence, plutôt que comme première lecture.
+
+Pour visualiser les parcours, rien ne remplace un outil interactif. Le site VisuAlgo, développé pour l'enseignement, propose des animations de BFS, de DFS et de Dijkstra sur des graphes que vous pouvez modifier, avec affichage pas à pas de la file, de la pile et des distances. Si votre intuition hésite encore entre largeur et profondeur, observez deux fois le même graphe : la différence deviendra évidente sans qu'aucun texte ne soit nécessaire.
+
+Côté pratique, la bibliothèque NetworkX en Python offre une implémentation complète de tous les algorithmes du chapitre et constitue un excellent banc d'essai. Vous y définissez un graphe en quelques lignes, puis vous comparez la distance renvoyée par vos propres fonctions à celle de la bibliothèque. Enfin, lisez la documentation de votre langage pour la file de priorité : comprendre le tas binaire vous expliquera à lui seul la complexité de Dijkstra.
+
+- https://fr.wikipedia.org/wiki/Algorithme_de_parcours_en_largeur — le parcours BFS, sa preuve de correction et ses variantes
+- https://fr.wikipedia.org/wiki/Algorithme_de_Dijkstra — l'algorithme pas à pas, sa preuve et sa complexité
+- https://fr.wikipedia.org/wiki/Matrice_d%27adjacence — la représentation matricielle et ses coûts
+
+## Et maintenant : passez à l'implémentation
+
+Vous disposez des trois briques qui permettent d'explorer n'importe quel réseau : deux représentations pour stocker la structure, deux parcours pour la découvrir, et un algorithme de plus court chemin pour la mesurer. Chacune répond à une question précise, et aucune ne remplace les autres : la matrice et les listes sont deux vues du même objet, BFS et DFS sont deux ordres de découverte, Dijkstra est la seule des trois à tenir compte des poids. Cette distinction entre stockage et traitement est la vraie leçon du chapitre.
+
+L'exercice qui accompagne ce chapitre vous demande d'écrire en Python l'ensemble de la chaîne : construire la représentation d'un graphe pondéré à partir d'une liste d'arêtes, écrire BFS et DFS avec leur marquage correct, implémenter Dijkstra avec un tas, puis comparer les distances obtenues sur un exemple tracé à la main. Le quiz de quatre questions vérifie les points les plus souvent oubliés : la position du marquage, le choix entre file et pile, les conditions de validité de Dijkstra et l'interprétation des complexités.
+
+Si un point résiste, revenez à la section correspondante plutôt que de chercher une solution toute faite : les représentations dans le premier volet, la file et le marquage dans le second, la pile et la récursion dans le troisième, le déroulé chiffré et les complexités dans le dernier. Tracez à la main, comparez au tableau de vos propres résultats, puis seulement exécutez le code : dix minutes de parcours simulé sur papier valent mieux qu'une heure de débogage sans ordre ni méthode.

@@ -1,0 +1,557 @@
+Bienvenue dans le onzième et dernier chapitre du parcours Réseaux. Les dix chapitres précédents ont construit une infrastructure complète : adresses et masques, VLAN et commutation, couche transport, routage, filtrage, supervision, durcissement. Tout est en place, documenté, supervisé. Reste la question que personne ne pose le jour de la mise en service et que tout le monde pose le lendemain de la première panne : combien de temps ce service peut-il s'arrêter sans que l'organisation s'arrête avec lui, et que faut-il mettre en place pour que la réponse soit longue ? C'est exactement l'objet de ce chapitre, qui clôt le parcours en traitant de la haute disponibilité : redondance, équilibrage de charge et liens multiples.
+
+À la fin de cette leçon, vous saurez faire trois choses très concrètes. Vous saurez configurer un équilibrateur de charge : répartir des requêtes entre plusieurs serveurs avec un algorithme choisi, des contrôles d'état qui interrogent réellement le service, une persistance de session quand elle est nécessaire, et une interface de statistiques que vous lirez tous les matins. Vous saurez expliquer, avec des arguments chiffrés et non avec des slogans, ce qu'un SD-WAN apporte réellement à un réseau de sites multiples : overlay chiffré, contrôleur central, sélection de chemin selon la qualité mesurée, accès direct à Internet et politiques par application. Et vous saurez éliminer les points de défaillance uniques, un par un, en partant d'une cartographie méthodique et en finissant par des tests de bascule exécutés, chronométrés et documentés.
+
+Le fil rouge de ce chapitre est double, comme le veut la réalité. Le premier terrain est le site Lilas, que vous avez configuré, supervisé et sécurisé au fil des chapitres : deux routeurs de cœur, un pare-feu en bordure, des serveurs applicatifs en VLAN serveurs, une machine de supervision en VLAN de gestion. Le second terrain est une association culturelle qui exploite un site public avec deux liens opérateur, deux serveurs d'applications et une caisse en ligne dont la coupure se compte en recettes perdues. Deux échelles différentes, une même méthode : identifier la chaîne de dépendances, supprimer le maillon unique, doubler ce qui doit l'être, puis prouver que la bascule fonctionne.
+
+Une règle gouverne l'ensemble : une redondance non testée n'existe pas. Un deuxième serveur branlé mais jamais éteint à dessein, un second lien opérateur payé mais jamais vérifié, une base répliquée dont personne n'a mesuré le décalage, ne valent pas mieux qu'un équipement unique. Ils donnent en plus un sentiment dangereux de sécurité. Nous avancerons donc en suivant un ordre immuable : comprendre ce qui peut tomber, mesurer ce que la panne coûte, concevoir la solution, la configurer, puis provoquer la panne volontairement et chronométrer la reprise. Chaque section se termine par un contrôle exécutable : une commande à lancer, un état à observer, un chiffre à noter.
+
+## Pourquoi la haute disponibilité : le point de défaillance unique
+
+Un point de défaillance unique, souvent désigné par son acronyme anglais SPOF, est un élément dont l'arrêt met immédiatement hors service l'ensemble auquel il appartient, faute d'alternative disponible. La définition est simple ; la difficulté est entièrement dans le mot disponible. Deux serveurs affichés côte à côte sur le même tableau de bord ne constituent pas une redondance si une seule même alimentation électrique, un seul même commutateur ou un seul même fichier de configuration les tient. Le point de défaillance se déplace : on a doublé la machine, on a découvert que le vrai maillon unique était le câble, l'alimentation, la licence ou l'humain qui sait redémarrer le service. La haute disponibilité n'est donc pas une liste d'achats, c'est un raisonnement mené maillon par maillon.
+
+La méthode la plus sûre consiste à décrire le service comme une chaîne de dépendances, puis à écrire la loi qui la gouverne : la disponibilité d'une chaîne dont les maillons travaillent de façon indépendante est le produit des disponibilités de ces maillons. Si le serveur d'application tient à 99,9 pour cent, la base de données à 99,9 pour cent, la passerelle réseau à 99,9 pour cent, le service global plafonne à environ 99,7 pour cent, soit plus de deux heures d'arrêt par mois, malgré trois briques qui semblent fiables. Plus le nombre de maillons croît, plus le produit se dégrade : c'est la raison pour laquelle on commence toujours par supprimer les dépendances inutiles avant de doubler les autres. Réduire le nombre de maillons vaut souvent mieux que doubler les maillons restants.
+
+Confondre redondance et haute disponibilité est l'erreur conceptuelle la plus répandue du domaine. La redondance dit qu'il existe un second élément ; la haute disponibilité ajoute trois capacités : détecter la défaillance, décider de la bascule, puis l'exécuter à temps et sans erreur. Un second serveur qui n'est pas interrogé par un contrôle d'état ne sera jamais retiré du service au moment opportun. Une base répliquée dont la réplication échoue silencieusement depuis trois semaines n'est pas une redondance, c'est une copie obsolète. La redondance est un état du matériel ; la haute disponibilité est un comportement du système, et ce comportement se démontre uniquement par le test.
+
+Le schéma suivant met face à face une chaîne à maillon unique et la même chaîne doublée. Observez la différence de structure, pas seulement le nombre de boîtes : à droite, chaque étape possède une alternative, et les alternatives sont elles-mêmes rattachées à des chemins distincts. C'est cette indépendance qui fait tenir l'ensemble, car une redondance branchée sur le même maillon amont ne protège de rien.
+
+```text
+CHAINE A MAILLON UNIQUE              MEME CHAINE DOUBLEE
+
+  usagers                              usagers
+    |                                    |
+  DNS unique                           DNS chez deux registrar
+    |                                    |
+  un seul lien FAI          ---->     deux liens, deux operateurs
+    |                                    |
+  un seul pare-feu                   deux pare-feux en cluster
+    |                                  /   \
+  un seul serveur app             srv A   srv B
+    |                                \     /
+  base unique                      base maitre + replique
+    |
+  sauvegarde locale              sauvegarde hors site + copie
+```
+
+Le tableau ci-dessous sert d'inventaire de départ : il associe à chaque maillon le point de défaillance que l'on rencontre le plus souvent, la forme de redondance adaptée et la condition sans laquelle cette redondance reste décorative. Servez-vous-en comme d'une check-list de conception avant d'acheter quoi que ce soit.
+
+```table
+| Maillon | Point de défaillance typique | Redondance adaptée | Condition de bascule |
+|---|---|---|---|
+| Accès réseau | Un seul lien opérateur | Deux liens, deux opérateurs, deux entrées physiques | Suivi de route ou SD-WAN avec politique de repli |
+| Électricité | Une seule prise, un seul onduleur | Deux armoires, deux alimentations par serveur, groupe électrogène | Basculable et testé sous charge |
+| Commutation | Un commutateur de raccordement | Deux commutateurs, liens appairés en agrégation | Protocole de boucle maîtrisé et sans temps mort |
+| Traitement | Un seul serveur applicatif | Deux serveurs derrière un équilibrateur | Contrôle d'état interrogant réellement l'application |
+| Données | Une base mono-instance | Maitre et réplique avec bascule | Réplication surveillée et bascule répétée en exercice |
+| Noms | Un seul registrar, un seul serveur DNS | Deux zones chez deux fournisseurs | Délégation cohérente et TTL raisonnable |
+| Exploitation | Un seul administrateur | Deux personnes, runbook daté, astreinte | Procédure exécutée par la seconde personne |
+```
+
+
+## Mesurer la panne : disponibilité, quatre neuf, RTO et RPO
+
+La disponibilité est un rapport : le temps pendant lequel le service est utilisable, divisé par le temps total, exprimé en pourcentage. Cette définition contient déjà deux pièges. Le premier est le mot utilisable : un serveur qui répond au ping mais dont l'application refuse toute authentification n'est pas disponible ; la mesure doit être prise du point de vue de l'usager, exactement comme le faisaient les tests synthétiques du chapitre sur la supervision. Le deuxième piège est la fenêtre de mesure : sur un mois de trente jours, une disponibilité de 99 pour cent autorise plus de sept heures d'arrêt, ce qui se lit facilement sur un graphique et se justifie difficilement auprès d'un dirigeant. Les pourcentages se comprennent toujours quand on les convertit en durée.
+
+Le tableau suivant donne les correspondances à retenir par cœur. Les valeurs sont calculées sur un mois de trente jours, soit 43 200 minutes. Elles servent de graticule : dès que quelqu'un prononce le mot quatre neuf, vous devez savoir qu'il parle de quatre minutes et vingt secondes d'arrêt par mois, ni plus ni moins.
+
+```table
+| Niveau | Disponibilité | Temps d'arrêt sur 30 jours | Exemple de service |
+|---|---|---|---|
+| Deux neuf | 99 pour cent | 7 h 18 min | Site vitrine, documentation interne |
+| Trois neuf | 99,9 pour cent | 43 min | Intranet, application métier de bureau |
+| Quatre neuf et demi | 99,95 pour cent | 21 min | Application métier en journée ouvrée |
+| Quatre neuf | 99,99 pour cent | 4 min 20 s | Paiement, tunnel de sécurité, DNS critique |
+| Cinq neuf | 99,999 pour cent | 26 s | Opérateur, cœur de plateforme de paiement |
+```
+
+
+À l'objectif de disponibilité s'ajoutent deux mesures qui décrivent la panne elle-même plutôt que sa fréquence. Le temps de reprise, ou RTO, indique combien d'heure, de minute ou de seconde peut durer l'interruption avant que l'organisation subisse un dommage inacceptable ; c'est lui qui fixe la fréquence des sauvegardes et la durée de bascule admissible. La perte de données admissible, ou RPO, indique combien de données l'organisation accepte d'avoir perdu au moment de la reprise ; c'est elle qui décide si l'on accepte une réplique en différé ou s'il faut une réplication synchrone. Un site de commerce électronique peut fixer un RTO de quinze minutes et un RPO de zéro seconde pour les commandes en cours de paiement, tandis qu'un forum associatif acceptera un RTO de plusieurs heures et un RPO d'une journée. Ces deux chiffres, écrits avant la conception, décident presque à eux seuls de l'architecture retenue.
+
+La traduction chiffrée de la panne varie énormément selon l'activité, et c'est ce qui justifie des budgets très différents pour des réseaux d'apparence identique. Sur une plateforme de vente en ligne en période de forte affluence, chaque minute d'arrêt se mesure en chiffre d'affaires perdu et en campagnes publicitaires déjà payées dont le trafic ne convertit plus. Sur le site d'une association, la coupure du seul lien opérateur pendant un service de caisse se traduit en recettes non encaissées et en tickets imprimés à la main. Dans les deux cas, la méthode est identique : on multiplie le nombre d'utilisateurs impactés par le temps moyen d'arrêt, puis par la valeur perdue par unité de temps, et l'on compare le résultat au coût annuel de la redondance. Ce calcul, aussi approximatif soit-il, remplace l'argumentaire du type c'est plus prudent par une décision budgétaire défendable.
+
+## Cartographier les SPOF : sept questions sur le terrain
+
+Avant toute configuration, il faut un inventaire. La méthode que nous allons utiliser est volontairement artisanale : on prend un service réel, on le décrit de bout en bout, et on lui pose sept questions dans un ordre fixe. Elle se pratique assis devant un tableau blanc, avec l'administrateur qui connaît l'installation et l'utilisateur qui la subit, parce que les deux voient des maillons différents. L'objectif n'est pas de produire un joli schéma, c'est de sortir de la réunion avec une liste de maillons uniques classés par coût de correction. Comptez une à deux heures pour un service simple, une demi-journée pour une chaîne comprenant base de données, sauvegarde et dépendance à un tiers.
+
+Première question : quelle est la chaîne complète, du clic de l'usager jusqu'à la donnée enregistrée ? Tracez-la en écrivant chaque étape : résolution de nom, routage, pare-feu, équilibrateur, serveur applicatif, base, stockage, puis retour. Toute étape non écrite est un maillon que personne ne surveille. Deuxième question : où le trafic entre-t-il physiquement, et par combien de câbles ? Une seule paire de fibres entre la salle technique et l'opérateur, un seul connecteur dans le panneau de brassage, une seule gaine : autant de SPOF matériels qui coûtent peu à doubler le jour où l'on décide de les éliminer et qui coûtent cher la nuit où ils cassent. Troisième question : quelle est la source d'alimentation de chaque élément, et que se passe-t-il si l'on coupe cette source ? Deux serveurs sur la même prise multiprise restent un seul serveur du point de vue électrique.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/serveur-rack.jpg
+| Baie de serveurs en datacenter : chaque machine tire deux alimentations sur deux armoires distinctes, car la redondance ne commence qu'au câble d'alimentation.
+```
+
+Quatrième question : quel logiciel, quelle licence, quelle version unique peut mettre le service à l'arrêt ? Une seule instance de moteur de base de données, un seul service d'authentification, un seul démon de mise en cache, une licence flottante unique qui refuse la seconde connexion : la redondance matérielle ne sert à rien tant que cette couche logicielle reste mono-instance. Cinquième question : où vivent les données, et que se passe-t-il si la machine qui les porte disparaît ? Posez la question avec brutalité : si l'on éteint ce serveur et qu'on le détruit, combien de données perdez-vous, et depuis quand ? Si la réponse est au hasard, c'est que le RPO n'est pas tenu et qu'aucune réplication digne de ce nom n'existe.
+
+Sixième question : qui résout vos noms, et chez qui ? Le domaine du service dépend d'un registrar, d'un serveur de noms et d'un TTL ; une panne de ce trio vous rend invisible même si vos serveurs tournent à merveille. Vérifiez que la zone existe chez deux fournisseurs distincts, que les enregistrements sont cohérents, que le compte du registrar a un contact d'astreinte et que le renouvellement automatique est réellement actif. Septième question : qui sait faire, et quelle est la procédure écrite ? Un point de défaillance humain se traite comme les autres : deux personnes formées, un runbook daté accessible hors ligne, une astreinte avec un numéro testé, et une revue trimestrielle où la seconde personne exécute la procédure à la place de la première. Un service qui repose sur un seul expert n'est pas redondé, il est fragile avec élégance.
+
+- Quelle est la chaîne complète, du clic de l'usager jusqu'à la donnée enregistrée ?
+- Par combien de câbles physiques et de connecteurs le trafic entre-t-il dans la salle ?
+- Quelle source d'alimentation alimente chaque élément, et quelle bascule existe-t-il ?
+- Quel logiciel, quelle licence ou quelle version unique peut arrêter le service ?
+- Où vivent les données, depuis quand ne sont-elles plus synchronisées, et qui le sait ?
+- Qui publie vos noms, chez quel registrar, avec quel contact et quel délai de renouvellement ?
+- Qui sait exécuter la procédure de reprise, à quelle fréquence l'a-t-il réellement fait ?
+
+Une fois la liste écrite, classez chaque maillon selon deux axes : probabilité de panne et impact sur l'activité. En haut à droite, les maillons à fort impact et forte probabilité sont traités sans attendre ; en bas à gauche, les maillons à faible impact peuvent attendre une fenêtre de maintenance ou une simple documentation. La catégorie intermédiaire, à fort impact mais faible probabilité, est la plus trompeuse : c'est là que se cachent le disque unique, la réplication jamais testée et le second lien opérateur dont personne ne vérifie l'état depuis sa mise en service. Cette faible probabilité apparente ne tient qu'à l'absence d'historique de panne, ce qui prouve l'ignorance plutôt que la fiabilité. Exigez donc une donnée : date du dernier test, durée de bascule observée, personne qui l'a exécuté. Ce qui n'est pas daté n'existe pas.
+
+## Load balancing : répartir la charge, effacer la panne
+
+Un équilibrateur de charge est un point d'entrée unique qui décide, pour chaque connexion ou chaque requête, vers quel serveur du groupe la diriger. L'usager ne connaît qu'une seule adresse, celle de l'équilibrateur ; les serveurs, eux, restent inconnus de l'extérieur et peuvent être ajoutés, retirés, réinstallés ou mis à jour sans que la configuration du client change. Cette propriété est la première raison d'être du dispositif : elle rend la taille de la ferme de serveurs indépendante de l'adresse annoncée. Le second bénéfice est immédiat : la répartition évite qu'un serveur unique ne sature pendant que son voisin reste inoccupé, ce qui allonge la durée avant le prochain investissement matériel. Le troisième est la dissimulation de la panne : quand un membre du groupe tombe, les requêtes suivantes vont aux autres, et l'usager ne perçoit qu'une requête lente ou relancée, pas une page d'erreur.
+
+L'histoire de la répartition est courte et instructive. On a commencé par la résolution de noms alternée, qui renvoie plusieurs adresses et laisse le client choisir : simple, gratuit, mais aveugle, car le client ignore l'état réel des serveurs et conserve souvent sa valeur mise en cache. Sont venus ensuite des appareils matériels spécialisés, puis des logiciels libres qui ont démocratisé la fonction : HAProxy, nginx, IPVS, et les équilibrateurs managés dans le cloud. Quel que soit l'outil, le vocabulaire reste identique : une adresse virtuelle, un ou plusieurs fronts d'entrée, un groupe de serveurs appelé pool, ses membres, un contrôle d'état, un algorithme de répartition et, si nécessaire, une règle de persistance de session.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/load-balancer.png
+| Schéma de load balancing : l'adresse virtuelle unique reçoit le trafic, le répartiteur le distribue vers plusieurs serveurs selon l'état de chacun.
+```
+
+Le schéma ci-dessous donne la structure réelle d'une installation logicielle, avec deux équilibrateurs qui partagent la même adresse virtuelle afin de ne pas reconstruire le dispositif autour d'un nouveau point de défaillance unique. Observez que la redondance est pensée à deux niveaux : les serveurs du groupe se remplacent entre eux, et les répartiteurs eux-mêmes se remplacent entre eux. Nous traiterons le second niveau en détail dans la section consacrée à keepalived.
+
+```text
+                    INTERNET
+                       |
+              +--------+--------+
+              |  adresse VIP    |
+              |  10.10.8.100    |
+              +---+---------+---+
+                  |         |
+             lb-01|         |lb-02   (keepalived : un seul actif)
+             .8.5 |         |.8.6
+                  |         |
+        +---------+---------+---------+
+        |         |         |         |
+     srv A     srv B     srv C     srv D
+    .8.21     .8.22     .8.23     .8.24
+   (pool web, controle d'etat toutes les 2 s)
+```
+
+Trois bénéfices complémentaires se mesurent dès la mise en service. Le déploiement sans coupure devient possible : on retire un serveur du pool, on le met à jour, on le remet dans le pool, puis on recommence sur le suivant ; l'usager ne voit jamais de fenêtre d'arrêt, à condition que l'application supporte que ses sessions soient réparties entre plusieurs instances. La montée en charge devient linéaire : ajouter un serveur au pool augmente le débit disponible sans toucher à l'annonce du service. Et la maintenance gagne un outil décisif, le mode drain, qui laisse les sessions existantes se terminer tout en refusant les nouvelles, si bien qu'une intervention planifiée ne coupe jamais un client en pleine transaction.
+
+Il faut cependant dire ce que l'équilibrateur ne fait pas. Il ne répare pas une application défaillante : il masque un membre défaillant pendant que l'équipe répare, ce qui change radicalement la nature de l'incident vécu par l'usager, pas sa cause. Il ne partage pas l'état : si la session du client n'existe que dans la mémoire d'un serveur, la répartition pure casse le parcours, d'où la nécessité d'une persistance ou d'une session externalisée. Il ne corrige pas une base de données mal dimensionnée, ni un disque lent, ni un verrouillage de tables. Enfin, il devient lui-même un maillon de la chaîne : un répartiteur unique est un point de défaillance unique, et il faut donc prévoir son redoublement dès la conception, pas après la première panne.
+
+## Répartiteurs en couche 4 et couche 7 : ce que chacun voit
+
+Le niveau OSI auquel travaille le répartiteur détermine tout le reste : ce qu'il voit, ce qu'il peut décider, ce qu'il coûte en ressources et ce qu'il cache à l'équipe d'exploitation. Un équilibrateur de couche 4 manipule des paquets et des connexions : il lit les adresses IP, les ports et l'état de la connexion TCP, il ouvre une socket vers un serveur du pool et transporte les octets sans jamais les interpréter. Un équilibrateur de couche 7 interprète le contenu : il termine le chiffrement TLS, lit la ligne de requête HTTP, les en-têtes, le chemin demandé, le cookie de session, puis décide à quoi cette requête précise doit servir. L'un est un routage rapide de flux ; l'autre est un agent d'application déguisé en routeur.
+
+La couche 4 possède des forces que l'on ne lui rend pas toujours justice. Elle est très rapide, puisqu'aucune déchiffrement ni aucune analyse de contenu n'est nécessaire ; elle est neutre vis-à-vis du protocole, ce qui permet de répartir du trafic qui n'est pas HTTP : bases de données, messagerie, jeux, tunnels, flux vidéo, protocoles propriétaires ; elle supporte des volumes très élevés avec une empreinte mémoire faible, car elle ne garde qu'une table de connexions. Ses limites sont celles de son ignorance : impossible de router vers l'arrière selon le chemin demandé, impossible de réécrire un en-tête, impossible de mettre en cache, impossible de détecter qu'une requête réussit alors que la page est vide. Elle peut tout au plus vérifier qu'un port accepte une connexion.
+
+La couche 7, elle, offre le contrôle dont l'application a besoin. On route selon le nom de domaine, ce qui permet de héberger plusieurs sites sur une même adresse ; on route selon le chemin, ce qui permet d'envoyer l'API vers un pool et le site statique vers un autre ; on route selon un en-tête ou un cookie ; on termine le TLS une seule fois et l'on chiffre à nouveau vers les serveurs, ce qui centralise les certificats et leur renouvellement ; on ajoute la compression, le caching et la limitation de débit. Le prix se paie en ressources et en responsabilité : le répartiteur doit déchiffrer, donc consommer du processeur ; il voit les contenus chiffrés, donc devient une cible à protéger ; et il intervient dans la sémantique HTTP, donc il doit évoluer avec le protocole.
+
+```table
+| Critère | Répartiteur couche 4 | Répartiteur couche 7 |
+|---|---|---|
+| Éléments examinés | Adresses IP, ports, état TCP ou UDP | Nom, chemin, en-têtes, cookie, corps de requête |
+| Chiffrement TLS | Transit ou déchiffrement en option | Terminaison et ré-encryption fréquentes |
+| Performance | Très élevée, mémoire réduite | Inférieure, coût processeur déchiffrement |
+| Routage | Par flux uniquement | Par contenu, par application, par session |
+| Services ajoutés | Aucun | Cache, compression, réécriture, limitation de débit |
+| Protocoles | N'importe lequel (TCP, UDP) | HTTP, HTTPS, HTTP/2, WebSocket, gRPC |
+| Usage typique | Bases de données, messagerie, flux, DNS | Sites web, API, services internes |
+```
+
+
+Le choix entre les deux niveaux n'est d'ailleurs pas exclusif. On installe fréquemment un équilibrateur de couche 7 pour le site web et l'API, puis un équilibrateur de couche 4 pour les services qui n'ont rien à faire de HTTP, ou pour les connexions de maintenance vers des équipements qui ne supportent pas d'intermédiaire applicatif. La règle de décision tient en une phrase : on choisit le niveau le plus bas qui permet la décision que l'on doit prendre. Si la décision exige de lire un chemin ou un cookie, il faut monter en couche 7 ; si la décision se limite à un port et à un débit, rester en couche 4 économise du processeur et simplifie le diagnostic.
+
+## Algorithmes de répartition : sous le capot
+
+L'algorithme de répartition est la règle qui choisit, parmi les membres sains d'un pool, celui qui servira la prochaine connexion ou la prochaine requête. Il n'existe pas d'algorithme supérieur aux autres : chacun fait un compromis différent entre simplicité, équité et connaissance de l'application. Le tour de table, ou round-robin, distribue les connexions à tour de rôle dans l'ordre du pool. Il est d'une simplicité désarmante et parfaitement équitable quand les serveurs sont identiques et les requêtes de coût constant ; il devient naïf dès que les machines diffèrent, dès que certaines requêtes coûtent dix fois plus que d'autres, ou dès que les connexions vivent longtemps, car il ignore totalement la charge réelle de la cible choisie.
+
+La variante pondérée corrige l'inégalité de capacité : un serveur de 32 Go de mémoire reçoit le double de connexions qu'un serveur de 16 Go si on lui attribue un poids double. Le nombre de connexions le plus faible, ou least connections, abandonne l'ordre pour regarder l'état : chaque nouvelle requête part vers le membre qui a actuellement le plus petit nombre de connexions ouvertes. C'est l'algorithme de référence pour des sessions de durée variable, parce qu'il suit la charge réelle plutôt qu'une estimation. Sa version affinée, le temps de réponse le plus faible, ajoute la mesure : on préfère le serveur qui répond vite, ce qui écarte naturellement une machine en train de saturer son processeur ou d'attendre un disque. Le tableau ci-dessous compare ces familles et indique, pour chacune, le cas d'usage auquel elle répond.
+
+```table
+| Algorithme | Principe | Forces | Limites | Cas d'usage |
+|---|---|---|---|---|
+| Round-robin | Tour de table dans l'ordre du pool | Simple, équitable si homogène | Ignore la charge réelle et le coût des requêtes | Serveurs identiques, requêtes uniformes |
+| Round-robin pondéré | Tour de table au prorata du poids | Tient compte des différences de capacité | Le poids est fixé à la main, il vieillit | Matériel hétérogène |
+| Least connections | Vers le membre ayant le moins de connexions | Suit la charge réelle | Calcul plus coûteux, sensible aux sessions très courtes | Sessions longues ou coûteuses |
+| Least response time | Vers le membre le plus rapide mesuré | Détecte la saturation débutante | Dépend de la qualité des mesures | Applications à temps de réponse variable |
+| Hachage source ou URL | Même entrée, même serveur | Affinité sans état stocké | Distribution inégale si un client disparaît | Cache local, sessions dans la mémoire |
+| Aléatoire | Choix uniforme au hasard | Zéro hypothèse, très robuste | Aucune intelligence de placement | Repli, trafic parfaitement symétrique |
+```
+
+
+Le piège classique de l'affinité mérite un développement, car il coûte des incidents incompréhensibles. Imaginez un hachage sur l'adresse source derrière un équilibrateur exposé à Internet : tous les clients d'un même grand réseau d'entreprise, une université ou un opérateur mobile, arrivent avec une seule adresse source et se retrouvent tous sur le même serveur, qui sature pendant que les autres dorment. Le remède est double : préférer least connections quand l'application le permet, et répartir sur une entrée à forte entropie, comme un identifiant de session réellement aléatoire plutôt qu'une adresse IP.
+
+Le cas d'une plateforme de commerce électronique permet de choisir sans hésiter. Les requêtes de consultation de page sont légères et peuvent être servies par n'importe quel membre ; la commande, elle, engage un panier et une authentification. On configure donc least connections pour l'ensemble du trafic, on ajoute la persistance par cookie pour que le panier suive le client, et l'on résout la session hors mémoire du serveur afin que la perte d'un membre ne perde pas le panier. Le round-robin resterait utilisable pour un annuaire statif, où chaque requête coûte le même prix ; il deviendrait dangereux pendant les soldes, quand la même site voit alterner des pages légères et des calculs de frais de port très coûteux.
+
+## Health checks : la vérité vient du service
+
+Un contrôle d'état est une question posée périodiquement par le répartiteur à chaque membre du pool, dont la réponse décide si la cible reçoit du trafic. C'est le composant le plus décisif de tout le dispositif : un algorithme parfait n'a aucune importance si le répartiteur continue d'envoyer des requêtes à un serveur dont l'application est morte. Or le défaut le plus répandu consiste à tester la connexion réseau et à en conclure à la bonne santé du service. Un port ouvert ne prouve rien : il prouve que le système d'exploitation écoute, pas que l'application répond, pas que la base est joignable, pas que l'espace disque n'est pas plein et pas que la licence n'est pas expirée. Le serveur mort complètement est le cas facile ; le serveur vivant mais incapable de servir est le cas qui coûte des heures de diagnostic.
+
+Les contrôles actifs, ceux que le répartiteur déclenche lui-même, se règlent par quatre paramètres à connaître par cœur : l'intervalle, qui fixe la fréquence de la question ; le nombre d'échecs consécutifs nécessaires au retrait, qui détermine la vitesse de détection ; le nombre de réussites consécutives nécessaires à la remise en service, qui évite les va-et-vient ; et le délai d'attente, au-delà duquel la question est comptée comme un échec. Des valeurs typiques sont une question toutes les deux secondes, trois échecs pour sortir et dix réussites pour entrer, avec une seconde d'attente. Trop serrées, ces valeurs provoquent des bascules en rafale dès qu'un ralentissement transitoire survient ; trop lâches, elles laissent le trafic partir dans le vide plusieurs dizaines de secondes.
+
+Les contrôles de niveau application posent la vraie question. Pour un service HTTP, on envoie une requête réelle vers une ressource conçue pour cela, par exemple une adresse qui vérifie la connexion à la base et le montage du stockage, et l'on attend un code de réponse précis : le code deux cents, ou un code deux cent quatre-vingt-dix-neuf destiné au répartiteur. On peut aller plus loin en exigeant un contenu attendu dans la réponse, ce qui détecte une page d'erreur déguisée en succès, ou en mesurant le temps de réponse et en déclenchant le retrait au-delà d'un seuil. Attention toutefois à ne pas transformer le contrôle en charge : une vérification qui interroge la base à chaque question ajoute de la charge exactement au moment où le service est fragile.
+
+```text
+Reglages types d'un controle d'etat applicatif
+  intervalle       2 s        (frequence de la question)
+  attente          1 s        (au-delà, c'est un echec)
+  echecs           3          (sortie du pool apres 6 s environ)
+  reussites        10         (retour progressif, evite le va-et-vient)
+  requete          GET /healthz
+  code attendu     200        (ou 209 pour le rechargement a chaud)
+  corps attendu    "status: ok"
+  observation      couche 7   (le code seul ne suffit pas toujours)
+```
+
+La synchronisation entre contrôles pose un problème subtil qu'il faut connaître avant de le rencontrer. Si le réseau entre le répartiteur et les serveurs est dégradé, le répartiteur déclare tout le pool défaillant et retire l'intégralité des membres alors que les serveurs fonctionnent parfaitement : c'est la partition de contrôle d'état. À l'inverse, si chaque répartiteur pose ses propres questions, l'un peut considérer un membre sain et l'autre défaillant. On traite ce risque en conservant un contrôle qui distingue la panne du serveur de la panne du chemin, en surveillant séparément le répartiteur lui-même, et en gardant une action manuelle capable de forcer un membre en service ou hors service sans attendre la détection automatique.
+
+La sortie de service propre, ou drain, est la dernière brique. Retirer brutalement un serveur du pool coupe les transactions en cours ; le mode maintenance le retire de la répartition tout en laissant ses connexions existantes se terminer. La procédure standard en devient mécanique : on met le membre en maintenance, on attend que son nombre de connexions tombe à zéro, on applique la mise à jour, on redémarre, on vérifie la réponse à la ressource de santé, puis on rend le membre au pool et l'on observe les statistiques pendant quelques minutes. Chaque étape produit un chiffre à noter dans le compte rendu, et c'est ce compte rendu qui, un jour, vous évitera de refaire la même manipulation à l'aveugle.
+
+## Configurer HAProxy : frontends, backends et ACL
+
+HAProxy organise sa configuration en trois blocs qui portent les noms de la chaîne qu'ils décrivent. Le bloc global règle le comportement du processus lui-même : journalisation, nombre maximal de connexions, emplacement de la socket d'administration. Le bloc defaults applique ses valeurs par défaut à tous les services déclarés ensuite : mode de fonctionnement, temporisations, politiques de reprise. Viennent ensuite les fronts d'entrée, qui écoutent sur une adresse et un port et décident vers quel arrière envoyer chaque requête, puis les arrières, qui décrivent les serveurs réels, leur contrôle d'état, leur algorithme et leurs limites. Comprendre cette séparation suffit à lire n'importe quelle configuration : on lit d'abord où le trafic entre, ensuite comment il est routé, enfin où il arrive.
+
+La décision de routage repose sur des ACL, de courtes expressions qui évaluent une propriété de la requête et renvoient vrai ou faux. On déclare une ACL avec un nom libre, puis on l'utilise dans une instruction conditionnelle. Le point important est que les ACL ne s'exécutent pas une par une en s'arrêtant à la première vraie : elles sont combinées, niées et réutilisées, ce qui permet d'exprimer des règles subtiles sans dupliquer de configuration. Dans l'exemple ci-dessous, une première ACL cible le chemin de l'API, une seconde exclut les robots, et une troisième décide du basculement HTTPS ; chaque instruction se lit de gauche à droite, comme une phrase conditionnelle.
+
+```text
+global
+    log /dev/log local0 info
+    maxconn 20000
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    daemon
+
+defaults
+    mode http
+    log global
+    option httplog
+    option forwardfor
+    option redispatch
+    retries 2
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend ft_web
+    bind 10.10.8.100:80
+    bind 10.10.8.100:443 ssl crt /etc/haproxy/certs/lilas.pem alpn h2,http/1.1
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    acl api_path path_beg /api/
+    acl static_path path_beg /static/
+    acl is_bot hdr_sub(User-Agent) Googlebot
+    use_backend bk_api if api_path and not is_bot
+    use_backend bk_static if static_path
+    default_backend bk_web
+
+backend bk_web
+    balance leastconn
+    cookie SRV insert indirect nocache
+    option httpchk GET /healthz
+    http-check expect rstatus (200|209)
+    default-server inter 2s fall 3 rise 10 maxconn 500
+    server web01 10.10.8.21:8080 check cookie web01
+    server web02 10.10.8.22:8080 check cookie web02
+    server web03 10.10.8.23:8080 check cookie web03 disabled
+```
+
+Cinq lignes méritent d'être lues une à une, car elles concentrent les décisions qui comptent. Le bind du port quatre cent quarante-trois termine le TLS sur le répartiteur et annonce HTTP/2 en priorité, ce qui centralise les certificats ; l'en-tête X-Forwarded-Proto conserve le schéma d'origine pour l'application. L'ACL api_path permet d'envoyer l'interface de programmation vers un pool différent, avec son propre algorithme et ses propres temporisations. La directive http-check attend un code deux cents ou deux cent neuf, ce qui distingue le serveur sain du serveur dont le port écoute mais dont l'application est cassée. Enfin, le serveur marqué disabled reste déclaré, prêt à être remis en service pendant une intervention, sans modification de configuration.
+
+La persistance mérite une décision explicite. L'insertion d'un cookie par le répartiteur garantit que le client revient vers le même membre tant que celui-ci est sain, sans dépendre de la mémoire du serveur ; l'option indirecte évite de conserver le cookie pour les requêtes statives, et nocache empêche un cache intermédiaire de figer le choix. Si l'application partage déjà sa session sur un stockage commun, cette persistance devient inutile et l'on préfère la supprimer, car elle dégrade la répartition quand un membre disparaît. Le bon réflexe est d'écrire la décision dans la configuration elle-même : persistance nécessaire parce que la session est locale, ou persistance supprimée parce que la session est partagée. Une configuration muette sur ce point sera un jour relue dans l'urgence.
+
+La mise en service passe par trois vérifications obligatoires, dans cet ordre. On valide d'abord la syntaxe du fichier avec l'option de contrôle, qui détecte les fautes d'orthographe et les références à des ACL inexistantes sans interrompre le service. On recharge ensuite le processus, qui accepte la nouvelle configuration et termine les connexions en cours sur l'ancienne. On observe enfin les statistiques pendant quelques minutes pour confirmer que tous les membres sont remontés à l'état sain. Une configuration rechargée sans contrôle et sans observation est la cause la plus fréquente des coupures de mise en production.
+
+```text
+$ haproxy -c -f /etc/haproxy/haproxy.cfg
+Configuration file is valid
+
+$ sudo systemctl reload haproxy
+
+$ echo "show stat" | socat /run/haproxy/admin.sock stdio | cut -d, -f1,2,18,19
+pxname,srvname,status,lastchg
+bk_web,web01,UP,18342
+bk_web,web02,UP,18342
+bk_web,web03,MAINT,37
+ft_web,FRONTEND,OPEN,18342
+```
+
+## Reverse proxy, terminaison TLS et affinité : nginx entre les mondes
+
+Le reverse proxy et l'équilibrateur de charge se recouvrent largement, mais leur intention diffère, et cette différence guide le choix d'outil. Un reverse proxy se place devant des applications pour leur rendre des services : terminer le chiffrement, ajouter le cache, compresser, réécrire les en-têtes, servir les fichiers statiques, protéger contre certaines requêtes mal formées. L'équilibrateur se concentre sur la répartition et la surveillance des membres. Dans une installation de taille moyenne, on retrouve les deux fonctions dans le même logiciel : nginx pour la partie applicative et la terminaison TLS, HAProxy pour la répartition fine, ou un outil unique quand la complexité reste contenue. La bonne question n'est pas quel est le meilleur logiciel, mais quelle décision doit prendre le composant que je place ici.
+
+nginx déclare ses serveurs dans un bloc upstream, qui porte le nom utilisé ensuite par proxy_pass. Le mot-clé least_conn choisit le membre ayant le moins de connexions actives, exactement comme le least connections vu précédemment. Les paramètres max_fails et fail_timeout pilotent le retrait après échec, et les temporisations d'amorçage de connexion évitent d'attendre indéfiniment un serveur qui ne répond pas. Le bloc server suivant illustre la chaîne complète : écoute chiffrée, certificats, en-têtes d'origine transmis à l'application, et politique de reprise qui déclare explicitement quelles erreurs déclenchent le passage au serveur suivant.
+
+```text
+upstream app_lilas {
+    least_conn;
+    server 10.10.8.21:8080 max_fails=3 fail_timeout=15s;
+    server 10.10.8.22:8080 max_fails=3 fail_timeout=15s;
+    keepalive 64;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name site-lilas.example.fr;
+
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        proxy_pass http://app_lilas;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 30s;
+    }
+}
+```
+
+Trois points de vigilance ressortent de cette configuration. Le premier concerne la terminaison TLS : le certificat n'existe plus que sur le répartiteur, ce qui simplifie le renouvellement mais augmente la valeur de la machine ; protégez-la d'autant plus, et automatisez le renouvellement avec une alerte sur la date d'échéance. Le deuxième concerne l'adresse du client : sans l'en-tête X-Forwarded-For réécrit par le proxy, les journaux d'application voient tous la même adresse et les limites de débit deviennent inopérantes. Le troisième est proxy_next_upstream : par défaut, seules les erreurs de connexion basculent vers le serveur suivant ; en y ajoutant les codes cinq cent deux, cinq cent trois et cinq cent quatre, on accepte de perdre une réponse partielle plutôt que de la rendre à l'usager.
+
+L'affinité, enfin, se traite différemment selon l'outil et l'application. nginx propose dans sa version libre le hachage sur l'adresse source, ip_hash, qui est simple mais présente le défaut décrit plus haut : derrière un grand réseau, tous les clients convergent vers un seul membre. Sa version évoluée ajoute des cookies persistants, et la fonction se trouve aussi dans les équilibrateurs managés du cloud. La solution la plus robuste reste pourtant la même partout : externaliser la session dans un magasin partagé, base de données ou cache distribué, puis laisser la répartition libre. Quand l'application est sans état, l'affinité devient un luxe inutile ; quand elle ne l'est pas, c'est une contrainte d'architecture qu'aucun réglage de répartiteur ne corrigera réellement.
+
+Un dernier comparatif aide à choisir : l'arbre de décision tient en quatre questions. L'application parle-t-elle HTTP ? Sinon, il faut un répartiteur de couche 4. A-t-elle besoin de règles par chemin, par nom ou par cookie ? Si oui, la couche 7 s'impose. La session est-elle partagée ? Si non, il faut une persistance. Enfin, le volume justifie-t-il deux composants distincts ? Si oui, on termine le TLS sur le proxy applicatif et l'on confie la répartition au répartiteur dédié, en conservant le protocole PROXY ou l'en-tête d'origine pour que la chaîne reste traçable de bout en bout. Cette trace est indispensable : sans elle, impossible de savoir, dans les journaux, si une requête a été réécrite, retentée ou rejouée.
+
+## Deux répartiteurs : keepalived et VRRP
+
+Un équilibrateur unique est un point de défaillance unique, et doubler le pool derrière lui n'y change rien. La solution standard consiste à installer deux répartiteurs, de préférence sur deux machines distinctes, et à leur faire partager une même adresse virtuelle par le protocole VRRP. Vous avez déjà rencontré ce protocole dans le chapitre sur la redondance de passerelle, où deux routeurs se partageaient une passerelle virtuelle ; le principe est rigoureusement le même, seules la plateforme et le vocabulaire changent. Sous Linux, le démon keepalived implémente VRRP, gère l'élection et y ajoute une brique décisive : la possibilité d'observer un script local et d'ajuster la priorité en conséquence, si bien que l'actif n'est pas seulement le routeur le plus rapide à parler, c'est celui qui peut réellement servir.
+
+L'élection suit les règles que vous connaissez. Les deux instances échangent des messages de vœu à intervalle régulier ; celle qui détient la priorité la plus élevée devient maître et assume l'adresse virtuelle, les autres restent en attente. Dès que les messages cessent, l'attente prend le relais et publie l'adresse par une gratuit ARP, ce qui met à jour les tables de voisinage sans intervention des clients. La préemption rend ensuite le rôle à l'actif d'origine quand il redevient viable. Le script de contrôle apporte la logique métier : il vérifie que le processus de répartition tourne et qu'il répond, et retire des unités de priorité s'il échoue ; l'actif descend alors sous la priorité de son alterne et cède la place, exactement comme le suivi de lien le faisait sur les routeurs.
+
+```text
+! --- /etc/keepalived/keepalived.conf : instance principale ---
+vrrp_script chk_lb {
+    script "/usr/bin/pgrep -x haproxy > /dev/null"
+    interval 2
+    weight -60
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_WEB {
+    state BACKUP
+    interface eth0
+    virtual_router_id 51
+    priority 150
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass L1LAS51
+    }
+
+    virtual_ipaddress {
+        10.10.8.100/24 dev eth0
+    }
+
+    track_script {
+        chk_lb
+    }
+
+    notify_master "/usr/local/sbin/lb-state master.sh"
+    notify_backup "/usr/local/sbin/lb-state backup.sh"
+    notify_fault  "/usr/local/sbin/lb-state fault.sh"
+}
+```
+
+Le second répartiteur reçoit exactement la même configuration, à trois différences près : la priorité est abaissée, par exemple à cent dix, l'état déclaré reste BACKUP pour les deux machines, et la même clé d'authentification doit être employée. Une clé différente entre les deux instances produit le scénario classique de partition, où chacune se croit maîtresse et où deux serveurs répondent sur la même adresse, ce qui provoque des pertes de paquets que rien, côté usager, ne permet d'expliquer. Une même valeur de routeur virtuel est également obligatoire : elle identifie le groupe, et deux groupes différents ne se voient pas. Vérifiez ces trois points avant tout test de bascule.
+
+La vérification est rapide et doit devenir un réflexe. Sur la machine active, l'adresse virtuelle apparaît dans la configuration d'interface ; sur la machine en attente, elle est absente. Le journal du service montre les transitions, et un capture de paquets du protocole confirme l'émission régulière des vœux. Ces trois observations, exécutées avant et après chaque test, transforment une bascule subie en une bascule maîtrisée.
+
+```text
+$ ip -br addr show eth0
+eth0             UP             10.10.8.5/24 fe80::21/64
+
+$ ip -br addr show eth0        # sur l'alterne : pas de .100
+eth0             UP             10.10.8.6/24 fe80::22/64
+
+$ journalctl -u keepalived -n 20 --no-pager
+...Entering MASTER state (source priority 150)
+...Setting VI_WEB VIP to 10.10.8.100/24
+
+$ sudo tcpdump -ni eth0 vrrp
+10:41:07.114 IP 10.10.8.5 > 224.0.0.18: VRRPv2, prio 150, vrid 51, ...
+```
+
+La supervision s'applique à cette couche exactement comme aux autres : l'état VRRP est une métrique, et sa perte est une alerte. Branchez la socket d'administration du répartiteur à l'outil de collecte, alertez dès qu'un membre du pool sort, et alertez séparément dès que l'instance passive reste en maître pendant plusieurs minutes, signe qu'aucun des deux ne joue vraiment son rôle. Enfin, chronométrez la bascule : coupez le processus de répartition sur l'actif et mesurez le temps entre la dernière requête servie et la première servie par l'alterne. Ce chiffre, noté dans le runbook, est le seul qui prouve que la redondance existe réellement.
+
+## Liens multiples : ECMP, symétrie et deux liens opérateur
+
+Jusqu'ici, la redondance portait sur des machines ; elle porte maintenant sur les chemins. Deux directions se présentent, et elles se complètent. La première consiste à exploiter simultanément plusieurs liens de capacité égale vers une même destination, ce que l'on appelle ECMP, ou multipath à coût égal : la table de routage contient plusieurs next-hop pour le même préfixe, et le routeur répartit les flux entre eux. La seconde consiste à garder un lien principal et un lien de repli, avec une bascule déclenchée par l'échec d'une route ou d'une interface, comme le faisaient les objets de suivi vus dans le chapitre sur la redondance de passerelle. La première maximise l'utilisation, la seconde sécurise la continuité ; la plupart des réseaux utilisent les deux selon les destinations.
+
+L'ECMP repose sur un hachage de flux : le routeur calcule une fonction sur les adresses source et destination, parfois sur les ports et le numéro de protocole, puis il associe toujours le même flux au même chemin. Cette stabilité n'est pas un détail, c'est une exigence. Un flux TCP doit garder la même source et la même destination tout au long de sa vie ; si les paquets d'une même connexion prenaient des chemins de latence différente, on observerait des réordonnancements, des retransmissions intempestives et une dégradation que les outils de mesure peinent à expliquer. La conséquence pratique est que l'ECMP équilibre les flux, jamais les octets : avec quelques gros flux, la répartition peut rester très inégale.
+
+La symétrie devient critique dès qu'un composant étatique intervient, et c'est la difficulté la plus fréquente. Un pare-feu établit une session dans un sens ; si les réponses reviennent par un autre lien, elles ne trouvent pas de session et sont rejetées, si bien que le service tombe au moment précis où l'on essaie d'utiliser la seconde voie. Le même problème se produit avec la traduction d'adresses : la sortie et le retour doivent se faire par la même adresse publique, faute de quoi le correspondant voit des paquets qu'il n'a jamais demandés. Trois remèdes existent : conserver la symétrie par le hachage, activer la synchronisation d'état entre les deux passations quand l'équipement le permet, ou désigner un seul lien sortant pour tout ce qui est étatique et réserver l'ECMP aux trafics symétriques.
+
+Le cas d'une association disposant de deux liens opérateur illustre la décision à prendre. Chaque lien vient d'un fournisseur différent, avec son propre bloc d'adresses publiques et sa propre route dans l'Internet. La solution la plus courante consiste à définir des politiques : le trafic destiné au site en ligne part par le lien principal, le trafic de sauvegarde et les mises à jour logicielles partent par le second, et la bascule se déclenche dès que la route principale disparaît. Si les deux liens doivent servir en permanence, il faut une adresse publique mobile, ou bien déléguer la résolution du nom à un service qui suit l'état des liens et renvoie l'adresse qui répond. Sans cette pièce, vos serveurs sont redondés et votre service reste injoignable quand le seul lien annoncé tombe.
+
+```text
+Topologie a deux liens operateur (association Le Comptoir)
+
+   usagers                      serveurs
+      |                          .8.21 / .8.22
+      |                              |
+ +----+-----+                 +------+------+
+ | FAI A    |    routeur A    |             |
+ | 203.0.113.16/28 ----------|             |---- interne 10.10.8.0/24
+ +----------+                 |   pare-feu  |
+ +----------+                 |   multi-WAN |
+ | FAI B    |    routeur B    |             |
+ | 198.51.100.32/28 ---------|             |
+ +----------+                 +------+------+
+      |                              |
+      +----- bascule par suivi de route et politique par application
+
+$ ip route show
+default via 10.0.0.1 dev wan0 metric 100 proto static
+default via 10.1.0.1 dev wan1 metric 200 proto static
+10.10.8.0/24 dev lan0 proto kernel scope link
+
+$ ip route get 203.0.113.44
+203.0.113.44 via 10.0.0.1 dev wan0 src 10.0.0.2 uid 0
+```
+
+La vérification de ces liens suit la même discipline que pour les serveurs : on ne présume pas, on mesure. Pour chaque lien, on enregistre le temps de réponse vers une cible stable, le taux de perte et la gigue, sur plusieurs jours, afin de connaître la qualité moyenne et ses à-coups ; on déclenche ensuite une coupure volontaire et l'on chronomètre la reprise du trafic. Une bascule qui prend quarante secondes parce que le délai de détecteur est mal réglé produira des sessions coupées et des appels au support, alors qu'une bascule sous deux secondes passe inaperçue. Ces deux chiffres, la qualité continue et la durée de bascule, constituent la fiche d'identité de vos liens, et ils sont à conserver sous la main : c'est en les comparant à un SD-WAN que vous justifierez ou non son acquisition.
+
+## SD-WAN : overlay, contrôleur, politiques et bénéfices
+
+Le réseau étendu traditionnel repose sur un compromis devenu difficile à assumer : une liaison louée chez un opérateur, fiable mais chère et lente à commander, à laquelle on ajoute une liaison large bande bon marché, et une politique unique qui fait passer par le datacenter le trafic destiné à des applications désormais hébergées chez des tiers. Ce détour, dit backhaul, était justifié quand l'application vivait sur site ; il ne l'est plus quand la messagerie, la visioconférence et la comptabilité sont chez un fournisseur. Le SD-WAN répond à ce décalage en séparant la couche de transport, qui peut être multiple, disparate et instable, de la couche de service, qui doit rester uniforme et pilotée par une politique.
+
+L'équipement de site établit des tunnels chiffrés vers ses pairs et vers l'Internet, mesure en continu la qualité de chaque chemin, puis applique des règles qui décident, application par application, par quel chemin le trafic part. Ce découplage porte un nom : l'overlay. Les sites communiquent par des tunnels IPsec qui portent leurs propres adresses, indépendamment des adresses du lien sous-jacent ; on peut changer d'opérateur, ajouter une liaison sans fil ou une fibre sans retoucher aux routes internes ni aux pare-feux du cœur. Sous l'overlay, le sous-jacent reste ce qu'il est : deux opérateurs, des adresses publiques qui changent, une qualité variable selon l'heure. C'est précisément l'intérêt de l'architecture : le transport devient interchangeable et la qualité cesse d'être une promesse pour devenir une mesure continue.
+
+Le contrôleur est la pièce qui distingue un SD-WAN d'un simple empilement de tunnels. Il centralise l'inventaire des sites, distribue les configurations et les clés, publie les politiques, agrège les mesures de chemin et fournit une vue commune à toute l'organisation. Il apporte aussi le provisionnement sans intervention : un boîtier déployé sur site se connecte, s'authentifie, reçoit sa configuration et devient opérationnel sans déplacement d'ingénieur. Le délai de mise en service d'un site passe alors de plusieurs semaines à quelques heures, et l'ajout d'une règle de qualité de service ne demande plus une modification sur chaque routeur, mais une publication unique.
+
+La décision de chemin repose sur des sondes périodiques qui mesurent, pour chaque voie, le temps de réponse, le taux de perte et la gigue. Sur cette base, la politique déclare des objectifs, par exemple un temps de réponse inférieur à cent cinquante millisecondes et une perte inférieure à un pour cent pour la voix, puis des actions : utiliser le meilleur chemin, basculer dès que l'objectif n'est plus tenu, dupliquer les paquets les plus critiques sur les deux liens, ou appliquer une correction d'erreur en amont pour masquer les pertes. Le tableau ci-dessous rassemble les bénéfices attendus et, surtout, la manière de les vérifier : un bénéfice qu'on ne peut pas mesurer est un argument commercial, pas un résultat d'exploitation.
+
+```table
+| Bénéfice annoncé | Ce qui change concrètement | Preuve à collecter |
+|---|---|---|
+| Réduction du coût de liaison | Remplacement partiel du lien loué par deux liens large bande | Facture mensuelle face au débit utile réellement servi |
+| Mise en service rapide | Boîtier configuré à distance, sans déplacement | Délai entre la commande et le service utilisable |
+| Résilience multi-liens | Bascule par application dès la dégradation mesurée | Nombre de bascules et durée de chacune, sur un mois |
+| Accès direct à Internet | Le trafic SaaS ne traverse plus le siège | Temps de réponse vers la messagerie avant et après |
+| Visibilité applicative | Détection des applications et de leur volume | Top d'applications par site et par lien |
+| Politique unique | Une règle publiée vaut pour tous les sites | Nombre de sites conformes à la politique publiée |
+```
+
+
+Les limites se disent sans détour. Le contrôleur devient un maillon critique : sa perte empêche les changements de politique, rarement le trafic lui-même, mais il faut le superviser. Le diagnostic d'un overlay chiffré demande des outils spécifiques, car on ne lit plus les en-têtes au passage. La licence et le support représentent un coût récurrent, à comparer à l'économie réelle sur les liaisons. L'accès direct multiplie les sorties, donc chaque sortie exige le même filtrage qu'une sortie unique. Enfin, une politique trop fine devient illisible au moment de l'incident : on commence par trois règles globales, on mesure un trimestre, puis on affine.
+
+```text
+Exemple de politique de chemin (format type contrôleur)
+  regle 1  priorite 10
+    application : voip, visio
+    exigence    : latence < 150 ms, perte < 1 %, gigue < 30 ms
+    action      : meilleur chemin, bascule si exigence rompue
+    repli       : duplication sur les deux liens
+
+  regle 2  priorite 20
+    application : sauvegarde, mises a jour
+    exigence    : debit > 20 Mbit/s
+    action      : lien secondaire uniquement
+    repli       : attente du retour du lien principal
+
+  regle 3  priorite 30
+    application : toutes les autres
+    exigence    : aucune
+    action      : lien principal, bascule apres 3 echecs consecutifs
+```
+
+## Bascule et tests : provoquer la panne, mesurer la reprise
+
+La redondance n'existe que le jour où on la met à l'épreuve. Tout ce qui a été construit dans ce chapitre — pool de serveurs, contrôles d'état, répartiteurs en double, liens multiples, politiques de chemin — reste une hypothèse tant que personne n'a coupé quelque chose volontairement et chronométré ce qui s'est passé. Le test de bascule est donc un exercice planifié, pas un accident opportun : il se prépare, il s'annonce, il se déroule avec un observateur qui chronomètre et un opérateur qui agit, il se termine par un retour à l'état nominal et par un compte rendu. Cette discipline transforme la peur de la panne en une donnée d'exploitation : vous ne supposerez plus que la bascule prend deux secondes, vous le saurez.
+
+On distingue trois familles de tests, du moins destructeur au plus instructif. Le test de composant consiste à arrêter un membre du pool et à observer que les requêtes suivantes vont aux autres : c'est le test de base, exécutable à tout moment, qui valide le contrôle d'état et l'algorithme. Le test de chemin consiste à couper un lien opérateur ou une route, et à vérifier que la bascule se produit dans le délai attendu et que la traduction d'adresses reste cohérente. Le test d'infrastructure va plus loin : on éteint une machine, on débranche une alimentation, on coupe un câble dans la baie. Cette dernière catégorie exige une fenêtre, un plan de retour et la présence de quelqu'un capable de remettre la main sur le matériel ; elle est aussi la seule qui révèle les redondances de papier.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/patch-panel.jpg
+| Panneau de brassage en baie : deux liens d'entrée et deux sorties distinctes, car une redondance qui passe par le même connecteur ne protège de rien.
+```
+
+La mesure se fait à trois niveaux, et les trois doivent figurer dans le compte rendu. Le temps de détection est l'intervalle entre la coupure et le moment où le système a compris ; il dépend directement de l'intervalle du contrôle d'état et du nombre d'échecs requis. Le temps de bascule s'étend de la coupure à la première réponse correcte servie après l'événement ; c'est celui que l'usager ressent. Le taux d'erreur pendant la fenêtre de bascule indique combien de requêtes ont été perdues ou servies avec un code d'erreur. Un test qui produit zéro erreur et une bascule en deux secondes se célèbre ; un test qui produit cinq pour cent d'erreurs sur trente secondes désigne exactement le réglage à corriger.
+
+```text
+$ while true; do curl -s -o /dev/null -w "%{http_code} %{time_total}\n" \
+    https://site-lilas.example.fr/ ; sleep 1; done > /tmp/bascule.log
+
+200 0.042
+200 0.038
+000 0.000     <- coupure de lb-01 a t0
+000 1.006
+200 0.051     <- reponse de lb-02 a t0+2 s
+200 0.039
+
+$ journalctl -u haproxy --since "10:41:00" | grep -E "DOWN|UP"
+... server bk_web/web01 changed its state from UP to DOWN
+... server bk_web/web02 changed its state from UP to DOWN (maint)
+```
+
+La méthode d'exécution suit un ordre strict, du laboratoire à la production. On répète d'abord le scénario sur un environnement de test, où l'on peut se tromper sans conséquence ; on documente alors la procédure exacte, commande par commande. On l'exécute ensuite en production pendant une fenêtre annoncée, avec un plan de retour écrit avant de commencer et une personne qui ne touche à rien d'autre que le chronomètre. On valide enfin que l'état nominal est rétabli : tous les membres du pool sont sains, l'actif VRRP est le bon, les deux liens sont égaux, les statistiques sont revenues à leur niveau habituel. Une redondance qui bascule mais ne revient jamais à l'état initial reste un incident, même si elle a évité la coupure.
+
+La fréquence se décide par risque, pas par confort : un test annuel pour les mécanismes critiques, trimestriel pour les liens et les contrôles d'état, à chaque changement majeur pour le reste. Chaque exercice produit trois artefacts : la procédure datée, le relevé chronométré et la liste des corrections à apporter, rangés avec les runbooks du chapitre sur la supervision. Partagez le bilan, même quand il est mauvais : une bascule lente découverte en exercice est une réussite d'équipe, une bascule lente découverte par les usagers est un incident, et la différence tient uniquement à qui a été le premier à couper le cordon.
+
+## Mini-projet : fiabiliser le site Lilas et l'association Le Comptoir
+
+Le mini-projet final rassemble toutes les briques du chapitre dans deux contextes réels. Le premier est le site Lilas : deux routeurs de cœur, un pare-feu en bordure, des serveurs applicatifs en VLAN serveurs, une machine de supervision en VLAN de gestion, deux liens vers l'extérieur et une application web qui doit rester accessible. Le second est une association qui exploite un site public avec deux liens opérateur venant de deux fournisseurs différents, deux serveurs d'applications et une caisse en ligne dont l'arrêt se compte en recettes perdues. Dans les deux cas, la consigne est identique : éliminer les points de défaillance uniques, sans dépasser le budget et sans complexifier l'exploitation au point que plus personne ne comprenne l'installation.
+
+Le travail se déroule en cinq étapes, dans cet ordre. La première est la cartographie : on applique les sept questions du début de chapitre et l'on produit la liste des maillons uniques, classés par impact et probabilité. La seconde est la répartition : pool de serveurs, algorithme choisi, contrôles d'état applicatifs, persistance seulement si la session l'exige. La troisième est la redondance du répartiteur lui-même : deux instances, une adresse virtuelle, un script de contrôle et une priorité explicite. La quatrième traite les liens : suivi de route, politiques par application, éventuel SD-WAN si le nombre de sites et l'économie attendue le justifient. La cinquième est le test, exécuté, chronométré et documenté, qui seul autorise la mention haute disponibilité dans le rapport.
+
+Un point mérite d'être tranché avant d'ouvrir la moindre configuration : où s'arrête-t-on ? La redondance absolue n'existe pas, et poursuivre l'élimination de tous les maillons uniques conduirait à financer deux de tout, y compris là où la panne ne coûte rien. On décide donc à l'avance le niveau de service visé, on le convertit en durée d'arrêt acceptable sur un mois, puis on ne retient que les redondances qui ramènent l'architecture sous ce seuil. Ce filtre, appliqué ligne à ligne, protège le projet autant de la sous-traitance que de la surenchère technique.
+
+- Cartographie : sept questions, liste de maillons uniques classés par impact et probabilité.
+- Répartition : pool, algorithme choisi et justifié, contrôles applicatifs, persistance décidée.
+- Redondance du répartiteur : deux instances, adresse virtuelle, script de contrôle, priorités.
+- Liens multiples : suivi de route, politiques par application, qualité mesurée en continu.
+- Test : coupure, chronométrage, taux d'erreur, retour à l'état nominal, compte rendu daté.
+- Supervision : alerte sur la sortie d'un membre, sur la baisse des membres sains et sur la perte de l'actif.
+
+Les critères de réussite se lisent en quatre chiffres que le livrable doit contenir. Le temps de bascule mesuré, comparé à l'objectif de temps de reprise écrit au début du chapitre. Le taux d'erreur pendant la bascule, qui mesure la qualité réelle de la transition. Le nombre de points de défaillance uniques restants, assumés et justifiés, car il en restera toujours quelques-uns : un seul comptable, un seul registrar, une seule baie. Enfin, la durée avant qu'un second opérateur d'exploitation soit capable d'exécuter la procédure seule, ce qui mesure la transmission du savoir plutôt que la performance technique.
+
+Le rapport de fin de projet tient en quatre parties et se rédige comme un document destiné à être relu dans deux ans. On décrit l'architecture d'origine et ses maillons uniques, avec le schéma avant. On présente l'architecture cible et les décisions prises, en justifiant chaque redondance par un coût ou par un risque mesuré. On consigne les résultats des tests, avec les chronométrages et les corrections apportées après coup. Enfin, on liste les points restants non traités, la date du prochain exercice et la personne responsable. Ce dernier paragraphe est souvent le plus utile : c'est lui qui empêche la redondance de retomber dans l'oubli dès que la pression retombe.
+
+## À retenir
+
+La haute disponibilité n'est pas un achat, c'est un raisonnement suivi d'une preuve. On décrit la chaîne de dépendances, on élimine les maillons uniques, on double ce qui doit l'être, on configure la répartition avec des contrôles qui interrogent réellement le service, on sécurise les chemins multiples, puis on coupe pour mesurer. Sans cette dernière étape, tout le reste n'est qu'une hypothèse confortable.
+
+- Un point de défaillance unique se déplace : doubler la machine révèle le commutateur, l'alimentation ou la licence unique.
+- La disponibilité d'une chaîne est le produit des disponibilités de ses maillons indépendants.
+- RTO et RPO s'écrivent avant la conception ; ils décident de l'architecture, pas l'inverse.
+- Couche 4 pour les flux non HTTP, couche 7 dès qu'il faut lire un chemin, un nom ou un cookie.
+- Round-robin pour des requêtes égales, least connections pour des sessions longues, hachage pour l'affinité.
+- Un contrôle d'état qui vérifie seulement un port ouvert valide un système d'exploitation, jamais une application.
+- Intervalle, échecs, réussites et attente déterminent le temps réel de détection d'une panne.
+- Assurer la redondance du répartiteur avec keepalived revient à appliquer VRRP : priorité, préemption, script de contrôle.
+- Plusieurs liens exigent la symétrie : hachage de flux, synchronisation d'état ou adresse publique unique.
+- Un SD-WAN apporte overlay chiffré, contrôleur central, sélection de chemin selon la qualité et accès direct à Internet.
+- Un bénéfice de SD-WAN qui ne se mesure pas ne figure pas dans le bilan.
+- Une bascule non chronométrée n'a jamais eu lieu : temps de détection, temps de bascule, taux d'erreur.
+
+## Erreurs fréquentes
+
+La première erreur est de confondre réponse réseau et service disponible : le port quatre cent quarante-trois accepte la connexion, donc le serveur est sain. Un contrôle d'état qui teste la connexion seulement laissera dans le pool un serveur dont la base est injoignable, et le répartiteur enverra méthodiquement des requêtes à une machine qui répond par des erreurs cinq cents. La deuxième erreur est de choisir un algorithme par habitude : garder le round-robin sur une application à sessions longues produit une répartition inégale que personne ne comprend, alors que la page de statistiques l'aurait montrée en un coup d'œil.
+
+- Tester un serveur sur son port ouvert et conclure à la santé de l'application.
+- Laisser la persistance activée alors que la session est déjà partagée, ce qui dégrade la répartition.
+- Oublier l'en-tête d'origine : tous les journaux d'application affichent alors l'adresse du répartiteur.
+- Configurer deux instances VRRP avec des clés ou des routeurs virtuels différents, ce qui provoque deux maîtres.
+- Laisser la préemption désactivée : la bascule fonctionne, mais le retour à l'état nominal ne se fait jamais.
+- Ajouter un second lien sans traiter la symétrie : les sessions établies sur le premier sont rejetées en retour.
+- Publier une politique de chemin trop fine, impossible à relire pendant un incident.
+- Déployer un SD-WAN sans surveillance de la qualité des liens : on remplace une panne visible par une dégradation ignorée.
+- Réaliser un test de bascule sans plan de retour, puis découvrir que la redondance ne se réarme pas.
+
+La troisième erreur concerne les liens : on double l'accès mais on conserve un seul chemin physique dans la baie, une seule gaine ou un seul connecteur, et l'on découvre que les deux opérateurs partagent la même tranchée. La quatrième est de croire qu'un SD-WAN remplace la sécurité, alors que l'accès direct multiplie les sorties. La cinquième, enfin, est de ne jamais réarmer : après une bascule, l'actif d'origine reste en attente, un membre du pool reste en maintenance, une route reste en repli. Un exercice qui ne vérifie pas le retour à l'état nominal laisse l'installation fragile.
+
+## Pour aller plus loin
+
+La documentation de configuration de HAProxy reste la référence pour approfondir la répartition, les contrôles d'état et la persistance de session : les tutoriels décrivent, directive par directive, les fronts, les arrières, les ACL, les contrôles de couche 7 et les cookies de persistance, et se lisent au fil des besoins. Elle est accessible à l'adresse https://www.haproxy.com/documentation/haproxy-configuration-tutorials/. Pour la redondance du répartiteur, le site du projet keepalived publie le guide utilisateur, la synoptique de configuration et les études de cas consacrées aux contrôles d'état et à la bascule : https://www.keepalived.org/. Enfin, le centre d'apprentissage de Cloudflare consacre une page claire aux méthodes de répartition, au suivi de l'état des serveurs et à la bascule automatique, utile pour comparer l'approche logicielle à l'approche managée : https://www.cloudflare.com/learning/performance/what-is-load-balancing/.
+
+Au-delà des lectures, deux habitudes feront progresser plus vite que n'importe quel manuel. La première consiste à installer une pile complète sur un laboratoire, deux répartiteurs, trois serveurs, deux liens simulés, puis à provoquer méthodiquement chaque panne : arrêt d'un membre, coupure d'un lien, perte du script de contrôle, partition de l'adresse virtuelle, en chronométrant chaque reprise. La seconde consiste à relire vos incidents passés à l'aune de ce chapitre : chaque incident où les usagers ont subi une coupure correspond presque toujours à un maillon unique identifié trop tard, et chacun d'eux peut se transformer en une ligne de cartographie, en une alerte ou en une configuration de contrôle d'état.
+
+## Et maintenant : vous avez terminé le parcours Réseaux
+
+Vous voici au bout d'onze chapitres, et le dernier a ajouté la pièce qui manquait à votre maîtrise : la capacité à faire tenir un service malgré la panne. Vous savez repérer les points de défaillance uniques, dimensionner un pool, écrire des contrôles d'état qui interrogent l'application plutôt que le port, redonder le répartiteur lui-même, faire travailler plusieurs liens sans perdre la symétrie, et discuter d'un SD-WAN avec des critères mesurables plutôt qu'avec des promesses. Ce sont des compétences d'exploitation : elles ne valent que par les preuves qu'elles produisent en conditions réelles.
+
+Avant de conclure, prenez une heure pour le dernier exercice du parcours. Choisissez un service que vous connaissez, écrivez sa chaîne complète de dépendances, nommez ses trois points de défaillance uniques les plus probables, et pour chacun d'eux, décrivez la redondance que vous mettriez en place, le contrôle d'état qui la rendrait visible et le test qui la prouverait. Si vous parvenez à cette page sans hésiter, le parcours a fait son travail. Sinon, reprenez la section sur la cartographie, puis celle sur les contrôles d'état : c'est là que se joue la différence entre un réseau conçu et un réseau qui tient.
+
+Il ne reste plus qu'à passer du document à la machine. Installez la pile sur un laboratoire, coupez le premier câble, notez le chronomètre, puis remettez tout en état. Répétez cette opération jusqu'à ce qu'elle devienne un réflexe d'équipe : c'est ainsi que l'on transforme une architecture redondée en un service réellement disponible, et c'est ainsi que ce parcours trouve son utilité, non dans les pages que vous avez lues, mais dans les pannes que vous saurez éviter.

@@ -1,0 +1,148 @@
+## Priorités et préemption
+
+L'ordonnanceur FreeRTOS fonctionne selon une règle unique, qu'il applique en permanence : parmi les tâches prêtes à tourner, c'est celle qui a la priorité la plus élevée qui gagne. Si deux tâches ont la même priorité, l'ordonnanceur alterne entre elles à chaque expiration de tick, ce qui donne un partage équitable ; si l'une d'elles se met en état bloqué, elle sort du jeu et les autres récupèrent la totalité du temps. Une tâche de priorité inférieure ne tourne donc que lorsque toutes les tâches supérieures sont endormies. Ce n'est pas un arbitrage, c'est une hiérarchie : retenez-le et toutes les priorités que vous attribuerez par la suite auront un sens.
+
+Les priorités sont des entiers dont la signification dépend d'une seule grandeur, le nombre maximal de priorités configuré dans le noyau : vingt-cinq sur un ESP32, ce qui laisse une échelle largement suffisante pour un objet connecté. Dans votre sketch Arduino, la tâche loopTask qui exécute setup() puis boucle() tourne à la priorité 1 ; la tâche d'identification, invisible, tourne à 0. Il faut donc éviter deux excès symétriques : donner la priorité haute à tout le monde, ce qui revient à n'avoir aucune hiérarchie, et tout laisser à 1, ce qui revient à supprimer l'ordonnanceur. Trois à quatre niveaux suffisent pour la station météo, et chaque niveau doit correspondre à une urgence réelle, pas à une commodité de code.
+
+La préemption est la conséquence mécanique de cette hiérarchie. À chaque tick, l'ordonnanceur compare les priorités des tâches prêtes ; si une tâche de rang supérieur devient prête, celle qui tourne est interrompue au milieu de son travail, son contexte est sauvegardé, et la nouvelle prend le relais. Rien n'est perdu, l'interruption ne dure que quelques microsecondes, mais l'ordre d'exécution change à tout moment. C'est cette propriété qui permet à une tâche de lecture de capteur de s'imposer à une tâche d'affichage, et c'est aussi la source du défaut le plus fréquent que nous détaillerons plus bas.
+
+```image
+freertos-tasks
+| Diagramme des états d'une tâche FreeRTOS : prête, en cours d'exécution, bloquée ou suspendue, avec les transitions qui mènent de l'une à l'autre.
+```
+
+Le tableau suivant donne les quatre états et, pour chacun, ce que la tâche fait réellement. Observez la colonne de droite : la quasi-totalité du temps, une tâche saine est bloquée, c'est-à-dire en attente d'un événement précis, et non en train de consommer du processeur.
+
+| État | Signification | Ce qui la fait sortir de cet état |
+|---|---|---|
+| Prête (Ready) | Son code est éligible, elle attend son tour | L'ordonnanceur la choisit pour tourner |
+| En cours (Running) | Elle exécute ses instructions sur un cœur | Préemption, fin de tour de tick, attente |
+| Bloquée (Blocked) | Elle attend un délai, une file ou un verrou | L'événement arrive ou le délai expire |
+| Suspendue (Suspended) | Elle est retirée du jeu sans attente | Un appel explicite de réveil depuis une autre tâche |
+
+Le piège classique des priorités est celui d'une tâche haute qui bloque. Placez une tâche prioritaire qui lit une entrée série avec attente de fin de ligne, ou qui contacte un serveur sans délai, et tout le reste du système s'arrête : la tâche basse, qui affiche et mesure, ne récupère la main que lorsque la tâche haute s'endort, ce qui peut ne jamais arriver. Le symptôme est trompeur sur le banc : l'objet semble simplement lent, l'écran rame, les mesures deviennent rares, alors que le diagnostic correct est qu'une tâche prioritaire monopolise le cœur. La règle à appliquer : aucune tâche de priorité haute ne doit jamais attendre indéfiniment, et toute attente d'une tâche prioritaire doit être bornée par un délai maximal.
+
+La bonne attribution de priorité se fait donc à partir des contraintes de temps, jamais de la structure du code. On commence par lister, pour chaque tâche, son échéance : combien de temps après l'événement la réponse est-elle encore acceptable ? On classe ensuite de l'échéance la plus courte à la plus longue, et l'on attribue les priorités dans cet ordre. Pour la station météo, la mesure à la seconde passe au-dessus de l'affichage, l'affichage passe au-dessus de la publication réseau, et la boucle de service reste en bas de l'échelle. Cette méthode produit une hiérarchie stable : elle ne change pas quand on ajoute une fonctionnalité, alors qu'une priorité attribuée au fil des humeurs casse à chaque évolution.
+
+## Le temps des tâches : tick, vTaskDelay et cadences
+
+Toutes les notions de durée que vous manipulerez reposent sur un même battement, le tick, une interruption périodique qui réveille l'ordonnanceur et déclenche les vérifications de priorité. Sa fréquence est fixée à la compilation : de nombreuses configurations ESP-IDF la laissent à 100 Hz, soit dix millisecondes par tick, tandis que le cœur Arduino de l'ESP32 travaille à 1000 Hz, soit une milliseconde. Vous ne devez jamais supposer cette valeur : la constante portTICK_PERIOD_MS vous dit combien de millisecondes vaut un tick sur votre compilation, et toutes vos durées doivent passer par elle. Une attente d'une demi-milliseconde n'a pas de sens dans un système qui compte des ticks entiers.
+
+La fonction vTaskDelay place la tâche appelante en état bloqué pendant le nombre de ticks indiqué, et lui rend la main à l'expiration du délai. C'est l'équivalent direct de la fonction delay() du monde Arduino, et sur l'ESP32, la correspondance est littérale : la bibliothèque Arduino implémente delay() par vTaskDelay(ms / portTICK_PERIOD_MS). La différence n'est donc pas un écart de nature sur cette carte, mais d'intention et de portabilité. vTaskDelay exprime une durée en ticks du système, rappelle au lecteur que l'on bloque une tâche, et fonctionne à l'identique si le projet migre sous ESP-IDF ou sur un autre port FreeRTOS ; delay() ne porte aucune de ces informations et, sur d'autres cartes Arduino, n'a pas du tout ce comportement.
+
+Le défaut réel de vTaskDelay est ailleurs : il compte à partir du moment de l'appel, pas à partir du début de l'exécution de la tâche. Si votre tâche doit se réveiller toutes les secondes et que son travail dure quatre-vingts millisecondes, chaque cycle fait une seconde plus quatre-vingts millisecondes : la cadence dérive, lentement mais sûrement, et vos horodatages s'en aperçoivent. C'est la raison d'être de xTaskDelayUntil, qui maintient une date de réveil de référence et y ajoute systématiquement la période. Le retard éventuel est rattrapé sur les cycles suivants, la fréquence reste stable, et une tâche qui prend un coup de retard ne décale pas toutes les suivantes.
+
+Le tableau ci-dessous réunit les outils de temporisation que vous utiliserez. Chacun a sa place : l'erreur consiste à employer le mauvais parce qu'il est celui que l'on connaît.
+
+| Besoin | Outil | Remarque |
+|---|---|---|
+| Attendre une durée une fois | vTaskDelay(pdMS_TO_TICKS(ms)) | Bloque la tâche, cède la main |
+| Maintenir une cadence régulière | xTaskDelayUntil(&reveil, periode) | Rattrape le retard, évite la dérive |
+| Mesurer un intervalle | xTaskGetTickCount() ou millis() | Soustraire les instants, jamais comparer une somme |
+| Créer une temporisation courte | Timer matériel ou interruption | Sous le tick, la résolution ne le permet pas |
+| Attendre une file ou un verrou | Fonction de lecture avec délai maximum | L'attente se termine toujours |
+
+Il reste à mesurer ce que vous construisez. Deux horloges coexistent : millis() et micros(), qui donnent le temps écoulé en millisecondes et microsecondes, et le compteur de ticks, qui donne le temps dans l'unité native du noyau. Pour diagnostiquer une tâche, chronométrez son travail au tick près et comparez la durée réelle au budget annoncé : c'est cette comparaison, et non l'impression à l'écran, qui dit si le système est temps réel. Prévoyez aussi une marge : un budget occupé à quatre-vingt-quinze pour cent laisse déjà peu de place à un événement imprévu, et un système réel se dimensionne sur son pire jour, pas sur sa moyenne.
+
+```cpp
+// Deux cadences : la derive d'une part, la stabilite d'autre part
+void tacheDerivante(void *p) {
+  for (;;) {
+    executerLeTravail();            // duree variable, parfois 80 ms
+    vTaskDelay(pdMS_TO_TICKS(1000)); // repart de 1 s APRES le travail
+  }                                 // -> periode reelle : 1080 ms
+}
+
+void tacheStable(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  const TickType_t periode = pdMS_TO_TICKS(1000);
+  for (;;) {
+    executerLeTravail();
+    xTaskDelayUntil(&reveil, periode); // la date de reveil avance
+  }                                    // -> periode reelle : 1000 ms
+}
+```
+
+## Files de messages : la communication par copie
+
+Dès que deux tâches doivent échanger une information, une tentation immédiate apparaît : déclarer une variable globale, l'écrire d'un côté, la lire de l'autre. C'est la pire des solutions, et elle échoue pour trois raisons indépendantes : l'accès concurrent peut lire une valeur à moitié écrite, la notion de moment où la donnée est prête n'existe pas, et le débogage devient impossible puisque rien ne dit qui a écrit quoi. La file de messages règle les trois défauts d'un seul coup. Elle est une boîte dans laquelle un producteur dépose des copies complètes d'un message et qu'un consommateur retire ensuite ; le transfert se fait par valeur, la file gère l'attente et l'ordre, et personne ne touche à la mémoire de l'autre.
+
+L'API tient en cinq appels. xQueueCreate(longueur, tailleElement) crée la file, dont il faut conserver le poignée. xQueueSend ou xQueueSendToBack dépose un message en fin de file, xQueueSendToFront en met un en tête, xQueueReceive retire le plus ancien, et xQueuePeek consulte le premier message sans le retirer. À chaque appel, vous pouvez donner un délai maximum d'attente : zéro pour ne jamais bloquer, portMAX_DELAY pour attendre indéfiniment, une autre valeur pour une attente bornée. Toute fonction renvoie pdTRUE en cas de succès et pdFALSE si le délai est écoulé, ce qu'il faut toujours tester.
+
+Le comportement aux extrêmes se règle au dimensionnement. Une file pleine fait attendre l'émetteur jusqu'à libération de place ; une file vide fait attendre le récepteur jusqu'à arrivée d'un message. Pour des mesures successives où seul le dernier état compte, on crée une file d'une seule case et l'on utilise xQueueOverwrite, qui remplace la valeur au lieu d'attendre : le capteur publie toujours, l'afficheur lit l'état le plus récent. Pour des événements qui ne doivent pas se perdre, on crée une file plus longue et on laisse la production aller son chemin pendant une panne brève de consommation. Ce choix est une décision d'architecture, pas un détail d'implémentation.
+
+| Situation | File choisie | Appel d'écriture | Résultat |
+|---|---|---|---|
+| Seul le dernier état compte | Une case | xQueueOverwrite | La valeur est toujours fraîche |
+| Chaque événement compte | Plusieurs cases | xQueueSend | FIFO, une file tampon |
+| L'émetteur peut attendre | Profondeur libre | xQueueSend avec délai | Bloqué jusqu'à place libre |
+| Le récepteur interroge sans consommer | Indifférent | xQueuePeek | Le premier message reste en place |
+
+Le message lui-même doit être un objet complet et autonome. Définissez une structure, typiquement les valeurs mesurées, l'horodatage, un numéro de séquence et un drapeau de validité, et faites-en des copies dans la file. Ne transmettez jamais un pointeur vers une donnée que l'émetteur continue de modifier : la file copierait l'adresse, pas la donnée, et vous retrouveriez exactement le problème de partage que vous vouliez éviter. Le numéro de séquence mérite une attention particulière : il permet au consommateur de détecter les messages perdus ou réordonnés, ce qui transforme un silence suspect en un diagnostic chiffré.
+
+```cpp
+// File de mesures : production par la tache capteur, consommation ailleurs
+typedef struct {
+  float temperature;
+  float humidite;
+  uint32_t sequence;
+  uint32_t tick;
+  bool valide;
+} Mesure;
+
+QueueHandle_t fileMesures;
+
+void setupStation() {
+  fileMesures = xQueueCreate(1, sizeof(Mesure));  // dernier etat seulement
+  xTaskCreatePinnedToCore(tacheCapteur,  "capteur", 4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(tacheAfficheur, "ecran",  4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(tacheReseau,   "reseau",  6144, NULL, 2, NULL, 1);
+}
+
+void tacheCapteur(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  Mesure m;
+  for (;;) {
+    m = lireEtFiltrer();
+    m.tick = xTaskGetTickCount();
+    xQueueOverwrite(fileMesures, &m);   // copie, pas de pointeur
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Cas concret : la station météo en trois tâches
+
+Voici la station assemblée. L'initialisation crée d'abord la file, puis les trois tâches, puis laisse tourner la boucle Arduino, réduite désormais au rôle de service : configuration, console, commandes manuelles. Rien d'autre ne change par rapport au chapitre six : les fonctions de lecture, de filtrage, d'affichage et de publication sont celles que vous avez déjà écrites, simplement appelées depuis des flux différents. C'est tout l'intérêt du découpage, il ne contraint pas la logique métier, il change l'organisation du temps.
+
+Le trajet d'une mesure est maintenant facile à raconter. La tâche capteur se réveille à la seconde, interroge le capteur, valide et filtre, puis dépose une copie dans la file. La tâche afficheur, réveillée quatre fois par seconde, consulte la file sans la vider et dessine ce qu'elle trouve. La tâche réseau, réveillée toutes les dix secondes, retire le message, maintient la liaison puis publie. Chacune connaît sa cadence, chacune travaille sur sa propre copie, et aucune n'a besoin de savoir que les autres existent.
+
+L'intérêt apparaît quand la liaison se dégrade. Supposons que la reconnexion Wi-Fi immobilise la tâche réseau pendant quatre cents millisecondes : avec la superloop, l'écran aurait gelé et la mesure aurait pris du retard ; maintenant, seule la tâche réseau subit le retard, la tâche capteur continue de se réveiller à la seconde et l'écran reste vivant. Si la panne dure dix secondes, la file ne contient que le dernier état, les anciens sont remplacés, et la station reprend d'elle-même dès la liaison rétablie. C'est cette propriété, la continuité d'un service malgré la défaillance d'un autre, qui justifie à elle seule le passage à FreeRTOS.
+
+Le tableau ci-dessous donne les budgets de temps de la station telle qu'elle tourne. Ils ne sont pas des promesses, ce sont des ordres de grandeur de banc : mesurez les vôtres avec la méthode de la section précédente et remplissez la dernière colonne avec vos chiffres.
+
+| Tâche | Cadence | Durée de travail observée | Pire cas admissible | Conséquence si dépassé |
+|---|---|---|---|---|
+| Capteur | 1000 ms | 5 à 20 ms | 50 ms | Mesure en retard, pas perdue |
+| Afficheur | 250 ms | 10 à 40 ms | 100 ms | Image figée quelques cycles |
+| Réseau | 10000 ms | 50 ms à 2 s | 30 s | Publication suivante rattrapée |
+| Service | libre | 1 à 5 ms | indifférent | Console moins réactive |
+
+Il reste trois règles de conduite pour terminer l'assemblage. Premièrement, ne créez jamais une file entre deux tâches qui ne s'échangent qu'un booléen de drapeau : un sémaphore binaire ou une notification de tâche est plus léger et plus clair. Deuxièmement, écrivez le contrat de la file dans le code : qui produit, qui consomme, quelle profondeur, que signifie l'absence de message. Troisièmement, gardez une règle de dégradation : si une tâche ne peut pas faire son travail, elle le signale et poursuit, jamais elle ne s'arrête d'attendre sans limite.
+
+```cpp
+// Assemblage : la boucle Arduino devient un simple service
+void setup() {
+  Serial.begin(115200);
+  configurerCapteurEtEcran();
+  setupStation();          // file puis trois taches, cf. section precedente
+}
+
+void loop() {
+  // Plus aucune mesure ni publication ici : seulement le service.
+  if (Serial.available()) {
+    traiterCommandeConsole();   // lecture non bloquante, une ligne par tour
+  }
+  vTaskDelay(pdMS_TO_TICKS(50));
+}
+```

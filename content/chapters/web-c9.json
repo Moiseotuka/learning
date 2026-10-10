@@ -1,0 +1,88 @@
+{
+  "exercise": "Le panneau de l'atelier de la Médiathèque des Lilas affiche la liste des inscrits, mais la liste se remplit deux fois, la session redescend de trois niveaux de propriétés et chaque frappe dans la zone de recherche ralentit la page. Reprenez le code de départ et appliquez la méthode du chapitre dans l'ordre. Extrayez d'abord le chargement dans un hook useInscriptions qui expose les quatre états nommés, la liste, le message d'erreur et une fonction de rechargement stable, avec annulation de la requête au démontage. Créez ensuite le contexte de session et son hook de lecture qui signale l'absence de fournisseur, puis mémorisez une seule et unique valeur de fournisseur. Protégez la ligne de liste avec React.memo, en stabilisant les propriétés qu'elle reçoit. Enfin, enveloppez le panneau dans un Profiler, enregistrez une interaction de filtrage avant et après vos corrections, et consignez dans un commentaire les deux mesures relevées, le composant désigné comme dominant, ainsi que la mémoïsation que vous avez volontairement écartée et la raison.",
+  "resources": [
+    {
+      "label": "react.dev — Référence des hooks de React, règles et hooks personnalisés",
+      "url": "https://react.dev/reference/react/hooks"
+    },
+    {
+      "label": "react.dev — Composant Profiler et callback de rendu pour la mesure",
+      "url": "https://react.dev/reference/react/Profiler"
+    },
+    {
+      "label": "npm — eslint-plugin-react-hooks, vérification automatique des règles",
+      "url": "https://www.npmjs.com/package/eslint-plugin-react-hooks"
+    },
+    {
+      "label": "Vidéos tutorielles WEB",
+      "url": "https://www.youtube.com/results?search_query=web html"
+    },
+    {
+      "label": "Grafikart — HTML5 : structure sémantique, formulaires",
+      "url": "https://www.youtube.com/@grafikart/search?query=html5%20s%C3%A9mantique%20formulaires"
+    },
+    {
+      "label": "Grafikart — CSS3 : flexbox, grid, animations",
+      "url": "https://www.youtube.com/@grafikart/search?query=css3%20flexbox%20grid"
+    },
+    {
+      "label": "Grafikart — JavaScript ES6+ : arrow functions, destructuring, modules",
+      "url": "https://www.youtube.com/@grafikart/search?query=javascript%20es6"
+    },
+    {
+      "label": "Grafikart — React : hooks, context, routing",
+      "url": "https://www.youtube.com/@grafikart/search?query=react%20hooks%20context"
+    },
+    {
+      "label": "Grafikart — Vue.js : composition API, composants",
+      "url": "https://www.youtube.com/@grafikart/search?query=vuejs%20composition%20api"
+    },
+    {
+      "label": "Grafikart — TypeScript : types, interfaces, generics",
+      "url": "https://www.youtube.com/@grafikart/search?query=typescript%20tutoriel"
+    }
+  ],
+  "code_language": "javascript",
+  "starter_code": "import { createContext, useCallback, useContext, useEffect, useMemo, useState } from \"react\";\n\n// TODO 1 : créez le contexte de session EN DEHORS du composant, avec null par défaut.\nconst SessionContext = createContext(null);\n\nexport function FournisseurSession({ session, enfants }) {\n  // TODO 2 : construisez UNE SEULE valeur mémoïsée contenant la session.\n  // Un objet reconstruit à chaque rendu redessinerait tous les lecteurs.\n  const valeur = session;\n\n  return <SessionContext.Provider value={valeur}>{enfants}</SessionContext.Provider>;\n}\n\nexport function useSession() {\n  // TODO 3 : lisez le contexte et signalez l'absence de fournisseur\n  // par une erreur explicite, plutôt que de renvoyer silencieusement null.\n}\n\n// TODO 4 : écrivez le hook useInscriptions(url).\n// Il doit exposer les quatre états nommés (repos, chargement, succes, erreur),\n// la liste, le message d'erreur et une fonction recharger stable.\n// La requête doit être annulée au démontage et à chaque changement d'adresse.\nexport function useInscriptions(url) {\n}\n\n// TODO 5 : protégez la ligne avec React.memo : elle reçoit un inscrit stable\n// et doit se redessiner uniquement si cet inscrit change.\nexport function LigneInscrit({ inscrit }) {\n  return (\n    <li>\n      {inscrit.nom} — {inscrit.courriel}\n    </li>\n  );\n}\n\nexport function PanneauInscrits() {\n  const { session } = useSession();\n  const { statut, liste, erreur, recharger } = useInscriptions(\"/api/inscrits\");\n  const [requete, setRequete] = useState(\"\");\n\n  // TODO 6 : filtrez la liste à partir de la saisie locale, sans état global.\n  const visibles = [];\n\n  // TODO 7 : affichez les quatre états de la liste (chargement, erreur avec\n  // recharger, vide, succès) puis enveloppez le rendu dans un Profiler\n  // d'identifiant PanneauInscrits dont le rappel affiche id, phase et durée.\n  return (\n    <section>\n      <h2>Inscrits</h2>\n      <p>Session : {session ? session.nom : \"aucune\"}</p>\n      <input\n        value={requete}\n        onChange={(e) => setRequete(e.target.value)}\n        aria-label=\"Rechercher un inscrit\"\n      />\n      <ul>{visibles.map((inscrit) => <LigneInscrit key={inscrit.id} inscrit={inscrit} />)}</ul>\n    </section>\n  );\n}\n",
+  "solution_code": "import { createContext, useCallback, useContext, useEffect, useMemo, useState, memo, Profiler } from \"react\";\n\nconst SessionContext = createContext(null);\n\nexport function FournisseurSession({ session, enfants }) {\n  const valeur = useMemo(() => ({ session }), [session]);\n  return <SessionContext.Provider value={valeur}>{enfants}</SessionContext.Provider>;\n}\n\nexport function useSession() {\n  const valeur = useContext(SessionContext);\n  if (valeur === null) {\n    throw new Error(\"useSession doit être utilisé sous FournisseurSession\");\n  }\n  return valeur;\n}\n\nexport function useInscriptions(url) {\n  const [etat, setEtat] = useState({ statut: \"repos\", liste: [], erreur: null });\n  const [recherche, setRecherche] = useState(0);\n  const recharger = useCallback(() => setRecherche((n) => n + 1), []);\n\n  useEffect(() => {\n    const controleur = new AbortController();\n    setEtat((courant) => ({ ...courant, statut: \"chargement\" }));\n\n    fetch(url, { signal: controleur.signal })\n      .then((reponse) => {\n        if (!reponse.ok) throw new Error(\"HTTP \" + reponse.status);\n        return reponse.json();\n      })\n      .then((liste) => setEtat({ statut: \"succes\", liste, erreur: null }))\n      .catch((erreur) => {\n        if (erreur.name === \"AbortError\") return;\n        setEtat({ statut: \"erreur\", liste: [], erreur: erreur.message });\n      });\n\n    return () => controleur.abort();\n  }, [url, recherche]);\n\n  return { ...etat, recharger };\n}\n\nexport const LigneInscrit = memo(function LigneInscrit({ inscrit }) {\n  return (\n    <li>\n      {inscrit.nom} — {inscrit.courriel}\n    </li>\n  );\n});\n\nfunction Panneau() {\n  const { session } = useSession();\n  const { statut, liste, erreur, recharger } = useInscriptions(\"/api/inscrits\");\n  const [requete, setRequete] = useState(\"\");\n\n  const visibles = liste.filter((inscrit) =>\n    inscrit.nom.toLowerCase().includes(requete.trim().toLowerCase()),\n  );\n\n  if (statut === \"chargement\") return <p>Chargement des inscrits…</p>;\n  if (statut === \"erreur\") {\n    return (\n      <p role=\"alert\">\n        {erreur} <button onClick={recharger}>Réessayer</button>\n      </p>\n    );\n  }\n\n  return (\n    <section>\n      <h2>Inscrits ({visibles.length})</h2>\n      <p>Session : {session.nom}</p>\n      <input\n        value={requete}\n        onChange={(e) => setRequete(e.target.value)}\n        placeholder=\"Rechercher un inscrit\"\n        aria-label=\"Rechercher un inscrit\"\n      />\n      {visibles.length === 0 ? (\n        <p>Aucun inscrit ne correspond à cette recherche.</p>\n      ) : (\n        <ul>{visibles.map((inscrit) => <LigneInscrit key={inscrit.id} inscrit={inscrit} />)}</ul>\n      )}\n    </section>\n  );\n}\n\nfunction relever(id, phase, duree) {\n  console.log(id, phase, duree);\n}\n\nexport function PanneauInscrits() {\n  return (\n    <Profiler id=\"PanneauInscrits\" onRender={relever}>\n      <Panneau />\n    </Profiler>\n  );\n}\n",
+  "concepts": [
+    "Structure d'un document HTML",
+    "Balises sémantiques (header, nav, main, section)",
+    "Hiérarchie de titres (h1-h6)",
+    "Liens et images",
+    "Formulaires de base"
+  ],
+  "lecon": "web-c9.txt",
+  "videos": [
+    {
+      "title": "HTML5 : structure sémantique, formulaires",
+      "url": "https://www.youtube.com/@grafikart/search?query=html5%20s%C3%A9mantique%20formulaires",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "CSS3 : flexbox, grid, animations",
+      "url": "https://www.youtube.com/@grafikart/search?query=css3%20flexbox%20grid",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "JavaScript ES6+ : arrow functions, destructuring, modules",
+      "url": "https://www.youtube.com/@grafikart/search?query=javascript%20es6",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "React : hooks, context, routing",
+      "url": "https://www.youtube.com/@grafikart/search?query=react%20hooks%20context",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Vue.js : composition API, composants",
+      "url": "https://www.youtube.com/@grafikart/search?query=vuejs%20composition%20api",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "TypeScript : types, interfaces, generics",
+      "url": "https://www.youtube.com/@grafikart/search?query=typescript%20tutoriel",
+      "channel": "Grafikart"
+    }
+  ]
+}

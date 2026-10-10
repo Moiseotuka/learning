@@ -1,0 +1,61 @@
+{
+  "exercise": "Vous êtes mandaté par la direction d'une PME de vingt-cinq personnes pour vérifier le départ de Karim B., chargé de clientèle, dont le contrat a pris fin vendredi dernier et qui a rendu un portable ainsi qu'une clé USB. La direction a remarqué que le dossier Prospects de l'outil commercial a été ouvert plusieurs fois après 19 h et qu'un export CSV figure dans ses documents récents. Vous disposez de trois jours, du poste rendu, du compte de messagerie professionnel et des journaux du serveur de fichiers. Réalisez deux livrables. Le premier est une chronologie complète, présentée en tableau, avec heure locale, heure d'origine si elle diffère, fait constaté, source et niveau de confiance, et des trous assumés plutôt que comblés. Le second est un constat interne d'une page, structuré en mandat, méthode, constats établis, éléments non établis, limites et recommandations datées. Respectez l'ordre de préemption, calculez les empreintes à la saisie, tenez un registre d'opérations, et signalez toute donnée que vous n'avez pas pu collecter plutôt que de la deviner.",
+  "resources": [
+    {
+      "label": "NIST SP 800-86 — Guide d'intégration des techniques forensiques dans la réponse à incident",
+      "url": "https://csrc.nist.gov/pubs/sp/800/86/final"
+    },
+    {
+      "label": "SANS Institute — ressources pratiques : acquisition, analyse de journaux et rapports d'incident",
+      "url": "https://www.sans.org/"
+    },
+    {
+      "label": "The Sleuth Kit — documentation officielle des outils d'analyse d'images forensiques",
+      "url": "https://www.sleuthkit.org/sleuthkit/docs/"
+    },
+    {
+      "label": "Vidéos tutorielles CYB",
+      "url": "https://www.youtube.com/results?search_query=cyb cyb"
+    },
+    {
+      "label": "Grafikart — Sécurité web : authentification et JWT",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20web%20jwt"
+    },
+    {
+      "label": "Grafikart — Protection CSRF, XSS, injection SQL",
+      "url": "https://www.youtube.com/@grafikart/search?query=csrf%20xss%20injection%20sql"
+    },
+    {
+      "label": "Grafikart — HTTPS, certificats SSL/TLS",
+      "url": "https://www.youtube.com/@grafikart/search?query=https%20ssl%20tls"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# AFF-2026-10-04 — script d'acquisition et de chaine de preuve\n# Usage : sudo ./acquisition.sh <peripherique> <affaire>\nset -euo pipefail\n\nDEVICE=\"${1:-}\"\nAFFAIRE=\"${2:-}\"\nDOSSIER=\"/evidence/${AFFAIRE}\"\nDATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)\nOPERATEUR=$(id -un)\n\n# TODO 1 : refuser le lancement si DEVICE ou AFFAIRE est vide, si DOSSIER existe\n#         deja, si DEVICE n'est pas un peripherique de bloc, et verifier que\n#         /evidence contient au moins la taille du peripherique\n\n# TODO 2 : creer DOSSIER, initialiser registre_operations.log avec une ligne de\n#         DEBUT (horodatage, operateur, peripherique, taille)\n\n# TODO 3 : acquerir l'image bit a bit vers ${DOSSIER}/image.img avec\n#         conv=noerror,sync, en dirigant la sortie de dd vers acquisition.log\n\n# TODO 4 : calculer l'empreinte SHA-256 de la SOURCE avant l'acquisition, puis\n#         celle de l'image, et les ecrire dans ${DOSSIER}/empreintes.sha256\n\n# TODO 5 : comparer les empreintes ; en cas d'ecart, ecrire la ligne\n#         INCOMPATIBLE au registre, signaler l'echec sur la sortie standard\n#         d'erreur et quitter avec un code different de 0\n\n# TODO 6 : re-calculer l'empreinte de la SOURCE apres l'acquisition : si elle a\n#         change, la referencer comme le CONSTATER dans le registre\n\n# TODO 7 : ecrire la ligne FIN, restreindre les permissions du dossier et\n#         afficher un resume : taille, empreinte, chemin, operateur",
+  "solution_code": "#!/usr/bin/env bash\n# AFF-2026-10-04 — acquisition forensique complete et chaine de preuve\nset -euo pipefail\n\nDEVICE=\"${1:-}\"\nAFFAIRE=\"${2:-}\"\nOPERATEUR=$(id -un)\n\nif [ -z \"$DEVICE\" ] || [ -z \"$AFFAIRE\" ]; then\n  echo \"usage : sudo $0 <peripherique> <affaire>\" >&2\n  exit 2\nfi\nif [ ! -b \"$DEVICE\" ]; then\n  echo \"erreur : $DEVICE n'est pas un peripherique de bloc\" >&2\n  exit 2\nfi\n\nDOSSIER=\"/evidence/${AFFAIRE}\"\nif [ -e \"$DOSSIER\" ]; then\n  echo \"erreur : $DOSSIER existe deja, aucun ecrasement\" >&2\n  exit 1\nfi\n\nTAILLE=$(blockdev --getsize64 \"$DEVICE\")\nLIBRE_KO=$(df --output=avail -k /evidence | tail -1 | tr -d ' ')\nif [ \"$((LIBRE_KO * 1024))\" -lt \"$TAILLE\" ]; then\n  echo \"erreur : espace insuffisant sur /evidence\" >&2\n  exit 1\nfi\n\nmkdir -p \"$DOSSIER\"\nREGISTRE=\"$DOSSIER/registre_operations.log\"\nlog() { printf '%s | %s | %s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$OPERATEUR\" \"$1\" >> \"$REGISTRE\"; }\n\nlog \"DEBUT | peripherique=$DEVICE taille=$TAILLE affaire=$AFFAIRE\"\n\necho \"[1/7] empreinte de la source avant acquisition\"\nEMB_AVANT=$(sha256sum \"$DEVICE\" | cut -d' ' -f1)\nprintf '%s  %s\\n' \"$EMB_AVANT\" \"$DEVICE\" > \"$DOSSIER/empreintes.sha256\"\n\necho \"[2/7] acquisition bit a bit\"\nif ! dd if=\"$DEVICE\" of=\"$DOSSIER/image.img\" bs=4M conv=noerror,sync status=progress \\\n     2> \"$DOSSIER/acquisition.log\"; then\n  log \"ECHEC | dd interrompu sur $DEVICE\"\n  echo \"erreur : acquisition interrompue, dossier a ne pas utiliser\" >&2\n  exit 1\nfi\nlog \"IMAGE | image.img creee\"\n\necho \"[3/7] empreinte de l'image\"\nEMB_IMAGE=$(sha256sum \"$DOSSIER/image.img\" | cut -d' ' -f1)\nprintf '%s  %s\\n' \"$EMB_IMAGE\" \"$DOSSIER/image.img\" >> \"$DOSSIER/empreintes.sha256\"\n\necho \"[4/7] comparaison source / image\"\nif [ \"$EMB_AVANT\" != \"$EMB_IMAGE\" ]; then\n  log \"INCOMPATIBLE | source=$EMB_AVANT image=$EMB_IMAGE\"\n  echo \"erreur : empreintes differentes, image non fiable\" >&2\n  exit 1\nfi\nlog \"EMPREINTES | sha256=$EMB_IMAGE egal source et image\"\n\necho \"[5/7] empreinte de la source apres acquisition\"\nEMB_APRES=$(sha256sum \"$DEVICE\" | cut -d' ' -f1)\nprintf '%s  %s\\n' \"$EMB_APRES\" \"$DEVICE\" >> \"$DOSSIER/empreintes.sha256\"\nif [ \"$EMB_AVANT\" != \"$EMB_APRES\" ]; then\n  log \"ALERTE | source modifiee pendant l'acquisition\"\nelse\n  log \"SOURCE | inchangee pendant l'acquisition\"\nfi\n\necho \"[6/7] cloture et protection du dossier\"\nlog \"FIN | dossier=$DOSSIER taille_image=$(stat -c %s \"$DOSSIER/image.img\")\"\nchmod 440 \"$DOSSIER\"/*\n\necho \"[7/7] resume\"\necho \"  peripherique : $DEVICE\"\necho \"  dossier      : $DOSSIER\"\necho \"  taille       : $TAILLE octets\"\necho \"  empreinte    : $EMB_IMAGE\"\necho \"  registre     : $REGISTRE\"\necho \"acquisition terminee : la copie est verifiee, le registre est horodate.\"",
+  "concepts": [
+    "Modèle chaîne d'attaque (MITRE ATT&CK)",
+    "Phishing vs ingénierie sociale",
+    "Surface d'attaque d'un réseau",
+    "Principes de durcissement",
+    "Bonnes pratiques de sécurité"
+  ],
+  "lecon": "cyb-c8.txt",
+  "videos": [
+    {
+      "title": "Sécurité web : authentification et JWT",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20web%20jwt",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Protection CSRF, XSS, injection SQL",
+      "url": "https://www.youtube.com/@grafikart/search?query=csrf%20xss%20injection%20sql",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "HTTPS, certificats SSL/TLS",
+      "url": "https://www.youtube.com/@grafikart/search?query=https%20ssl%20tls",
+      "channel": "Grafikart"
+    }
+  ]
+}

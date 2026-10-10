@@ -1,0 +1,149 @@
+## L'authentification par token
+
+L'authentification par token est le mécanisme le plus répandu pour les API consommées par des applications mobiles ou des front-end distants. Le principe : le client envoie ses identifiants une seule fois, le serveur lui répond un token opaque, et le client renvoie ce token dans chaque requête suivante via l'en-tête Authorization. Le token ne contient aucune information lisible : il est une clé qui pointe vers un utilisateur en base.
+
+DRF fournit ce mécanisme dans le module authtoken. Après l'avoir ajouté à INSTALLED_APPS sous le nom rest_framework.authtoken, vous lancez les migrations pour créer la table des tokens. La vue obtain_auth_token, déjà incluse dans nos URLs, répond à POST avec un nom d'utilisateur et un mot de passe, et renvoie le token correspondant. Si les identifiants sont incorrects, la réponse est 400 avec un message d'erreur.
+
+```python
+INSTALLED_APPS = [
+    "rest_framework",
+    "rest_framework.authtoken",
+    "bibliotheque",
+]
+```
+
+```json
+{
+    "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b"
+}
+```
+
+Pour utiliser ce token, le client l'envoie dans chaque requête avec l'en-tête Authorization suivi du mot-clé Token et de la valeur. Avec curl, cela donne curl -H "Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b" http://127.0.0.1:8000/api/livres/. DRF vérifie l'en-tête, retrouve l'utilisateur associé au token, et le place dans request.user. Si le token est absent ou invalide, la requête est traitée comme anonyme, et les permissions décideront si l'accès est autorisé.
+
+```python
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.TokenAuthentication",
+    ],
+}
+```
+
+La gestion des tokens en production demande quelques précautions. Un token est un secret : s'il est volé, l'attaquant se fait passer pour l'utilisateur jusqu'à révocation. Vous devez donc le transmettre uniquement en HTTPS, le stocker côté client dans un endroit sécurisé, et prévoir une vue pour régénérer ou révoquer un token en cas de fuite. DRF ne fournit pas nativement de révocation, mais supprimer l'objet Token en base ou en créer un nouveau suffit.
+
+Une alternative moderne est l'authentification par JSON Web Tokens, gérée par le package djangorestframework-simplejwt. Contrairement au token DRF, un JWT est signé et contient des informations comme la date d'expiration, ce qui permet une révocation fine et une validation sans requête en base. Pour les nouveaux projets, simplejwt est souvent préféré, mais le token DRF reste un excellent choix pour sa simplicité et sa prévisibilité.
+
+## La Browsable API et le design des URLs
+
+La Browsable API est la signature de DRF. Quand vous ouvrez une URL d'API dans votre navigateur, au lieu d'un JSON brut, vous obtenez une page HTML stylisée qui affiche la réponse, les paramètres acceptés, et un formulaire pour tester les requêtes POST, PUT et DELETE. C'est un outil de développement inestimable : vous explorez votre API, vous testez vos endpoints, vous vérifiez vos permissions, sans écrire une seule ligne de code client.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/HTTP_logo_-_2014.svg/960px-HTTP_logo_-_2014.svg.png
+| Le logo du protocole HTTP, fondement de toutes les échanges d'une API REST.
+```
+
+Pour en profiter, gardez SessionAuthentication dans vos classes d'authentification : la session de votre navigateur vous maintient connecté, et la Browsable API peut envoyer des requêtes authentifiées. Si vous ne gardez que TokenAuthentication, la page s'affichera mais les requêtes seront anonymes. Vous pouvez aussi cliquer sur votre nom en haut à droite pour vous connecter ou vous déconnecter.
+
+Le design des URLs est une discipline à part entière. Une bonne API REST utilise des noms pluriels pour les collections, des verbes HTTP pour les actions, et une hiérarchie reflétant les relations. /api/livres/ pour la collection, /api/livres/3/ pour un livre précis, /api/auteurs/3/livres/ pour les livres d'un auteur. Évitez les verbes dans les URLs comme /api/livres/creer/ : le verbe est déjà porté par la méthode HTTP.
+
+Les bonnes pratiques de nommage méritent d'être suivies avec constance. Utilisez des tirets bas ou des traits d'union de façon cohérente, préférez les minuscules, et gardez les noms de ressources au pluriel. Une URL lisible est une URL que les développeurs comprennent sans documentation. Documentez aussi vos paramètres de requête, vos codes de réponse et vos formats d'erreur : une API bien documentée est une API utilisée.
+
+## Tester son API avec APIClient
+
+Une API non testée est une API cassée. DRF fournit APIClient, un client de test qui se comporte comme un navigateur ou une application mobile, mais sans passer par le réseau. Vous l'instanciez dans vos tests, vous vous authentifiez avec force_authenticate, et vous appelez les URLs de votre API comme le ferait un client réel. Les assertions portent sur le code de réponse et le contenu JSON.
+
+```python
+from rest_framework.test import APIClient, APITestCase
+from django.contrib.auth.models import User
+
+class LivreAPITest(APITestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user("alice", password="secret")
+        self.client.force_authenticate(user=self.user)
+
+    def test_creation_livre(self):
+        reponse = self.client.post("/api/livres/", {"titre": "Dune", "prix": 12.5})
+        self.assertEqual(reponse.status_code, 201)
+        self.assertEqual(reponse.data["titre"], "Dune")
+```
+
+La méthode force_authenticate contourne l'authentification réelle et connecte directement l'utilisateur choisi. C'est rapide et fiable pour tester les permissions. Pour tester l'authentification par token elle-même, vous créez un objet Token et vous l'envoyez dans l'en-tête Authorization avec le format credentials. Les deux approches sont complémentaires : l'une teste la logique métier, l'autre le mécanisme d'authentification.
+
+Les tests doivent couvrir les cas heureux comme les cas d'erreur. Vérifiez qu'un utilisateur anonyme ne peut pas créer de livre, qu'un livre avec un prix négatif est rejeté avec un message d'erreur, qu'une page inexistante renvoie 404. Chaque permission, chaque validation, chaque action personnalisée mérite au moins un test. Cette discipline transforme votre API en un système sur lequel vous pouvez évoluer sans crainte.
+
+```python
+    def test_creation_refusee_sans_auth(self):
+        self.client.logout()
+        reponse = self.client.post("/api/livres/", {"titre": "Dune"})
+        self.assertEqual(reponse.status_code, 403)
+```
+
+## Versioning et en-têtes HTTP
+
+Une API évolue, et les clients ne suivent pas toujours. Le versioning permet de faire coexister plusieurs versions de votre API sans briser les clients existants. DRF propose plusieurs stratégies. La plus simple est le versioning par namespace d'URL : /api/v1/livres/ et /api/v2/livres/ pointent vers des vues différentes. La plus fine est le versioning par en-tête Accept, où le client demande la version avec un paramètre dans l'en-tête.
+
+```python
+REST_FRAMEWORK = {
+    "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
+    "DEFAULT_VERSION": "v1",
+    "ALLOWED_VERSIONS": ["v1", "v2"],
+}
+```
+
+Avec URLPathVersioning, le paramètre version est capturé dans l'URL et transmis à la vue. Vous pouvez alors adapter le serializer ou le queryset selon la version demandée. Cette approche est transparente pour le client et facile à déboguer, car la version est visible dans l'URL.
+
+Les en-têtes HTTP sont le langage du client et du serveur. L'en-tête Content-Type indique le format du corps de la requête, application/json pour du JSON. L'en-tête Accept indique le format souhaité en réponse. L'en-tête Authorization transporte les credentials. Une API bien conçue respecte ces en-têtes et renvoie des erreurs claires quand ils sont absents ou mal formés.
+
+```python
+class LivreViewSet(viewsets.ModelViewSet):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+
+    def get_serializer_class(self):
+        if self.request.version == "v2":
+            return LivreSerializerV2
+        return LivreSerializer
+```
+
+La négociation de contenu est un sujet lié. DRF peut servir du JSON par défaut et d'autres formats selon l'en-tête Accept ou le suffixe d'URL. Pour une API publique, le JSON suffit. Pour une API qui alimente aussi des clients legacy, vous pouvez ajouter un renderer XML ou CSV. Cette flexibilité est un atout, mais gardez-la sobre : chaque format supplémentaire est une surface à tester et à maintenir.
+
+## À retenir
+
+Django REST Framework transforme Django en usine à API. Vous installez le package, vous l'ajoutez à INSTALLED_APPS, et vous configurez le dictionnaire REST_FRAMEWORK pour la pagination et l'authentification. Les serializers sont les traducteurs entre vos modèles et le JSON : ModelSerializer génère les champs automatiquement, et la validation se fait à trois niveaux, champ par champ, objet par objet, et validateurs réutilisables.
+
+Les ViewSets et le routeur éliminent la répétition : ModelViewSet fournit les six actions CRUD, et DefaultRouter génère les URLs correspondantes. Les vues génériques sont l'alternative fine quand votre API est asymétrique. La pagination découpe les listes en pages avec des métadonnées de navigation, et django-filter permet de filtrer par n'importe quel champ avec des lookup expressions expressives.
+
+Les permissions protègent vos ressources : AllowAny pour le public, IsAuthenticated pour le privé, IsAuthenticatedOrReadOnly pour le contributif, et des permissions personnalisées comme IsOwnerOrReadOnly pour les règles métier. L'authentification par token, avec rest_framework.authtoken ou simplejwt, permet aux clients distants de s'identifier avec un en-tête Authorization. La Browsable API rend votre API explorable au navigateur, et APIClient permet de tout tester automatiquement.
+
+Enfin, le versioning par URL ou par en-tête fait coexister les évolutions, et le design d'URLs soigné, avec des noms pluriels et des hiérarchies claires, rend votre API compréhensible. Ces pièces forment un ensemble cohérent : une API DRF bien construite est prévisible, testable et évolutive.
+
+## Erreurs fréquentes
+
+La première erreur est d'oublier les permissions. Un ModelViewSet sans permission_classes expose tout le CRUD à tout le monde. Dès que vous créez un ViewSet, demandez-vous qui doit avoir accès à chaque action, et déclarez get_permissions en conséquence. Une API ouverte par négligence est une faille de sécurité.
+
+La deuxième erreur est de confondre validation et filtrage. Un serializer qui rejette une valeur invalide est une validation ; un queryset qui limite les résultats est un filtrage. Si vous filtrez le queryset par request.user mais que vous oubliez la permission, un utilisateur peut modifier un objet qui ne lui appartient pas en devinant son identifiant. Les deux mécanismes sont complémentaires.
+
+La troisième erreur est de renvoyer des réponses mal formées. DRF attend que vous renviez des objets Response avec un code de statut explicite : 201 pour une création, 204 pour une suppression, 400 pour une erreur de validation, 403 pour un accès refusé, 404 pour un objet introuvable. Un code de statut ambigu force le client à deviner et casse les automatisations.
+
+La quatrième erreur est de négliger les tests. Une API évolue, et chaque modification peut casser un client. Sans tests, vous découvrez les régressions en production. Avec APIClient, chaque endpoint se teste en quelques lignes, et la suite de tests devient votre filet de sécurité. Écrivez les tests en même temps que les vues, pas après.
+
+La cinquième erreur est de sur-construire. Un projet qui démarre n'a pas besoin de versioning, de permissions objet complexes et de filtres sur tous les champs. Commencez simple : ModelViewSet, permission globale, pagination. Ajoutez la complexité quand le besoin réel se manifeste. Une API simple et bien testée vaut mieux qu'une API sophistiquée et fragile.
+
+## Pour aller plus loin
+
+La documentation officielle de Django REST framework est la référence absolue. Le tutorial en six parties vous guide de la sérialisation jusqu'aux ViewSets, et l'API guide détaille chaque classe, chaque paramètre, chaque cas d'usage. C'est le livre de chevet de tout développeur DRF, et il est tenu à jour avec chaque version.
+
+Le package django-filter mérite une lecture approfondie de sa documentation. Au-delà des filtres simples, il sait gérer les relations, les plages de dates, les booléens et les choix multiples. Combiné avec SearchFilter et OrderingFilter, il couvre tous les besoins de requêtage d'une API sérieuse.
+
+Pour l'authentification moderne, explorez djangorestframework-simplejwt. Les JSON Web Tokens apportent l'expiration, la révocation fine et la validation sans requête en base. La documentation du package explique la configuration des durées de vie, le rafraîchissement des tokens et la personnalisation des claims.
+
+Les tests d'API peuvent aller plus loin avec pytest et le plugin pytest-django. Vous écrivez vos tests avec des fixtures, vous factorisez les données de test, et vous exécutez la suite en quelques secondes. La combinaison d'APIClient et de pytest donne une expérience de test agile et puissante.
+
+Enfin, étudiez le design d'API avec les guides de bonnes pratiques REST. Les principes de Richardson, les matures de maturité de Leonard Richardson, et les retours d'expérience des grandes API publiques comme celles de GitHub ou Stripe. Ces lectures vous aideront à prendre les bonnes décisions de design quand votre API grandira.
+
+## Et maintenant
+
+Vous avez toutes les cartes en main pour construire votre première API avec Django REST Framework. Installez le package, déclarez vos serializers avec leur validation, exposez vos ressources avec des ViewSets et un routeur, protégez-les avec des permissions adaptées, authentifiez vos clients par token, filtrez et paginez vos listes, et testez chaque endpoint avec APIClient. Ce chapitre vous a donné les fondations ; la pratique fera le reste.
+
+La prochaine étape est de passer à l'application. Prenez un modèle que vous connaissez, déclarez son serializer, écrivez son ViewSet, et testez-le dans votre navigateur avec la Browsable API. Puis ajoutez une permission personnalisée, un filtre, une action sur mesure. Chaque notion de ce chapitre deviendra concrète quand vous la mettrez en œuvre. Votre API vous attend.

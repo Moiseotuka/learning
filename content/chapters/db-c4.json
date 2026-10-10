@@ -1,0 +1,61 @@
+{
+  "exercise": "Écrivez un script ecritures.sql qui pilote les écritures de la bibliothèque municipale en appliquant toutes les règles du chapitre. Commencez par insérer deux lecteurs avec un INSERT multi-lignes en listant explicitement les colonnes, puis importez les ouvrages d'un fichier de catalogage à l'aide d'un INSERT ... SELECT. Ajoutez un exemplaire pour chaque ouvrage créé, en laissant le moteur attribuer les identifiants techniques. Mettez ensuite à jour l'état des exemplaires empruntés avec un UPDATE qui porte une condition WHERE, après avoir exécuté le SELECT équivalent pour compter le périmètre. Supprimez les réservations antérieures à une date butoir avec un DELETE conditionné, en vérifiant le nombre de lignes avant et après. Enregistrez enfin un emprunt complet, insertion de la ligne d'emprunt et mise à jour de l'exemplaire, dans une transaction unique terminée par COMMIT, puis simulez un échec de disponibilité que vous annulez par ROLLBACK. Terminez par un virement de provision entre deux comptes, avec débit, crédit et ligne de journal dans une même transaction, la condition de solde étant portée directement par le UPDATE. Chaque écriture doit être précédée de sa lecture de contrôle et suivie d'une vérification du résultat.",
+  "resources": [
+    {
+      "label": "PostgreSQL — Tutoriel : transactions et BEGIN, COMMIT, ROLLBACK",
+      "url": "https://www.postgresql.org/docs/current/tutorial-transactions.html"
+    },
+    {
+      "label": "MySQL — Documentation : niveaux d'isolation et concurrence des transactions",
+      "url": "https://dev.mysql.com/doc/refman/8.0/en/transaction-isolation.html"
+    },
+    {
+      "label": "Wikipédia — Propriétés ACID des systèmes de gestion de bases de données",
+      "url": "https://fr.wikipedia.org/wiki/ACID"
+    },
+    {
+      "label": "Vidéos tutorielles DB",
+      "url": "https://www.youtube.com/results?search_query=db db"
+    },
+    {
+      "label": "Grafikart — PostgreSQL : installation et bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=postgresql%20tutoriel"
+    },
+    {
+      "label": "Grafikart — Modélisation Merise, MLD, MCD",
+      "url": "https://www.youtube.com/@grafikart/search?query=merise%20mld%20mcd"
+    },
+    {
+      "label": "Grafikart — Requêtes SQL avancées",
+      "url": "https://www.youtube.com/@grafikart/search?query=sql%20avanc%C3%A9"
+    }
+  ],
+  "code_language": "sql",
+  "starter_code": "-- Chapitre 4 : écritures et transactions\n-- Bibliothèque des Lilas : complétez chaque bloc.\n\n-- 1. Insérez deux lecteurs en une seule commande, colonnes listées explicitement.\nINSERT INTO lecteurs (identifiant, nom, prenom, courriel, date_inscription)\n-- à compléter\n\n-- 2. Importez les ouvrages déjà catalogués dans la table d'attente.\nINSERT INTO ouvrages (identifiant, titre, auteur, isbn)\n-- à compléter : INSERT ... SELECT\n\n-- 3. Comptez d'abord le périmètre, puis mettez à jour les exemplaires en retard.\nSELECT COUNT(*) FROM exemplaires WHERE etat = 'perdu';\n-- UPDATE avec WHERE : à compléter\n\n-- 4. Supprimez les réservations périmées après vérification.\n-- à compléter\n\nBEGIN;\n\n-- 5. Enregistrez un emprunt : insertion puis mise à jour de l'exemplaire.\n-- à compléter\n\n-- Vérifiez le résultat, puis validez ou annulez.\n-- COMMIT; ou ROLLBACK;\n\n-- 6. Virement de provision : débit conditionné, crédit, journal.\n-- à compléter",
+  "solution_code": "-- Chapitre 4 : écritures et transactions\n-- Bibliothèque des Lilas : solution complète.\n\n-- 1. Insertion multi-lignes, colonnes listées explicitement.\nINSERT INTO lecteurs (identifiant, nom, prenom, courriel, date_inscription)\nVALUES (21, 'Fabre', 'Nina', 'nina.fabre@example.fr', '2026-03-02'),\n       (22, 'Ouedraogo', 'Idriss', 'idriss.o@example.fr', '2026-03-02');\n\n-- 2. Import à partir d'une table d'attente.\nINSERT INTO ouvrages (identifiant, titre, auteur, isbn)\nSELECT identifiant, titre, auteur, isbn\nFROM ouvrages_en_attente\nWHERE valide = true\n  AND NOT EXISTS (\n    SELECT 1 FROM ouvrages o WHERE o.isbn = ouvrages_en_attente.isbn\n  );\n\n-- 3. Lecture de contrôle puis mise à jour conditionnée.\nSELECT COUNT(*) FROM exemplaires WHERE etat = 'perdu';\n\nUPDATE exemplaires\nSET etat = 'bon'\nWHERE etat = 'perdu'\n  AND date_reforme IS NULL;\n\nSELECT COUNT(*) FROM exemplaires WHERE etat = 'perdu';\n\n-- 4. Suppression sécurisée des réservations périmées.\nSELECT COUNT(*) FROM reservations WHERE date_demande < '2025-06-01';\n\nDELETE FROM reservations\nWHERE date_demande < '2025-06-01'\n  AND ouvrage_id IS NULL;\n\nSELECT COUNT(*) FROM reservations WHERE date_demande < '2025-06-01';\n\n-- 5. Enregistrement d'un emprunt dans une transaction.\nBEGIN;\n\nSELECT COUNT(*) FROM exemplaires WHERE identifiant = 101 AND etat = 'neuf';\n\nINSERT INTO emprunts (identifiant, lecteur_id, date_sortie)\nVALUES (9100, 21, '2026-03-04');\n\nUPDATE exemplaires\nSET etat = 'emprunté', emprunt_id = 9100\nWHERE identifiant = 101 AND etat = 'neuf';\n\nSELECT etat FROM exemplaires WHERE identifiant = 101;\n\nCOMMIT;\n\n-- Cas d'échec : exemplaire indisponible, on annule tout.\nBEGIN;\n\nSELECT COUNT(*) FROM exemplaires WHERE identifiant = 102 AND etat = 'neuf';\n\nUPDATE exemplaires\nSET etat = 'emprunté', emprunt_id = 9101\nWHERE identifiant = 102 AND etat = 'neuf';\n\nROLLBACK;\n\n-- 6. Virement de provision entre deux comptes.\nBEGIN;\n\nSELECT solde FROM comptes WHERE numero = 'FR111';\n\nUPDATE comptes\nSET solde = solde - 150\nWHERE numero = 'FR111'\n  AND solde >= 150;\n\nUPDATE comptes\nSET solde = solde + 150\nWHERE numero = 'FR222';\n\nINSERT INTO ecritures (compte_debit, compte_credit, montant, date_operation)\nVALUES ('FR111', 'FR222', 150, '2026-03-04');\n\nSELECT solde FROM comptes WHERE numero = 'FR111';\n\nCOMMIT;",
+  "concepts": [
+    "Modèle relationnel (entities/attributes/relations)",
+    "Clés primaires et étrangères",
+    "Cardinalités",
+    "Diagramme Entité-Association",
+    "Concepts SQL de base"
+  ],
+  "lecon": "db-c4.txt",
+  "videos": [
+    {
+      "title": "PostgreSQL : installation et bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=postgresql%20tutoriel",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Modélisation Merise, MLD, MCD",
+      "url": "https://www.youtube.com/@grafikart/search?query=merise%20mld%20mcd",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Requêtes SQL avancées",
+      "url": "https://www.youtube.com/@grafikart/search?query=sql%20avanc%C3%A9",
+      "channel": "Grafikart"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+La première règle de l'optimisation tient en une phrase : on ne devine pas, on mesure. Un développeur qui déclare qu'une requête est lente parce qu'elle semble lourde fait de la fiction ; un développeur qui exécute la requête et lit son plan d'exécution fait de l'ingénierie. Les moteurs relationnels embarquent pour cela un outil universel nommé EXPLAIN, que vous trouverez dans PostgreSQL, MySQL, MariaDB, SQLite et, sous une forme légèrement différente, dans SQL Server. Ce chapitre vous apprend à l'utiliser, à comprendre ce qu'il produit, et à en tirer une décision : ajouter un index, réécrire une condition, ou conclure que la requête est déjà aussi rapide qu'elle peut l'être.
+
+Le point délicat est que EXPLAIN et EXPLAIN ANALYZE ne disent pas la même chose. Le premier affiche une prévision, calculée à partir des statistiques que le moteur possède sur vos données ; le second exécute réellement la requête et affiche ce qui s'est passé. L'un est gratuit et ment parfois, l'autre a un coût et ne ment jamais sur l'exécution, mais il a fallu faire le travail pour obtenir le résultat. Savoir alterner entre les deux, et plus précisément savoir dans quel ordre les utiliser, fait toute la différence entre une optimisation fondée et une série de changements au jugé.
+
+Ensuite viendra la lecture, qui est un exercice d'interprétation bien plus que de syntaxe. Un plan d'exécution se lit de l'intérieur vers l'extérieur et de bas en haut : les opérations les plus profondes s'exécutent en premier, et leurs résultats remontent vers l'opération parente. Chaque ligne porte des coûts, des estimations de cardinalité, parfois des tailles de tampon et des temps réels. Certains chiffres rassurent, d'autres alarment, et l'essentiel est de savoir lesquels regarder d'abord. Enfin, la notion de sélectivité viendra expliquer la quasi-totalité des décisions du planificateur : c'est elle qui détermine si votre index sera utilisé ou ignoré, et comprendre sa définition revient à comprendre la moitié de l'optimisation.
+
+Prenons un exemple concret et restons-en là pour l'instant : la bibliothèque des Lilas doit afficher les emprunts en retard. La requête filtre sur une date et joint une table de lecteurs. Est-elle lente ? De combien ? Un index sur la date résoudrait-il le problème, ou le jointureur est-il le vrai coupable ? Répondre à ces questions au doigt mouillé, c'est prendre le risque d'ajouter un index sur la colonne la moins coupable et de laisser le véritable goulet d'étranglement intact. Mesurons d'abord. Nous mesurerons ensuite. Et nous comparerons, parce qu'une optimisation qui ne se mesure pas avant et après n'est qu'une opinion.
+
+## Mesurer avant d'optimiser : EXPLAIN et EXPLAIN ANALYZE
+
+EXPLAIN est la commande qui interroge le planificateur : elle lui demande quel plan il comptait employer pour exécuter votre requête, sans exécuter cette requête. Dans PostgreSQL, on l'écrit devant une requête SELECT, UPDATE ou DELETE ; dans MySQL, on l'écrit devant un SELECT et l'on dispose en supplément de EXPLAIN FORMAT = JSON, particulièrement lisible ; dans SQLite, la variante s'écrit EXPLAIN QUERY PLAN et renvoie un plan synthétique. Quel que soit le moteur, l'idée est la même : vous soumettez une intention, on vous répond par une stratégie. Cette distinction est fondamentale, car la stratégie que vous voyez est une prévision, construite à partir des statistiques collectées sur les valeurs de vos colonnes.
+
+Le coût affiché par PostgreSQL, deux nombres séparés par une virgule, s'interprète ainsi : le premier est le coût de démarrage, c'est-à-dire le temps nécessaire avant de pouvoir renvoyer la première ligne ; le second est le coût total, jusqu'à la dernière ligne. Une requête affichant un coût total de trois mille n'a aucun sens en soi : ce chiffre est une unité abstraite, proportionnelle aux pages lues et au temps processeur, et il ne se convertit pas en millisecondes. Il n'en reste utile que par comparaison. Si deux plans traitent la même requête, celui dont le coût total est le plus faible est, statistiques à jour, le meilleur choix. Si vous comparez des coûts de plans différents pour des requêtes différentes, vous comparez des choses sans rapport.
+
+Voici la distinction la plus importante entre les deux commandes : EXPLAIN ne lance rien, EXPLAIN ANALYZE exécute. Cette exécution réelle produit un plan enrichi, où chaque nœud affiche un temps écoulé, parfois décomposé en temps d'attente, temps CPU et lecture d'entrée. Le plan affiché après ANALYZE n'est plus forcément celui qui a été prévu : si les estimations de la prévision étaient mauvaises, le moteur a pu choisir un autre chemin en cours de route, ou encore exécuter un nœud de manière différente de ce que la structure suggérait. Un plan réel est donc la vérité, mais une vérité du passé : il vous dit ce qui s'est passé pour cette exécution, pas forcément ce qui se passera demain avec des données différentes.
+
+La conséquence pratique tient en trois précautions. Premièrement, ANALYZE exécute la requête : si elle modifie des données, les modifications ont lieu ; si elle est très lente, vous attendrez. Utilisez-le sur des requêtes SELECT, ou dans une transaction que vous annulez ensuite. Deuxièmement, faites varier les valeurs de paramètres : une requête peut être rapide avec un identifiant fréquent et catastrophique avec un identifiant rare, car le plan n'est pas le même. Troisièmement, rafraîchissez les statistiques avant de juger, avec ANALYZE en PostgreSQL ou OPTIMIZE TABLE en MySQL : un plan calculé sur des statistiques d'il y a six mois est un plan calculé sur un souvenir.
+
+```sql
+-- 1. Prévision seule, sans exécuter la requête.
+EXPLAIN
+SELECT l.nom, l.prenom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.date_retour IS NULL;
+
+-- 2. Exécution réelle, avec les temps de chaque étape.
+EXPLAIN ANALYZE
+SELECT l.nom, l.prenom
+FROM emprunts e
+JOIN lecteurs l ON l.identifiant = e.lecteur_id
+WHERE e.date_retour IS NULL;
+```
+
+Le rythme de travail à adopter est le suivant. Vous capturez d'abord le plan actuel, en le copiant dans votre fichier de notes ou de migration, parce que le plan d'avant est aussi précieux que le plan d'après. Vous formulez ensuite une hypothèse explicite, du type : ajouter un index sur emprunts(date_retour) devrait remplacer le balayage séquentiel par une recherche par index et diviser le coût par dix. Vous appliquez une seule modification. Vous relancez la mesure. Puis vous acceptez ou vous rejetez l'hypothèse, sur la base des chiffres. Ce cycle, répété, est exactement la méthode des équipes qui maintiennent des bases performantes sur la durée, et il vous protège de l'erreur la plus coûteuse de toutes : l'optimisation qui améliore une requête et en dégrade trois autres.
+
+## Lire un plan d'exécution ligne par ligne
+
+Un plan ressemble à une arborescence dont les lignes imbriquées décrivent des opérations. En PostgreSQL, la lecture commence par l'opérateur le plus à droite et le plus profond, celui dont les flèches ne viennent de nulle part : c'est généralement l'accès initial à une table ou à un index. Les résultats remontent ensuite vers l'opérateur qui les consomme, jusqu'à la racine, qui produit les lignes rendues à l'utilisateur. En MySQL, la lecture se fait à l'envers, de la ligne de résultat vers les sources. Dans les deux cas, la règle demeure : identifier d'où viennent les données, et quel traitement leur est appliqué en chemin.
+
+Les opérateurs d'accès sont les plus simples à reconnaître. Seq Scan, ou Table Access Full dans MySQL, signifie balayage complet : toutes les lignes sont lues. Index Scan signifie que l'index est utilisé pour localiser les lignes, puis que chacune est récupérée dans la table. Index Only Scan, ou Covering Index, signifie que l'index seul suffit, la table n'est jamais ouverte : c'est le meilleur des cas, celui de la couverture d'index que nous étudierons dans la partie suivante. Bitmap Heap Scan, dans PostgreSQL, signifie que l'index a d'abord produit une carte des pages à lire, que ces pages ont été triées pour éviter les allers-retours inutiles, puis que les lignes ont été extraites : c'est la stratégie choisie quand l'index retient une fraction notable mais pas majoritaire de la table.
+
+Les opérateurs de traitement font ce que le nom suggère. Nest Loop parcourt la table externe ligne à ligne et, pour chaque ligne, recherche la correspondance dans la table interne, idéalement via un index. Hash Join construit d'abord une table de hachage en mémoire à partir d'une des tables, puis balaie l'autre en la comparant à cette table : il est excellent pour les jointures sans index, mais demande assez de mémoire pour tenir l'une des deux tables. Merge Join suppose que les deux entrées sont triées, et il redevient très efficace si cette tri est gratuit, c'est-à-dire si un index fournit déjà l'ordre. Sort, Aggregate, Filter et Materialize décrivent respectivement un tri, une agrégation, un filtre appliqué en mémoire et la mise en cache intermédiaire des résultats.
+
+À côté du nom de l'opération, deux colonnes retiennent l'attention. Le coût, rappelons-le, est une estimation sans unité, utile pour comparer. La cardinalité, notée rows, est le nombre de lignes que le moteur estime devoir manipuler à cette étape, et c'est ici que se cachent la plupart des problèmes. Comparez la valeur estimée avec la valeur réellement traitée, affichée entre parenthèses par EXPLAIN ANALYZE. Si le moteur prédit dix lignes et en traite cent mille, son estimation était fausse, et un mauvais plan peut découler de cette erreur : statistiques périmées, distribution très irrégulière de valeurs, condition complexe que le moteur sait mal modéliser. Corriger l'estimation, souvent par un rafraîchissement de statistiques ou en augmentant l'échantillonnage, rétablit un plan correct sans écrire une ligne d'index.
+
+Le plan suivant, obtenu après EXPLAIN ANALYZE, illustre les trois niveaux de lecture. La racine est un hash join entre deux entrées. La première entrée balaie la table des emprunts et applique un filtre sur la date de retour nulle ; la seconde construit une table de hachage à partir des lecteurs, en balayage séquentiel également. Aucun index n'est utilisé, et les temps réels confirment que le balayage des emprunts domine le coût total.
+
+```
+Hash Join  (cost=185.00..412.00 rows=842 width=24) (actual time=4.12..6.90 rows=837 loops=1)
+  Hash Cond: (e.lecteur_id = l.identifiant)
+  ->  Seq Scan on emprunts e  (cost=0.00..198.00 rows=842 width=12)
+        Filter: (date_retour IS NULL)
+        Rows Removed by Filter: 9163
+        Actual Rows: 837  Actual Loops: 1
+  ->  Hash  (cost=112.00..112.00 rows=5000 width=16)
+        ->  Seq Scan on lecteurs l  (actual rows=5000 loops=1)
+Planning Time: 0.18 ms
+Execution Time: 7.45 ms
+```
+
+Lisez ce plan dans l'ordre. Le filtre sur date_retour est appliqué pendant le balayage, et le moteur indique qu'il a écarté neuf mille cent soixante-treize lignes pour n'en garder que huit cent trente-sept : la condition est sélective, puisqu'elle retient à peine huit pour cent des emprunts. Pourtant, le moteur a choisi de balayer toute la table, parce que le planificateur juge, à raison dans ce cas précis, que le coût d'un aller-retour par index dépasserait le coût d'une lecture séquentielle. La ligne Execution Time vous donne le vrai chiffre, sept virgule quatre cinq millisecondes, et c'est ce chiffre que vous comparerez après toute modification. Sans lui, tout le reste n'est que théorie.
+
+## Sélectivité : combien de lignes votre condition garde-t-elle ?
+
+La sélectivité d'une condition est la fraction de lignes de la table qu'elle laisse passer. Une condition qui ne conserve qu'une ligne sur un million est hautement sélective ; une condition qui conserve la moitié des lignes ne l'est pas du tout. Cette simple proportion commande presque toutes les décisions du planificateur. Si la condition est très sélective, il vaut mieux payer le prix d'une recherche dans l'index et d'un aller-retour par ligne correspondante, car ces aller-retours seront rares. Si la condition conserve une large part de la table, il vaut mieux tout lire une fois : un balayage séquentiel lit chaque page une seule fois, alors qu'une série d'accès aléatoires par index relirait les mêmes pages de nombreuses fois.
+
+Pour estimer la sélectivité avant même d'exécuter, deux méthodes suffisent. La première est statistique : comptez les lignes totales, puis les lignes satisfaisant la condition, avec deux requêtes distinctes. Le rapport vous donne un pourcentage. La seconde utilise les statistiques du moteur, qui enregistrent notamment le nombre de valeurs distinctes d'une colonne, la fameuse cardinalité. Si la colonne porteur possède mille valeurs distinctes pour mille lignes, chaque valeur correspond à une ligne, et l'égalité est maximale. Si la colonne sexe n'en a que deux pour un million de lignes, une égalité retient statistiquement cinq cent mille lignes : un index sur cette colonne n'apportera rien, nous y reviendrons.
+
+Le planificateur passe de la sélectivité au nombre de lignes en multipliant. Il suppose souvent que les valeurs sont réparties de manière uniforme, et c'est précisément là que l'hypothèse peut échouer. Une colonne date de naissance, une colonne code postal, une colonne date d'inscription ont des distributions très irrégulières : certaines valeurs sont extrêmement fréquentes, d'autres extrêmement rares. Si l'estimation part du principe qu'une valeur vaut une part uniforme, elle se trompera de plusieurs ordres de grandeur sur les valeurs rares, et le plan choisi sera mauvais pour ces valeurs. Ce phénomène explique bon nombre de requêtes qui sont rapides pour certains paramètres et lentes pour d'autres, avec exactement le même plan.
+
+Quelques ordres de grandeur servent de repères, à confirmer toujours par la mesure. En dessous de un pour cent, la plupart des moteurs préfèrent l'index. Entre un et dix pour cent, l'arbitrage dépend du coût d'accès à la table et du nombre de colonnes demandées. Au-delà d'un tiers, le balayage complet gagne presque toujours, car lire une fraction importante de la table coûte moins cher que des accès dispersés. Ces seuils ne sont pas des lois : ils varient selon le moteur, la taille des pages, la mémoire disponible et la fraîcheur des statistiques. Ils n'en donnent pas moins un réflexe de lecture : devant un plan inattendu, vérifiez d'abord la sélectivité de la condition, avant de soupçonner le moteur d'erreur.
+
+```sql
+-- Estimer la sélectivité d'une condition, sans optimiser à l'aveugle.
+SELECT count(*) AS total FROM emprunts;
+
+SELECT count(*) AS en_retard
+FROM emprunts
+WHERE date_retour IS NULL
+  AND date_sortie < CURRENT_DATE - INTERVAL '30 days';
+
+-- Consulter le nombre de valeurs distinctes, base de l'estimation du moteur.
+SELECT count(DISTINCT date_sortie) AS dates_diverses, count(*) AS total
+FROM emprunts;
+```
+
+Retenez enfin que la sélectivité n'est pas une propriété de la colonne, mais de la condition. La colonne date_sortie peut être hautement sélective quand on cherche une journée précise, et parfaitement non sélective quand on cherche un mois entier, pourtant la même colonne et le même index. C'est pourquoi une requête lente ne se juge jamais à son apparence, mais à la distribution réelle des données à l'instant de l'exécution. Demandez-vous toujours quel pourcentage de la table la condition conserve, et vous saurez immédiatement si le moteur raisonne juste, et si un index aurait une chance d'être utile.
+
+## Les index inutiles : reconnaître et supprimer le poids mort
+
+Un index inutile n'est jamais neutre. Il ralentit chaque insertion, chaque mise à jour et chaque suppression, puisque ces opérations doivent maintenir une structure qui ne sert à personne. Il occupe de l'espace disque, parfois plus que la table elle-même quand il porte sur une colonne large. Il rallonge les sauvegardes et les temps de restauration. Et il multiplie les pistes entre lesquelles le planificateur doit choisir, ce qui augmente le temps passé à planifier et, parfois, le conduit à choisir mal. Le poids mort n'est pas une métaphore : c'est un coût réel, payé à chaque écriture, pour aucun bénéfice.
+
+Le premier réflexe consiste à consulter les statistiques d'utilisation des index. Dans PostgreSQL, la vue pg_stat_user_indexes compte les lectures effectuées sur chaque index, et la vue pg_stat_user_indexes croisée avec pg_stat_user_tables permet d'identifier ceux qui n'ont jamais été ouverts. MySQL propose des informations équivalentes dans le schéma performance_schema, avec les compteurs par index. SQLite affiche l'utilisation des index dans le plan et permet d'inspecter leur structure. Un index qui affiche zéro lecture depuis des semaines, sur une base active, est un candidat immédiat à la suppression, après une vérification que les requêtes les plus rares, par exemple les traitements mensuels, ne s'en servent pas.
+
+Le second réflexe est de regarder le plan de vos requêtes les plus fréquentes et de relever les index qui y apparaissent. Faites cet inventaire : un index présent dans tous les plans est vital, un index absent de tous les plans est suspect. Attention toutefois à ne pas supprimer un index utilisé par une contrainte : les index derrière une clé primaire ou une contrainte d'unicité ne sont pas des index de performance, ce sont des index d'intégrité, et leur suppression ferait échouer les écritures. De même, un index référencé par une clé étrangère dans certains moteurs n'est pas un candidat à la suppression. Distinguez toujours les index de contrainte, que la base exige, et les index de performance, que vous avez ajoutés et que vous pouvez retirer.
+
+Le troisième réflexe est de soupçoner les colonnes à faible cardinalité, ce piège déjà évoqué et que la pratique confirme sans cesse. Indexer un drapeau booléen, un champ sexe, un statut à trois valeurs ou un code pays sur une table de gros volume revient à construire un annuaire téléphonique classé par prénom : la structure est en ordre, mais chaque recherche vous rend la moitié du répertoire, et vous auriez mieux fait de le parcourir. Ces colonnes ne deviennent utiles que combinées, dans un index composite, avec une colonne sélective, ou bien quand elles servent une contrainte d'unicité ou un index partiel ciblant une fraction rare des lignes.
+
+Enfin, il faut accepter qu'un index devienne obsolète avec le temps. Les usages changent, les écrans évoluent, les requêtes sont réécrites, et un index qui optimisait une fonctionnalité disparue reste dans le schéma pendant des années. La bonne pratique consiste à tenir un registre : chaque index du schéma correspond à une entrée dans le fichier de migration, avec la date, la requête motivante et l'auteur. Tout index sans entrée au registre est, par définition, suspect. Ce discipline légère transforme l'optimisation d'une accumulation soudaine et angoissante en un entretien régulier et serein, où l'on retire autant que l'on ajoute, et où chaque suppression se mesure comme chaque ajout.
+
+```sql
+-- Repérer les index jamais lus, dans PostgreSQL.
+SELECT s.indexrelname AS index,
+       s.idx_scan AS lectures,
+       pg_size_pretty(pg_relation_size(s.indexrelid)) AS taille
+FROM pg_stat_user_indexes s
+WHERE s.idx_scan = 0
+ORDER BY pg_relation_size(s.indexrelid) DESC;
+
+-- Supprimer sans risque un index de performance devenu inutile.
+DROP INDEX idx_emprunts_date_sortie;
+```
+
+La boucle que vous venez de parcourir est complète : mesurer avec EXPLAIN et EXPLAIN ANALYZE, lire le plan ligne à ligne, évaluer la sélectivité de la condition, puis agir sur les index, en en ajoutant quand la preuve est là et en retirant ceux qui ne servent plus. La partie suivante traite du cas le plus fréquent de blocage : la condition écrite de telle sorte que l'index ne peut pas être employé, même s'il existe, même s'il est parfait. Savoir repérer ces conditions vous évitera de conclure à tort que vos index sont inefficaces, alors qu'ils sont simplement ignorés.

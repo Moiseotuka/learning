@@ -1,0 +1,128 @@
+## Fiabilité : watchdog, piles et statistiques
+
+Un système temps réel ne se juge pas à ce qu'il fait quand tout va bien, mais à ce qu'il fait quand quelque chose cloche. Trois instruments suffisent à ouvrir le capot, et aucun n'exige de matériel supplémentaire : l'indicateur de pile, le compteur de cycles par tâche et le watchdog. Ils répondent à trois questions distinctes. La pile vous dit si votre dimensionnement est juste. Les statistiques vous disent qui consomme le processeur. Le watchdog vous dit si une tâche s'est perdue. Un firmware professionnel les consulte avant la mise en service, puis après chaque évolution.
+
+L'indicateur de pile, uxTaskGetStackHighWaterMark, renvoie la quantité minimale de pile restée inutilisée depuis le démarrage de la tâche. Le chiffre se lit à l'envers : plus il est petit, plus la tâche s'est approchée du débordement. Sur ESP-IDF et dans le cœur Arduino de l'ESP32, la valeur est exprimée en octets, alors que la documentation de FreeRTOS d'origine parle en mots ; ne comparez donc jamais deux chiffres sans savoir dans quelle unité ils ont été produits. La méthode consiste à faire passer votre firmware dans toutes ses branches, y compris les cas d'erreur, puis à relever le minimum : sous deux cents octets de réserve, agrandissez la pile, un débordement se paie par une corruption qui ne se signale jamais au bon endroit.
+
+Le watchdog est la seconde ligne de sécurité. Le système embarque un mécanisme qui surveille l'activité des tâches d'identification : si l'un des cœurs cesse d'attribuer du temps à la tâche d'attente, c'est que quelque chose tourne en boucle sans jamais céder la main, et le système redémarre plutôt que de rester figé. Dans un sketch Arduino, la boucle() participe à cette surveillance, ce qui explique des redémarrages en cascade quand une attente s'allonge excessivement. Pour un firmware sérieux, on abonde le compte à rebours explicitement à la fin de chaque cycle de travail, et l'on veille à ce que chaque tâche laisse régulièrement tourner les tâches d'identification.
+
+| Instrument | Question à laquelle il répond | Bon signal | Signal inquiétant |
+|---|---|---|---|
+| Indicateur de pile | La pile est-elle suffisante ? | Plusieurs centaines d'octets libres | Moins de deux cents octets |
+| Compteurs de cycles | Qui consomme le processeur ? | Chaque tâche dans son budget | Une tâche à cent pour cent |
+| Watchdog de tâche | Une tâche s'est-elle perdue ? | Réinitialisation périodique | Redémarrage intempestif |
+| Raison de redémarrage | Pourquoi a-t-on redémarré ? | Extinction volontaire | Panne logicielle ou débordement |
+
+Les statistiques d'exécution ferment la boucle. En activant la génération de statistiques à la compilation, vous obtenez, pour chaque tâche, le pourcentage du temps processeur consommé, ce qui transforme une intuition en chiffre. C'est l'outil qui trahit les tâches qui tournent inutilement : une tâche censée se réveiller une fois par seconde et qui affiche douze pour cent d'occupation tourne visiblement beaucoup plus souvent que prévu, ou bien omet son attente. Procédez par comparaison, chiffre en main, entre le budget annoncé dans le tableau de conception et le chiffre mesuré : tout écart supérieur à quelques pour cent mérite une explication écrite.
+
+Un mot enfin sur la lecture des redémarrages, car elle décide souvent de l'heure perdue ou gagnée en dépannage. Une carte qui repart sans raison apparente laisse une trace : dans le cœur Arduino, un rapport est imprimé au démarrage quand le précédent s'est terminé par une panne logicielle, avec le nom de la tâche et l'adresse de l'instruction fautive. Ce rapport doit être recueilli avant tout redémarrage, en ouvrant le moniteur série immédiatement après la coupure. Un redémarrage dû au watchdog n'a pas la même cause qu'un redémarrage dû à un débordement de pile ni qu'une alimentation insuffisante lors du pic du module radio : trois symptômes identiques au premier regard, trois remèdes entièrement différents.
+
+```cpp
+// Metrologie : pile, cycles et signature de chaque tache
+void afficherDiagnostic(TaskHandle_t tache, const char *nom) {
+  UBaseType_t libre = uxTaskGetStackHighWaterMark(tache);
+  Serial.printf("%s : %u octets de pile libres\n", nom, (unsigned)libre);
+}
+
+void tacheCapteur(void *p) {
+  TickType_t reveil = xTaskGetTickCount();
+  for (;;) {
+    travailler();
+    afficherDiagnostic(NULL, "capteur");
+    xTaskDelayUntil(&reveil, pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Assemblage : la station météo temps réel complète
+
+Réunissons maintenant les pièces. La station compte une file de mesures d'une case, trois tâches épinglées au cœur applicatif, un verrou sur le port série utilisé pour les traces, une attente bornée partout où une ressource extérieure est en jeu, et un compte à rebours de surveillance alimenté en fin de cycle. Le rôle de la boucle() s'est réduit : configuration, console, supervision. Toute la logique métier du chapitre six a survécu au déplacement, seule l'organisation du temps a changé, ce qui était précisément l'objectif.
+
+Le tableau suivant récapitule le fonctionnement en conditions normales. Les chiffres sont ceux d'un banc de mesure : reprenez la colonne du milieu sur votre propre matériel, c'est le premier exercice utile après le téléchargement du firmware.
+
+| Tâche | Priorité | Réveil | Durée de travail | Part du processeur |
+|---|---|---|---|---|
+| Capteur | 3 | Toutes les secondes | 5 à 20 ms | Environ 1 à 2 pour cent |
+| Afficheur | 2 | Toutes les 250 ms | 10 à 40 ms | Environ 5 à 10 pour cent |
+| Réseau | 2 | Toutes les dix secondes | 50 ms à 2 s | Variable, nulle en panne |
+| Service | 1 | En continu | 1 à 5 ms | Quelques fractions de pour cent |
+
+Les règles de dégradation font partie du firmware, pas du commentaire. Un capteur qui ne répond pas produit un message marqué invalide, jamais une valeur plausible. Un afficheur absent n'arrête personne. Une liaison coupée met la tâche réseau en attente bornée et laisse les autres poursuivre, avec reprise automatique. Une file qui ne se remplit plus est comptée et signalée. Dans tous les cas, le système dégrade une fonction, jamais l'ensemble : c'est la même règle que celle du chapitre six, simplement rendue possible par la séparation des tâches.
+
+Le découpage n'a pas rendu le code du chapitre six obsolète, il l'a replacé. Les modules de lecture, de filtrage, de stockage et de publication restent les mêmes, avec les mêmes contrats d'entrée et de sortie ; ce qui change, c'est l'appelant et le moment de l'appel. C'est le critère à retenir pour juger une bonne refactorisation : si déplacer le code dans des tâches vous a obligé à réécrire la logique métier, le découpage était mal posé, et le problème vient d'un couplage antérieur qu'il faut d'abord défaire. À l'inverse, si la logique est entrée telle quelle dans les blocs de travail et si seuls les appels d'attente et d'échange ont été ajoutés, l'architecture est saine.
+
+La recette se fait en provoquant les pannes, pas en espérant qu'elles n'arrivent pas. Débranchez le point d'accès : la station doit continuer à mesurer et à afficher, puis publier le dernier état au retour du réseau. Collez le bus I2C : les autres tâches doivent rester cadencées et l'état d'erreur doit apparaître sur l'écran. Bloquez la console avec une commande interminable : la mesure doit continuer. Enfin, laissez tourner l'objet vingt-quatre heures avec les statistiques affichées : un firmware temps réel se valide par une trace stable, pas par une démonstration de trente secondes.
+
+```cpp
+// Station meteo temps reel : complet, avec file, verrou et surveillance
+QueueHandle_t fileMesures;
+SemaphoreHandle_t mutexSerial;
+
+void setup() {
+  Serial.begin(115200);
+  fileMesures = xQueueCreate(1, sizeof(Mesure));
+  mutexSerial  = xSemaphoreCreateMutex();
+  configurerCapteurEtEcran();
+  demarrerTaches();
+}
+
+void demarrerTaches() {
+  xTaskCreatePinnedToCore(tacheCapteur,   "capteur", 4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(tacheAfficheur, "ecran",   4096, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(tacheReseau,    "reseau",  6144, NULL, 2, NULL, 1);
+}
+
+void loop() {
+  if (Serial.available()) traiterCommandeConsole();
+  vTaskDelay(pdMS_TO_TICKS(50));
+}
+```
+
+## À retenir
+
+Ce chapitre tient en un principe unique : découpez le temps avant de coder, puis laissez l'ordonnanceur l'attribuer. Tout le reste, priorités, files, verrous, mesures, n'est que la mise en œuvre de cette décision. Voici l'essentiel, formulé pour être relu juste avant d'ouvrir votre projet.
+
+- Une tâche est un flux autonome avec sa pile, sa priorité et son état, pas une fonction appelée.
+- Une tâche saine attend : file vide, délai écoulé, verrou libéré ; elle ne tourne jamais à vide.
+- La priorité la plus haute l'emporte ; à priorité égale, l'ordonnanceur partage le temps.
+- Attribuez les priorités selon l'échéance, jamais selon la structure du code.
+- Aucune tâche prioritaire ne doit attendre sans délai maximum.
+- La pile se compte en octets sur l'ESP32 et se mesure avec uxTaskGetStackHighWaterMark.
+- Une cadence régulière s'écrit avec xTaskDelayUntil, pas avec un délai reparti de zéro.
+- Les tâches communiquent par copies, dans des files dimensionnées pour le scénario de panne.
+- Le verrou protège une ressource ; il se tient le moins longtemps possible et se rend sur toutes les branches.
+- Imposer un ordre total aux verrous rend le blocage mutuel structurellement impossible.
+- Le mutex à héritage de priorité limite l'inversion ; l'attente régulière évite la famine.
+- volatile ne crée ni atomicité ni ordre d'accès ; il ne protège qu'une lecture face au compilateur.
+- Mesurez avant de croire : pile, cycles par tâche, raison de redémarrage.
+
+## Erreurs fréquentes
+
+La première erreur consiste à créer une seule tâche et à y replacer toute la boucle : FreeRTOS est alors présent, mais rien n'a changé. La deuxième est d'oublier l'attente en fin de boucle ; la tâche tourne alors en permanence et affame les autres, sans jamais produire d'erreur. La troisième est d'attribuer la priorité haute à la tâche qui bloque le plus, celle qui contacte le réseau : tout le système s'arrête avec elle. La quatrième est de transmettre à une tâche l'adresse d'une variable locale de la fonction d'initialisation, ce qui donne un comportement aléatoire difficile à relier à sa cause.
+
+Viennent ensuite les verrous oubliés sur une branche d'erreur, qui transforment un incident en gel définitif, et les attentes sans limite sur une ressource externe, qui font la même chose à la première panne du fournisseur. On voit aussi des files dimensionnées à une case là où chaque événement compte, donc des données perdues en silence, et des structures partagées lues sans protection, qui produisent des mesures impossibles. Enfin, le diagnostic est souvent bâclé : on regarde la moyenne au lieu du pire cas, on néglige l'unité de l'indicateur de pile, on interprète un redémarrage sans en lire la raison.
+
+Une dernière famille d'erreurs relève de la conception plutôt que du code : attribuer une priorité parce qu'une tâche paraît importante, sans regarder son échéance, puis s'étonner que l'objet soit lent. Le classement par importance est humain, le classement par urgence est technique, et seul ce dernier produit une hiérarchie stable. De même, multiplier les tâches pour imiter le nombre de fonctions du projet augmente les piles allouées, les changements de contexte et les occasions de contension, sans jamais ajouter de réactivité : le bon nombre de tâches est celui des flux réellement indépendants, ni plus, ni moins.
+
+- Tâche unique reprenant toute la boucle : rien n'a changé.
+- Boucle sans attente : une tâche monopolise un cœur.
+- Priorité haute sur une tâche qui bloque : tout le système s'arrête.
+- Paramètre pointant vers une variable locale : comportement aléatoire.
+- Rendu de verrou oublié sur une branche d'erreur : gel.
+- Attente portMAX_DELAY sur une ressource extérieure : panne garantie.
+- File d'une seule case pour des événements cumulatifs : pertes silencieuses.
+- Structure lue et écrite sans section critique : valeurs impossibles.
+- Unité de pile confondue : dimensionnement faux d'un facteur quatre.
+- Moyenne mesurée au lieu du pire cas : certitude trompeuse.
+
+## Pour aller plus loin
+
+La référence du noyau reste la source la plus sûre pour approfondir chaque appel. La page consacrée à xTaskCreate explique les six arguments, la signification de la pile et le code de retour : https://www.freertos.org/a00125.html . La page dédiée à xQueueCreate décrit la création des files, la taille des éléments et les règles de pleine et de vide : https://www.freertos.org/a00116.html . Du côté d'Espressif, la documentation FreeRTOS détaille les différences du port SMP, l'affinité de cœur, l'unité de la pile et les sections critiques : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/freertos_idf.html . Le guide d'optimisation de la mémoire explique l'indicateur de pile, son unité et la méthode de dimensionnement : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/performance/ram-usage.html . Enfin, la documentation Arduino rappelle le comportement de delay() et sa place dans un sketch : https://docs.arduino.cc/language-reference/en/functions/time/delay/ .
+
+Au-delà des références, deux pratiques feront de vous un meilleur développeur temps réel. La première est l'habitude de mesurer : gardez les statistiques d'exécution activées pendant toute la phase de mise au point, et consignez les chiffres dans le dossier du projet, car c'est en les relisant dans six mois que vous verrez la régression. La deuxième est la revue de conception avant code : sur un papier, listez les tâches, leurs échéances, les ressources qu'elles partagent et l'ordre de leurs verrous. Un tableau d'une page suffit à rendre visible un blocage mutuel qui coûterait une journée de débogage. Pratiquez sur de petits objets, un feu, une alarme, une porte : chaque essai ajoutera un cas à votre répertoire.
+
+## Et maintenant : passez à l'exercice de refonte
+
+Vous avez maintenant les outils qui séparent un prototype d'un firmware : plusieurs flux d'exécution, une hiérarchie de priorités fondée sur les échéances, des échanges par copie, des ressources protégées et des moyens de mesure. Un point reste volontairement hors de ce chapitre : le bilan énergétique et la veille profonde, qui relèvent du projet de fin de parcours plutôt que de l'ordonnancement. L'exercice pratique vous demande d'appliquer exactement cette méthode à la station météo du chapitre six, en la refactorant en trois tâches communicant par file, avec les priorités justifiées, les attentes bornées et le diagnostic de pile fourni.
+
+Avant de commencer, une dernière exigence de méthode. Écrivez d'abord, sur une page, le tableau des tâches : nom, cadence, échéance, priorité, pile, ressources partagées. Ce tableau est le vrai livrable de conception ; le code n'en sera que la transcription. Un firmware temps réel qui commence par un tableau commence bien, et un firmware qui commence par xTaskCreate sans savoir pourquoi se termine presque toujours par un objet silencieux que personne ne saura réparer.

@@ -1,0 +1,93 @@
+## Se réveiller sans réveiller tout le monde : événements, filtres et coprocesseur
+
+Un réveil n'est pas une fin en soi : c'est un coût que l'on accepte pour traiter un événement. La première question à poser n'est donc pas comment réveiller la carte, mais ce qui doit justifier ce réveil. Une broche qui change d'état à cause d'une induction sur un fil long de trois mètres, un capteur dont la sortie oscille au passage d'un véhicule, un bouton sans anti-rebond : chacun de ces phénomènes déclenchera un démarrage complet, une association réseau et une publication, pour rien. Sur une batterie, une série de faux réveils se paie plus cher que dix heures de veille profonde. Le durcissement du réveil commence avant toute ligne de code, au niveau du câblage.
+
+L'ESP32 propose deux mécanismes de réveil externe. Le premier, appelé ext0, surveille une seule broche du domaine RTC et se déclenche sur un état de niveau. Il convient à un bouton ou à un contacteur dont on veut que la carte se réveille tant que la condition persiste. Le second, ext1, surveille un masque de plusieurs broches et peut déclencher sur le premier passage à l'état haut de n'importe laquelle d'entre elles. C'est lui qu'on utilise quand plusieurs sources de réveil coexistent : une porte de boîtier, un capteur d'ouverture, une alarme. La distinction niveau ou bord est déterminante : en mode niveau, si la condition reste vraie après le traitement, la carte se rendort puis se réveille aussitôt, en boucle, et vide la batterie en quelques heures.
+
+Voici la séquence complète d'un réveil multi-broches associé à un minuteur de sécurité, avec l'identification de la cause au démarrage. Le masque est exprimé en broches du domaine RTC, et le résultat lisible indique laquelle des sources a déclenché le réveil.
+
+```cpp
+#include "esp_sleep.h"
+
+const uint64_t MASQUE_REVEIL =
+    (1ULL << GPIO_NUM_25) | (1ULL << GPIO_NUM_26);
+const uint64_t DUREE_SEC = 30ULL * 60ULL;
+
+void armerLeReveil() {
+  esp_sleep_enable_ext1_wakeup(MASQUE_REVEIL, ESP_EXT1_WAKEUP_ANY_HIGH);
+  esp_sleep_enable_timer_wakeup(DUREE_SEC * 1000000ULL);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+void identifierLaCause() {
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+    uint64_t broches = esp_sleep_get_ext1_wakeup_status();
+    Serial.printf("reveil externe, broches 0x%llx\n",
+                  (unsigned long long)broches);
+  }
+}
+```
+
+Notez le minuteur de sécurité : il garantit que la carte se réveillera au pire toutes les trente minutes, même si aucune broche ne bouge. Sans lui, une cause extérieure manquée ou une broche mal câblée laisserait l'objet figé en sommeil jusqu'à la décharge de la batterie, sans aucun journal pour l'expliquer. Le minuteur constitue toujours le plan de repli, la broche n'étant qu'un raccourci.
+
+Cette boucle de réveils spontanés est un défaut classique dont le symptôme est trompeur : la carte fonctionne parfaitement au banc, se réveille correctement, publie, puis se retrouve à plat une semaine après son installation. Le diagnostic consiste à compter les réveils en mémoire RTC et à afficher la cause de chacun. Si le compteur s'envole pendant la nuit sans que rien ne se soit passé dans le champ, la cause est matérielle : un fil qui capte, un rappel insuffisant, un capteur instable. Réglez alors le câblage, ajoutez un condensateur de filtrage sur la ligne, choisissez un déclenchement sur bord plutôt que sur niveau, ou exigez une condition persistante avant d'agir.
+
+Pour les cas difficiles, l'ESP32 embarque un coprocesseur de très faible consommation, nommé ULP, capable de tourner pendant que le processeur principal dort. Écrit en assembleur et chargé en mémoire RTC, il peut surveiller une entrée analogique, comparer une tension à un seuil et n'autoriser le réveil de la puce que lorsqu'un phénomène réel est détecté. C'est l'outil de choix pour une alarme d'inondation ou une détection de mouvement : le coprocesseur absorbe quelques microampères et ne réveille le système complet qu'une fois par jour, le cas échéant. Sous ESP-IDF, la compilation du programme ULP est intégrée au système de construction ; sous l'environnement Arduino, il faut charger le binaire produit à la main au démarrage, ce qui se planifie en quelques lignes mais demande de la rigueur.
+
+La règle générale se résume en trois exigences. Premièrement, chaque réveil doit avoir une cause identifiée, enregistrée en mémoire RTC et affichée sur le port série. Deuxièmement, chaque cause doit être traitée une seule fois, puis neutralisée avant de se rendormir. Troisièmement, le seuil de décision doit être suffisamment éloigné du bruit pour que la carte ne oscille pas entre deux états. Ce trio de précautions transforme un réveil erratique en événement maîtrisé, et c'est la condition pour que les calculs d'autonomie du reste de ce chapitre restent valides sur le terrain.
+
+## Choisir et dimensionner son alimentation
+
+La meilleure optimisation logicielle ne sauvera jamais une mauvaise alimentation. Le choix de la source d'énergie conditionne la taille du boîtier, l'autonomie, le coût de la maintenance et jusqu'à la possibilité de recharger sur site. Il se fait en trois temps : choisir la chimie, choisir le régulateur, puis protéger l'ensemble. Chacune de ces décisions a des conséquences directes sur le courant de veille, souvent davantage que le mode de sommeil lui-même.
+
+La chimie dépend de la contrainte de recharge. Un accumulateur lithium-polymère de trois volts sept est la solution naturelle quand la carte peut être rechargée : forte densité d'énergie, tension compatible avec un régulateur simple, format plat qui glisse dans un boîtier étanche. Il impose en revanche un circuit de charge, une protection contre la décharge profonde et une tolérance nulle aux températures négatives en charge. Une pile bouton au lithium, elle, ne se recharge pas : quelques centaines de milliampères-heures seulement, mais une autodécharge faible et une absence totale de circuit de charge. Les piles alcalines restent pertinentes quand l'objet doit vivre des années et se remplacer en magasin, au prix d'une décharge lente et d'une chute de tension sous charge.
+
+```image
+battery-li-ion
+| Une pile bouton au lithium : trois volts dans un format qui ne se recharge pas, ce qui impose de réduire la consommation plutôt que d'augmenter la capacité.
+```
+
+Le second point de décision est le régulateur, et c'est là que se cachent les pertes les plus stupides. Un régulateur linéaire abaisse la tension en dissipant la différence en chaleur : il est simple, silencieux, sans bruit électrique, mais son rendement chute avec l'écart entre entrée et sortie. Un régulateur à découpage convertit l'énergie par commutation : il atteint quatre-vingt-quinze pour cent de rendement, mais consomme lui-même en permanence un courant de repos. Sur un objet qui dort, c'est ce courant de repos qui tranche. Un linéaire de quelques microampères perd rarement face à un découpage de plusieurs dizaines de microampères, quand la moyenne du système est de l'ordre du milliampère. Consultez toujours la fiche technique avant de choisir, et pas seulement le rendement en pleine charge.
+
+Le tableau ci-dessous compare les principales sources selon les critères qui comptent pour un objet embarqué en veille.
+
+| Source | Tension | Capacité utile | Rechargeable | Courant de repos | Remarque de terrain |
+| --- | --- | --- | --- | --- | --- |
+| Lithium-polymère | 3,7 V | 500 à 3 000 mAh | oui | circuit de charge dédié | exige une protection de décharge |
+| Lithium 18650 | 3,7 V | 2 000 à 3 500 mAh | oui | circuit de charge dédié | format rigide, soudage délicat |
+| Pile bouton lithium | 3 V | 200 à 300 mAh | non | aucun | idéale pour un réveil très rare |
+| Alcaline AA | 1,5 V | 1 800 à 2 600 mAh | non | aucune | tension trop basse, nécessite un boost |
+| NiMH | 1,2 V | 1 500 à 2 500 mAh | oui | aucune | autodécharge élevée, tension faible |
+| Panneau solaire | variable | selon l'ensoleillement | oui | à dimensionner | ajoute charge et gestion de nuit |
+
+Les protections ne sont pas optionnelles. Un lithium déchargé en dessous de trois volts se dégrade de manière irréversible et devient dangereux en charge : une petite carte de protection coupant la sortie en dessous de trois volts, associée à un circuit de charge, est le minimum. Prévoyez également de mesurer la tension de la batterie en runtime, mais avec une astuce indispensable : la pont diviseur qui réduit la tension pour l'entrée analogique consomme lui-même en continu, souvent plus que la puce en veille. Commandez le pont par une broche à travers un transistor, et ne l'activez que le temps de la mesure, ou acceptez la décharge qu'il représente et chiffrez-la dans le budget. Enfin, utilisez l'entrée analogique de premier groupe, les broches trente-deux à trente-neuf : le second groupe d'entrées analogiques devient inutilisable dès que le Wi-Fi fonctionne, et la mesure échoue exactement au moment de la transmission.
+
+La fenêtre de tension mérite la même attention. Un lithium part de quatre volts deux en pleine charge et ne doit pas descendre sous trois volts, alors qu'un module ESP32 régulé demande une entrée qui reste au-dessus de la tension de son régulateur, souvent trois volts cinq en charge. Entre les deux, la marge est étroite : d'où l'intérêt d'un régulateur abaisseur-élévateur maintenant trois volts trois stables sur toute la plage, quitte à en payer le courant de repos. Ajoutez le froid à ce calcul : sous zéro degré, la capacité restituée chute facilement d'un cinquième, et la charge est interdite. Un objet installé en extérieur doit être dimensionné pour la saison la plus défavorable, jamais pour les conditions du laboratoire.
+
+Un dernier détail d'ingénierie que l'on découvre toujours trop tard : la carte elle-même dissimule des consommateurs. Le convertisseur USB-série maintient la puce alimentée et consomme quelques milliampères tant que le jumper reste en place, le voyant de statut clignote à vide, et les résistances de rappel de certaines broches dérivent en permanence. Pour un prototype, cela ne se voit pas. Pour un objet sur batterie, retirez le jumper de mesure, déposez le voyant si l'application le permet, et vérifiez le courant de repos de la carte entière, non pas celui de la seule puce. C'est cette mesure, prise sur le module complet, qui doit entrer dans votre calcul d'autonomie.
+
+Une règle simple encadre le dimensionnement final : divisez la capacité réellement disponible en trois parts égales. Une part pour la consommation prévue, une part pour les pertes de conversion, la décharge propre et le froid, une part intacte pour l'imprévu. Si votre budget annuel consomme la totalité de la batterie, le produit n'a pas de marge, donc pas de terrain. Cette discipline vous évite surtout le raisonnement inverse, très répandu : augmenter la capacité pour compenser une consommation mal maîtrisée, jusqu'à ce que le coût et le volume de la batterie dépassent ceux d'une intervention technique.
+
+## Étude de cas : une sonde de terrain qui doit tenir six mois
+
+Reprenez la sonde annoncée en introduction : un boîtier étanche posé dans une parcelle, une batterie lithium-polymère de deux ampères-heure, un capteur d'humidité capacitif, un ESP32 et une passerelle Wi-Fi à cinquante mètres. La mesure a lieu toutes les trente minutes, soit quarante-huit cycles par jour. L'objectif chiffré est de six mois sans intervention, ce qui représente environ cent quatre-vingts jours et mille quatre cents milliampères-heures utilisables, en laissant une marge d'un tiers pour le froid, la décharge propre de la batterie et les aléas de transmission. Tout le reste du chapitre se joue sur ces quelques chiffres.
+
+Commençons par le scénario que tout le monde produit par défaut, faute de veille : la carte reste allumée, lit son capteur toutes les trente minutes et reste connectée entre deux relevés. Quarante milliampères en moyenne pendant vingt-quatre heures donnent neuf cent soixante milliampères-heures par jour. La batterie est vide en un jour et demi. Aucune taille de batterie raisonnable ne rachète ce mode de fonctionnement : le facteur limitant n'est pas la capacité, c'est la consommation continue. C'est la démonstration par l'absurde que la veille n'est pas une option de confort mais la condition d'existence de l'objet.
+
+Ajoutez maintenant la veille profonde entre les relevés, avec une radio coupée, et recomptez phase par phase. Le tableau suivant décompose un cycle complet, de la reprise du processeur au retour en sommeil.
+
+| Phase du cycle | Durée | Courant moyen | Énergie par cycle |
+| --- | --- | --- | --- |
+| Réveil et initialisation | 0,1 s | 30 mA | 0,0008 mAh |
+| Lecture du capteur et calcul | 0,5 s | 15 mA | 0,0021 mAh |
+| Association Wi-Fi | 3 s | 120 mA | 0,100 mAh |
+| Publication du relevé | 1 s | 100 mA | 0,028 mAh |
+| Veille profonde, trente minutes | 1 800 s | 10 µA | 0,005 mAh |
+| Total du cycle | 1 800 s | 0,03 mA moyen | environ 0,136 mAh |
+
+Quarante-huit cycles donnent donc environ six milliampères-heure par jour, auxquels s'ajoute la décharge propre de la batterie, de l'ordre de quelques pour cent par mois, et les pertes du régulateur, de quelques pour cent. Sur cent quatre-vingts jours, la consommation totale avantage mille deux cents milliampères-heure, largement compatible avec les mille quatre cents milliampères-heure disponibles. L'objet tient six mois, avec de la marge. Notez la répartition : l'association réseau absorbe à elle seule les trois quarts du budget, la veille profonde n'en pèse qu'un centième. C'est le réveil qui coûte, jamais le sommeil.
+
+Cette répartition commande les optimisations à mener, par ordre d'efficacité. La première consiste à réduire le nombre de connexions : enregistrer les relevés en mémoire et n'ouvrir la liaison qu'une fois par jour, par exemple, divise la consommation quotidienne par six, l'envoi devenant le seul moment coûteux. La seconde consiste à compresser la trame et à abréger l'association, en conservant une adresse attribuée par le réseau si votre infrastructure le permet. La troisième consiste à descendre la fréquence de mesure quand le phénomène observé le tolère : sur sol, l'humidité varie en heures, pas en minutes. Aucune de ces trois mesures ne demande de changer de matériel, et toutes surpassent de loin un effort d'optimisation du code en langage machine.
+
+Reste à valider le calcul sur le banc, car un budget écrit n'est qu'une hypothèse. Mesurez chaque phase au multimètre en série, chronométrez l'association Wi-Fi réelle avec un point d'accès de faible portée, puis laissez la sonde tourner quarante-huit heures sur une alimentation instrumentée et comparez la consommation totale au cumul théorique. Une différence supérieure à dix pour cent signale un poste non comptabilisé : LED oubliée, résistance de pont toujours sous tension, tentative de reconnexion en boucle quand le réseau est absent. Corrigez le budget avant l'installation, et non après, parce qu'une sonde enterrée ne se diagnostique pas. Ce travail de validation achève la première compétence du chapitre : votre objet sait désormais dormir, et vous savez combien de temps il dormira.

@@ -1,0 +1,127 @@
+## Les vues génériques pour aller vite
+
+Avant les ViewSets, il y a les vues génériques. Une vue générique est une classe prête à l'emploi qui implémente une action ou un ensemble d'actions, en vous laissant uniquement renseigner le queryset et le serializer. Si un ViewSet regroupe toutes les actions, une vue générique se concentre sur un usage précis : lister, récupérer, créer, mettre à jour ou supprimer. Comprendre les génériques est utile même si vous utilisez des ViewSets, car les ViewSets s'appuient exactement sur les mêmes mélanges.
+
+Les génériques de base se divisent en deux familles. Les premières travaillent sur un objet : RetrieveAPIView pour récupérer un seul objet, UpdateAPIView pour le mettre à jour, DestroyAPIView pour le supprimer. Les secondes travaillent sur une collection : ListAPIView pour lister, CreateAPIView pour créer. En combinant ListModelMixin et CreateModelMixin avec GenericAPIView, vous obtenez une vue qui gère à la fois la liste et la création, comme le fait ListCreateAPIView.
+
+```python
+from rest_framework import generics
+from bibliotheque.models import Livre
+from bibliotheque.serializers import LivreSerializer
+
+class ListeLivres(generics.ListCreateAPIView):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+
+class DetailLivre(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+```
+
+Ces vues sont un excellent choix quand votre API est asymétrique : par exemple, les administrateurs peuvent créer des livres mais les utilisateurs simples ne peuvent que les lister. Plutôt que d'hériter d'un ModelViewSet complet et de devoir surcharger chaque action, vous prenez exactement les génériques dont vous avez besoin. Le code est plus court, plus lisible, et l'intention est immédiate.
+
+Les mélanges, ou mixins, sont les briques qui composent les vues génériques. ListModelMixin fournit la méthode list, CreateModelMixin fournit create, et ainsi de suite. GenericAPIView apporte le socle : la gestion du queryset, la pagination, le filtrage, la recherche. En assemblant ces trois éléments, vous composez précisément le comportement souhaité. Cette philosophie de composition est au cœur de la conception de DRF.
+
+```python
+from rest_framework import mixins, generics
+
+class LivreViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+```
+
+Un cas d'usage fréquent : la vue qui retourne l'utilisateur connecté. Vous écrivez une vue avec l'action retrieve, mais sans paramètre d'URL, en redéfinissant get_object pour renvoyer request.user. C'est le profil de l'utilisateur authentifié, un endpoint que toutes les applications mobiles possèdent. Les génériques vous permettent de le construire en quelques lignes sans écrire de ViewSet entier.
+
+Les vues génériques brillent aussi dans les API en lecture seule. Une documentation publique, un catalogue de produits exposé à des partenaires : ListAPIView et RetrieveAPIView suffisent, sans risque d'écriture. Vous configurez permission_classes avec AllowAny, vous ajoutez pagination et filtrage, et vous obtenez une API ouverte mais contrôlée.
+
+## Pagination et filtrage des résultats
+
+Une liste de livres peut contenir dix mille éléments. Renvoyer tout cela en une seule réponse est une erreur : la réponse serait gigantesque, le client lent à la parser, et votre serveur mobilisé pour sérialiser des milliers d'objets. La pagination résout ce problème en découpant les résultats en pages, avec des métadonnées indiquant le nombre total, la page courante, et les liens vers les pages suivantes et précédentes.
+
+DRF propose trois styles de pagination. Le premier, PageNumberPagination, est le plus intuitif : le client demande la page 3 avec le paramètre page, et la réponse contient les éléments 41 à 60. Le deuxième, LimitOffsetPagination, fonctionne avec une limite et un décalage, utile pour les exports progressifs. Le troisième, CursorPagination, utilise un curseur opaque et reste stable pendant que les données changent, ce qui est idéal pour les flux en temps réel ou les listes qui s'insèrent en tête.
+
+```python
+REST_FRAMEWORK = {
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+}
+```
+
+```json
+{
+    "count": 1543,
+    "next": "http://127.0.0.1:8000/api/livres/?page=2",
+    "previous": null,
+    "results": [
+        {"id": 1, "titre": "Le Petit Prince", "prix": 8.5}
+    ]
+}
+```
+
+La réponse paginée contient toujours count, next, previous et results. Cette structure stable permet aux clients d'écrire une logique de navigation uniforme. Vous pouvez personnaliser la taille maximale de page avec le paramètre page_size_query_param, qui laisse le client demander un nombre d'éléments par page, tout en plafonnant avec max_page_size pour éviter les abus.
+
+Le filtrage répond à un besoin complémentaire : au lieu de recevoir une page entière, le client veut uniquement les livres d'un auteur donné ou publiés après une date. DRF ne fournit pas de filtrage tout fait, mais le package django-filter s'intègre parfaitement. Vous l'installez avec pip, vous l'ajoutez à INSTALLED_APPS, puis vous déclarez dans la vue les champs sur lesquels le filtrage est autorisé.
+
+```python
+import django_filters
+from bibliotheque.models import Livre
+
+class LivreFilter(django_filters.FilterSet):
+    auteur = django_filters.CharFilter(field_name="auteur__nom", lookup_expr="icontains")
+    min_prix = django_filters.NumberFilter(field_name="prix", lookup_expr="gte")
+
+    class Meta:
+        model = Livre
+        fields = ["categorie", "statut"]
+
+class LivreViewSet(viewsets.ModelViewSet):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+    filterset_class = LivreFilter
+```
+
+Avec ce filterset, l'URL /api/livres/?auteur=herbert&min_prix=10 renvoie les livres dont le nom de l'auteur contient « herbert » et dont le prix est supérieur ou égal à dix. Le lookup_expr précise la sémantique de la comparaison : exact pour l'égalité stricte, icontains pour la recherche insensible à la casse, gte pour supérieur ou égal. Cette expressivité couvre l'immense majorité des besoins de filtrage.
+
+Au-delà de django-filter, DRF intègre aussi un backend de recherche avec SearchFilter et un ordre de tri avec OrderingFilter. SearchFilter permet une recherche plein texte sur plusieurs champs avec un seul paramètre search. OrderingFilter permet de trier par n'importe quel champ exposé, avec un paramètre ordering et un double soulignement dans le champ pour trier en ordre décroissant. Ces trois outils combinés offrent une puissance de filtrage digne des API professionnelles.
+
+## Les permissions : qui peut faire quoi
+
+Une API sans protection est une porte ouverte. Le système de permissions de DRF répond à une question simple pour chaque requête : cette identité a-t-elle le droit d'effectuer cette action sur cette ressource ? DRF fournit plusieurs classes de permissions prêtes à l'emploi, et vous pouvez écrire les vôtres en héritant de BasePermission.
+
+La permission la plus permissive est AllowAny. Elle autorise tout le monde, y compris les visiteurs non connectés. Elle convient aux endpoints publics : catalogue consultable, page d'accueil, documentation. À l'opposé, IsAuthenticated exige que le client soit authentifié, qu'il s'agisse d'une session ou d'un token. C'est la permission par défaut que vous appliquerez à la majorité des ressources privées.
+
+```python
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
+class LivreViewSet(viewsets.ModelViewSet):
+    queryset = Livre.objects.all()
+    serializer_class = LivreSerializer
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [AllowAny()]
+        return [IsAuthenticated(), IsOwnerOrReadOnly()]
+```
+
+IsAdminUser réserve l'accès aux administrateurs, reconnaissables par le drapeau is_staff. Elle convient aux actions sensibles comme la suppression en masse ou la gestion des utilisateurs. La permission la plus subtile est IsAuthenticatedOrReadOnly : les utilisateurs anonymes peuvent lire, mais seul un utilisateur connecté peut écrire. C'est le choix classique pour un blog ou un catalogue contributif.
+
+La vraie finesse vient des permissions personnalisées. Imaginons que chacun puisse créer un livre, mais que seul son auteur puisse le modifier ou le supprimer. Vous écrivez une classe IsOwnerOrReadOnly qui autorise tout le monde en lecture et vérifie en écriture que request.user est bien l'auteur du livre. Cette permission s'intègre dans get_permissions et s'applique aux actions de votre choix.
+
+```python
+from rest_framework import permissions
+
+class IsOwnerOrReadOnly(permissions.BasePermission):
+    def has_object_permission(self, request, view, objet):
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        return objet.auteur == request.user
+```
+
+Les permissions s'exécutent en deux temps. D'abord has_permission, qui voit la requête entière et peut refuser l'accès avant même de connaître l'objet. Ensuite has_object_permission, appelé uniquement pour les actions qui portent sur un objet précis, après que la vue a récupéré l'objet via get_object. Ce second niveau est indispensable pour les vérifications qui concernent un objet spécifique.
+
+Une erreur classique : oublié que les permissions ne suffisent pas toujours. Si vous filtrez le queryset dans la vue pour n'exposer que les objets de l'utilisateur connecté, vous protégez la confidentialité. Mais une permission mal configurée peut laisser passer une modification sur un objet qui ne vous appartient pas. La règle d'or : combinez toujours le filtrage du queryset, qui limite ce que l'utilisateur voit, et les permissions, qui limitent ce qu'il peut faire. Ces deux mécanismes sont complémentaires, jamais interchangeables.

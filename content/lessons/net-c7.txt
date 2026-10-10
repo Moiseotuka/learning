@@ -1,0 +1,737 @@
+Bienvenue dans le septième et dernier chapitre du parcours Réseaux, consacré à la sécurité réseau opérationnelle : contrôle d'accès au port avec 802.1X, VPN site-à-site chiffré, et durcissement des équipements. Les six chapitres précédents ont fait tout le travail de fond : vous savez segmenter un réseau en VLAN, faire dialoguer TCP et UDP, installer des routes statiques et des adjacences OSPF, filtrer avec des ACL, traduire des adresses avec le NAT, mesurer la latence et capturer des paquets avec tcpdump. Toute cette infrastructure suppose toutefois une hypothèse commode et dangereuse : que celui qui se branche sur un port, qui atteint une adresse de gestion ou qui traverse un lien mérite d'être là. Ce dernier chapitre retire cette hypothèse. Il vous apprend à exiger une identité avant d'ouvrir un port, à chiffrer les échanges entre deux sites distants, et à retirer aux équipements tout ce qui n'est pas nécessaire à leur fonctionnement. C'est la différence entre un réseau qui fonctionne et un réseau qui tient devant un test, un audit ou un incident.
+
+À la fin de cette leçon, vous saurez faire trois groupes d'opérations très concrètes. Sur le contrôle d'accès, vous décrirez le dialogue complet entre un supplicant, un commutateur authenticateur et un serveur RADIUS, vous choisirez la méthode d'authentification adaptée à chaque population (EAP-TLS pour les postes certifiés, PEAP-MSCHAPv2 pour les comptes, MAB pour les imprimantes et les objets connectés), vous configurerez le VLAN dynamique renvoyé par le serveur, le VLAN invité de repli et la journalisation des sessions, puis vous testerez un poste non autorisé qui doit se retrouver confiné. Sur le VPN, vous établirez un tunnel IPsec IKEv2 entre deux pare-feux, en choisissant les algorithmes, le groupement de clés, la détection de pair mort et l'exemption de NAT, puis vous vérifierez le tunnel avec les commandes de diagnostic avant de tester le trafic réel de bout en bout. Sur le durcissement, vous appliquerez une checklist complète à un commutateur, à un routeur et à un pare-feu : services désactivés, gestion en SSH seul, comptes locaux hachés, journalisation horodatée, horloge authentifiée, SNMPv3 en lecture seule, protection des ports d'accès et filtrage anti-spoofing en bordure.
+
+Le fil rouge de la leçon reste le site Lilas de la fiction du parcours : un cœur R1 et R2, un pare-feu de bordure, trois commutateurs d'accès dans les bâtiments A, B et C, un serveur RADIUS situé en VLAN de gestion 10.10.0.10, et un site distant, le siège, relié par Internet public sur le réseau 192.168.100.0/24. Deux conseils avant de commencer, parce qu'ils valent plus que toute la théorie. Le premier concerne 802.1X : déployez-le toujours sur un seul port de test, avec un port de secours connu et joignable, avant de l'étendre à un bâtiment entier, car une mauvaise configuration isole tout le monde et vous pouvez vous enfermer dehors de votre propre réseau. Le second concerne le durcissement : prenez toujours une sauvegarde de la configuration avant d'appliquer quoi que ce soit, et documentez chaque exception, car un contrôle de sécurité qui interrompt un service métier est un contrôle qui sera annulé le jour même.
+
+## Ce que l'on protège, et contre qui
+
+La sécurité réseau ne se résume pas à installer un produit : elle commence par savoir ce que l'on protège et contre qui. Sur un réseau d'entreprise, quatre catégories de biens méritent une attention particulière. Les identifiants d'administration, car ils ouvrent la main courante de toute l'infrastructure. Les données en transit, car elles traversent des liens que l'on ne possède pas, en particulier Internet entre deux sites. Les points d'entrée physiques, car un port Ethernet libre dans une salle de réunion est une connexion réseau gratuite pour un visiteur. Enfin la disponibilité, car un commutateur saturé par un orage de paquets de diffusion, ou un routeur dont la table de routage a été corrompue par une annonce frauduleuse, cesse de faire son travail pour tout le monde. Chacun de ces biens est attaquable par une voie différente, et chacun appelle un mécanisme différent : c'est pourquoi ce chapitre enchaîne trois mécanismes au lieu d'en présenter un seul en longueur.
+
+L'adversaire de référence n'est pas seulement l'attaquant distant qui expédie des exploits depuis un autre continent. Il commence souvent à quelques mètres, dans le couloir, dans la salle de réunion ou chez le prestataire qui passe un après-midi dans le local technique. Le modèle de menace le plus utile est donc celui-ci : une personne capable de se brancher sur un port libre, un utilisateur dont le poste est compromis, un tiers de passage qui cherche une adresse de gestion, et enfin l'erreur humaine, qui reste de loin la première cause d'incident. Face à ces voies d'accès, les mécanismes que vous allez configurer jouent quatre rôles distincts : prouver une identité avant d'ouvrir un port, chiffrer les flux qui quittent le site, réduire la surface offerte au réseau, et rendre chaque action traçable pour qu'une anomalie soit détectée avant qu'elle ne devienne un incident déclaré.
+
+Le tableau suivant relie chaque menace typique au mécanisme du chapitre qui la traite. Servez-vous-en comme d'une carte : à chaque ligne correspond une configuration que vous écrirez dans les sections suivantes, et un test que vous pourrez réaliser immédiatement pour vérifier que la protection est réelle plutôt que déclarative.
+
+```table
+| Menace | Ce qu'elle exploite | Mécanisme du chapitre | Test de validation |
+| --- | --- | --- | --- |
+| Poste parasite branché sur un port libre | Ports d'accès ouverts à tous | 802.1X, repli invité, port-security | Brancher un poste sans certificat et vérifier son confinement |
+| Fuite d'identifiants d'administration | Protocoles de gestion non chiffrés | SSH version 2 seul, comptes hachés, ACL de gestion | Tenter une session Telnet et une connexion HTTP |
+| Écoute des flux entre deux sites | Liens publics non chiffrés | Tunnel IPsec IKEv2 site-à-site | Capturer le trafic sur le lien et vérifier le chiffrement ESP |
+| Empoisonnement de table d'adresses | ARP sans validation | Inspection dynamique d'ARP | Injecter une fausse réponse ARP sur un port d'accès |
+| Orage de diffusion saturant le commutateur | Émission excessive de trames de diffusion | Limitation de tempête et isolation de l'arbre | Émettre des paquets de diffusion en rafale et observer la coupure |
+| Spoofing d'adresses source en bordure | Absence de contrôle de cohérence | Filtrage anti-spoofing et uRPF | Envoyer un paquet depuis une adresse privée sur l'interface WAN |
+| Équipement laissé aux valeurs d'usine | Services et comptes par défaut | Durcissement : services, AAA, secrets changés | Auditer la configuration avec une commande d'inclusion |
+```
+
+
+Une remarque sur la portée de ces protections : elles ne sont pas décoratives, mais elles ne sont pas non plus absolues. Un contrôle d'accès au port empêche le branchement sauvage, pas l'utilisateur malveillant déjà authentifié. Un tunnel IPsec protège le transit, pas les postes en bout de chaîne. Un durcissement réduit la surface d'attaque, il ne la supprime pas. L'objectif de ce chapitre est que vous sachiez associer à chaque risque résiduel le contrôle qui le réduit le plus, puis le superviser pour savoir s'il fonctionne encore. Cette logique de couche se retrouvera tout au long de la leçon : chaque mécanisme que vous configurerez répond à une question précise, et chacun laisse subsister une question à laquelle le suivant répond.
+
+## 802.1X : l'authentification au port
+
+802.1X est une norme IEEE de contrôle d'accès au port. Son principe tient en une phrase : un port de commutateur reste fermé tant que celui qui s'y connecte n'a pas prouvé une identité acceptée. Concrètement, la norme définit trois rôles. Le supplicant est le client qui demande l'accès, généralement le système d'exploitation du poste accompagné de son client 802.1X, parfois un téléphone ou un point d'accès. L'authenticateur est l'équipement qui maîtrise le port, un commutateur ou un point d'accès : il ne décide pas lui-même, il relaie. Le serveur d'authentification est le serveur RADIUS, seul juge capable de dire si l'identité présentée est acceptable, et surtout seul à détenir la liste des identités et des règles associées. Cette séparation des rôles est la grande force du mécanisme : la logique métier reste centralisée dans un serveur, tandis que les centaines de commutateurs du réseau ne gardent qu'une commande de bascule à appliquer.
+
+Le langage commun entre le supplicant et l'authenticateur s'appelle EAP, l'Extensible Authentication Protocol, transporté dans les trames Ethernet par le protocole EAPOL. L'échange se déroule en six temps. Le supplicant signale qu'il veut s'authentifier, soit spontanément, soit à la demande du commutateur qui lui envoie une requête d'identité. Le commutateur encapsule ensuite les messages EAP dans des requêtes RADIUS et les transmet au serveur. Le serveur choisit une méthode, par exemple un défi avec certificat ou un défi avec identifiant et mot de passe, et le supplicant répond. Si la réponse est conforme, le serveur renvoie une acceptation accompagnée d'attributs : le VLAN à affecter, le temps de session maximal, parfois une liste d'accès. Le commutateur applique alors ces attributs et ouvre le port. En cas de refus, le port reste fermé ou bascule dans un VLAN de repli selon la configuration locale. L'ensemble dure quelques secondes dans le meilleur des cas, et c'est ce délai qui conditionne le confort perçu par l'utilisateur final.
+
+```text
+DEMONSTRATION : échange 802.1X entre les trois acteurs
+
+ Poste (supplicant)         Commutateur (authenticateur)     Serveur RADIUS
+ -----------------          --------------------------      --------------
+ EAPOL-Start    --------------------------------->
+                             EAP-Request/Identity  -------->
+ EAP-Response/Identity  <----------------------------
+                             Access-Request (EAP)  -------->
+                                                         EAP-Request/TLS
+                             EAP-Request/TLS       <--------
+ EAP-Response/TLS (certificat) <------------------
+                             Access-Request (EAP)  -------->
+                                                         vérification CA
+                                                         puis Access-Accept
+                             Access-Accept (EAP)   <--------
+ EAP-Success   <---------------------------------
+                             port ouvert, VLAN 10 appliqué
+                             Accounting-Start      -------->
+```
+
+Deux choix de méthode structurent réellement les déploiements. EAP-TLS exige un certificat côté client et un certificat côté serveur : c'est l'option la plus robuste, car aucun mot de passe n'est présenté et donc aucune réutilisation n'est possible, mais elle suppose une infrastructure de clés publique et une distribution de certificats sur chaque poste. PEAP-MSCHAPv2 ne demande un certificat qu'au serveur ; le poste, lui, présente un identifiant et un mot de passe enfermés dans un tunnel TLS établi avec le serveur. C'est l'option la plus courante pour les ordinateurs portables qui ne sont pas gérés par une autorité de certification, et elle reste largement acceptable à condition que les mots de passe soient robustes. Entre les deux, on trouve EAP-TTLS et EAP-FAST, moins répandus, mais utiles quand un équipement tiers ne sait faire ni l'un ni l'autre.
+
+Une question de vocabulaire vous évitera des heures de lecture : le supplicant ne parle jamais RADIUS, il parle EAPOL, et le commutateur traduit. Si vous capturez le trafic sur un port d'accès, vous voyez des trames EAPOL encapsulant EAP ; si vous capturez le lien entre le commutateur et le serveur, vous voyez des paquets UDP vers les ports 1812 pour l'authentification et 1813 pour la comptabilité. Retenir cette distinction vous aide à décider où poser un filtre d'analyse quand un utilisateur annonce, un matin, que network ne fonctionne plus après la mise à jour de son client.
+
+Le périmètre de déploiement se réfléchit port par port. On active 802.1X sur les ports d'accès aux utilisateurs, jamais sur les liens montants entre commutateurs, car un lien interne doit transporter plusieurs VLAN sans s'authentifier. On l'active en mode dynamique plutôt qu'en mode forcé, ce qui laisse le port ouvert pour le trafic de découverte tout en exigeant l'authentification pour le reste. On prévoit un mécanisme de repli pour les équipements incapables de dialoguer en EAP. Et surtout, on commence par un port de test : un poste de labo, un câble de secours, un compte dédié, avant de déployer par bâtiment. Un déploiement mondial conduit depuis un poste unique, sans retour arrière possible, est la seule méthode véritablement risquée ici.
+
+- 802.1X ferme le port tant qu'aucune identité acceptée n'a été présentée.
+- Trois rôles : supplicant sur le poste, authenticateur sur le commutateur, serveur RADIUS au centre.
+- EAP circule dans les trames Ethernet sous forme d'EAPOL ; le commutateur l'encapsule ensuite en RADIUS.
+- EAP-TLS utilise des certificats des deux côtés ; PEAP-MSCHAPv2 protège un mot de passe dans un tunnel TLS.
+- Le serveur renvoie avec l'acceptation le VLAN, la durée de session et éventuellement une ACL.
+- Le port de test et le port de secours précèdent toujours le déploiement à grande échelle.
+- Les liens montants entre commutateurs ne doivent jamais exiger d'authentification.
+
+
+## EAP, RADIUS et les VLAN dynamiques
+
+Le serveur RADIUS est le cerveau du dispositif. Il reçoit sur le port 1812 des requêtes d'authentification, les compare à sa base d'identités, puis répond par une acceptation ou un rejet. Sur le port 1813, il reçoit les messages de comptabilité qui notent l'ouverture, la reconduction et la fermeture de chaque session. Trois logiciels couvrent l'essentiel des besoins : FreeRADIUS sous Linux, très flexible et entièrement piloté par des fichiers texte ; Cisco ISE, la solution intégrée des environnements Cisco, qui ajoute de la visibilité et de la posture ; et Microsoft NPS, naturellement branché sur l'Active Directory quand vos comptes sont déjà hébergés là. Quel que soit celui que vous choisissez, le rôle reste identique : centraliser les identités, décider, renvoyer des attributs, tracer.
+
+Ces attributs méritent une attention particulière, car c'est eux qui transforment un simple contrôle d'accès en segmentation dynamique. Le VLAN n'est plus écrit dans la configuration du commutateur : il est envoyé par le serveur dans les attributs de tunnel, à savoir Tunnel-Type de valeur VLAN, Tunnel-Medium-Type de valeur 802, et Tunnel-Private-Group-ID contenant l'identifiant du VLAN sous forme de chaîne. Le commutateur prend cet identifiant et l'applique au port. On peut aussi renvoyer un temps de session maximal, de sorte qu'une authentification soit reconduite périodiquement, et une action de terminaison qui referme le port si l'utilisateur ne se ré-authentifie pas. Le même mécanisme permet de faire atterrir une population entière dans un VLAN de production, une autre dans un VLAN invité, sans jamais toucher aux commutateurs lorsqu'un nouveau service apparaît.
+
+```text
+EXEMPLE : AAA, serveur RADIUS et 802.1X global sur un commutateur Cisco IOS
+
+! Serveur RADIUS et groupe de serveurs
+radius server RADIUS_ISE
+ address ipv4 10.10.0.10 auth-port 1812 acct-port 1813
+ key 0 <CLE_RADIUS_FORT>
+
+aaa group server radius RADIUS_GROUP
+ server name RADIUS_ISE
+
+! Chaîne AAA : authentification, autorisation, comptabilité
+aaa authentication dot1x default group RADIUS_GROUP
+aaa authorization network default group RADIUS_GROUP
+aaa accounting dot1x default start-stop group RADIUS_GROUP
+
+! Activation globale du contrôle d'accès
+dot1x system-auth-control
+
+! Compte local de secours (panne du serveur RADIUS)
+username admin privilege 15 algorithm-type scrypt secret <HACHAGE_SCRYPT>
+aaa authentication login default local group RADIUS_GROUP
+```
+
+Le bloc suivant s'applique port par port. Il force le mode d'accès, demande l'authentification, fixe les temporisations de re-authentification et de reprise, et décide du comportement en cas de violation. Notez la commande qui autorise le trafic avant authentification : elle est utile pour les équipements qui doivent émettre avant de parler EAP, comme un téléphone VoIP qui a besoin d'obtenir son adresse par DHCP, mais elle affaiblit mécaniquement la protection et doit être réservée aux cas documentés. La commande qui limite les violations évite le comportement par défaut qui fait tomber le port à la première anomalie, ce qui se révèle pénible pendant une phase de déploiement où l'on cherche encore les supplicants mal configurés.
+
+```text
+EXEMPLE : port utilisateur 802.1X, imprimante en MAB et VLAN invité
+
+! Port utilisateur standard
+interface GigabitEthernet1/0/5
+ description Poste bureau
+ switchport mode access
+ switchport access vlan 10
+ authentication port-control auto
+ authentication periodic
+ authentication timer reauthenticate 3600
+ authentication timer inactivity 60
+ authentication violation restrict
+ authentication open
+ dot1x pae authenticator
+ dot1x timeout tx-period 30
+ dot1x max-reauth-req 3
+
+! Imprimante sans supplicant : contournement par adresse MAC
+interface GigabitEthernet1/0/20
+ description Imprimante etage 2
+ switchport mode access
+ switchport access vlan 30
+ authentication port-control auto
+ authentication order mab dot1x
+ authentication priority mab dot1x
+ mab
+ dot1x pae authenticator
+
+! Repli en cas d'echec : VLAN 99 sans acces au reseau interne
+fallback profile GUEST_VLAN
+ access-group name GUEST_ACL
+
+ip access-list extended GUEST_ACL
+ permit udp any any eq 67
+ permit udp any any eq 68
+ permit icmp any any
+ deny   ip any any log
+```
+
+La comptabilité clôt le sujet. Chaque session produit un départ, des relevés périodiques et une fin, chacun associé à l'identité, au port, au VLAN et à la durée. Cette trace répond en pratique à trois questions d'incident : d'où partait la machine qui a généré l'alerte, à quel moment exact l'utilisateur s'est connecté, et combien de temps le port est resté ouvert. Sans comptabilité, 802.1X contrôle l'accès mais n'écrit rien ; avec elle, vous disposez d'un registre consultable lors d'un audit. Pensez à dimensionner la conservation des journaux en conséquence : quelques semaines suffisent pour l'exploitation courante, plusieurs mois sont souvent exigés pour un audit annuel.
+
+- Le serveur RADIUS décide sur le port 1812 et trace les sessions sur le port 1813.
+- Le VLAN dynamique est envoyé par Tunnel-Private-Group-ID et appliqué par le commutateur.
+- FreeRADIUS, Cisco ISE et Microsoft NPS répondent au même rôle, avec des niveaux de confort différents.
+- La re-authentification périodique limite le temps d'une session volée.
+- Le compte local de secours évite de se verrouiller hors de l'équipement lors d'une panne RADIUS.
+- La comptabilité transforme un contrôle d'accès en preuve exploitable.
+
+
+## Choisir les populations et déployer sans coupure
+
+Avant d'écrire la moindre ligne de configuration, il faut répondre à une question simple : qui se trouve derrière chaque port ? La réponse se décline en quatre populations, et chaque population appelle un traitement différent. Les postes de bureau gérés par l'entreprise reçoivent un certificat et s'authentifient en EAP-TLS, la méthode la plus sûre. Les portables personnels ou les postes hors domaine passent par PEAP-MSCHAPv2 avec identifiant et mot de passe. Les imprimantes, les bornes d'accès, les téléphones et les objets connectés ne savent généralement pas parler EAP : on les laisse passer en contournement par adresse MAC, ce qui authentifie l'équipement et non l'utilisateur. Enfin les visiteurs atterrissent dans un VLAN de repli, sans accès au réseau interne, avec une durée de vie courte. Dessiner ce tableau avant toute configuration vous évite de découvrir, en production, qu'une imprimante silencieuse a cessé d'imprimer parce que personne ne lui avait expliqué la notion de contournement.
+
+La planification des VLAN vient ensuite, et il doit rester stable : les identifiants envoyés par le serveur sont référencés dans des règles de gestion, et les changer revient à déplacer des populations entières. Sur le site Lilas, le découpage est le suivant : VLAN 10 pour les postes publics, VLAN 20 pour le Wi-Fi, VLAN 30 pour les imprimantes, VLAN 60 pour la gestion des équipements, VLAN 99 pour le repli invité. Le serveur RADIUS lui-même vit en VLAN 60, car il doit être atteignable par tous les commutateurs, y compris par ceux dont les ports sont encore fermés. C'est un point qu'on oublie facilement : un commutateur qui n'arrive pas à joindre le serveur ne peut pas authentifier, et si votre serveur est placé derrière un port qu'il contrôle lui-même, vous venez de créer une dépendance circulaire.
+
+Le déploiement se fait en trois phases, chacune mesurable. La phase de labo utilise un commutateur, un poste de test, une imprimante et un compte invité : vous y validez chaque méthode, le délai d'ouverture du port, le comportement en cas d'arrêt du serveur. La phase pilote couvre un bâtiment ou un étage avec un port de secours physique, c'est-à-dire un port configuré en accès permanent sur un VLAN de gestion, relié à un switch de secours ou à un ordinateur de maintenance. La phase générale étend ensuite la configuration par lots, un commutateur à la fois, en surveillant en continu les journaux du serveur et les compteurs d'échecs. À chaque étape, on mesure : combien de sessions ouvertes, combien de rejets, combien d'échecs de méthode, combien d'équipements tombés en repli. Un pic d'échecs signale un supplicant mal configuré, pas un problème de câblage.
+
+```text
+EXEMPLE : suivi du déploiement depuis un commutateur
+
+show dot1x summary
+show dot1x interface GigabitEthernet1/0/5 detail
+show authentication sessions interface GigabitEthernet1/0/5
+show authentication sessions
+show vlan brief
+show logging | include DOT1X
+```
+
+La question la plus importante reste celle du comportement en l'absence du serveur. Deux écoles s'affrontent. L'école permissive ouvre les ports quand le serveur ne répond pas, au nom de la continuité de service : le réseau reste utilisable pendant une panne, mais le contrôle d'accès disparaît au moment précis où il serait le plus utile. L'école stricte ferme les ports ou les bascule dans le VLAN invité, au nom du principe de moindre privilège : une panne du serveur devient un incident visible plutôt qu'une faille silencieuse. En pratique, on choisit en fonction de la criticité : les locaux techniques et les zones publiques peuvent accepter la fermeture, une salle de crise ne le supportera pas. Dans tous les cas, la décision doit être écrite, et non subie le jour de la panne.
+
+- Cartographiez d'abord les populations : certificats, mots de passe, contournement par adresse MAC, repli invité.
+- Fixez le plan de VLAN une fois pour toutes et placez le serveur RADIUS hors de tout port contrôlé par lui-même.
+- Déployez en trois phases : labo, pilote avec port de secours, généralisation par lots.
+- Surveillez les compteurs d'échecs : pic d'erreurs, mauvaise méthode, mauvais serveur, VLAN inconnu.
+- Décidez à l'avance du comportement en cas d'indisponibilité du serveur et notez-le dans la documentation.
+- Gardez un port de secours physique accessible, car c'est le seul remède à une erreur de règles.
+
+
+## VPN site-à-site : chiffrer le lien entre deux réseaux
+
+Un VPN site-à-site relie deux réseaux d'entreprise par un tunnel chiffré traversant un réseau que l'on ne contrôle pas, Internet dans la quasi-totalité des cas. Du point de vue des utilisateurs, le site distant ressemble à un sous-réseau accessible directement : un poste du site Lilas tape une adresse du siège et la connexion aboutit, sans rien demander au poste. Tout le chiffrement se joue dans les équipements, aux deux extrémités du tunnel. Le protocole de référence s'appelle IPsec, et il s'organise en deux phases. La phase 1, assurée par IKE, authentifie les deux équipements et se met d'accord sur les algorithmes et les clés qui protégeront les échanges de négociation. La phase 2 définit ensuite les paramètres du tunnel lui-même, c'est-à-dire la façon dont les paquets utiles seront chiffrés avant de quitter le site et recomposés à l'arrivée.
+
+La version moderne du protocole d'échange de clés est IKEv2, définie par la RFC 7296. Elle réduit le nombre de messages nécessaires à l'établissement, autorise la reconstruction asynchrone du tunnel quand l'un des deux côtés redémarre, supporte la détection de mouvement pour les liens mobiles et permet une authentification extensible. Sur un lien fixe entre deux sites, sa principale qualité est la sobriété : un échange complet tient en quatre messages, contre dix-huit pour son ancêtre. Deux modes d'authentification coexistent. La clé pré-partagée consiste en un secret long et aléatoire partagé par les deux équipements ; elle convient parfaitement quand le nombre de sites reste faible, à condition que le secret fasse au moins trente-deux caractères tirés au sort et qu'il soit conservé avec soin. Les certificats, eux, scales bien au-delà de quelques tunnels et apportent une révocation propre, au prix d'une infrastructure de clés à maintenir.
+
+À la phase 2, chaque paquet utile est protégé par le protocole ESP, qui chiffre le contenu et, dans les modes modernes, en protège aussi l'intégrité. On choisit une suite d'algorithmes qui combine chiffrement et authentification de message ; les constructions récentes privilégient les algorithmes authentifiés de chiffrement à la volée, qui réalisent les deux opérations en un seul passage et vont donc plus vite. La notion de transparence parfaite en avant ajoute un échange de clés supplémentaire pour la phase 2 : la compromission de la clé de phase 1 ne permet alors pas de déchiffrer les sessions passées. Le tableau ci-dessous récapitule ce qu'il faut retenir, ce qu'il faut éviter et pourquoi.
+
+```table
+| Choix | Recommandation | Raison |
+| --- | --- | --- |
+| Chiffrement | AES-GCM-256 en priorité | Chiffrement et intégrité en un seul passage, rapide sur les équipements récents |
+| Chiffrement à accepter en second recours | AES-128 ou AES-256 en mode CBC avec HMAC dédié | Compatibilité avec les équipements plus anciens |
+| Chiffrement à proscrire | 3DES et DES | Bloc trop court, dépréciés depuis longtemps |
+| Intégrité | SHA-384 ou SHA-256 | Fonctions modernes, coût négligeable sur les liens Gbit |
+| Intégrité à proscrire | MD5 et SHA-1 | Collisions connues, plus acceptées par aucune norme récente |
+| Échange de clés | Groupe Diffie-Hellman 14 ou 19 | Modularité suffisante pour les années à venir |
+| Échange à proscrire | Groupes 1, 2 et 5 | Tailles insuffisantes ou historiquement fragiles |
+| Durées de vie | 8 heures en phase 1, 2 heures en phase 2 | Compromis entre re-cléage fréquent et stabilité du tunnel |
+```
+
+
+Le trajet d'un paquet mérite d'être visualisé avant de configurer quoi que ce soit. Un poste du réseau 10.10.0.0/22 envoie un paquet vers le siège. Le routeur de bordure consulte sa table, trouve une route vers 192.168.100.0/24 par l'interface du tunnel. L'équipement consulte la liste d'accès qui définit le trafic à protéger, l'enveloppe dans ESP, y ajoute l'en-tête IP externe vers l'adresse publique du pair, puis transmet le paquet chiffré sur son interface physique. De l'autre côté, l'équipement reconnaît le paquet ESP, le déchiffre, vérifie l'intégrité, retire l'en-tête externe et remet le paquet original sur le réseau local. Si un routeur intermédiaire du chemin est derrière un translation d'adresse, l'enveloppe est encapsulée dans un paquet UDP sur le port 4500, mécanisme connu sous le nom de traversée de NAT.
+
+```text
+DEMONSTRATION : trajet d'un paquet a travers le tunnel IPsec
+
+ Site Lilas                                   Site Siege
+ +-------------------+                        +-------------------+
+ | Poste             |                        | Serveur           |
+ | 10.10.0.25        |                        | 192.168.100.50    |
+ +---------+---------+                        +---------+---------+
+           |                                          |
+           v                                          v
+ +-------------------+      ESP chiffre le paquet  +-------------------+
+ | Commutateur       | ========================> | Commutateur       |
+ +---------+---------+   Internet (reseau public) +---------+---------+
+           |                                          |
+           v                                          v
+ +-------------------+                        +-------------------+
+ | Pare-feu Lilas    |   IKEv2 negocie les     | Pare-feu Siege    |
+ | 203.0.113.10      | <---------------------> | 198.51.100.10     |
+ +-------------------+   SA, cles, algorithmes  +-------------------+
+
+ En-tete externe : 203.0.113.10  -->  198.51.100.10   UDP 4500 si NAT
+ Charge utile     : 10.10.0.25   -->  192.168.100.50  chiffree par ESP
+```
+
+Deux détails de mise en œuvre reviennent systématiquement dans les déploiements réussis. Le premier concerne le MTU : le chiffrement ajoute des octets d'en-tête, et un paquet déjà à pleine taille devient alors non fragmentable, ce qui se traduit par des sessions web qui se bloquent et des transferts qui n'aboutissent jamais. On réduit donc le MTU de l'interface de tunnel et on ajuste la taille maximale de segment TCP pour rester sous la limite. Le second concerne le routage : le trafic destiné au site distant doit trouver une route vers l'interface du tunnel, sinon il part directement sur Internet et disparaît. Une route statique suffit pour un seul lien, une session de routage protégée par le tunnel est préfable dès qu'un second chemin existe.
+
+- Un VPN site-à-site chiffre le transit entre deux réseaux sans rien changer aux postes.
+- IKEv2 authentifie les équipements et négocie les paramètres ; ESP protège les paquets utiles.
+- La clé pré-partagée convient à peu de sites ; les certificats aux grands déploiements.
+- Privilégiez AES-GCM avec SHA-384 et un échange de clés de groupe 14 ou 19.
+- Le PFS rend les clés de phase 2 indépendantes de la clé de phase 1.
+- Réduisez le MTU et ajustez le TCP pour éviter les blocages de paquets non fragmentables.
+
+
+## IKEv2 pas à pas : du pair au tunnel VTI
+
+La configuration d'un tunnel se lit comme une pile de briques, chacune référençant la précédente. On commence par la proposition de phase 1, qui liste les algorithmes que l'équipement accepte de négocier : chiffrement, intégrité et groupe de clés. On l'insère dans une politique, puis on crée un anneau de clés qui associe l'adresse publique du pair à sa clé pré-partagée. On déclare ensuite un profil IKEv2 qui dit à l'équipement à quel moment ce profil s'applique, c'est-à-dire quand un paquet arrive d'une adresse donnée, et avec quel mode d'authentification on se présentera. Rien n'est encore actif à ce stade : ces éléments sont des ingrédients, qui ne prennent vie que lorsqu'une interface de tunnel les référence.
+
+La seconde pile construit le tunnel lui-même. Une suite de transformation décrit comment les paquets seront protégés : protocole ESP, algorithme de chiffrement choisi, mode tunnel. Un profil IPsec associe cette suite au profil IKEv2, ajoute l'échange de clés supplémentaire si l'on souhaite la transparence parfaite en avant, puis fixe les durées de vie du tunnel. Reste l'interface : on peut appliquer la protection directement sur l'interface physique, méthode historique fondée sur une carte cryptographique, ou créer une interface de tunnel virtuelle. La seconde approche est aujourd'hui préférée, car l'interface de tunnel se comporte comme une interface réseau ordinaire : elle porte une adresse, accepte des routes, participe à une session de routage et se prête aux diagnostics classiques.
+
+```text
+EXEMPLE : phase 1 IKEv2 entre le pare-feu Lilas et le siège
+
+! Proposition et politique de phase 1
+crypto ikev2 proposal IKEV2_PROP
+ encryption aes-gcm-256
+ integrity sha384
+ group 14
+
+crypto ikev2 policy IKEV2_POL
+ proposal IKEV2_PROP
+
+! Anneau de clés : un secret par pair
+crypto ikev2 keyring KEYRING_SIEGE
+ peer SIEGE
+  address 198.51.100.10
+  pre-shared-key <SECRET_32_CARACTERES>
+
+! Profil : quand s'applique-t-il, et comment s'authentifie-t-on
+crypto ikev2 profile IKEV2_PROF_SIEGE
+ match identity remote address 198.51.100.10 255.255.255.255
+ identity local address 203.0.113.10
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local KEYRING_SIEGE
+ dpd 10 30 on-demand
+```
+
+La détection de pair mort mérite une ligne à elle seule. Sans elle, un équipement continue de croire que le tunnel est vivant alors que le lien distant est coupé, et il laisse ainsi des sessions suspendues pendant plusieurs minutes. Le mécanisme envoie régulièrement des messages de contrôle ; si aucune réponse n'arrive après un nombre défini de tentatives, l'équipement déclare le tunnel mort et purge les associations de sécurité, ce qui libère le routage alternatif. Le réglage typique envoie une demande toutes les dix secondes dès qu'il y a du trafic, avec une seconde de délai entre les tentatives, et marque le tunnel mort après trois échecs.
+
+```text
+EXEMPLE : phase 2, interface de tunnel et routage
+
+! Suite de transformation ESP chiffre et authentifie
+crypto ipsec transform-set IPSEC_TSET esp-aes-256-gcm
+ mode tunnel
+
+! Profil IPsec : suite, profil IKEv2, cle supplementaire, durees de vie
+crypto ipsec profile IPSEC_PROF_SIEGE
+ set transform-set IPSEC_TSET
+ set ikev2-profile IKEV2_PROF_SIEGE
+ set pfs group14
+ set security-association lifetime seconds 7200
+ set security-association lifetime kilobytes 4608000
+
+! Interface de tunnel virtuelle
+interface Tunnel0
+ description VPN Lilas vers Siege
+ ip address 10.255.255.1 255.255.255.252
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+ tunnel source GigabitEthernet0/0
+ tunnel destination 198.51.100.10
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile IPSEC_PROF_SIEGE
+
+! Routage du site distant par le tunnel
+ip route 192.168.100.0 255.255.255.0 Tunnel0
+```
+
+L'exemption de NAT constitue la dernière pièce, et son absence est la panne la plus fréquente de tous les tunnels IPsec. Sur une interface soumise à la traduction d'adresses, le trafic destiné au pair est traduit avant d'être chiffré, si bien que l'équipement distant reçoit une annonce d'origine inattendue et rejette la négociation. La correction tient en quelques lignes : une liste d'accès qui écarte explicitement le trafic entre les deux réseaux internes de la traduction, puis l'application de cette liste à la règle de traduction. Vérifiez ensuite que la traduction est bien absente pour les adresses du tunnel, sinon vous corrigerez dans le mauvais sens pendant une heure.
+
+Les certificats remplacent la clé pré-partagée quand le nombre de sites croît. On déclare un point de confiance, on y inscrit l'équipement par terminal ou par fichier, on exige la vérification de révocation, puis on demande au profil IKEv2 d'utiliser une signature RSA pour l'authentification locale et distante. L'avantage devient évident dès le deuxième tunnel : ajouter un site revient alors à lui émettre un certificat, sans jamais partager un nouveau secret par un canal parallèle.
+
+- Décrivez d'abord les algorithmes de phase 1, puis l'anneau de clés, puis le profil IKEv2.
+- L'interface de tunnel virtuelle se comporte comme une interface normale et se prête au routage.
+- Configurez la détection de pair mort pour purger les associations obsolètes en quelques secondes.
+- Pensez systématiquement à l'exemption de NAT avant de chercher ailleurs la cause d'un tunnel absent.
+- Réduisez le MTU et ajustez le segment TCP pour éviter les blocages de transferts.
+- Passez aux certificats dès que le nombre de tunnels dépasse quelques unités.
+
+
+## Vérifier et dépanner le tunnel
+
+Un tunnel déclaré à la configuration n'existe pas tant qu'il n'a pas été observé en fonctionnement. La vérification suit un ordre précis, et cet ordre compte : on commence par la phase 1, on poursuit par la phase 2, puis on teste le routage, et seulement ensuite le trafic utile. Si vous inversez les étapes, vous passerez une heure à diagnostiquer un routage parfaitement correct alors que la négociation n'a jamais abouti. Les commandes de consultation diffèrent légèrement d'une plateforme à l'autre, mais la logique est universelle : état de la négociation, associations de sécurité actives, compteurs de chiffrement et de déchiffrement, puis test de bout en bout avec une adresse du réseau distant.
+
+Le premier réflexe consiste à afficher l'association de phase 1. L'état doit être prêt, et l'affichage doit montrer les algorithmes réellement retenus, ce qui vous permet de vérifier que votre proposition n'a pas été écartée au profit d'une valeur par défaut. Le second réflexe affiche les associations de phase 2, où l'on attend des compteurs de paquets chiffrés qui augmentent à chaque test. Un compteur de chiffrement qui monte tandis que le compteur de déchiffrement reste figé signale que le paquet part mais n'arrive pas utile : mauvaise adresse de destination, mauvaise route ou filtrage en travers. L'inverse, déchiffrement sans chiffrement, arrive quand l'autre extrémité envoie vers la mauvaise adresse de tunnel.
+
+```text
+EXEMPLE : commande de vérification du tunnel
+
+! Phase 1 : la négociation est-elle établie
+show crypto ikev2 sa detail
+show crypto ikev2 sa
+
+! Phase 2 : les associations de sécurité vivent-elles
+show crypto ipsec sa
+show crypto session detail
+
+! Routage et interface
+show ip route 192.168.100.0
+show ip interface brief | include Tunnel
+show interface Tunnel0
+
+! Test de bout en bout, depuis une adresse source explicite
+ping 192.168.100.1 source 10.10.0.1
+traceroute 192.168.100.1 source 10.10.0.1
+
+! Traduction d'adresses : le trafic du tunnel doit en être exclu
+show ip nat translations
+```
+
+La panne la plus fréquente, on l'a dit, tient à la traduction d'adresses : le trafic chiffré est traduit, l'autre côté rejette, et le tunnel ne s'établit jamais. La seconde en fréquence est une incohérence de clé pré-partagée, qui se manifeste par un rejet en phase 1 avec un message d'authentification. La troisième est une route manquante : le tunnel est établi, les compteurs bougent, mais le trafic part par l'interface par défaut parce que personne n'a écrit la route vers le réseau distant. Viennent ensuite les MTU mal réglés, qui laissent passer le ping mais bloquent les transferts, et enfin les listes d'accès de bordure qui oublient d'autoriser le trafic IKE et ESP vers l'équipement local.
+
+- Vérifiez toujours dans l'ordre : phase 1, phase 2, routage, trafic utile.
+- Des compteurs de chiffrement qui augmentent sans déchiffrement indiquent un problème côté récepteur.
+- Traduction d'adresses, clé incohérente, route absente et MTU mal réglé couvrent la majorité des cas.
+- Une capture sur l'interface physique tranche entre un problème local et un problème distant.
+- Testez avec une adresse source explicite pour éliminer les ambiguïtés de routage.
+
+
+## Durcir le commutateur : services, comptes et gestion
+
+Le durcissement part d'un constat banal mais décisif : un équipement réseau neuf est ouvert. Il écoute plusieurs protocoles d'annonce qui révèlent son identité, il propose une interface web, il accepte une connexion de gestion sans chiffrement, il embarque des services historiques qui n'ont jamais servi personne, et il conserve des comptes d'usine dont les mots de passe sont publics. Chacune de ces ouvertures est inutile au fonctionnement du réseau et utile à quiconque veut le connaître ou le reprendre. La règle du durcissement se résume donc en une phrase : désactiver tout ce qui n'est pas nécessaire, puis restreindre et chiffrer ce qui l'est. Chaque service que l'on coupe est une surface de recherche en moins pour l'adversaire, et aucun utilisateur ne remarquera jamais leur absence.
+
+La première famille de commandes retire les protocoles d'annonce et les services d'accompagnement. Les annonces réseau permettent à un voisin de dresser l'inventaire complet des équipements, de leurs adresses et de leurs versions ; elles sont précieuses pendant les travaux et dangereuses une fois le réseau stabilisé. L'interface web, elle, a été la source d'un nombre considérable de failles ; si votre processus d'administration passe par la ligne de commande, elle n'a aucune raison d'être active. Les services historiques de diagnostic, hérités des premiers systèmes UNIX, acceptent des requêtes sans authentification. Enfin la résolution de noms sortante depuis la ligne de commande, si elle n'est pas nécessaire, transforme une simple faute de frappe en tentative de connexion sortante vers un domaine inconnu.
+
+```text
+EXEMPLE : durcissement des services, des comptes et de la gestion
+
+! Retirer les annonces et les services inutiles
+no cdp run
+no lldp run
+no ip http server
+no ip http secure-server
+no service tcp-small-servers
+no service udp-small-servers
+no ip finger
+no service pad
+no ip domain-lookup
+no ip source-route
+no ip gratuitous-arps
+
+! Comptes locaux hachés, jamais de mots de passe en clair
+username admin privilege 15 algorithm-type scrypt secret <HACHAGE_SCRYPT>
+username auditor privilege 3 algorithm-type scrypt secret <HACHAGE_SCRYPT>
+
+! SSH version 2 seule, algorithmes modernes
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+ip ssh algorithm encryption aes256-ctr aes192-ctr aes128-ctr
+ip ssh algorithm mac hmac-sha2-256 hmac-sha2-512
+ip ssh algorithm kex curve25519-sha256 diffie-hellman-group14-sha256
+
+! Lignes de gestion : SSH uniquement, filtre d'acces, delai d'inactivite
+line vty 0 15
+ transport input ssh
+ access-class MGMT_ACL in
+ exec-timeout 10 0
+ logging synchronous
+ login authentication default
+
+ip access-list standard MGMT_ACL
+ permit 10.10.0.0 0.0.0.255
+ deny   any log
+```
+
+La gestion à distance mérite d'être traitée comme un accès physique sensible. On n'autorise que SSH version 2, on retire Telnet même derrière une liste d'accès, on impose un délai d'inactivité court afin qu'une session oubliée ne reste pas ouverte toute la journée, et on filtre les lignes de gestion sur le VLAN de management uniquement. L'idéal va plus loin : un accès de gestion par une adresse de source explicite, une porte d'accès physique au cas où, et l'interdiction faite aux équipements de se connecter entre eux pour la gestion, de sorte qu'un commutateur compromis ne puisse pas en rejoindre un autre. Les algorithmes de chiffrement et de clé échangée sont modernes par défaut sur les versions récentes, mais il est bon de les expliciter, car une plateforme héritée peut encore proposer des valeurs faibles.
+
+L'authentification elle-même se structure en trois couches : une chaîne par défaut pour l'ouverture de session, une chaîne pour la commande d'autorisation, et une chaîne de comptabilité qui trace ce que chaque compte a exécuté. Le principe de moindre privilège appliqué aux comptes est essentiel : l'administrateur quotidien n'a pas besoin d'un niveau de privilège maximal, l'auditeur n'a besoin que de lecture, et le compte de service qui pousse les configurations n'a besoin que des commandes de sauvegarde. Prévoyez toujours un compte local de secours haché, car une panne du serveur d'authentification central ne doit jamais vous laisser sans moyen de reprendre la main.
+
+La sauvegarde de configuration termine cette section, et elle n'est pas facultative. Un équipement durci sans sauvegarde est un équipement qu'on n'ose plus toucher ; un équipement sauvegardé automatiquement se modifie sans anxiété. Le mécanisme d'archive natif conserve les dernières versions, horodatées, à intervalle régulier et après chaque écriture en mémoire. Lorsqu'une modification casse l'accès, la restauration prend alors trente secondes au lieu d'une demi-journée passée à reconstituer la configuration à la main.
+
+- Désactivez les annonces, l'interface web, les services historiques et la résolution de noms inutile.
+- Hachez tous les comptes locaux et évitez tout mot de passe en clair dans la configuration.
+- N'acceptez que SSH version 2 sur les lignes de gestion, filtrées par une liste d'accès.
+- Structurez l'authentification, l'autorisation et la comptabilité, avec un compte local de secours.
+- Appliquez le moindre privilège aux comptes : lecture pour l'audit, niveau minimal pour l'exploitation.
+- Activez l'archive automatique de configuration avant toute modification à risque.
+
+
+## Protéger les ports d'accès
+
+Le port d'accès est l'endroit où le réseau rencontre le monde réel : un câble, une prise murale, un visiteur, un objet connecté, parfois un commutateur posé en catastrophe sous une table. C'est aussi l'endroit où les attaques locales sont les plus simples à mener, car aucune exploitation complexe n'est nécessaire pour exploiter une prise ouverte. La défense repose sur une poignée de mécanismes complémentaires, chacun ciblant un angle différent : l'arbre de couverture, les orages de paquets, le nombre d'adresses acceptées, l'origine des annonces d'adresse et la cohérence des réponses d'adresse. Aucun de ces mécanismes ne remplace 802.1X, mais chacun rattrape une faille que 802.1X ne voit pas.
+
+Commençons par l'arbre de couverture. Les commutateurs échangent des messages de prévention de boucle pour construire une topologie sans cycles ; un port directement relié à un terminal n'a aucun besoin de ces messages, et il ne doit surtout pas en émettre, car un poste qui envoie de faux messages peut réorganiser la topologie à son profit. On active donc l'activation rapide du port, qui saute l'état d'attente, et la garde de ces messages, qui ferme immédiatement le port s'il en reçoit. À mesure que 802.1X s'étend, on remplace progressivement ces protections par une isolation dynamique de port, mécanisme plus fin qui n'autorise qu'une seule adresse visible par port le temps de l'authentification.
+
+```text
+EXEMPLE : protections des ports d'accès d'un commutateur
+
+! Arbre de couverture et stabilite de topologie
+interface range GigabitEthernet1/0/1 - 48
+ description Port acces utilisateur
+ switchport mode access
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+ storm-control broadcast level 1.00
+ storm-control multicast level 2.00
+ storm-control action shutdown
+
+! Nombre limite d'adresses et vieillissement
+ switchport port-security maximum 2
+ switchport port-security violation shutdown
+ switchport port-security aging time 10
+ switchport port-security aging type inactivity
+
+! Anti-empoisonnement DHCP et ARP
+ ip dhcp snooping limit rate 10
+ ip arp inspection limit rate 10
+
+! Isolation dynamique, compatible avec un deploiement 802.1X progressif
+ access session port-control auto
+```
+
+La limitation de tempête mérite une explication : elle compte les paquets de diffusion et de multidiffusion émis par un port et coupe l'émission lorsqu'un seuil est dépassé. Un poste compromis qui inonde le réseau, un commutateur défectueux en boucle logique ou un simple branchement fautif créent alors une coupure locale au lieu d'un incident généralisé. Le réglage en pourcentage de débit doit être basé sur la connaissance de votre trafic : trop bas, il coupe les annonces légitimes de négociation ; trop haut, il ne protège plus. Le mode de coupure est préférable au mode de plainte, car une alerte sans action laisse l'inondation se poursuivre.
+
+Les mécanismes d'anti-empoisonnement travaillent en binôme. L'inspection des baux DHCP vérifie que les réponses d'attribution proviennent bien d'un serveur autorisé sur un port autorisé, ce qui empêche quiconque de se faire passer pour le serveur et d'attribuer une passerelle de son choix. L'inspection dynamique d'adresse fait de même pour l'adresse : elle mémorise les paires adresse et adresse matérielle apprises de façon légitime, puis rejette toute tentative de changer d'identité sans accord. Leur activation globale est sans effet tant que les ports individuels ne sont pas déclarés comme sujets ou fiables, erreur classique qui laisse croire à une protection alors qu'elle est inactive.
+
+La limitation du nombre d'adresses par port referme la boucle. Un port utilisateur n'a aucune raison d'abriter plus d'un ou deux terminaux ; au-delà, il s'agit d'un commutateur non autorisé, d'un pont fait maison ou d'un partage de connexion. En imposant une limite et une action de coupure, on transforme ce scénario en incident local immédiatement visible. Le vieillissement inactif permet en revanche de libérer la place après un départ, ce qui évite qu'un utilisateur changeant de prise ne soit bloqué le lendemain matin.
+
+- Activez l'activation rapide du port et la garde des messages de prévention de boucle.
+- Limitez les orages de diffusion et de multidiffusion avec une action de coupure.
+- Limitez le nombre d'adresses par port et faites vieillir les entrées inactives.
+- Inspectez les baux DHCP et les adresses après avoir déclaré chaque port comme sujet.
+- Remplacez progressivement les protections statiques par l'isolation dynamique à mesure que 802.1X avance.
+- Mesurez vos seuils sur du trafic réel avant de les abaisser.
+
+
+## Routeur et pare-feu en bordure : filtrer, absorber, taire
+
+La bordure d'un réseau concentre deux fonctions contradictoires : laisser passer ce qui est légitime et refuser tout le reste, sans jamais ralentir le premier ni saturer le second. Le durcissement d'un routeur ou d'un pare-feu suit donc trois axes. On réduit ce que l'équipement accepte, on protège son propre processeur contre les paquets qui le visent, et on supprime les comportements historiques qui aident l'adversaire à explorer le réseau. Ces trois axes se concrétisent en un petit nombre de commandes, dont la plupart sont sans effet secondaire et devraient figurer dans toute configuration de référence.
+
+Le premier axe traite les adresses qui ne devraient jamais arriver. Les réseaux privés, les adresses de bouclage, les adresses de diffusion et les adresses non attribuées n'ont aucune raison d'être reçues sur une interface externe : leur présence signifie soit une erreur de routage, soit une tentative d'usurpation d'origine. La même logique s'applique aux messages de redirection et de réponse d'adresse diffusés par le routeur vers le réseau local : ils informent les hôtes d'un chemin plus direct vers une destination, ce qui, sur un réseau malveillant, se transforme en redirection de trafic. Chaque commande ci-dessous retire une pièce inutile du protocole.
+
+```text
+EXEMPLE : durcissement d'une interface externe et filtrage d'origine
+
+! Ne pas aider les hotes a choisir leur propre chemin
+interface GigabitEthernet0/0
+ description Lien operateur
+ no ip redirects
+ no ip proxy-arp
+ no ip directed-broadcast
+ ip verify unicast source reachable-via rx
+ ip access-group INGRESS_FILTER in
+
+! Anti-spoofing : rien ne doit arriver depuis les reseaux internes en externe
+ip access-list extended INGRESS_FILTER
+ deny ip 10.0.0.0 0.255.255.255 any
+ deny ip 172.16.0.0 0.15.255.255 any
+ deny ip 192.168.0.0 0.0.255.255 any
+ deny ip 127.0.0.0 0.255.255.255 any
+ deny ip 224.0.0.0 15.255.255.255 any
+ deny ip host 0.0.0.0 any
+ deny ip host 255.255.255.255 any
+ permit ip any any
+
+! Le plan de controle ne doit pas etre noye par le trafic utile
+class-map type control-plane match-any CPP_ICMP
+ match protocol icmp
+class-map type control-plane match-any CPP_SSH
+ match protocol ssh
+class-map type control-plane match-any CPP_ROUTING
+ match protocol ospf
+ match protocol bgp
+
+policy-map type control-plane CPP_POLICY
+ class CPP_ICMP
+  police rate 100 pps
+ class CPP_SSH
+  police rate 500 pps
+ class CPP_ROUTING
+  police rate 1000 pps
+ class class-default
+  police rate 200 pps
+
+control-plane
+ service-policy input CPP_POLICY
+```
+
+La vérification d'origine unicast, notée uRPF, demande au routeur de vérifier que la table de routage contient bien une route vers l'adresse source du paquet reçu. Un paquet qui prétend venir d'un réseau interne en arrivant par l'interface externe est rejeté immédiatement, sans autre consultation. Le mode strict convient aux interfaces où chaque voisin est connu à l'avance ; le mode lâche convient aux liens où le routage asymétrique pourrait faire tomber des paquets légitimes. Sur une bordure, le mode strict est la bonne réponse tant que votre propre plan de routage est symétrique.
+
+Le plan de contrôle constitue le second axe. Il désigne l'ensemble des tâches exécutées par le processeur de l'équipement : recevoir les protocoles de routage, répondre aux demandes de gestion, traiter les paquets qui ne peuvent pas être délégués à la carte de commutation. Un flood de paquets adressés au processeur fait monter sa charge jusqu'à ce que l'équipement cesse de router correctement, sans qu'aucun service ne paraisse en panne. Le filtrage du plan de contrôle impose des taux à chaque famille de trafic : quelques dizaines de réponses par seconde pour les demandes d'écho, une bande passante réservée pour la gestion, une marge large pour les échanges de routage, et une part plafonnée pour tout le reste.
+
+Le pare-feu complète ces mécanismes par ses propres règles, et sa configuration par défaut mérite la même méfiance que celle d'un commutateur. On part d'une politique de refus explicite, on autorise les flux documentés, on évite les règles trop larges qui acceptent n'importe quelle source vers n'importe quelle destination, et on retire les règles devenues sans objet après une migration. Chaque règle reçoit une justification et une date ; une règle sans propriétaire est une règle qui ne sera jamais supprimée. La journalisation des rejets, enfin, transforme ces règles en capteurs : un flux qui heurte sans cesse la même règle signale souvent une erreur de configuration ou un scan en cours.
+
+- Rejetez en entrée les réseaux privés, le bouclage, la multidiffusion et les adresses non attribuées.
+- Désactivez les redirections, les réponses d'adresse diffusées et la diffusion dirigée.
+- Activez la vérification d'origine unicast en mode strict sur les interfaces de confiance.
+- Protégez le plan de contrôle avec des taux limités par famille de trafic.
+- Basez les règles de pare-feu sur une politique de refus explicite et des règles justifiées.
+- Journalisez les rejets : ils sont vos meilleurs capteurs de reconnaissance.
+
+
+## Journaliser, synchroniser et superviser
+
+Un équipement durci mais muet est un équipement qu'on ne peut pas défendre. Les journaux racontent ce qui s'est passé, l'horloge donne au récit une date fiable, et la supervision transforme ces éléments en alerte. Ces trois pièces forment un ensemble indivisible : des journaux horodatés par une horloge fausse racontent une histoire décalée, impossible à recouper avec celle des autres équipements, et une supervision qui n'interroge rien laisse ces journaux s'accumuler sans jamais être lus. Chacune des trois se configure en quelques lignes, mais l'ordre compte : on aligne d'abord l'horloge, ensuite on horodate, enfin on centralise.
+
+La synchronisation d'horloge commence par le choix des sources. On utilise une ou deux sources situées sur le réseau de gestion, de préférence un serveur local lui-même synchronisé sur des sources externes de confiance, car dépendre directement d'un serveur public expose votre horloge à une indisponibilité que vous ne contrôlez pas. On authentifie ensuite les échanges avec une clé partagée, ce qui empêche quiconque sur le chemin de renvoyer une heure falsifiée et de décaler ainsi toutes vos corrélations d'incident. Enfin on ne fait confiance qu'aux sources authentifiées : une source qui ne répond pas avec la bonne clé doit être ignorée, pas acceptée par défaut.
+
+```text
+EXEMPLE : horloge authentifiee, journaux centraux et supervision
+
+! Sources de temps authentifiees
+ntp server 10.10.0.10 key 1 prefer
+ntp server 10.10.0.11 key 1
+ntp authenticate
+ntp authentication-key 1 md5 <CLE_NTP>
+ntp trusted-key 1
+ntp source Vlan60
+
+! Horodatage de tous les messages, avec fuseau lisible
+service timestamps log datetime msec localtime show-timezone
+service timestamps debug datetime msec localtime show-timezone
+
+! Tampon local abondant puis export vers le serveur de journaux
+logging buffered 1000000
+logging host 10.10.0.10 transport udp 514
+logging source-interface Vlan60
+logging facility local7
+logging trap notifications
+archive
+ path flash:config-archive
+ maximum 14
+ time-period 1440
+ write-memory
+```
+
+Le choix de la source d'export des journaux n'est pas anodin. Si vous la faites passer par le VLAN d'administration, vous conservez la séparation entre le réseau de production et le réseau de gestion ; si vous la faites sortir par une interface de service, vous devez vous assurer que le pare-feu autorise exactement ce flux et rien d'autre. Le protocole de transfert classique n'offre aucune protection : les journaux circulent en clair et peuvent être modifiés en chemin. Sur un réseau sensible, on les chiffre, on les signe, ou au minimum on restreint l'accès au serveur de collecte à quelques sources. Quoi qu'il en soit, dimensionnez le tampon local pour absorber plusieurs heures d'activité, car c'est ce qui vous reste quand le lien ou le serveur tombe.
+
+La supervision s'appuie sur ces mêmes journaux et y ajoute l'interrogation périodique des compteurs. La version 3 du protocole de gestion à distance est la seule qui doive rester activée : elle authentifie et chiffre les échanges, et permet de n'accorder qu'un droit de lecture à l'outil de surveillance. Les versions antérieures transmettent une communauté, c'est-à-dire un mot de passe non chiffré, et la communauté en écriture équivaut à un accès administrateur complet. On retire donc toute communauté résiduelle, on limite la vue exposée aux seuls objets utiles, et on associe la supervision à une adresse de gestion, jamais à une adresse accessible depuis les postes.
+
+Le tableau de vérification suivant condense les commandes que vous exécuterez après chaque modification. Prenez l'habitude de les enchaîner dans cet ordre : elles confirment en moins d'une minute que l'horloge est alignée, que les journaux partent bien vers la collecte, que l'agent de supervision répond en version 3 et que rien d'interdit ne subsiste dans la configuration.
+
+```table
+| Vérification | Commande attendue | Signe d'anomalie |
+| --- | --- | --- |
+| Synchronisation | Association d'horloge à la strate attendue | Aucune source sélectionnée ou statut rejeté |
+| Horodatage | Dates cohérentes entre plusieurs équipements | Décalage constant indiquant une source fausse |
+| Export des journaux | Flux reçu par le serveur de collecte | Tampon local qui déborde sans réception |
+| Supervision | Agent accessible en version 3 avec droits limités | Réponse en version 1 ou communauté en écriture |
+| Configuration propre | Résultat vide pour les services interdits | Une ligne résiduelle signalant un oubli |
+```
+
+
+- Alignez l'horloge avant d'horodater, et n'acceptez que des sources authentifiées.
+- Dimensionnez le tampon local pour survivre à une coupure de la collecte.
+- N'exportez jamais les journaux sur un réseau qui ne les protège pas.
+- N'autorisez que la version 3 de la supervision, en lecture seule, depuis la gestion.
+- Vérifiez la propreté de la configuration avec une commande d'inclusion après chaque changement.
+- Écrivez la durée de conservation des journaux et revoyez-la avec le responsable du respect des obligations.
+
+
+## Déployer : le mini-projet du site Lilas
+
+Tout ce qui précède n'a de valeur qu'assemblé. Le mini-projet de fin de chapitre reprend les trois mécanismes et les applique au site Lilas comme on le ferait en mission, c'est-à-dire avec des livrables identifiés, un ordre de réalisation justifié et une validation signée. Trois livrables constituent le dossier complet. Le premier décrit le contrôle d'accès du site, du serveur aux ports, en passant par les populations et les replis. Le second décrit le tunnel vers le siège, de la négociation au routage. Le troisième décrit le durcissement des six équipements, avec la même checklist appliquée à chacun mais des exceptions propres à chaque rôle.
+
+L'ordre de réalisation n'est pas arbitraire. On commence par la journalisation et l'horloge, car toute modification ultérieure doit être traçable et datée. On poursuit par le durcissement de la gestion, qui réduit le risque pendant les travaux eux-mêmes. Le tunnel arrive ensuite, car il faut pouvoir rejoindre le site distant pour vérifier son propre déploiement. Le contrôle d'accès vient en dernier, une fois les autres protections en place, précisément parce qu'il a le plus fort impact sur les utilisateurs et qu'il doit pouvoir être réversible rapidement. Cette séquence garantit que chaque étape est observée par un dispositif déjà en place, et non par rien.
+
+```text
+MODÈLE : checklist de validation post-déploiement
+
+CONTROLE D'ACCES AU PORT
+[ ] Poste certifie : EAP-TLS accepte, VLAN 10 applique, passerelle atteignable
+[ ] Poste hors domaine : PEAP accepte, VLAN 10 applique
+[ ] Imprimante : contournement par adresse MAC, VLAN 30 applique
+[ ] Poste non autorise : rejet, bascule en VLAN 99, DHCP seul, aucun reseau interne
+[ ] Comptabilite : depart et arrivee de session visibles sur le serveur
+[ ] Reconduction horaire observee sur un port de test
+[ ] Extinction du serveur : comportement conforme a la decision documentee
+
+VPN SITE A SITE
+[ ] Association de phase 1 etablie avec les algorithmes attendus
+[ ] Associations de phase 2 actives, compteurs qui augmentent
+[ ] Route vers 192.168.100.0/24 par l'interface de tunnel
+[ ] Ping de bout en bout depuis et vers chaque site
+[ ] Aucune traduction d'adresses pour le trafic du tunnel
+[ ] Extinction du lien distant : purge du tunnel en moins de 30 secondes
+
+DURCISSEMENT, PAR EQUIPEMENT
+[ ] Services d'annonce et services inutiles desactives
+[ ] SSH version 2 seule, listes d'acces sur les lignes de gestion
+[ ] Comptes locaux haches, moindre privilege applique
+[ ] Journaux horodates exportes, horloge authentifiee
+[ ] Supervision en version 3, lecture seule
+[ ] Ports d'accès : arbre, tempete, baux et adresses controles
+[ ] Bordure : redirections et diffusion dirigee desactives, origine verifiee
+[ ] Archive de configuration activee et derniere sauvegarde recuperee
+[ ] Commande d'inclusion ne retourne aucune ligne interdite
+
+EXCEPTIONS DOCUMENTÉES
+Equipement | Exception | Justification | Revu le | Par
+Switch-A   | Annonce reseau active sur le lien VoIP | Passerelle telephonique qui l'exige | 2026-10-01 | Admin
+Switch-C   | Contournement sur deux ports laboratoire | Appareils de mesure sans supplicant | 2026-10-01 | Admin
+```
+
+Chaque ligne de cette checklist correspond à une observation, jamais à une affirmation. On ne coche pas un contrôle parce qu'il est écrit dans la configuration, on le coche parce qu'on l'a vu se produire. Cette distinction paraît subtile et elle est tout le sujet de la validation : une configuration peut être parfaite sur le papier et ne pas fonctionner, parce qu'un réseau de management inaccessible rend le serveur injoignable, parce qu'un VLAN manquant dans la base du serveur rejette tout le monde, ou parce qu'un simple oubli de route empêche le tunnel de porter le trafic utile. Le contrôle signé engage son auteur : il dit que l'effet a été observé, pas seulement écrit.
+
+La gestion des exceptions mérite la même rigueur. Aucun réseau réel ne respecte la checklist sans écart : une passerelle téléphonique exige une annonce réseau, un appareil de mesure ne sait pas s'authentifier, un fournisseur impose un accès distant. L'art du durcissement consiste à transformer chaque écart en décision explicite, avec une justification, un responsable et une date de réexamen. Un écart documenté est une exception ; le même écart découvert en audit sans explication est une non-conformité. Tenez ce tableau à jour et faites-le relire, car c'est lui qui convainc un auditeur que le dispositif est piloté et non subi.
+
+Un dernier point concerne l'exploitation quotidienne, celle qui commence le lendemain de la recette. Le déploiement se termine, la sécurité elle non. Les journaux doivent être lus, les alertes analysées, les certificats renouvelés avant leur expiration, les comptes revus, les exceptions réexaminées, les sauvegardes testées en restauration. Un dispositif qui n'est pas réévalué perd de sa valeur à mesure que l'environnement change autour de lui. Planifiez ces revues, associez-y des dates, et mesurez le temps réellement consacré : dans la pratique, une heure par mois suffit à maintenir un site de cette taille en état, tant que rien n'est laissé s'accumuler.
+
+- Réalisez dans l'ordre : horloge et journaux, gestion, tunnel, contrôle d'accès.
+- Livrez trois dossiers : contrôle d'accès, tunnel, durcissement des six équipements.
+- Ne cochez une ligne de validation que si l'effet a été observé, pas seulement configuré.
+- Documentez chaque exception avec justification, responsable et date de réexamen.
+- Testez réellement la restauration d'une sauvegarde, sinon vous ne la possédez pas.
+- Planifiez les revues périodiques : lecture des journaux, comptes, certificats, exceptions.
+
+
+## Tester, mesurer et dépanner
+
+La sécurité se mesure comme tout le reste du parcours l'a déjà fait pour la performance : avec des tests reproductibles, des compteurs et une méthode. Le test de référence du contrôle d'accès tient en trois gestes. Vous branchez un poste en règle et vous vérifiez qu'il obtient son adresse dans le bon VLAN. Vous branchez un poste sans identité et vous vérifiez qu'il est confiné. Vous éteignez le serveur d'authentification et vous vérifiez que le comportement correspond à la décision prise à l'avance. Chacun de ces tests prend moins d'une minute, et ensemble ils valident la chaîne complète, du supplicant jusqu'au repli, en passant par l'attribution d'adresses qui échoue souvent quand le VLAN de repli n'a pas de serveur.
+
+Le test de référence du tunnel se décline de la même façon. Vous établissez le tunnel, vous observez les compteurs de chiffrement et de déchiffrement, vous traffic du réseau local vers le réseau distant, puis vous coupez le lien partenaire pour vérifier que la détection de mort purge les associations. Le retour à la normale doit être automatique, sans intervention. Enfin vous capturez quelques paquets sur le lien externe et vous confirmez que seuls des paquets chiffrés y circulent : cette capture est la seule preuve recevable que le chiffrement est réellement actif et pas seulement déclaré.
+
+```text
+EXEMPLE : protocole de test apres chaque modification
+
+! Controle d'accès
+show authentication sessions
+show dot1x interface GigabitEthernet1/0/5 detail
+test aaa server radius RADIUS_ISE
+
+! Tunnel
+show crypto ikev2 sa
+show crypto ipsec sa
+ping 192.168.100.1 source 10.10.0.1 repeat 100
+
+! Hygiène generale
+show running-config | include http|telnet|snmp-server community|finger
+show ntp association detail
+show snmp user
+show archive
+```
+
+Le tableau suivant condense les symptômes les plus fréquents et la cause qui leur correspond le plus souvent. Servez-vous-en comme d'une table de tri : commencez toujours par la vérification la moins coûteuse et la plus discriminante, puis remontez. Dans la grande majorité des cas, le problème n'est pas dans le mécanisme lui-même mais dans une pièce périphérique oubliée : une route, un VLAN absent de la base du serveur, une clé qui a changé d'un seul côté, une liste d'accès qui bloque le port d'authentification.
+
+```table
+| Symptôme | Cause probable | Première vérification |
+| --- | --- | --- |
+| Port qui reste fermé pour tout le monde | Serveur injoignable depuis le commutateur | Test de port UDP 1812 et journal du serveur |
+| Tous les postes atterrissent en invité | Vlan inconnu du serveur ou attribut absent | Journal d'acceptation et attributs renvoyés |
+| Imprimante hors service après déploiement | Contournement non activé sur le port | État de session du port et adresse de l'imprimante |
+| Tunnel qui n'établit pas en phase 1 | Clé incohérente ou adresse du pair erronée | Message de rejet et comparaison des deux configurations |
+| Tunnel établi mais trafic absent | Route manquante ou filtrage d'entrée | Table de routage et liste d'accès de bordure |
+| Transferts web qui bloquent | Taille de segment trop grande | Test de taille de paquet à travers le tunnel |
+| Gestion impossible après durcissement | Ligne de gestion filtrée trop étroitement | Liste d'accès appliquée aux lignes de gestion |
+| Dates incohérentes dans les journaux | Source d'horloge non authentifiée | Association d'horloge et clé utilisée |
+```
+
+
+Les outils du dépanneur restent d'ailleurs les mêmes que ceux des chapitres précédents, auxquels s'ajoutent les journaux du serveur d'authentification. La capture de paquets confirme ce qui circule réellement. Le suivi de session montre l'état d'authentification port par port. La commande d'inclusion sur la configuration révèle les services qu'on croyait éteints. Et la comparaison côte à côte de deux configurations, celle qui fonctionne et celle qui ne fonctionne pas, reste la méthode la plus rapide qui soit : la différence se lit presque toujours en quelques lignes, une clé, un VLAN, une route, une temporisation.
+
+- Testez chaque contrôle par l'observation d'un effet, jamais par la lecture de la configuration.
+- Capturez le lien externe : c'est la preuve que le chiffrement est réellement actif.
+- Employez la table de tri à partir de la vérification la plus discriminante.
+- Une modification à la fois, avec un test et une sauvegarde entre chacune.
+- Cherchez d'abord les pièces périphériques : route, VLAN, clé, liste d'accès, port UDP.
+
+
+## À retenir
+
+Ce chapitre a posé les trois verrous de la sécurité réseau opérationnelle : prouver une identité avant d'ouvrir un port, chiffrer les liens entre sites, et retirer aux équipements tout ce qui n'est pas nécessaire à leur fonctionnement. Chaque mécanisme se vérifie par un effet observé, jamais par une configuration seulement écrite, et chacun laisse une trace exploitable quand la journalisation et l'horloge ont été mises en place avant lui.
+
+- 802.1X oppose un supplicant, un authenticateur et un serveur RADIUS ; le port reste fermé sans identité acceptée.
+- EAP-TLS utilise des certificats des deux côtés, PEAP-MSCHAPv2 protège un mot de passe, le contournement par adresse MAC couvre les objets.
+- Le VLAN dynamique arrive dans les attributs de tunnel du serveur, le repli invité prend le relais en cas d'échec.
+- La comptabilité transforme chaque session en preuve datée : identité, port, VLAN, durée.
+- Le déploiement se fait en trois phases, avec un port de secours physique et une décision écrite pour la panne du serveur.
+- IKEv2 authentifie en quatre messages, ESP chiffre les paquets utiles, la transparence parfaite en avant protège les clés de phase 2.
+- AES-GCM, SHA-384 et un échange de clés de groupe 14 ou 19 constituent la référence ; 3DES, MD5 et les groupes courts sont proscrits.
+- L'exemption de NAT, la réduction de taille de paquet et la route vers le réseau distant règlent la majorité des tunnels qui ne montent pas.
+- Le durcissement retire les annonces et les services inutiles, impose SSH version 2, hache les comptes et archive la configuration.
+- Les ports d'accès gagnent une activation rapide, une garde de messages, une limite de tempête, un plafond d'adresses et l'inspection des baux.
+- La bordure rejette les origines incohérentes, coupe les redirections et protège son plan de contrôle par des taux limités.
+- L'horloge authentifiée, les journaux centralisés et la supervision en lecture seule forment un ensemble indivisible.
+
+## Erreurs fréquentes
+
+La première erreur est de déployer le contrôle d'accès avant d'avoir testé le chemin du serveur : le port se ferme pour tout le monde et personne ne sait pourquoi. La deuxième est d'oublier la traduction d'adresses sur le trafic du tunnel, alors que tout le reste est juste. Viennent ensuite les exceptions tacites, les comptes conservés en clair, les communautés de supervision résiduelles et les sauvegardes jamais restaurées.
+
+- Ouvrir le contrôle d'accès à tous les ports d'un coup, sans port de secours ni première phase de test.
+- Oublier d'exclure le trafic du tunnel de la traduction d'adresses, ce qui empêche la négociation de se terminer.
+- Laisser une interface web, Telnet ou une communauté de gestion résiduelle après le durcissement.
+- Placer le serveur d'authentification derrière un port que le commutateur doit lui-même authentifier.
+- Activer l'inspection des baux sans déclarer les ports concernés, et croire à une protection inactive.
+- Cocher une ligne de validation sur la foi d'une configuration plutôt que d'un effet observé.
+- Conserver des exceptions sans responsable ni date de réexamen, jusqu'à ce qu'un audit les découvre.
+- Déployer sans sauvegarde, puis hésiter à corriger par peur de ne pas pouvoir revenir en arrière.
+
+## Pour aller plus loin
+
+Les trois références officielles ci-dessous suffisent pour approfondir sans vous perdre dans la documentation constructeur. La norme IEEE 802.1X décrit le mécanisme d'authentification au port dans sa version complète, y compris les échanges EAPOL que vous avez vus en schéma : https://www.ieee802.org/1/pages/802.1X.html. La RFC 7296 définit IKEv2, la négociation, la reprise automatique et les extensions d'authentification : https://datatracker.ietf.org/doc/html/rfc7296. La RFC 4301 expose l'architecture de sécurité IPsec, les associations de sécurité et les modes de transport et tunnel : https://datatracker.ietf.org/doc/html/rfc4301.
+
+Pour le filtrage de bordure, la recommandation opérationnelle la plus citée reste la RFC 2827, qui décrit le contrôle des adresses source en entrée : https://datatracker.ietf.org/doc/html/rfc2827. Complétez ensuite par le guide de configuration de votre propre plateforme, mais seulement après avoir compris les mécanismes ici : la documentation d'équipement dit comment écrire une commande, elle dit rarement dans quel ordre la valider ni quel test la confirme.
+
+## Et maintenant : passez à l'exercice pratique du site Lilas
+
+Vous avez parcouru le dernier chapitre du parcours Réseaux : contrôle d'accès, chiffrement site à site et durcissement des équipements referment la boucle commencée par le modèle OSI. Passez à l'exercice pratique du site Lilas — il mobilise l'ensemble du parcours, des sous-réseaux jusqu'aux règles de filtrage. Avant de valider le niveau, relisez la section erreurs fréquentes : la plupart des incidents réseau viennent d'une règle oubliée ou d'un service non durci, jamais d'un protocole incompris.

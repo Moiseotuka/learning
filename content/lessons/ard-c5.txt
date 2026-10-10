@@ -1,0 +1,804 @@
+Bienvenue dans ce cinquième chapitre du parcours Arduino et ESP32 embarqué, celui où votre objet quitte enfin l'isolement. Jusqu'ici, vos programmes lisaient des capteurs, allumaient des LED et prenaient des décisions tout seuls, sur une seule carte posée sur votre bureau. À partir de maintenant, la même carte va parler au monde extérieur : elle se connectera à votre réseau local, exposera une page web que n'importe quel navigateur peut ouvrir, et publiera ses mesures vers un service de messagerie pensé pour les machines. C'est le saut qualitatif qui distingue une démonstration de tableur d'un véritable objet connecté : la mesure n'est plus seulement affichée sur un écran, elle devient disponible à distance, horodatée, lisible par un tableau de bord, une application mobile ou une règle d'alerte. Ce chapitre suppose que vous maîtrisez déjà les bases des chapitres précédents, en particulier les machines à états et les temporisations non bloquantes de la leçon sur les automates, car tout le code réseau que vous allez écrire repose sur cette discipline : une boucle principale qui tourne vite, jamais interrompue par un délai long.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, et vous les aurez déjà écrites dans du code complet. Premièrement, vous connecterez l'ESP32 en Wi-Fi en mode station, c'est-à-dire en client de votre routeur, avec une stratégie de connexion qui ne fige pas le programme. Deuxièmement, vous ferez tourner un serveur web sur la puce elle-même, capable de servir une page HTML à un navigateur et de répondre à des routes d'API au format JSON. Troisièmement, vous publierez des mesures en MQTT sur un broker, puis vous vous abonnerez à un topic pour recevoir des commandes à distance. Quatrièmement, vous rendrez tout cela robuste : reconnexion automatique avec retard croissant, gestion de la perte de réseau, journal de débogage sur le port série et chien de garde logiciel. Ces quatre compétences sont exactement celles que l'on demande en production sur un microcontrôleur connecté, et le projet fil rouge du chapitre, une station météo connectée, les réunit toutes dans un seul sketch que vous récrirez seul dans l'exercice pratique.
+
+Un mot sur la manière d'aborder ce chapitre, car le réseau est un domaine où les débutants se découragent vite. Un programme qui ne fonctionne pas alors qu'il « a l'air correct » est ici la norme, pas l'exception : le réseau ajoute une couche d'incertitude qui n'existe pas quand on lit une broche. Le routeur est-il joignable ? Le mot de passe est-il exact ? Le broker écoute-t-il sur cette adresse ? Le pare-feu bloque-t-il le port ? Plutôt que de subir ces questions, vous allez apprendre à les poser méthodiquement, dans l'ordre, en affichant chaque étape sur le moniteur série. La règle d'or du développeur d'objets connectés tient en une phrase : affichez toujours ce que vous faites, avant, pendant et après chaque étape réseau. Une ligne de journal qui dit wifi: connexion en cours puis wifi: IP obtenue 192.168.1.42 vous fait gagner une heure par rapport à un programme muet qui affiche simplement rien. Nous adopterons ce réflexe dès le premier exemple, et nous le conserverons jusqu'au dernier.
+
+## Le réseau de votre objet : adresse IP, passerelle, DNS
+
+Avant d'écrire une seule ligne de code, il faut partager un vocabulaire. Un réseau local, typiquement celui de votre domicile ou de votre atelier, est un ensemble d'appareils qui peuvent s'envoyer des paquets. Le routeur, souvent la box fournie par votre opérateur, joue deux rôles à la fois : il distribue des adresses à chaque appareil qui se connecte, et il relaie le trafic vers l'extérieur, c'est-à-dire vers Internet. Chaque appareil du réseau local reçoit une adresse unique de la forme 192.168.1.34, appelée adresse IP. Cette adresse sert d'identifiant postale : pour parler à votre ESP32, un autre appareil doit connaître cette adresse, ou du moins un nom qui la désigne.
+
+L'adresse IP est composée de deux parties, séparées par le masque de sous-réseau. Si le masque est 255.255.255.0, les trois premiers octets désignent le réseau, le dernier l'hôte. Ainsi 192.168.1.34 et 192.168.1.99 sont sur le même réseau et peuvent dialoguer directement, tandis que 192.168.2.50 en fait partie : il faudra passer par la passerelle, qui est l'adresse du routeur sur ce réseau, souvent 192.168.1.1. Enfin, pour rejoindre un serveur d'internet, il faut résoudre son nom en adresse avec le service DNS, généralement assuré par le routeur lui-même. Ces trois pièces, adresse locale, passerelle et DNS, sont exactement les trois informations que votre ESP32 devra obtenir du routeur lors de la connexion.
+
+Le protocole qui distribue ces informations s'appelle DHCP. À chaque mise en route, l'ESP32 envoie une demande de broadcast, le routeur répond avec une offre, et la négociation se conclut par la concession d'une adresse pour une durée limitée, appelée bail. Ce mécanisme explique deux phénomènes que vous rencontrerez. D'abord, l'adresse de votre carte peut changer d'un redémarrage à l'autre si le bail n'est pas renouvelé à l'identique. Ensuite, si aucune adresse n'est attribuée, c'est que la demande DHCP n'a pas reçu de réponse : le réseau n'est pas joignable, ou le mot de passe était refusé. Un schéma résume la chaîne complète, du capteur jusqu'à l'utilisateur final.
+
+```
+   [ DHT22 ]--GPIO--> [ ESP32 192.168.1.42 ]
+                           |
+                           | Wi-Fi (station, DHCP)
+                           v
+                    [ Routeur 192.168.1.1 ] ---- Internet
+                      |         |                    |
+                      |         |                    +--> [ Broker MQTT ]
+                      |         +--> [ PC, tableur ]         easylearn/...
+                      +--> [ Smartphone, navigateur ]
+```
+
+Une dernière distinction vaut la peine d'être mémorisée, car elle revient dans toutes les documentation : le mode station et le mode point d'accès. En mode station, l'ESP32 est un client, exactement comme votre téléphone : il se connecte à un réseau existant et en obtient une adresse. En mode point d'accès, l'ESP32 devient lui-même un mini-routeur, il émet son propre réseau auquel d'autres appareils se raccordent. Les deux modes peuvent coexister, c'est le mode combiné, que nous utiliserons plus loin pour créer un portail de configuration de secours. Dans ce chapitre, le mode station est la base : c'est lui qui permet à votre objet de rejoindre le réseau que vous utilisez déjà au quotidien.
+
+Voici un tableau des états renvoyés par la bibliothèque Wi-Fi après une tentative de connexion. Les connaître vous permet de transformer un silence incompréhensible en un diagnostic précis.
+
+```table
+| Constante | Valeur | Signification pratique |
+| --- | --- | --- |
+| WL_IDLE_STATUS | 0 | La carte initialise le module, aucune décision prise |
+| WL_NO_SSID_AVAIL | 1 | Le réseau annoncé n'est pas détecté : mauvais nom ou hors portée |
+| WL_SCAN_COMPLETED | 2 | Une balayage s'est terminé, connexion encore à lancer |
+| WL_CONNECTED | 3 | Connexion établie et adresse IP obtenue |
+| WL_CONNECT_FAILED | 4 | Association refusée : mot de passe presque toujours en cause |
+| WL_CONNECTION_LOST | 5 | Connexion établie puis perdue |
+| WL_DISCONNECTED | 6 | Déconnecté, la carte retente selon sa configuration |
+```
+
+
+## Connecter l'ESP32 en Wi-Fi mode station
+
+La connexion elle-même tient en peu de lignes, mais chaque ligne mérite d'être comprise. On commence par fixer le mode avec WiFi.mode, puis on appelle WiFi.begin avec le nom du réseau et son mot de passe. Cette fonction est asynchrone : elle lance la procédure d'association et retourne immédiatement, sans attendre le résultat. Le programme doit donc interroger l'état jusqu'à ce que la connexion aboutisse.
+
+```cpp
+#include <WiFi.h>
+
+const char* SSID     = "votre-reseau";
+const char* MOTDEPASSE = "votre-mot-de-passe";
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(SSID, MOTDEPASSE);
+  Serial.print("wifi: connexion a ");
+  Serial.println(SSID);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("wifi: IP obtenue ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {}
+```
+
+Ce premier squelette est volontairement bloquant : le programme s'arrête dans la boucle while tant que la connexion n'est pas établie. Pour une carte dont le seul rôle est d'être connectée, cela peut suffire au démarrage. C'est en revanche inacceptable dès que vous avez des LED à faire clignoter, des capteurs à lire ou un afficheur à rafraîchir pendant la connexion. La version non bloquante, que nous construirons dans la section suivante, remplace ce while par un test périodique dans loop(), en conservant l'état de la procédure dans une variable d'état.
+
+Quelques détails de bon usage méritent d'être signalés. Le nom du réseau et le mot de passe sont stockés dans des constantes de type chaîne, ce qui évite de les disperser dans le code : une seule modification à faire quand vous changez de réseau. L'adresse IP s'obtient avec WiFi.localIP() après connexion, et se présente sous la forme d'un objet que Serial.println sait afficher point par point. Pour connaître la puissance du signal reçu, WiFi.RSSI() renvoie un nombre négatif en décibels : au-delà de moins soixante-dix, la liaison devient peu fiable et il faut rapprocher l'antenne du routeur. Pour une carte encastrée dans une boîte métallique, ce simple indicateur vous évitera des heures d'investigation.
+
+La gestion des erreurs commence par le refus des valeurs par défaut. Ne laissez jamais le nom de réseau en dur dans un fichier que vous partagerez publiquement, et méfiez-vous des chaînes vides : WiFi.begin avec un SSID vide renverra immédiatement un état d'échec. Une bonne pratique consiste à prévoir un repli : si la connexion échoue après un délai raisonnable, le programme continue en mode dégradé, en publiant par exemple ses mesures sur le port série seul, plutôt que de rester bloqué indéfiniment. Vous verrez dans la section sur la robustesse comment structurer ce repli proprement.
+
+## Une connexion qui ne bloque jamais
+
+La discipline non bloquante est le cœur du chapitre, et elle prolonge directement ce que vous avez appris sur les machines à états. L'idée est simple : au lieu d'attendre dans une boucle fermée, on mémorise l'état de la procédure et on la fait progresser à chaque passage dans loop(). Pour la connexion Wi-Fi, quatre états suffisent : en attente de connexion, connecté, en attente de délai de nouveau essai, et déconnecté. Chaque état déclenche une action différente, et les transitions sont conditionnées par le temps écoulé, mesuré avec millis().
+
+```cpp
+enum EtatWifi { ATTENTE, CONNECTE, ATTENT_RETRY, HORS_RESEAU };
+EtatWifi etatWifi = ATTENTE;
+unsigned long debutAttente = 0;
+unsigned long dernierEssai = 0;
+const unsigned long DELAI_CONNEXION = 15000;
+const unsigned long DELAI_RETRY    = 20000;
+
+void demarrerConnexion() {
+  WiFi.disconnect();
+  WiFi.begin(SSID, MOTDEPASSE);
+  debutAttente = millis();
+  etatWifi = ATTENTE;
+  Serial.println("wifi: nouvelle tentative");
+}
+
+void gererWifi() {
+  unsigned long maintenant = millis();
+  switch (etatWifi) {
+    case ATTENTE:
+      if (WiFi.status() == WL_CONNECTED) {
+        etatWifi = CONNECTE;
+        Serial.print("wifi: OK ");
+        Serial.println(WiFi.localIP());
+      } else if (maintenant - debutAttente > DELAI_CONNEXION) {
+        etatWifi = HORS_RESEAU;
+        dernierEssai = maintenant;
+        Serial.println("wifi: echec, absence de reseau");
+      }
+      break;
+    case CONNECTE:
+      if (WiFi.status() != WL_CONNECTED) {
+        etatWifi = HORS_RESEAU;
+        dernierEssai = millis();
+        Serial.println("wifi: liaison perdue");
+      }
+      break;
+    case HORS_RESEAU:
+      if (maintenant - dernierEssai > DELAI_RETRY) {
+        demarrerConnexion();
+      }
+      break;
+  }
+}
+```
+
+Cette structure a trois avantages décisifs. Le programme reste libre pendant les quinze secondes d'attente : une LED peut clignoter, un afficheur peut se rafraîchir, un capteur peut être lu. La perte de connexion est détectée dans l'état CONNECTE, ce que l'approche naïve oublie toujours : une fois connecté, il faut continuer à surveiller. Enfin, le délai entre deux essais évite de marteler le routeur, ce qui consommerait de la batterie et pourrait même déclencher une protection anti brute force sur certains équipements.
+
+Il existe un raccourci commode pour ceux qui préfèrent un style plus simple : WiFi.setAutoReconnect(true) demande au module de gérer seul la réassociation, et WiFi.reconnect() force une nouvelle tentative. Ces fonctions sont pratiques, mais elles ne remplacent pas l'affichage de l'état sur le port série, et elles rendent parfois le diagnostic plus obscur. La machine à états explicite que vous venez d'écrire reste la solution recommandée quand la visibilité prime, car elle vous dit exactement à quel moment la connexion a été perdue et combien de temps a duré chaque tentative.
+
+Un point de vigilance sur millis(). Comme vous le savez depuis la leçon sur les automates, la variable déborde après environ cinquante jours de fonctionnement continu. Le pattern de comparaison maintenant - debut > delai reste correct même après le débordement, à condition de ne jamais écrire maintenant < debut. C'est une des raisons pour lesquelles on compare toujours des différences et jamais des dates absolues. Sur un objet connecté destiné à tourner des mois sans interruption, ce détail n'est pas théorique : il évite un redémerrage incompréhensible tous les cinquante jours.
+
+Pour conclure cette première grande partie, voici l'ordre de démarrage que nous réutiliserons dans tout le chapitre. Le port série d'abord, pour pouvoir observer la suite. Le Wi-Fi ensuite, avec la machine à états de gestion. Le serveur web une fois l'adresse obtenue, puis le client MQTT enfin, car les deux dépendent d'une liaison établie. Chaque étape annonce sa naissance sur le port série et signale ses échecs avec un code exploitable. Ce canevas, répété à l'identique dans chaque projet connecté, est ce qui sépare un prototype qui fonctionne devant vous d'un objet qui fonctionne aussi quand vous n'êtes pas là.
+
+
+Une fois l'adresse IP obtenue, votre ESP32 peut devenir à son tour un serveur, c'est-à-dire un programme à l'écoute de demandes entrantes. C'est une révolution de perspective : jusqu'ici, la carte initiait toujours la communication. Maintenant, c'est l'inverse : elle attend, et n'importe quel appareil du réseau local, ordinateur, téléphone ou tablette, peut venir la solliciter. Le cas le plus familier est celui du navigateur web, qui envoie une requête HTTP et attend en retour une page HTML. Comprendre ce mécanisme à la main, sans cadre abstrait, vous donnera une base solide pour toute l'architecture web moderne.
+
+## Servir une page web depuis la puce
+
+Le protocole HTTP repose sur un modèle simple : un client envoie une ligne de commande textuelle, le serveur répond par un en-tête puis un corps. La requête la plus courante se lit GET /index.html HTTP/1.1, ce qui signifie : donne-moi la ressource située à l'emplacement /index.html. Le serveur répond par un code de statut, 200 pour le succès, 404 quand la ressource n'existe pas, puis un en-tête qui décrit le contenu, notamment son type, et enfin les données elles-mêmes. Quand vous tapez une adresse dans un navigateur, exactement ce dialogue se produit, en général en quelques millisecondes.
+
+La bibliothèque WebServer incluse avec l'outil ESP32 encapsule tout cela. Vous déclarez un objet sur le port 80, le port standard du protocole HTTP, vous enregistrez des routes, puis vous appelez handleClient() en permanence dans loop(). Cette dernière appelée est indispensable : c'est elle qui accepte les connexions entrantes et déclenche le bon gestionnaire. L'oublier est l'erreur la plus fréquente du débutant, qui observe alors un port fermé malgré un code apparemment correct.
+
+```cpp
+#include <WebServer.h>
+
+WebServer serveur(80);
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(SSID, MOTDEPASSE);
+  while (WiFi.status() != WL_CONNECTED) delay(250);
+  Serial.println(WiFi.localIP());
+
+  serveur.on("/", HTTP_GET, []() {
+    serveur.send(200, "text/html", PAGE_ACCUEIL);
+  });
+  serveur.onNotFound([]() {
+    serveur.send(404, "text/plain", "Route inconnue");
+  });
+  serveur.begin();
+}
+
+void loop() {
+  serveur.handleClient();
+}
+```
+
+Le point-virgule manquant à la fin d'une déclaration n'est pas la seule source d'erreur dans ce genre de code. Il faut surtout saisir que les gestionnaires sont des fonctions anonymes, appelées lambdas, qui s'exécutent au moment exact où la requête arrive. Elles doivent donc être rapides et ne jamais bloquer : aucune attente longue, aucun délai de lecture de capteur dans le corps d'un gestionnaire. Si une mesure prend du temps, vous publierez plutôt la dernière valeur connue, mise à jour en dehors du serveur, dans le flux normal de loop(). Le serveur n'est qu'une vitrine, il expose l'état courant de l'objet, il ne le calcule pas.
+
+La page elle-même est une chaîne de caractères stockée en mémoire flash, ce qui vous oblige à quelques précautions. Les guillemets à l'intérieur de la page doivent être échappés, et les accents sont autorisés si vous enregistrez le fichier en UTF-8. Pour éviter ce casse-tête, beaucoup de projets embarquent la page dans un fichier séparé ou utilisent un littéral brut. Quel que soit votre choix, gardez en tête que l'ESP32 dispose d'une mémoire vive limitée : une page de quelques kilo-octets est confortable, un site complet avec images ne l'est pas. La règle empirique tient en une phrase : le serveur embarqué sert des pages de supervision, pas un site de contenu.
+
+Voici un exemple de page minimaliste, volontairement petite, qui affiche un titre et un lien vers l'API que nous construirons ensuite. Notez qu'il s'agit d'un bloc de code, la seule zone du fichier où les balises HTML sont autorisées.
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Station meteo</title>
+</head>
+<body>
+  <h1>Station meteo easyLearn</h1>
+  <p>Derniere mesure : <strong id="valeur">...</strong></p>
+  <a href="/api/mesures">Voir le JSON</a>
+</body>
+</html>
+```
+
+L'attribut viewport mérite une explication : sans lui, le téléphone rend la page dans une fenêtre étroite et force l'utilisateur à zoomer. Avec lui, la page occupe toute la largeur de l'écran. C'est le détail qui fait la différence entre une page perçue comme bâclée et une page qui semble native sur mobile. Pour une supervision d'atelier consultée depuis un téléphone, ce simple attribut est indispensable.
+
+## Routes, API JSON et lecture de capteurs à la demande
+
+Une page statique sert à l'œil, mais c'est l'API qui sert les machines. Le principe consiste à exposer des routes dont la réponse est du JSON, un format texte structuré que n'importe quel client sait interpréter. L'ESP32 produit alors deux sorties complémentaires : le HTML pour l'humain, le JSON pour le programme. C'est exactement la séparation des préoccupations que l'on retrouve dans toute application web professionnelle.
+
+```cpp
+#include <ArduinoJson.h>
+
+void routeMesures() {
+  StaticJsonDocument<192> doc;
+  doc["temp"]  = derniereTemp;
+  doc["hum"]   = derniereHum;
+  doc["rssi"]  = WiFi.RSSI();
+  doc["up"]    = millis() / 1000;
+  String sortie;
+  serializeJson(doc, sortie);
+  serveur.send(200, "application/json", sortie);
+}
+
+// enregistrement dans setup()
+serveur.on("/api/mesures", HTTP_GET, routeMesures);
+```
+
+Le choix de la bibliothèque ArduinoJson n'est pas anodin. Elle sérialise un document typé, évitant les chaînes concaténées à la main où une virgule oubliée casse tout le tableau de bord côté client. La taille déclarée, ici 192 octets, doit correspondre au contenu réel : trop petite, la sérialisation échoue silencieusement ; trop grande, vous gaspillez de la mémoire vive. Mesurez, ajustez, puis figez la valeur. Un JSON mal formé est le défaut le plus difficile à diagnostiquer, car le serveur répond 200 et c'est le client qui échoue, souvent sans message exploitable.
+
+Pensez aussi au contenu de la réponse. Le type application/json indique au client comment parser le corps. Pour du HTML, c'est text/html. Pour un fichier téléchargé, il faudrait un type binaire. Ces en-têtes ne sont pas décoratifs : un JSON servi en text/plain sera refusé par certaines bibliothèques front-end, et une page HTML servi sans encodage affichera des accents cassés. Le protocole HTTP est un protocole de métadonnées autant que de données, et soigner ces métadonnées, c'est soigner l'interopérabilité.
+
+Voici un schéma du cycle complet d'une requête, de la broche jusqu'au navigateur, en passant par les couches que vous venez d'écrire.
+
+```
+ Navigateur                ESP32                         Capteur
+     |                        |                             |
+     |  GET /api/mesures      |                             |
+     |----------------------->|                             |
+     |                        |  lecture valeur courante    |
+     |                        |---------------------------->|
+     |                        |  24.5 (memoire immediate)   |
+     |                        |<----------------------------|
+     |  200 OK {"temp":24.5}  |                             |
+     |<-----------------------|                             |
+     |                        |                             |
+     |  GET /  (HTML)         |                             |
+     |----------------------->|                             |
+     |  200 OK <html>...</html>|                            |
+     |<-----------------------|                             |
+```
+
+La distinction valeur courante et valeur fraîche est capitale. Le capteur n'est lu qu'une fois par cycle, hors du gestionnaire HTTP, et le serveur ne fait qu'exposer la dernière lecture. Si vous lisiez le capteur à l'intérieur du gestionnaire, vous exposeriez le bus matériel à des requêtes imprévisibles, et une lecture DHT22 trop rapprochée échouerait de toute façon. Le serveur ne doit jamais dépendre du matériel directement : il publie un état, il ne le produit pas.
+
+Il reste à traiter la question des méthodes HTTP. GET sert à lire, POST à envoyer une création, PUT à remplacer, DELETE à supprimer. Pour un objet embarqué, deux suffisent en pratique : GET pour les lectures, POST pour les commandes, par exemple changer l'intervalle de publication ou forcer une calibration. Le corps d'une requête POST arrive dans la chaîne serveur.arg("body"), qu'il faut parser avec la même rigueur que la sortie JSON. Une commande mal formatée ne doit jamais modifier l'état : validez d'abord, appliquez ensuite, répondez toujours par un code de statut explicite.
+
+Un dernier conseil d'architecture, issu de l'expérience. Exposez une route d'état globale qui répond en une ligne l'ensemble des informations de diagnostic : adresse IP, force du signal, état MQTT, temps de fonctionnement, compteur de redémarrages. Cette route, souvent nommée /api/etat, devient votre meilleur outil de dépannage à distance. Quand un objet cesse de répondre, la première question est toujours : est-ce que la carte tourne, ou est-ce que seul le réseau est tombé ? Une réponse JSON sur une page locale tranche la question en quelques secondes, sans ouvrir l'IDE ni brancher le câble USB.
+
+## MQTT : le messager des objets connectés
+
+Le serveur web répond quand on lui demande. MQTT fait l'inverse : il pousse les informations vers quiconque s'est abonné, sans que l'émetteur ait à connaître ses destinataires. Ce modèle, appelé publication et abonnement, est né dans les années quatre-vingt-dix pour les télécoms mobiles, précisément pour des dispositifs qui doivent fonctionner sur des liens coûteux et instables. Il est devenu le protocole dominant de l'internet des objets, et ce n'est pas un hasard : sa sobriété et sa tolérance aux coupures correspondent exactement aux contraintes d'un microcontrôleur.
+
+Au centre du système se trouve un broker, un serveur dédié qui reçoit les messages, les classe par sujet et les redistribue aux abonnés. Le sujet, ou topic, est une chaîne hiérarchique séparée par des barres obliques, par exemple easylearn/ardc5/mesures. La hiérarchie sert de filtre : s'abonner à easylearn/ardc5/# reçoit tous les sujets du chapitre, tandis que easylearn/+/alerte reçoit les alertes de tous les projets. Ce mécanisme de remplacement est d'une puissance remarquable pour organiser un parc d'objets sans modifier une ligne de code côté émetteur.
+
+Comparons les deux approches pour bien saisir ce qui change. Avec un serveur web, l'ESP32 doit rester à l'écoute en permanence et le client doit connaître son adresse, qui peut changer. Avec MQTT, l'ESP32 publie une fois et continue son travail ; le broker, lui, est joignable sous un nom de domaine stable et conserve les messages destinés aux abonnés temporaires si la fonction est activée. Le coût de cette commodité, c'est la dépendance à un tiers : si le broker tombe, la chaîne s'interrompt. D'où l'importance capitale de la reconnexion, que nous traiterons dans la partie suivante.
+
+Le protocole définit plusieurs niveaux de qualité de service, notés QoS. Le tableau ci-dessous résume leur portée et leur coût.
+
+```table
+| QoS | Garantie | Comportement | Usage typique |
+| --- | --- | --- | --- |
+| 0 | Au plus une fois | Envoi sans accusé, le message peut se perdre | Télémétrie haute fréquence |
+| 1 | Au moins une fois | Accusé de réception, doublons possibles | États, compteurs, alertes |
+| 2 | Exactement une fois | Protocole à quatre phases, sans doublon | Commandes critiques, facturation |
+```
+
+
+En pratique sur un ESP32 avec la bibliothèque PubSubClient, seul le niveau 0 est disponible pour la publication. C'est largement suffisant pour des mesures régulières : si un relevé se perd, le suivant corrige l'information dans les dix secondes. En revanche, pour une commande qui ne doit jamais être perdue, vous ajouterez un accusé de réception applicatif dans votre propre message, par exemple un identifiant de série que le récepteur confirme. C'est une solution simple et déterministe, sans dépendre d'un niveau de service que l'implémentation ne propose pas.
+
+Il existe plusieurs manières de démarrer un broker pour tester. En local, le paquet mosquitto fournit un serveur minimaliste et une paire d'outils en ligne de commande, mosquitto_sub et mosquitto_pub, qui permettent d'observer les messages sans écrire une ligne de code. En ligne, des services gratuits offrent un accès public, mais ils imposent souvent une authentification et une connexion chiffrée. Pour vos premiers pas, un broker local est préférable : le réseau reste sous votre contrôle, les journaux sont consultables, et vous éliminez une variable quand quelque chose ne fonctionne pas.
+
+Voici la séquence complète d'une session MQTT depuis un terminal, telle que vous la verrez apparaître au débogage.
+
+```
+$ mosquitto_sub -h 127.0.0.1 -t "easylearn/#" -v
+easylearn/ardc5/mesures {"temp":24.5,"hum":51.2}
+easylearn/ardc5/mesures {"temp":24.6,"hum":51.0}
+easylearn/ardc5/commande {"interval":20}
+```
+
+La ligne -v affiche le sujet avant le contenu, ce qui est précieux quand plusieurs flux se mêlent. Le filtre easylearn/# vous permet de surveiller d'un coup d'œil tout ce que vos objets publient pendant une session de développement. Gardez cette fenêtre ouverte en permanence pendant vos essais : elle vous dira, mieux que n'importe quel log, si l'ESP32 publie réellement ou s'il croit publier.
+
+
+La théorie de MQTT est en place, il est temps d'écrire le code qui s'y connecte. La bibliothèque PubSubClient est le standard de l'écosystème Arduino pour cette tâche : elle est légère, éprouvée et suffisante pour la grande majorité des objets de supervision. Elle s'appuie sur le client TCP fourni par la bibliothèque Wi-Fi et implémente le sous-ensemble du protocole dont un objet a besoin : connexion, authentification, publication, abonnement et callback de réception.
+
+## Publier et recevoir avec PubSubClient
+
+L'objet PubSubClient se construit autour d'une instance de client réseau que vous lui transmettez. Ensuite, trois appels structurent l'essentiel : setServer pour indiquer l'adresse et le port du broker, setCallback pour déclarer la fonction qui traitera les messages reçus, et connect pour ouvrir la session. Chacun de ces appels peut échouer, et c'est leur valeur de retour qu'il faut toujours vérifier.
+
+```cpp
+#include <PubSubClient.h>
+
+WiFiClient lienWifi;
+PubSubClient mqtt(lienWifi);
+
+const char* BROKER = "192.168.1.10";
+const int   PORT   = 1883;
+const char* ID     = "ard-c5-001";
+
+void surMessage(char* sujet, byte* donnees, unsigned long taille) {
+  String charge;
+  for (unsigned long i = 0; i < taille; i++) charge += (char)donnees[i];
+  Serial.print("mqtt: recu ");
+  Serial.print(sujet);
+  Serial.print(" -> ");
+  Serial.println(charge);
+}
+
+void demarrerMqtt() {
+  mqtt.setServer(BROKER, PORT);
+  mqtt.setCallback(surMessage);
+}
+
+void connecterMqtt() {
+  if (!mqtt.connected()) {
+    Serial.print("mqtt: connexion ");
+    if (mqtt.connect(ID)) {
+      Serial.println("ok");
+      mqtt.publish("easylearn/ardc5/etat", "en ligne");
+      mqtt.subscribe("easylearn/ardc5/commande");
+    } else {
+      Serial.print("echec, code=");
+      Serial.println(mqtt.state());
+    }
+  }
+}
+```
+
+La fonction de rappel surMessage mérite une attention particulière. Elle s'exécute à l'intérieur de client.loop(), donc dans le flux principal du programme : elle doit être courte, sans attente, sans appel bloquant. Elle reçoit le sujet, un tableau d'octets et sa longueur, car un message MQTT est binaire par nature. On convertit ce tableau en chaîne, on analyse, on déclenche éventuellement une action, puis on rend la main. Si vous devez traiter une charge volumineuse, mettez-la dans une file d'attente et traitez-la dans loop(), exactement comme vous l'auriez fait avec un drapeau posé par une interruption.
+
+Les codes de retour de mqtt.state() sont votre principal outil de diagnostic. La valeur 0 signifie connecté. -4 correspond à une perte de connexion au réseau, -3 à une session refusée par le broker, -2 à une reconnexion en cours, -1 à une déconnexion propre, et les valeurs négatives plus basses à des erreurs de protocole ou de mémoire. Un code -3 quasi systématique signale presque toujours un identifiant déjà utilisé : si deux cartes se présentent avec le même nom, le broker déconnecte l'une des deux en boucle. Donnez un identifiant unique à chaque objet, par exemple en intégrant la fin de l'adresse MAC.
+
+La publication est plus simple que la réception, car elle n'attend rien. On appelle publish avec le sujet, puis la charge utile convertie en chaîne, et éventuellement le drapeau de rétention qui demande au broker de conserver le dernier message pour les abonnés qui arriveront plus tard. Ce drapeau est précieux pour les états : un tableau de bord qui se connecte après l'objet voit immédiatement la dernière valeur connue au lieu d'attendre le prochain cycle.
+
+```cpp
+#include <ArduinoJson.h>
+
+void publierMesure(float t, float h) {
+  StaticJsonDocument<160> doc;
+  doc["temp"] = t;
+  doc["hum"]  = h;
+  doc["id"]   = ID;
+  char charge[160];
+  serializeJson(doc, charge);
+
+  if (mqtt.connected()) {
+    bool ok = mqtt.publish("easylearn/ardc5/mesures", charge);
+    Serial.print("mqtt: pub ");
+    Serial.println(ok ? "ok" : "echec");
+  } else {
+    Serial.println("mqtt: publication sautee, hors ligne");
+  }
+}
+```
+
+Notez la précaution consistant à vérifier l'état avant de publier. Publier hors ligne renvoie false sans lever d'erreur, ce qui peut faire croire à un problème de broker alors que la connexion réseau est simplement tombée. En cas de coupure, vous avez deux stratégies à disposition. La première consiste à ignorer les mesures perdues : pour un relevé périodique, c'est la plus simple et la plus sage. La seconde consiste à conserver les valeurs dans un petit tampon circulaire et à les rejouer à la reconnexion, ce qui se justifie quand chaque point compte, par exemple pour des courbes de consommation. Choisissez délibérément, et documentez votre choix dans le code.
+
+La réception, elle, se joue entièrement dans la boucle principale. Tant que vous n'appelez pas mqtt.loop(), aucun message n'arrive, même si l'abonnement est déclaré. Ce détail surprend régulièrement : on souscrit dans setup(), on ne rappelle jamais loop(), et on s'étonne que la callback ne se déclenche jamais. La règle est mécanique : dans loop(), appelez mqtt.loop() à chaque itération, sans exception et sans délai long juste avant.
+
+## Robustesse : reconnexion, back-off et chien de garde
+
+Un objet connecté qui fonctionne devant vous pendant dix minutes n'a pas encore prouvé grand-chose. La vraie question est celle-ci : que se passe-t-il quand le routeur redémarre, quand le broker s'arrête pour une mise à jour, quand le point d'accès change de canal ? Si votre programme n'a pas de réponse à ces questions, il s'arrêtera définitivement au premier incident. La robustesse n'est donc pas une option de confort, c'est la condition de fonctionnement d'un objet qui tourne sans surveillance.
+
+Le principe du back-off croissant est directement emprunté aux réseaux professionnels. Plutôt que de retenter toutes les cinq secondes, ce qui sature la bande passante et le broker, on augmente progressivement le délai : deux secondes, puis quatre, puis huit, jusqu'à un plafond de trente secondes. Dès qu'une connexion aboutit, le compteur repart à zéro. Ce simple mécanisme transforme une tempête de tentatives infructueuses en une respiration régulière, et il laisse au système le temps de se rétablir.
+
+```cpp
+unsigned long derniereTentative = 0;
+unsigned long delaiTentative = 2000;
+const unsigned long DELAI_MAX = 30000;
+
+void gererReconnexion() {
+  if (mqtt.connected()) {
+    delaiTentative = 2000;
+    return;
+  }
+  if (millis() - derniereTentative < delaiTentative) return;
+  derniereTentative = millis();
+  Serial.print("mqtt: tentative dans ");
+  Serial.println(delaiTentative);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("mqtt: reporte, pas de reseau");
+    delaiTentative = min(delaiTentative * 2, DELAI_MAX);
+    return;
+  }
+  if (mqtt.connect(ID)) {
+    Serial.println("mqtt: reconnecte");
+    mqtt.subscribe("easylearn/ardc5/commande");
+    delaiTentative = 2000;
+  } else {
+    Serial.print("mqtt: echec code=");
+    Serial.println(mqtt.state());
+    delaiTentative = min(delaiTentative * 2, DELAI_MAX);
+  }
+}
+```
+
+Cette fonction est conçue pour être appelée en début de loop(), et pour revenir immédiatement quand rien n'a à faire. Elle ne bloque jamais : la vérification du délai s'effectue en une comparaison, puis elle rend la main. Notez aussi qu'elle refuse de tenter une connexion MQTT tant que le Wi-Fi est absent : tenter dans ces conditions gaspillerait du temps et produirait un code d'erreur trompeur. La dépendance entre les couches réseau est explicite, et c'est exactement ce qui rend le diagnostic lisible.
+
+Le chien de garde logiciel est la dernière ligne de défense. L'ESP32 embarque un compteur que le programme doit réinitialiser régulièrement ; s'il n'expire pas avant, la puce redémarre d'elle-même. Ce mécanisme, hérité des systèmes industriels, transforme un blocage silencieux en un redémarrage contrôlé, souvent suffisant pour qu'un objet reparte tout seul après un incident imprévu. L'API se résume à trois appels, à placer dans setup(), et à un réarmement à placer en haut de loop().
+
+```cpp
+#include <esp_task_wdt.h>
+
+void setup() {
+  esp_task_wdt_init(10, true);
+  esp_task_wdt_add(NULL);
+  // ... reste de l'initialisation
+}
+
+void loop() {
+  esp_task_wdt_reset();
+  gererWifi();
+  gererReconnexion();
+  mqtt.loop();
+  serveur.handleClient();
+  lireCapteurSiTemps();
+}
+```
+
+Le délai du chien de garde doit être nettement supérieur au temps maximal d'une itération normale de loop(), mais suffisamment court pour intervenir vite. Dix secondes est un bon point de départ quand aucune opération ne dépasse une seconde. Si vous ajoutez par la suite une lecture longue, un téléchargement ou une mise à jour firmware à distance, mesurez d'abord la durée réelle, puis ajustez, sous peine de voir la puce redémarrer en boucle au pire moment.
+
+Un dernier aspect de robustesse concerne la persistance. L'ESP32 dispose d'une mémoire non volatile qu'on peut utiliser pour enregistrer des préférences, par exemple le nom du réseau, l'intervalle de publication ou un compteur de redémarrages. La bibliothèque Preferences encapsule ce mécanisme de façon très simple, avec des paires clé-valeur typées. Ce compteur de redémarrages, en particulier, est d'une grande valeur : affiché au démarrage sur le port série, il vous dit en une seconde si votre objet a redémarré cent fois pendant la nuit, ce qui est le symptôme le plus clair d'une instabilité résiduelle.
+
+## Sécurité, secrets et bonnes pratiques
+
+Passer du prototype au déployable implique de traiter quelques questions que l'on repousse volontiers en phase de développement. La première concerne les secrets. Un mot de passe Wi-Fi en clair dans un fichier source est un risque réel si le code est partagé ou si la carte est perdue. La solution simple consiste à séparer les secrets du code dans un fichier local ignoré par le gestionnaire de versions, puis à l'inclure à la compilation. Une solution plus aboutie consiste à stocker les identifiants en mémoire non volatile lors d'une phase de configuration, et à ne jamais les réafficher sur le port série.
+
+La deuxième question est la confiance dans les commandes reçues. Si votre objet écoute un topic pour changer un seuil ou redémarrer une pompe, n'importe qui ayant accès au broker peut envoyer cet ordre. Trois niveaux de protection se combinent, du plus simple au plus complet. D'abord, limitez l'exposition du broker : sur Internet, ne laissez jamais un port 1883 ouvert publiquement. Ensuite, utilisez l'authentification du protocole, un identifiant et un mot de passe transmis à la fonction connect. Enfin, validez chaque commande applicative : format, plage de valeurs, cohérence avec l'état courant. Une commande refusée doit recevoir une réponse explicite, pas un silence.
+
+Le troisième point concerne la mise à jour du programme. Un objet déjà installé dans une boîte, sur un toit ou derrière un panneau n'est pas toujours accessible par câble. La mise à jour à distance, dite OTA, permet de reflasher l'ESP32 par le réseau. La bibliothèque Update s'utilise avec le serveur web : on téléverse un fichier binaire, on le vérifie, puis on redémarre. Deux précautions sont non négociables : n'autorisez le téléversement que derrière une authentification, et conservez toujours un moyen de récupération, car un firmware interrompu rend la carte inutilisable sans câble.
+
+```cpp
+#include <Update.h>
+
+void routeMaj() {
+  if (!authentifie()) {
+    serveur.send(401, "text/plain", "Non autorise");
+    return;
+  }
+  HTTPUpload& upload = serveur.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    Serial.println("maj: debut");
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      Serial.println("maj: OK, redemarrage");
+      ESP.restart();
+    } else {
+      Update.printError(Serial);
+    }
+  }
+}
+```
+
+Enfin, quelques bonnes pratiques de structure qui facilitent la maintenance. Nommez vos topics à partir d'une racine unique par projet, puis d'un identifiant d'objet, puis d'une grandeur : un préfixe stable, une carte, une mesure. Conservez les adresses de broker et de réseau dans une seule section de configuration en tête de fichier. Séparez les fonctions réseau des fonctions métier, de sorte qu'un remplacement de bibliothèque n'entraîne pas la réécriture de la logique de mesure. Et surtout, gardez le port série bavard en développement, sobre en production : un journal trop verbeux finit par ralentir la boucle principale, tandis qu'un journal muet empêche de diagnostiquer.
+
+
+Toutes les pièces du puzzle sont désormais sur la table : connexion Wi-Fi non bloquante, serveur web avec routes d'API, client MQTT avec rappel de réception, reconnexion à délai croissant et chien de garde. Cette section les assemble en un seul programme cohérent, la station météo connectée qui constituera le fil rouge du chapitre. L'objectif n'est pas de vous livrer un code à recopier mécaniquement, mais de vous montrer comment les responsabilités se répartissent dans un fichier réel, dans quel ordre tout s'initialise et comment chaque appel sert une décision précise.
+
+## Exemple guidé : la station météo complète
+
+Le programme découpe en quatre responsabilités nettes. La première est la configuration : constantes de réseau, identifiants MQTT, seuils et intervalles, regroupés en tête de fichier pour ne jamais chercher un identifiant au milieu de la logique. La seconde est l'état : les variables qui décrivent où en est la machine à chaque instant, à savoir l'état Wi-Fi, le compteur de back-off et la dernière mesure. La troisième est la couche réseau, composée des fonctions de gestion du Wi-Fi, du serveur et du MQTT que vous avez écrites dans les sections précédentes. La quatrième est la métier : lecture du capteur, calcul, publication planifiée. Toute la difficulté d'un projet connecté tient dans le maintien de cette séparation : dès qu'une lecture de capteur s'introduit dans un gestionnaire de route, ou qu'une adresse IP se retrouve noyée dans la logique de mesure, le programme devient impossible à faire évoluer.
+
+L'ordre d'initialisation dans setup() n'est pas arbitraire. Le port série d'abord, car tout le reste dépend de sa capacité à vous raconter ce qui se passe. Le chien degarde ensuite, avant que quoi que ce soit d'autre puisse bloquer. Puis le capteur, puis le Wi-Fi, puis le serveur web, puis le MQTT enfin, car ce dernier exige une liaison IP établie. Si vous intervertissez deux étapes, vous obtiendrez un échec dont le message ne correspondra pas à la cause réelle, ce qui est la pire manière de perdre du temps. Chaque initialisation annonce sa réussite sur le port série, de sorte qu'une carte qui ne répond pas vous dise exactement à quelle ligne elle s'est arrêtée.
+
+```cpp
+#include <WiFi.h>
+#include <WebServer.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+#include <DHT.h>
+#include <esp_task_wdt.h>
+
+const char* SSID   = "votre-reseau";
+const char* MDP    = "votre-mot-de-passe";
+const char* BROKER = "192.168.1.10";
+const int   PORT   = 1883;
+const char* ID     = "ard-c5-meteo";
+
+const int PIN_DHT = 4;
+const unsigned long INTERVALLE = 10000;
+
+DHT dht(PIN_DHT, DHT22);
+WebServer serveur(80);
+WiFiClient lien;
+PubSubClient mqtt(lien);
+
+float derniereTemp = 0.0, derniereHum = 0.0;
+unsigned long dernierEnvoi = 0;
+unsigned long intervalleActif = INTERVALLE;
+
+void setup() {
+  Serial.begin(115200);
+  esp_task_wdt_init(10, true);
+  esp_task_wdt_add(NULL);
+  dht.begin();
+  demarrerWifi();
+  demarrerServeur();
+  demarrerMqtt();
+  Serial.println("setup: termine");
+}
+
+void loop() {
+  esp_task_wdt_reset();
+  gererWifi();
+  serveur.handleClient();
+  mqtt.loop();
+  gererReconnexion();
+  if (millis() - dernierEnvoi >= intervalleActif) {
+    dernierEnvoi = millis();
+    lireEtPublier();
+  }
+}
+```
+
+La boucle principale révèle la structure temporelle du programme. Chaque fonction appelée ici est non bloquante et revient en quelques millisecondes. La lecture du capteur n'a lieu que lorsque l'intervalle est écoulé, ce qui évite de saturer un DHT22, matériellement limité à une lecture toutes les deux secondes. La variable intervalleActif peut être modifiée à chaud par une commande MQTT reçue, ce qui transforme un réglage compilé en réglage exploitable à distance, sans reflash ni intervention physique sur la carte.
+
+La fonction de lecture et de publication illustre le chemin complet de la donnée, du capteur jusqu'au réseau. La valeur est lue, contrôlée, mise en mémoire, puis sérialisée en JSON et poussée sur le broker. Le contrôle n'est pas une formalité : un DHT22 renvoie des valeurs hors plage lors d'une lecture ratée, et publier zéro degré par erreur déclencherait des alertes fantômes dans votre tableau de bord. Une mesure douteuse est donc simplement ignorée jusqu'à la suivante, et le programme continue de fonctionner. C'est cette philosophie qui caractérise un objet fiable : il préfère une donnée manquante à une donnée fausse.
+
+```cpp
+void lireEtPublier() {
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+  if (isnan(t) || isnan(h)) {
+    Serial.println("capteur: lecture invalide, ignoree");
+    return;
+  }
+  derniereTemp = t;
+  derniereHum = h;
+
+  StaticJsonDocument<160> doc;
+  doc["temp"] = t;
+  doc["hum"]  = h;
+  doc["rssi"] = WiFi.RSSI();
+  doc["id"]   = ID;
+  char charge[160];
+  serializeJson(doc, charge);
+
+  if (mqtt.connected()) {
+    mqtt.publish("easylearn/ardc5/mesures", charge);
+    Serial.print("mqtt: publie ");
+    Serial.println(charge);
+  } else {
+    Serial.println("mqtt: hors ligne, mesure conservee");
+  }
+}
+```
+
+Le rappel de réception ferme la boucle en rendant l'objet commandable. Pour ce chapitre, une seule commande suffit à démontrer le principe : modifier l'intervalle de publication. La charge est analysée avec ArduinoJson, la valeur est validée contre une plage raisonnable, puis appliquée. Toute charge mal formée est rejetée avec un message clair envoyé sur un topic de retour. Ce réflexe de validation, appliqué dès le premier protocole que vous écrivez, vous épargnera les comportements absurds difficiles à comprendre plus tard, quand la carte sera installée et inaccessible.
+
+```cpp
+void surMessage(char* sujet, byte* donnees, unsigned long taille) {
+  String charge;
+  for (unsigned long i = 0; i < taille; i++) charge += (char)donnees[i];
+
+  StaticJsonDocument<128> doc;
+  if (deserializeJson(doc, charge)) {
+    Serial.println("cmd: JSON invalide");
+    mqtt.publish("easylearn/ardc5/retour", "erreur: format");
+    return;
+  }
+  if (doc.containsKey("interval")) {
+    long valeur = doc["interval"];
+    if (valeur >= 2000 && valeur <= 300000) {
+      intervalleActif = valeur;
+      Serial.print("cmd: intervalle ");
+      Serial.println(valeur);
+      mqtt.publish("easylearn/ardc5/retour", "ok");
+    } else {
+      mqtt.publish("easylearn/ardc5/retour", "erreur: plage");
+    }
+  }
+}
+```
+
+La couche serveur se limite, elle aussi, à exposer l'état courant. La route /api/mesures renvoie les valeurs mémorisées, la route /api/etat décrit la santé du système, et la racine sert la page de supervision. Aucune des trois ne déclenche une lecture de capteur : elles lisent des variables déjà à jour, ce qui garantit une réponse immédiate même si le réseau envoie cinq requêtes d'affilée. La page elle-même interroge périodiquement l'API et met à jour une zone de texte, ce qui suffit à obtenir un tableau de bord sans aucun service externe.
+
+```cpp
+void demarrerServeur() {
+  serveur.on("/", HTTP_GET, []() {
+    serveur.send(200, "text/html", PAGE_ACCUEIL);
+  });
+  serveur.on("/api/mesures", HTTP_GET, []() {
+    StaticJsonDocument<192> doc;
+    doc["temp"] = derniereTemp;
+    doc["hum"]  = derniereHum;
+    doc["rssi"] = WiFi.RSSI();
+    doc["up"]   = millis() / 1000;
+    String out;
+    serializeJson(doc, out);
+    serveur.send(200, "application/json", out);
+  });
+  serveur.on("/api/etat", HTTP_GET, []() {
+    StaticJsonDocument<256> doc;
+    doc["ip"]   = WiFi.localIP().toString();
+    doc["wifi"] = WiFi.status() == WL_CONNECTED;
+    doc["mqtt"] = mqtt.connected();
+    doc["rss"]  = WiFi.RSSI();
+    String out;
+    serializeJson(doc, out);
+    serveur.send(200, "application/json", out);
+  });
+  serveur.onNotFound([]() {
+    serveur.send(404, "text/plain", "Route inconnue");
+  });
+  serveur.begin();
+}
+```
+
+Pour valider l'ensemble, un client de bureau suffit : vous abonnez un terminal au filtre easylearn/# et vous observez les publications arriver à intervalle régulier. Notez la cadence : dix secondes entre chaque envoi est un rythme confortable pour l'œil et pour la bande passante, et il suffit largement à suivre une température de pièce. Pour une mesure plus rapide, réduisez l'intervalle, mais souvenez-vous que chaque message engage une requête réseau complète : au-delà d'une seconde, c'est le broker qui devient le goulot d'étranglement, pas la carte.
+
+Le tableau suivant récapitule le parcours d'un cycle complet, de l'horloge jusqu'au topic, en indiquant pour chaque étape la fonction responsable et le signal attendu sur le port série. Servez-vous-en comme d'une check-list lors de vos premiers dépannages : si une ligne manque, c'est la fonction correspondante qu'il faut ouvrir.
+
+```table
+| Étape | Fonction appelée | Signal sur le port série |
+| --- | --- | --- |
+| Démarrage | setup() | setup: termine |
+| Réseau | demarrerWifi(), gererWifi() | wifi: IP obtenue 192.168.1.42 |
+| Serveur | demarrerServeur() | http: pret sur le port 80 |
+| Broker | gererReconnexion() | mqtt: reconnecte |
+| Mesure | lireEtPublier() | mqtt: publie {"temp":24.5,...} |
+| Commande | surMessage() | cmd: intervalle 20000 |
+```
+
+
+Une remarque finale sur la lisibilité. Un projet connecté se débogue toujours à distance, ou du moins avec un écran de terminal plutôt qu'avec un débogueur pas à pas : la liaison USB n'est pas toujours branchée, et un pas de débogueur dans une boucle réseau désynchronise souvent la machine à états. C'est pourquoi les libellés affichés sont courts, prévisibles et toujours en français : wifi:, mqtt:, http:, cmd:, capteur:. Le préfixe agit comme un namespace humain. En filtrant la sortie du moniteur série sur mqtt:, vous isolez instantanément tout ce qui concerne le broker, sans toucher au reste du programme.
+
+
+Un dernier savoir-faire mérite sa place avant les bilans, car il décide de votre efficacité réelle : la méthode de diagnostic. Tôt ou tard, votre objet cesse de répondre, et la qualité de votre réflexion comptera davantage que la quantité de code écrit. La bonne nouvelle, c'est que la couche réseau se diagnostique de façon séquentielle : chaque question élimine la moitié des causes possibles. Cinq questions suffisent dans la très grande majorité des cas, à poser toujours dans le même ordre, depuis le câble jusqu'au broker.
+
+## Déboguer la couche réseau, méthode en cinq questions
+
+Première question : la carte tourne-t-elle ? Si le port série reste muet à l'ouverture, le problème n'est pas réseau : c'est l'alimentation, le câble, le bon port sélectionné dans l'IDE ou un programme qui plante avant le premier affichage. Branchez, ouvrez le moniteur à 115200 bauds, redémarrez la carte. Le message setup: termine doit apparaître. S'il n'apparaît pas, tout le reste de ce chapitre est hors sujet pour l'instant : revenez à la ligne d'alimentation et vérifiez que le courant disponible suffit, une carte Wi-Fi transitoire demandant plusieurs centaines de milliampères lors de l'émission.
+
+Deuxième question : le Wi-Fi est-il associé ? Le code d'état WiFi.status() tranche. Devant WL_NO_SSID_AVAIL, le nom du réseau est mal orthographié ou la carte est hors portée : testez en approchant l'antenne du routeur. Devant WL_CONNECT_FAILED, le mot de passe est presque toujours en cause, les deux étant refusés à l'association. Devant WL_CONNECTED sans communication utile, c'est l'adresse qui pose problème : affichez WiFi.localIP() et vérifiez que le masque correspond bien au réseau du routeur. Une adresse de la forme 169.254.x.x signifie qu'aucun serveur DHCP n'a répondu : la liaison physique existe, mais la configuration n'est pas arrivée.
+
+Troisième question : le réseau local est-il joignable ? À partir d'un ordinateur du même réseau, lancez un ping vers l'adresse IP de la carte. Si le ping échoue, la carte est joignable au niveau radio mais votre programme ne répond pas, ce qui oriente vers un serveur non démarré ou une boucle principale bloquée. Si le ping aboutit, la pile réseau fonctionne et le problème se réduit à la couche applicative. Cette simple distinction, entre atteindre la machine et atteindre le programme, vous fera gagner un temps considérable.
+
+Quatrième question : le port répond-il ? Un test direct sur le port 80, avec l'outil de ligne de commande intégré à votre système, suffit. La réponse attendue est un en-tête HTTP, et surtout pas un refus ou un délai d'attente, qui indiqueraient un pare-feu ou un serveur absent.
+
+```
+ Diagnostic ordonne, de la cause la plus matérielle
+ vers la plus applicative :
+
+     carte morte ?
+         | non
+     setup: termine absent ?
+         | non
+     WiFi.status() == WL_CONNECTED ?
+         | non --> nom / mot de passe / portee / DHCP
+         | oui
+     ping 192.168.1.42 ?
+         | non --> boucle principale bloquée
+         | oui
+     curl http://192.168.1.42/api/etat
+         | echec --> handleClient() absent
+         | ok
+     mqtt.state() == 0 ?
+         | non --> broker, port, identifiant
+         | oui
+     mosquitto_sub voit-il les messages ?
+         non --> topic mal écrit, filtre d'abonnement
+```
+
+Cinquième question : le broker est-il atteignable et accepte-t-il la session ? Le code renvoyé par mqtt.state() vous le dira. Un code négatif persistant malgré un réseau sain signe presque toujours une erreur de paramètre : adresse du broker écrite avec le nom d'un ordinateur alors que le résolveur DNS n'est pas joignable, port différent de celui du serveur, ou mot de passe transmis à un broker qui n'en exige pas. Inversement, si la connexion aboutit mais qu'aucun message n'arrive côté abonné, vérifiez deux détails imbriqués : appelez-vous mqtt.loop() dans loop(), et votre abonnement porte-t-il exactement le même sujet que la publication, y compris la casse et les barres obliques ?
+
+Les outils de terminal complètent avantageusement le moniteur série, car ils interrogent le système par l'extérieur plutôt que par votre propre code, ce qui élimine une source d'erreur possible. Trois commandes à connaître par cœur suffisent pour la plus grande partie du travail.
+
+```bash
+# 1. Que publie réellement la carte ?
+mosquitto_sub -h 192.168.1.10 -t "easylearn/#" -v
+
+# 2. Le serveur HTTP répond-il, et avec quoi ?
+curl -i http://192.168.1.42/api/etat
+
+# 3. La carte reçoit-elle une commande envoyée par un tiers ?
+mosquitto_pub -h 192.168.1.10 \
+  -t "easylearn/ardc5/commande" \
+  -m "{\"interval\":20000}"
+```
+
+Le préfixe -i de curl affiche les en-têtes de réponse, ce qui révèle immédiatement un mauvais type MIME ou un code de statut inattendu. La troisième commande est particulièrement précieuse : elle démonte un doute classique, où la carte accuse une réception silencieuse alors que le message n'est jamais parvenu, ou l'inverse. En publiant vous-même la commande depuis le terminal, vous savez si le problème se situe côté émission ou côté traitement.
+
+Un dernier réflexe, souvent négligé : la journalisation structurée. Plutôt que d'afficher des phrases complètes différentes à chaque endroit, préfixez chaque message par un espace de noms stable, puis un identifiant de cycle. La ligne mqtt: [42] publie 192 devient facilement filtrable, triable et comparable d'un essai au suivant. Quand vous devrez comparer un fonctionnement correct et un défaut, la différence entre deux journaux alignés se lit d'un coup d'œil, là où deux récits librement rédigés s'empilent sans se correspondre. Cette discipline, adoptée dès le premier projet, est celle que l'on retrouve dans tous les systèmes industriels, où l'analyse d'un incident commence toujours par la lecture des journaux dans l'ordre chronologique.
+
+Le tableau ci-dessous referme cette méthode en associant chaque symptôme observable à sa cause la plus probable. Gardez-le sous la main pendant la mise au point du chapitre : il condense l'essentiel de cette section en un seul regard.
+
+```table
+| Symptôme | Cause la plus probable | Vérification |
+| --- | --- | --- |
+| Port série muet | Alimentation ou mauvais port | Rebrancher, rouvrir à 115200 |
+| État WL_NO_SSID_AVAIL | Nom du réseau ou portée | Rapprocher la carte, vérifier le SSID |
+| Adresse 169.254.x.x | Aucune réponse DHCP | Tester avec un autre réseau |
+| Ping refusé | Boucle principale bloquée | Repérer les delay() résiduels |
+| HTTP en timeout | handleClient() non appelé | Contrôler loop() |
+| mqtt.state() vaut -3 | Session refusée | Identifiant unique, port, mot de passe |
+| Aucun message reçu | loop() oublié ou sujet faux | Comparer sujet publié et abonné |
+```
+
+
+
+Le programme fonctionne, les messages circulent, la page s'ouvre. Il reste deux sujets à approfondir avant de refermer le chapitre, parce qu'ils décident de la durée de vie réelle de votre objet : la configuration sans reprogrammation et l'observation à distance. Tous deux s'appuient sur les briques déjà en place, ce qui est le signe que l'architecture tient debout.
+
+## Configurer l'objet sans le reprogrammer
+
+Le scénario est familier : vous installez la carte dans sa boîte, vous la branchez, et vous découvrez que le nom du réseau a changé depuis votre dernier essai sur le bureau. Sans portail de configuration, il faut ouvrir l'IDE, ressaisir les identifiants, reflasher, puis remonter le boîtier. Le mode combiné de l'ESP32 élimine cette corvée. Si la carte ne parvient pas à rejoindre un réseau en quelques secondes, elle devient à son tour un point d'accès éphémère auquel vous vous connectez depuis votre téléphone, et elle sert une page où vous saisissez les vrais identifiants. Ces identifiants sont ensuite écrits en mémoire non volatile, et la carte redémarre en mode station.
+
+La séquence complète tient dans une machine à états que vous connaissez déjà, avec une branche supplémentaire. Pendant les quinze premières secondes, on tente la connexion en mode station. Si elle échoue, on bascule en point d'accès, on démarre le serveur sur l'adresse par défaut du mode point d'accès et on attend. Dès que la page de saisie a été soumise, on enregistre les valeurs, on éteint le point d'accès et on relance la tentative en station. Le même serveur sert les deux phases : seule l'adresse change, et les routes restent identiques.
+
+```cpp
+void basculerEnPointAcces() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("easyLearn-Setup");
+  Serial.print("ap: reseau emis, IP ");
+  Serial.println(WiFi.softAPIP());
+  serveur.on("/config", HTTP_POST, []() {
+    String nom = serveur.arg("ssid");
+    String mdp  = serveur.arg("mdp");
+    prefs.putString("ssid", nom);
+    prefs.putString("mdp", mdp);
+    serveur.send(200, "text/html",
+                 "<p>Enregistre, redemarrage...</p>");
+    delay(500);
+    ESP.restart();
+  });
+  serveur.begin();
+}
+```
+
+L'écriture passe par la bibliothèque Preferences, qui expose des paires clé-valeur typées dans la mémoire non volatile de la puce. Les chaînes y sont conservées après un redémarrage et même une coupure d'alimentation. Deux habitudes à prendre immédiatement : n'écrivez les identifiants que lorsqu'ils ont été testés avec succès, et ne les réaffichez jamais sur le port série, pas même en développement, car un journal copié dans un dépôt reste un mot de passe divulgué. Une variable drapeau en mémoire RAM indique si une configuration valide existe, ce qui évite de lancer le Wi-Fi avec une chaîne vide au premier démarrage.
+
+L'alternative, plus sobre, consiste à préserver la plage d'adresses 192.168.4.0 réservée au mode point d'accès et à n'ouvrir le portail qu'après trois échecs consécutifs. Le compteur de tentatives se remet à zéro dès qu'une connexion aboutit. Ainsi, une coupure brève du routeur ne déclenche pas inutilement l'émission d'un réseau ouvert : le portail reste une solution de secours, pas le mode normal de fonctionnement. C'est précisément ce genre de détail qui distingue un prototype de quelque chose que l'on peut laisser tourner dans un placard pendant un an.
+
+## Observer à distance : tableau de bord et persistance
+
+À ce stade, vos mesures arrivent au broker, mais elles disparaissent dès qu'aucun abonné n'écoute. Pour transformer ce flux en histoire, il faut les conserver. Deux approches se complètent. La première consiste à laisser un abonné permanent enregistrer chaque message dans un fichier ou une base de données légère, par exemple un script Python de quelques dizaines de lignes qui tourne sur un vieux portable. La seconde consiste à faire réagir les données : un seuil dépassé déclenche une notification, un message de commande ou l'allumage d'un relais. Dans les deux cas, l'ESP32 reste inchangé : il publie, il ne stocke pas, il n'alerte pas. Cette séparation est un choix d'architecture délibéré, car la mémoire et le temps processeur d'un microcontrôleur sont trop précieux pour héberger un historique.
+
+Le tableau de bord, lui, peut être aussi simple ou aussi riche que nécessaire. Pour commencer, une page unique servie par l'ESP32 qui interroge /api/mesures toutes les cinq secondes et dessine une courbe dans un élément canvas suffit à visualiser la tendance. Pour aller plus loin, une application séparée qui s'abonne aux topics et affiche plusieurs objets côte à côte devient pertinente dès que vous possédez deux ou trois cartes. Dans tous les cas, gardez à l'esprit la règle de la mémoire : une page lourde ne peut pas être servie par la puce, et un historique de plusieurs mois n'a pas sa place en mémoire vive. Le navigateur gère l'affichage, le broker relaie, la base conserve, la carte mesure.
+
+Voici la logique de rafraîchissement côté page, telle qu'on l'intègre dans un littéral HTML servi par le serveur. Le code s'exécute dans le navigateur, jamais sur la carte, et c'est précisément l'intérêt de la séparation.
+
+```html
+<script>
+async function maj() {
+  const r = await fetch('/api/mesures');
+  const d = await r.json();
+  document.getElementById('temp').textContent = d.temp + ' C';
+  document.getElementById('hum').textContent = d.hum + ' %';
+}
+setInterval(maj, 5000);
+maj();
+</script>
+```
+
+Un dernier point métrique vous sera utile pour dimensionner. Une publication MQTT typique de cent cinquante octets, toutes les dix secondes, représente moins d'un mégaoctet par mois : négligeable même sur une liaison partagée. En revanche, publier cent fois par seconde consommera du processeur, de la bande passante et de la batterie, sans apporter d'information sur une grandeur qui ne varie pas à cette vitesse. Mesurez la cadence réelle de votre phénomène avant de choisir l'intervalle : la fréquence d'échantillonnage est une décision physique, pas un réglage technique.
+
+## À retenir
+
+- L'ESP32 se connecte en mode station avec WiFi.begin, mais l'état se relève avec WiFi.status jusqu'à WL_CONNECTED.
+- Une connexion réseau ne doit jamais bloquer la boucle principale : on la pilote avec millis() et une machine à états.
+- Le serveur web s'appuie sur WebServer, des routes enregistrées et un appel permanent à handleClient() dans loop().
+- Le HTML sert l'humain, le JSON sert les applications : exposez une route par ressource, avec le bon type MIME.
+- Un gestionnaire de route est court et ne lit jamais le capteur directement : il publie l'état courant, il ne le produit pas.
+- MQTT repose sur un broker, des topics hiérarchiques et un modèle publication-abonnement indépendant des adresses IP.
+- PubSubClient exige mqtt.loop() à chaque itération, sans quoi aucun message reçu n'arrive jamais en callback.
+- La reconnexion suit un délai croissant, doublé jusqu'à trente secondes, remis à zéro dès que la liaison aboutit.
+- Le chien de garde esp_task_wdt transforme un blocage silencieux en redémarrage contrôlé.
+- Chaque étape réseau s'affiche sur le port série avec un libellé stable : c'est votre principal outil de diagnostic.
+- Le mode combiné permet d'offrir un portail de configuration quand le réseau configuré est introuvable.
+- Les identifiants se conservent en mémoire non volatile via Preferences, et ne reviennent jamais sur le port série.
+
+## Erreurs fréquentes
+
+- Oublier serveur.handleClient() ou mqtt.loop() dans loop(), ce qui donne un port fermé ou des messages jamais reçus.
+- Utiliser un délai long juste avant d'attendre une requête : le serveur ne peut alors répondre que par à-coups.
+- Publier sans vérifier mqtt.connected(), puis conclure à tort que le broker est en cause.
+- Réutiliser le même identifiant MQTT pour deux cartes, ce qui provoque une déconnexion en alternance permanente.
+- Lire un DHT22 toutes les cent millisecondes : le capteur renvoie alors des valeurs invalides ou nulles.
+- Écrire du texte non échappé à la main dans une réponse JSON, et produire un document illisible pour le client.
+- Laisser le mot de passe Wi-Fi en clair dans un fichier source destiné à être partagé.
+- Oublier que millis() déborde après environ cinquante jours, et comparer des valeurs absolues au lieu de différences.
+- Créer une machine à états Wi-Fi sans état de perte de liaison : la carte reste marquée connectée alors que le réseau est tombé.
+- Augmenter le délai du chien de garde pour masquer une boucle réellement bloquante, au lieu de trouver la cause.
+- Déclencher le portail de configuration à chaque démarrage raté, ce qui émet un réseau ouvert sans nécessité.
+- Confondre la charge utile MQTT et son sujet : le filtre d'abonnement porte sur le sujet, jamais sur le contenu.
+
+## Pour aller plus loin
+
+Les documents officiels d'Espressif sur l'API Wi-Fi détaillent les événements de connexion, les modes combinés station et point d'accès, ainsi que les options d'alimentation qui permettent de réveiller périodiquement une carte endormie. Le dépôt PubSubClient contient un guide d'utilisation et la liste exacte des codes renvoyés par la fonction d'état, à garder à portée de main pendant le débogage. Le site mqtt.org publie la spécification complète du protocole, courte à lire, qui explique les en-têtes, les niveaux de service et le mécanisme de maintien de session.
+
+Pour consolider, trois pistes progressives. Premièrement, ajoutez le portail de configuration décrit ci-dessus, avec persistance dans Preferences et compteur d'échecs. Deuxièmement, ajoutez une persistance des mesures dans un petit tampon circulaire, rejoué à la reconnexion du broker, puis comparez le nombre de points récupérés pendant une coupure volontaire de trente secondes. Troisièmement, mettez en place la mise à jour à distance avec une authentification, puis testez-la volontairement avec un firmware dégradé pour vérifier que vous conservez un chemin de récupération. Chacune de ces pistes mobilise les mêmes briques que ce chapitre, ce qui est le signe que les fondamentaux sont acquis.
+
+Des ressources officielles complètent utilement la lecture :
+
+- Documentation ESP-IDF sur le Wi-Fi, espressif.com, section networking.
+- Dépôt PubSubClient de Nick O'Leary sur GitHub, guide et exemples.
+- Spécification MQTT sur mqtt.org, version 5.0 et retours en arrière.
+- Exemples ESP32 de la carte Arduino, dossier WiFi et exemples WebServer.
+- Bibliothèque Preferences de l'ESP32, gestion clé-valeur en mémoire non volatile.
+
+## Et maintenant : passez à la supervision
+
+Le prochain chapitre transforme cette station isolée en système complet : vous concevrez l'architecture d'un ensemble de capteurs, vous stockerez les mesures publiées ici dans une base et vous construirez un tableau de bord qui les visualise. Avant de vous y aventurer, assurez-vous d'avoir obtenu les quatre résultats de ce chapitre sur votre propre matériel : une connexion Wi-Fi visible avec son adresse IP, une page ouverte depuis un navigateur, une ligne de JSON lue dans un client MQTT et une commande reçue qui modifie réellement le comportement de la carte. Si les quatre fonctionnent, vous maîtrisez la brique la plus décisive du parcours : votre objet parle au réseau, et le réseau lui répond.
+

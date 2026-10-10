@@ -1,0 +1,698 @@
+Bienvenue dans le dernier chapitre du parcours data science et intelligence artificielle. Après avoir entraîné des modèles de classification, évalué des métriques, déployé une API et suivi un modèle en production, vous voilà confrontés à la famille qui a le plus changé le logiciel au cours des dernières années : les grands modèles de langage, et tout ce qu'on bâtit autour d'eux. L'objectif de ce chapitre n'est pas de vous faire réciter la liste des noms commerciaux du moment, mais de vous donner une compréhension mécanique de ce qui se passe entre votre phrase et la réponse qui apparaît à l'écran. Une fois les mots « prompt », « token », « embedding » et « récupération augmentée » dépouillés de leur marketing, il ne reste que du calcul sur des vecteurs, des probabilités et des chaînes de traitement : du code, en somme, que vous êtes parfaitement capable d'écrire.
+
+À la fin de cette leçon, vous saurez faire cinq choses concrètes. Premièrement, vous formulerez un prompt structuré, avec un rôle, une consigne, un contexte et un format de sortie attendu, au lieu de laisser un texte vague produire une réponse vague. Deuxièmement, vous expliquerez ce qu'un modèle voit réellement quand vous lui écrivez : des identifiants de tokens, pas des mots, et pourquoi cette distinction change la façon dont on mesure la longueur d'un texte. Troisièmement, vous réglerez les paramètres de génération, température et longueur de contexte en tête, en sachant exactement ce qu'ils font à la fois à la qualité et à la facture. Quatrièmement, vous transformerez des documents en vecteurs de nombres et vous les comparerez entre eux avec la similarité cosinus, en pur Python et sans une seule dépendance externe. Cinquièmement, vous assemblerez un pipeline complet de recherche augmentée : découpage du corpus, indexation vectorielle, recherche des passages pertinents, puis synthèse finalisée par le modèle.
+
+Le fil rouge de la leçon sera un assistant documentaire miniature. Il répondra à des questions sur un corpus de quelques pages en s'appuyant uniquement sur les passages qu'il a jugés proches de la question, ce qui est la définition même de la recherche augmentée par la génération. Tous les exemples de code sont écrits en bibliothèque standard : math, json, urllib, unicodedata, rien d'autre. Vous pourrez donc les exécuter tels quels dans l'environnement Pyodide de ce cours, sans clé d'API, sans installation et sans réseau. Quand une vraie requête vers un service distant deviendra nécessaire, nous l'écrirons à la main avec urllib et nous simulerons la réponse, afin que la mécanique reste lisible ligne à ligne. La règle du chapitre est simple : aucune boîte noire, tout se démonte.
+
+## Comprendre : ce qu'est vraiment un grand modèle de langage
+
+Un grand modèle de langage, souvent abrégé LLM pour large language model, est un réseau de neurones entraîné à prédire la suite d'un texte. Le point est tellement central qu'il mérite d'être répété : pendant son entraînement, le modèle n'a jamais appris à répondre à des questions, il a appris, des milliards de fois, à deviner le fragment suivant. C'est de cette seule compétence, répétée avec une perfection croissante, que semblent émerger le raisonnement, la traduction, la rédaction et l'explication de code. Quand vous posez une question, vous n'interrogez pas une base de connaissances : vous lancez un processus de prédiction qui, mot après mot, assemble une suite plausible en tenant compte de tout ce qui précède.
+
+Cette mécanique explique deux comportements que les débutants trouvent déconcertants. Le premier est l'absence de mémoire : hors de la fenêtre de contexte, le modèle ne retient rien ; chaque appel repart d'une page blanche, sauf si vous lui rappeliez l'historique dans le prompt. Le second est l'absence de garantie de vérité : le modèle optimise la cohérence statistique, pas la justesse factuelle, d'où ces réponses admirables de ton et parfaitement fausses sur les points vérifiables. Corriger ces deux limites est précisément le travail de l'ingénieur : on recolle la mémoire avec un historique qu'on envoie explicitement, on ancre la vérité avec des documents que l'on insère dans le prompt, et l'ensemble prend un nom plus long mais une idée très simple : la génération augmentée par la récupération.
+
+Les modèles se distinguent par trois caractéristiques principales. La fenêtre de contexte mesure le nombre de tokens que le modèle accepte en entrée et en sortie pour un même appel : quelques dizaines de milliers chez les modèles compacts, plusieurs centaines de milliers chez les plus récents, avec une corrélation directe entre cette capacité et le prix. La date de connaissance, souvent appelée cutoff, indique la période au-delà de laquelle le modèle n'a pas été entraîné, ce qui rend indispensable toute question portant sur l'actualité. Enfin la famille de modèles, généralement déclinée en une version rapide et économique et en une version plus réfléchie et plus chère, impose un arbitrage permanent entre latence, coût et qualité de raisonnement. Un bon concepteur de système choisit sa variante par tâche, plutôt que d'utiliser partout le modèle le plus puissant.
+
+Il faut aussi se défaire d'une image fausse : le modèle n'est pas un moteur de recherche, et il n'est pas non plus une base de données. Il ne consulte rien pendant qu'il écrit, il ne clique sur aucun lien et il n'a aucun accès à vos fichiers tant que vous ne les lui avez pas fournis. Tout ce qu'il produit sort de ses paramètres, c'est-à-dire de ce qu'il a absorbé pendant son entraînement, corrigé de ce que vous glissez dans le prompt. C'est la raison pour laquelle la deuxième moitié de ce chapitre est consacrée à la recherche augmentée : plutôt que d'espérer que la réponse soit déjà quelque part dans les paramètres, on va la chercher dans vos propres documents, on la place devant les yeux du modèle, et on lui demande de rédiger à partir de cette matière.
+
+Enfin, un mot sur la manière dont on parle aux modèles. Les interfaces commerciales présentent un échange de messages ; sous le capot, l'API attend une liste ordonnée de rôles et de contenus. Chaque message déclare qui parle et ce qu'il dit, et le modèle traite la totalité de cette liste comme un unique tableau de bord. Cette structure est la première chose à maîtriser, car elle conditionne tout le reste : la qualité d'un système conversationnel dépend de la façon dont on découpe, on étiquette et on ordonne ces messages.
+
+```python
+# La structure exacte envoyée à la plupart des API de chat.
+messages = [
+    {"role": "system",
+     "content": "Tu es un assistant qui répond en français, "
+                "uniquement à partir du contexte fourni."},
+    {"role": "user", "content": "Combien de temps dure la fenêtre de contexte ?"},
+    {"role": "assistant", "content": "Elle se compte en tokens."},
+    {"role": "user", "content": "Et pour une page web moyenne ?"},
+]
+print(len(messages), "messages à envoyer")
+for message in messages:
+    print(message["role"].ljust(10), message["content"][:40])
+```
+
+Les trois rôles standards couvrent l'essentiel des besoins, et les comprendre évite bien des prompts brouillons.
+
+```table
+| Rôle | Qui l'utilise | Usage typique | Ce qu'il ne fait pas |
+| --- | --- | --- | --- |
+| system | le développeur | ton, langue, règles, format de sortie | ne contient pas les données métier |
+| user | l'utilisateur final | la question réelle posée à l'instant t | ne doit pas porter les consignes globales |
+| assistant | le modèle lui-même | historique, réponses précédentes, brouillon | ne doit pas inventer de consigne |
+```
+
+
+L'ordre compte autant que le contenu. Les consignes placées tout en début de contexte bénéficient d'une attention plus stable, tandis qu'une contrainte noyée au milieu d'un long historique a plus de chances d'être ignorée à mesure que la conversation s'allonge. Une pratique simple et efficace consiste à garder un message système court et invariable, à poser les règles de format dans ce message, et à relancer la contrainte juste avant la demande, quand la réponse se prépare. Vous verrez dans la section sur les prompts que cette architecture se répète, à des échelles différentes, dans presque tous les systèmes de génération.
+
+## Le prompt : votre interface avec le modèle
+
+Un prompt est un texte d'entrée qui détermine tout ce que le modèle va produire. Le mot est volontairement modeste : il s'agit d'une chaîne de caractères, rien de plus, mais cette chaîne est le seul levier que vous avez sur un modèle déjà entraîné et que vous ne modifieriez pas. Déplacer une phrase, ajouter un exemple, préciser le format de sortie, et la réponse change du tout au tout, sans que la moindre pondération du réseau n'ait bougé. C'est la caractéristique la plus pratique du domaine : vous itérez sur du texte, en quelques secondes, sans réentraîner quoi que ce soit.
+
+Un prompt efficace se compose presque toujours des mêmes briques. Le rôle décrit qui parle et avec quelle autorité : vous êtes un auditeur, un traducteur, un collègue expérimenté. La consigne dit ce qui doit être fait, à l'impératif, avec un verbe unique : résume, compares, extrait, corrige. Le contexte apporte les informations que le modèle ne peut pas deviner, et c'est la seule partie qui change d'un appel à l'autre dans un système automatisé. Les exemples, quand ils existent, montrent l'entrée voulue et la sortie voulue, ce qui vaut souvent mieux qu'une longue explication abstraite. Enfin la contrainte de sortie fige le format : une phrase, dix lignes maximum, un tableau, du JSON valide. Chaque brique manquante se paie par une ambiguïté que le modèle comblera lui-même, généralement mal.
+
+La tentation du prompt monolithique est grande : tout mettre dans un seul bloc, espérer que le modèle s'y retrouve. Le résultat habituel est une réponse qui traite la moitié des demandes, ignore l'autre moitié et invente une conclusion. Une meilleure approche consiste à découper. On sépare ce qui ne change pas, appelé souvent gabarit ou template, de ce qui change à chaque appel, appelé variables. Le gabarit porte les règles et le format ; les variables portent la question et les documents. Ce découpage se retrouve dans tous les frameworks du marché, mais il se réalise en trois lignes de Python et mérite d'être compris avant d'être délégué à une bibliothèque.
+
+```python
+# Un gabarit de prompt en pur Python : constantes d'un côté, variables de l'autre.
+GABARIT = """Tu es un assistant documentaire.
+Réponds en français, en trois phrases maximum.
+Appuie-toi uniquement sur le contexte ci-dessous.
+Si l'information n'y figure pas, dis-le explicitement.
+
+Contexte :
+{contexte}
+
+Question : {question}
+Réponse :"""
+
+def construire_prompt(question, passages):
+    contexte = "\n".join("- " + p for p in passages)
+    return GABARIT.format(contexte=contexte, question=question)
+
+print(construire_prompt("Qu'est-ce que la température ?", ["La température règle le hasard."]))
+```
+
+Trois erreurs reviennent dans presque tous les prompts que l'on relit. La première est la consigne négative pure : ne fais pas ceci, n'écris pas cela, sans jamais dire ce qu'il faut faire à la place ; le modèle retient mieux une action qu'une interdiction, il faut donc toujours proposer le comportement voulu. La deuxième est la contradiction : une règle en tête de prompt et son contraire en queue, le modèle choisira arbitrairement et vous attribuerez le problème à l'aléatoire. La troisième est le format non contraint : demander du JSON sans donner la structure exacte, ni les noms de champs, ni un exemple complet, puis constater que chaque appel invente des clés différentes.
+
+La longueur du prompt a elle aussi une influence mesurable. Un prompt très court laisse trop de liberté, un prompt très long noie la demande sous le contexte et augmente le coût, puisque la facture se compte en tokens d'entrée. Le bon équilibre se trouve en pratique : garder les règles constantes, fournir le contexte strictement nécessaire à la question, et éliminer toute phrase qui n'affecte pas la réponse. On mesure cette économie simplement, en comparant la taille du prompt et la longueur de la réponse, et en vérifiant que retirer une phrase ne dégrade pas la sortie. Cette discipline devient un réflexe dès le premier système en production.
+
+Enfin, un prompt n'est jamais terminé : il est testé. On constitue un petit jeu d'évaluation, une dizaine de questions représentatives avec la réponse attendue, on exécute le prompt à chaque modification, et on observe les régressions. Ce protocole, aussi modeste soit-il, transforme l'art de la reformulation en une pratique d'ingénierie. Les frameworks de prompt management ne font rien d'autre, avec plus de télémétrie et d'historique, mais le principe tient en une phrase : ce qui n'est pas mesuré ne s'améliore pas.
+
+## Anatomie d'un appel d'API
+
+Un appel d'API de génération est une requête HTTP comme une autre : on sérialise une charge utile en JSON, on l'envoie en POST vers une adresse, on ajoute une clé d'authentification dans un en-tête, et on lit la réponse. Rien de magique, et la bibliothèque standard suffit amplement à l'écrire avec urllib.request. Comprendre cette mécanique à la main a un avantage durable : quand vous utiliserez un client tout prêt, vous saurez exactement ce qu'il cache, qu'il s'agit des en-têtes, du délai d'attente, des essais automatiques et du décodage du corps de réponse.
+
+La charge utile minimale contient le modèle à utiliser et la liste des messages. Autour de ce noyau, les paramètres optionnels pilotent la génération : le nombre maximal de tokens de sortie, la température, le top_p, parfois une consigne de format. La réponse contient, elle, le texte généré dans un champ de contenu, ainsi que des métadonnées instructives : identifiant de l'appel, indices de tokens consommés, raison de l'arrêt, et parfois un détail de contribution au coût. Ces métadonnées sont votre tableau de bord : sans elles, impossible de savoir si une réponse courte vient du modèle ou d'une limite que vous avez vous-même posée.
+
+```python
+# Un appel d'API écrit à la main, en bibliothèque standard.
+import json
+import urllib.request
+
+def appeler_modele(messages, modele="modele-virtuel"):
+    charge = json.dumps({
+        "model": modele,
+        "messages": messages,
+        "max_tokens": 120,
+        "temperature": 0.2,
+    }).encode("utf-8")
+    requete = urllib.request.Request(
+        "https://api.exemple.test/v1/chat/completions",
+        data=charge,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer CLE_SECRETE"},
+        method="POST",
+    )
+    with urllib.request.urlopen(requete, timeout=30) as reponse:
+        corps = json.loads(reponse.read().decode("utf-8"))
+    return corps["choices"][0]["message"]["content"]
+```
+
+Notez ce que ce code ne fait pas : il ne gère ni la rotation de clé, ni la reprise après un échec transitoire, ni le débit maximal autorisé. En production, ces trois préoccupations reviennent toujours. La clé se range dans une variable d'environnement et jamais dans le dépôt de code ; un appel qui échoue pour cause de saturation doit être relancé avec un délai croissant, quelques fois seulement ; et un appel successful trop rapide en série finit par être refusé, il faut donc espacer les requêtes. Ces règles tiennent en quelques dizaines de lignes, mais leur absence est la première cause d'incidents sur les intégrations de génération.
+
+Un point mérite une attention particulière : les erreurs ne se ressemblent pas. Une réponse de code 401 signale une clé invalide, et aucun délai ne la corrigera. Une réponse de code 429 annonce un quota dépassé ou un débit trop élevé, et elle appelle un attente puis une nouvelle tentative. Une réponse de code 500 ou 503 vient du service, et elle justifie une reprise avec plafond d'essais. Un délai d'attente dépassé, en revanche, peut avoir laissé la requête parvenir : relancer aveuglément risque alors de produire deux réponses facturées. Distinguer ces cas est la première compétence d'exploitation d'un système de génération.
+
+Pour construire un système de bout en bout, il faut encore prévoir la journalisation. Chaque appel mérite d'être tracé avec son identifiant, la version du gabarit, le nombre de tokens d'entrée et de sortie, la latence et, si la tâche le permet, un jugement de qualité. Ces journaux sont ce qui vous permettra, dans trois mois, de répondre à la question qui tuera tout autre diagnostic : est-ce que la réponse était mauvaise parce que le modèle a changé, parce que le prompt a changé, ou parce que les documents fournis n'étaient plus à jour. Sans traçabilité, ces trois causes sont indiscernables.
+
+```python
+# Le formatage d'une réponse, isolé pour rester testable.
+def extraire_reponse(corps, index=0):
+    """Renvoie le texte, le nombre de tokens d'entrée et de sortie."""
+    choix = corps["choices"][index]
+    texte = choix["message"]["content"]
+    usage = corps.get("usage", {})
+    return texte, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+exemple = {
+    "choices": [{"message": {"role": "assistant", "content": "La fenêtre se compte en tokens."}}],
+    "usage": {"prompt_tokens": 180, "completion_tokens": 12},
+}
+texte, entree, sortie = extraire_reponse(exemple)
+print(texte, "| entrée :", entree, "| sortie :", sortie)
+print("total facturé :", entree + sortie, "tokens")
+```
+
+La figure suivante résume le trajet complet d'une requête, de la phrase tapée par l'utilisateur jusqu'à la réponse affichée. Elle vous servira de repère pour le reste du chapitre, car chaque bloc deviendra, dans les sections qui suivent, un morceau de code que vous écrirez vous-même.
+
+```text
+utilisateur
+    |
+    v
+[ normaliser la question ] ---> [ encoder en vecteur ]
+                                      |
+                                      v
+                              [ corpus indexe ]
+                                      |
+                                      v
+                           [ k passages proches ]
+                                      |
+                                      v
+                   [ gabarit : regles + contexte + question ]
+                                      |
+                                      v
+                              [ appel du modele ]
+                                      |
+                                      v
+                            [ reponse + traces ]
+```
+
+## Tokenisation : ce que le modèle voit vraiment
+
+Avant tout calcul, le texte doit être découpé. Cette opération, appelée tokenisation, transforme une chaîne de caractères en une suite d'identifiants numériques que le modèle sait traiter. Le point qui surprend toujours à la première lecture, c'est que cette découpe ne suit pas les mots : elle suit des unités fréquentes, à mi-chemin entre le caractère et le mot. Un mot courant comme le ou et devient un seul token ; un mot rare ou technique se scinde en plusieurs fragments, souvent un préfixe, une racine et une terminaison. La chaîne développement peut ainsi devenir trois tokens distincts, et le modèle ne « voit » que cette trinité d'entiers.
+
+Cette mécanique a trois conséquences pratiques qu'il faut intégrer dès maintenant. La première : les coûts et les limites de longueur se comptent en tokens, jamais en mots ni en caractères, et une page française contient en moyenne plus de tokens que la même page en anglais, car la tokenisation des langues moins représentées est moins économe. La deuxième : un mot que le découpeur ignore complètement devient une succession de fragments inconnus du contexte sémantique, ce qui dégrade la compréhension ; d'où l'utilité de normaliser avant d'indexer un corpus. La troisième : la frontière du contexte se coupe sur un token, pas sur une phrase, si bien qu'un document tronqué au pile peut finir au milieu d'un mot et rendre la dernière phrase inutilisable.
+
+Autre point crucial : deux modèles n'utilisent pas nécessairement le même découpeur. Les vocabulaires diffèrent, ce qui signifie qu'un même paragraphe paie un nombre de tokens différent selon le service choisi, et qu'un budget calibré sur un modèle peut déborder sur un autre. Pour cette raison, on mesure toujours la longueur réelle avec l'encodeur du modèle cible, jamais avec une règle du type trois caractères pour un token, qui ne reste qu'une estimation rapide de bureau. Quand l'encodeur réel n'est pas disponible, comme dans les exemples de ce chapitre, on affiche l'estimation en la nommant clairement, pour ne pas la prendre pour une mesure.
+
+Le vocabulaire d'un découpeur moderne compte typiquement de quelques dizaines à plus d'un centaine de milliers de sous-mots, appris automatiquement à partir d'un corpus d'entraînement par un algorithme qui fusionne les séquences les plus fréquentes. Ce vocabulaire est fixe une fois le modèle entraîné : on ne peut pas lui apprendre un nouveau mot sans réentraîner, tout au plus existe-t-il des jetons réservés pour signaler l'inconnu, la coupure ou les frontières de document. Dans la pratique quotidienne, cela se traduit par un réflexe : avant d'envoyer un corpus au système d'indexation, on le nettoie, on normalise les accents, on supprime la ponctuation parasite, et seulement ensuite on compte.
+
+```python
+# Un découpeur pédagogique, en bibliothèque standard.
+import string
+import unicodedata
+
+def tokenizer_simple(texte):
+    """Découpe en mots minuscules, sans ponctuation ni accent."""
+    table = str.maketrans("", "", string.punctuation)
+    propre = texte.lower().translate(table)
+    propre = unicodedata.normalize("NFD", propre)
+    propre = "".join(c for c in propre if not unicodedata.combining(c))
+    return [m for m in propre.split() if m]
+
+phrase = "La fenêtre de contexte se compte en tokens, pas en mots !"
+jetons = tokenizer_simple(phrase)
+print(len(jetons), "jetons :", jetons)
+print("estimation ~", round(len(phrase) / 3.5), "tokens pour un encodeur réel")
+```
+
+On peut aller plus loin et simuler une découpe par fréquence, ce qui donne une intuition très fidèle du comportement d'un vrai encodeur. L'idée est d'affecter à chaque mot rencontré un identifiant stable, en puisant dans un vocabulaire de départ qui contient les mots les plus courants. Les mots absents de ce vocabulaire sont alors découpés en préfixes et suffixes de deux ou trois lettres, exactement comme un vrai découpeur traite un terme rare. Ce comportement reproduit l'essentiel : les mots courants coûtent un jeton, les mots inhabituels en coûtent plusieurs, et l'identifiant dépend du vocabulaire, pas du mot lui-même.
+
+```python
+VOCAB = {"le", "la", "les", "de", "des", "un", "une", "et", "en", "du"}
+
+def encode(texte, vocab=VOCAB, taille=3):
+    """Attribue un identifiant par mot ; les mots rares sont fragmentés."""
+    table = str.maketrans("", "", string.punctuation)
+    jetons = texte.lower().translate(table).split()
+    sortie = []
+    for mot in jetons:
+        if mot in vocab or len(mot) <= taille:
+            sortie.append(("mot", mot))
+        else:
+            for i in range(0, len(mot), taille):
+                sortie.append(("partie", mot[i:i + taille]))
+    return sortie
+
+for type_jeton, valeur in encode("Une tokenisation découpe les mots rares"):
+    print(type_jeton.ljust(7), valeur)
+```
+
+Deux leçons se dégagent de cet exercice. D'abord, l'identifiant d'un jeton n'a aucun sens isolé : comparer le numéro 512 au numéro 513 ne dit rien du tout sur la proximité des mots, seule la position dans la table de plongement compte, et c'est précisément le sujet de la section suivante. Ensuite, fragmenter coûte cher : un mot rare consomme plusieurs entrées de contexte, ce qui explique pourquoi les acronymes inventés et les noms propres exotiques font exploser les compteurs, et pourquoi il est plus sage de normaliser un vocabulaire métier avant l'indexation que de le subir dans la facture.
+
+## Température, top_p et fenêtre de contexte
+
+La génération n'est pas déterministe par défaut. À chaque pas, le modèle calcule une distribution de probabilités sur tous les jetons de son vocabulaire, puis tire un jeton au hasard pondéré. Les deux réglages principaux agissent sur ce tirage. La température divise les scores avant l'application de l'exponentielle : à zéro, la distribution s'écrase et le jeton le plus probable gagne presque toujours, d'où des réponses stables et reproductibles ; à des valeurs supérieures à un, la queue de la distribution prend du poids et les choix deviennent plus rares, donc plus originaux, donc plus risqués. Le top_p, quant à lui, tronque la queue : on trie les jetons par probabilité décroissante et on ne tire que dans le plus petit ensemble dont la probabilité cumulée dépasse le seuil.
+
+Le choix entre ces deux réglages est plus simple qu'il n'y paraît. Pour une tâche mécanique, extraction, conversion de format, réponse factuelle, classification, on règle la température à zéro et on oublie le sujet. Pour une tâche créative, rédaction d'une accroche, reformulation variée, brainstorming, on monte prudemment, en observant toujours plusieurs sorties pour juger la dispersion. On évite en général de combiner une température élevée et un top_p élevé : les deux injectent du hasard, et leur effet se multiplie plutôt qu'il ne s'additionne, ce qui produit des réponses indisciplinées dont il est difficile de comprendre la cause. Un bon protocole change un seul paramètre à la fois.
+
+```python
+# L'effet de la température sur une distribution de probabilités.
+import math
+import random
+
+scores = {"reponse": 5.0, "hypothese": 3.0, "inconnu": 1.0}
+
+def probabilites(scores, temperature):
+    if temperature <= 0:
+        return {k: (1.0 if v == max(scores.values()) else 0.0)
+                for k, v in scores.items()}
+    bruts = {k: math.exp(v / temperature) for k, v in scores.items()}
+    total = sum(bruts.values())
+    return {k: v / total for k, v in bruts.items()}
+
+for temperature in (0.0, 0.5, 1.0, 2.0):
+    dist = probabilites(scores, temperature)
+    affiche = "  ".join(f"{k}={v:.2f}" for k, v in dist.items())
+    print("T =", temperature, "->", affiche)
+```
+
+La fenêtre de contexte constitue la troisième grandeur à maîtriser, et la plus concrète financièrement. Elle regroupe les tokens d'entrée et les tokens de sortie d'un même appel : la question, le contexte injecté, l'historique de conversation et la réponse doivent tous tenir dans cette enveloppe. Au-delà, il faut tronquer, et tronquer est toujours un choix douloureux : couper l'historique efface la mémoire de la conversation, couper le contexte fait disparaître le document qui contenait la réponse. Une bonne architecture dimensionne les trois compartiments séparément, en gardant une réserve pour la réponse, plutôt que de remplir l'enveloppe au hasard.
+
+```text
+fenetre de contexte = [ historique ] + [ contexte ] + [ question ] + [ reponse ]
+                          ^               ^            ^            ^
+                     taille fixe     taille fixe   petite    reservee a
+                     et decroissante  par passage            l'avance
+```
+
+Le tableau suivant rassemble les réglages que vous toucherez le plus souvent, avec la valeur par défaut raisonnable et la conséquence d'un abus dans chaque sens.
+
+```table
+| Réglage | Valeur de départ | Trop bas | Trop haut |
+| --- | --- | --- | --- |
+| temperature | 0.0 à 0.3 | réponses sèches, toujours identiques | divagations, incohérence |
+| top_p | 1.0 | appauvrissement du vocabulaire | doublons, détours |
+| max_tokens | selon la tâche | phrases coupées | facture gonflée, latence |
+| fenêtre utilisée | 50 à 70 pour cent | perte de contexte utile | coût élevé, noyade de la demande |
+```
+
+
+Un dernier réglage, souvent ignoré, mérite d'être cité : la longueur maximale de sortie. Elle borne la réponse, ce qui borne la facture et la latence, mais elle tronque aussi. Si vous demandez un tableau en dix lignes et que vous autorisez soixante tokens, vous obtiendrez un tableau amputé de sa fin, sans aucun message d'erreur. Le réflexe correct consiste à dimensionner la limite en fonction du format attendu, et à vérifier dans la réponse la raison de l'arrêt : quand celle-ci indique une longueur atteinte plutôt qu'une fin naturelle, il faut augmenter la limite ou réduire la demande.
+
+Enfin, la reproductibilité a un coût. Régler la température à zéro ne garantit pas à lui seul des sorties identiques : la concurrence, les mises à jour silencieuses du service et les variations d'implémentation peuvent modifier le résultat. Si votre application exige une réponse stable, il faut enregistrer la sortie attendue, comparer à chaque exécution et alerter sur divergence. C'est exactement la philosophie des tests de contrat appliquée à un composant non déterministe, et cela s'écrit en une dizaine de lignes.
+
+## Mesurer la qualité d'une réponse
+
+Une réponse vous plaît ? Ce n'est pas une mesure. Pour piloter un système de génération, il faut des critères observables, reproductibles et automatisables, sinon chaque modification de prompt dégénère en débat d'opinions. La première famille de critères est structurelle : la réponse respecte-t-elle le format demandé, se termine-t-elle par une ponctuation valide, contient-elle les champs annoncés, reste-t-elle dans la limite de longueur. Ces contrôles s'écrivent en Python pur, s'exécutent sans modèle et éliminent immédiatement une grande partie des échecs.
+
+La deuxième famille est sémantique, et c'est là que le vocabulaire du chapitre devient utile. On encode la réponse attendue et la réponse obtenue, on calcule leur similarité cosinus, et on retient au-delà d'un seuil. Cette mesure ne comprend rien : elle compare des directions de vecteurs. Mais elle est suffisamment fidèle pour repérer une réponse hors sujet, ce qui est exactement le défaut le plus coûteux à laisser passer. On l'utilise donc comme garde-fou, pas comme jugement de vérité, et on garde un œil humain sur ce qui passe sous le seuil.
+
+```python
+import math
+
+def cosine(a, b):
+    numerateur = sum(x * y for x, y in zip(a, b))
+    norme_a = math.sqrt(sum(x * x for x in a))
+    norme_b = math.sqrt(sum(y * y for y in b))
+    if norme_a == 0.0 or norme_b == 0.0:
+        return 0.0
+    return numerateur / (norme_a * norme_b)
+
+attendue = [1.0, 0.5, 0.0, 0.0]
+obtenue = [0.9, 0.6, 0.1, 0.0]
+hors_sujet = [0.0, 0.0, 0.8, 0.7]
+print("proche :", round(cosine(attendue, obtenue), 3))
+print("lointain :", round(cosine(attendue, hors_sujet), 3))
+```
+
+La troisième famille est la plus rentable à mettre en place dès le début : le jeu d'évaluation. On écrit dix questions représentatives, avec pour chacune une réponse de référence et un critère de réussite, puis on exécute le pipeline complet à chaque modification. Le score global protège contre les régressions silencieuses, et le détail par question montre exactement où le prompt s'est dégradé. Rien de neuf sous le soleil de l'ingénierie logicielle : c'est un jeu de tests, simplement ses cas d'entrée sont des phrases et ses attendus sont des jugements.
+
+Un mot sur les métriques plus savantes, que vous croiserez dans la littérature. On mesure parfois la fidélité à la source, c'est-à-dire la proportion d'affirmations de la réponse réellement étayées par le contexte fourni, ainsi que la couverture, la part des informations du contexte effectivement reprise. D'autres approches confient la notation à un second modèle, plus grand ou plus strict, qui attribue des points à la réponse selon une grille. Ces techniques sont utiles à grande échelle, mais elles introduisent leurs propres biais et leur propre coût ; pour un premier système, un jeu de cas à la main et une mesure de similarité suffisent largement à vous faire progresser.
+
+Enfin, il faut tracer ce qu'on mesure. Chaque exécution d'évaluation produit une ligne : identifiant de version du prompt, paramètres de génération, scores, latence et coût. Ces lignes, accumulées, transforment une suite d'essais en une historique exploitable. Vous découvrirez alors des corrélations que l'intuition n'aurait pas devinées : un prompt qui gagne en fidélité mais double la latence, une température qui améliore la créativité sur trois questions sur dix et détruit les sept autres, un contexte plus long qui n'apporte rien parce que le bon passage arrivait en dernier.
+
+## Les embeddings : le sens sous forme de vecteur
+
+Un embedding est une liste de nombres qui représente un texte. Une quarantaine de valeurs pour une phrase, plusieurs centaines pour un document, et voilà transformé en géométrie ce qui n'était qu'une suite de caractères. L'intérêt n'est pas cosmétique : dès que deux textes sont devenus deux vecteurs, on peut mesurer leur proximité par du calcul, trier des milliers de documents par similarité, détecter des doublons ou regrouper des requêtes autour d'un même thème. C'est le pont entre le langage naturel et les algorithmes classiques, et tout le reste du chapitre repose sur ce pont.
+
+Ces vecteurs ne sont pas construits à la main, ils sont entraînés. On expose un modèle à des paires de textes connexes, on le pousse à placer leurs représentations près les unes des autres et à éloigner celles qui n'ont aucun rapport, puis on garde ce qu'il a appris. Le résultat remarquable est la généralisation : deux phrases qui n'ont aucun mot commun, comme « un chien aboie dans le jardin » et « l'animal aboie dehors », se retrouvent voisines, parce que le modèle a appris le sens et non la cooccurrence littérale. Inversement, deux phrases au vocabulaire identique mais de sens opposé peuvent se retrouver lointaines, ce qui est exactement ce qu'on attend d'une représentation sémantique.
+
+Un détail d'ingénierie change beaucoup la pratique : la dimension est fixée par le modèle, et les vecteurs de modèles différents ne sont pas comparables entre eux. Un vecteur de 384 dimensions ne se compare pas à un vecteur de 1536 dimensions, ni ne se convertit sans réentraînement. Choisir un modèle d'encodage revient donc à choisir un espace, et cet espace doit rester le même entre l'indexation et la requête. C'est la raison la plus fréquente d'un système de recherche qui fonctionne au démarrage puis retombe brutalement : on a réindexé une partie du corpus avec un autre modèle sans s'en apercevoir. Une bonne pratique consiste à stocker, avec chaque index, l'identifiant exact du modèle d'encodage et sa dimension, et à refuser toute recherche en cas de discordance.
+
+Pour produire ces vecteurs en production, on interroge une API dédiée qui renvoie une liste de listes de nombres. L'encodage est un appel réseau ordinaire, tout comme l'appel de génération vu précédemment, et il se paie à l'unité de texte. Dans ce chapitre, nous ferons volontairement l'inverse : nous coderons à la main de minuscules vecteurs de dimension quatre, suffisants pour démontrer chaque mécanisme, afin que les calculs restent lisibles et que rien ne dépende du réseau. Le passage d'une échelle à l'autre ne change aucune formule, seulement les nombres.
+
+Trois familles de représentation coexistent en pratique, et les distinguer évite de suréquiper un besoin simple.
+
+```table
+| Représentation | Dimension typique | Force | Faiblesse |
+| --- | --- | --- | --- |
+| mots-clés exacts | nulle, simple index | rapide, explicite | rate les synonymes et la reformulation |
+| sac de mots pondéré | quelques milliers | simple, efficace sur le vocabulaire fixe | ignore l'ordre et le sens |
+| embedding dense | 384 à 1536 | capture la proximité de sens | coût d'indexation, modèle à imposer |
+```
+
+
+Le bon choix dépend de la question posée au système. Si l'utilisateur tape un identifiant de produit ou un numéro de version, la recherche littérale est non seulement suffisante, elle est préférable, car elle est exacte et gratuite. Si l'utilisateur reformule une idée avec ses propres mots, seule la représentation dense suivra. La plupart des systèmes récents combinent les deux, en classant par similarité dense puis en recalant sur les termes exacts, ce qui donne la robustesse de l'une et la précision de l'autre.
+
+```python
+# Des embeddings de démonstration, codés à la main, dimension 4.
+VECTEURS = {
+    "le chien aboie":        [1.0, 0.0, 0.0, 0.0],
+    "un chien aboie":        [0.9, 0.1, 0.0, 0.0],
+    "l'animal aboie":        [0.8, 0.2, 0.0, 0.1],
+    "le chat dort":          [0.0, 0.0, 1.0, 0.0],
+    "température du modèle": [0.0, 0.0, 0.1, 1.0],
+}
+
+def encoder(texte, table=VECTEURS):
+    """Renvoie le vecteur associé, ou un vecteur nul si le texte est inconnu."""
+    return table.get(texte, [0.0] * len(next(iter(table.values()))))
+
+print("inconnu :", encoder("phrase jamais indexée"))
+```
+
+## Similarité cosinus en pur Python
+
+La mesure de proximité la plus utilisée en recherche sémantique est la plus simple à écrire : le cosinus de l'angle entre deux vecteurs. On calcule d'abord la somme des produits termes à termes, puis on la divise par le produit des normes, c'est-à-dire des racines carrées des sommes des carrés. Le résultat vit entre moins un et un : deux vecteurs de même direction donnent un, deux vecteurs orthogonaux donnent zéro, deux directions opposées donnent moins un. Dans la pratique, seuls les cas positifs vous intéresseront.
+
+Pourquoi ce produit scalaire plutôt que la distance euclidienne ? Parce que la longueur d'un vecteur porte peu d'information : un document long a des fréquences plus élevées qu'un document court sur les mêmes sujets, et la distance euclidienne le pénaliserait alors, alors que sa direction, elle, reste identique. La similarité cosinus se focalise sur la direction, donc sur la répartition relative des termes, donc sur le sens. C'est exactement le comportement voulu quand on compare deux textes de longueurs différentes, ce qui est le cas la plupart du temps.
+
+```python
+import math
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def cosinus(a, b):
+    """Similarité cosinus entre deux vecteurs de même longueur."""
+    if len(a) != len(b):
+        raise ValueError("les vecteurs doivent avoir la même longueur")
+    produit = sum(x * y for x, y in zip(a, b))
+    na, nb = norme(a), norme(b)
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return produit / (na * nb)
+
+print(round(cosinus([1.0, 0.0], [1.0, 0.0]), 3))
+print(round(cosinus([1.0, 0.0], [0.0, 1.0]), 3))
+print(round(cosinus([1.0, 0.0], [-1.0, 0.0]), 3))
+```
+
+Les deux cas particuliers méritent une attention. Le vecteur nul, obtenu pour un texte entièrement hors vocabulaire, ne possède pas de direction : toute division deviendrait absurde, et la fonction renvoie donc zéro, ce qui place innocemment le document au bout du classement. Le problème ne vient pas du calcul mais de l'indexation, et il se signale par un document qui n'apparaît jamais dans aucun résultat. Le second cas est le déséquilibre de dimension : comparer deux vecteurs de longueurs différentes est une erreur de programmation, non une donnée manquante, et lever une exception dès le départ fait gagner des heures de diagnostic.
+
+Une fois la mesure établie, le classement se résume à une boucle et un tri. On calcule le score de chaque document par rapport à la requête, on ordonne les résultats par score décroissant, puis on ne conserve que les premiers, typiquement trois à cinq passages. Le nombre à retenir, souvent appelé k, fait partie des réglages du système : trop petit, la génération manque de matière et invente ; trop grand, le prompt s'allonge, le coût augmente et la pertinence se dilue sous des passages qui n'ont rien à voir. On le choisit par expérience sur un jeu d'évaluation, et on le garde identique d'une mesure à l'autre pour pouvoir comparer.
+
+```python
+def rechercher(question, documents, vecteurs, k=3):
+    """Classe les documents par similarité avec la question, meilleurs d'abord."""
+    cible = vecteurs[question]
+    scores = []
+    for i, document in enumerate(documents):
+        score = cosinus(cible, vecteurs[document])
+        scores.append((round(score, 4), i, document))
+    scores.sort(key=lambda ligne: (-ligne[0], ligne[1]))
+    return scores[:k]
+
+DOCUMENTS = ["le chien aboie", "l'animal aboie", "le chat dort"]
+VECTEURS = {
+    "le chien aboie": [1.0, 0.0, 0.0, 0.0],
+    "l'animal aboie": [0.8, 0.2, 0.0, 0.1],
+    "le chat dort":   [0.0, 0.0, 1.0, 0.0],
+    "un chien dort":  [0.3, 0.0, 0.8, 0.0],
+}
+for score, i, texte in rechercher("un chien dort", DOCUMENTS, VECTEURS, k=2):
+    print(score, i, texte)
+```
+
+Un piège revient souvent quand on passe de quatre dimensions à mille : la complexité. Une comparaison coûte le produit des dimensions, et la recherche exhaustive au sein d'un corpus de cent mille documents multiplie ce coût par cent mille, ce qui devient lent à chaque requête. Les systèmes réels répondent par des index vectoriels qui organisent les vecteurs en groupes proches et ne visitent qu'une fraction du corpus, ou par une réduction de dimension avant le tri. Ces structures, utiles dès quelques dizaines de milliers de documents, ne changent rien à la mesure : elles accélèrent seulement le calcul du même score.
+
+## Le pipeline RAG en cinq étapes
+
+La recherche augmentée par la génération, souvent abrégée RAG, combine deux composants que l'on vient de construire séparément : un rechercheur qui trouve des passages, et un générateur qui rédige une réponse à partir de ces passages. L'articulation des deux se fait en cinq étapes, toujours les mêmes, quel que soit le framework utilisé. Comprendre cette séquence, c'est pouvoir diagnostiquer n'importe quel système du domaine, y compris ceux qui la masquent derrière des abstractions nombreuses.
+
+La première étape est l'ingestion : récupérer les documents sources, fichiers texte, pages exportées, notes internes, et les convertir en texte brut exploitable. La deuxième est le découpage : un document entier est presque toujours trop long pour être utile, on le découpe donc en passages de taille raisonnable, en gardant un chevauchement pour ne pas perdre une phrase à cheval sur deux blocs. La troisième est l'indexation : chaque passage est encodé en vecteur et stocké avec son identifiant, son emplacement et le texte original. La quatrième est la récupération : la question de l'utilisateur est encodée avec le même modèle, puis les k passages les plus proches sont extraits de l'index. La cinquième est la génération : le gabarit assemble les règles, les passages et la question, et le modèle rédige la réponse.
+
+```text
+1. ingestion      -> fichiers bruts
+2. decoupage      -> passages + chevauchement
+3. indexation     -> vecteurs + metadonnees
+4. recuperation   -> question -> k passages proches
+5. generation     -> gabarit + passages + question -> reponse
+```
+
+Chacune de ces étapes possède ses propres échecs, et les confondre est la première erreur de diagnostic. Une réponse fausse vient rarement du modèle : elle vient le plus souvent d'un découpage qui a coupé la phrase clé, d'une indexation faite avec un modèle différent de celui de la requête, ou d'une récupération qui a renvoyé trois passages sans rapport parce que la question était trop courte. Avant de soupçonner la génération, on vérifie donc ce qui a été fourni au modèle, en affichant les passages retenus et leurs scores. Cette habitude, quelques lignes de journalisation, règle la moitié des incidents.
+
+Le découpage mérite une attention particulière, car il est souvent traité négligemment. Deux paramètres dominent : la taille du passage et le chevauchement. Un passage trop court perd son contexte, une phrase détachée de sa négation ou de son sujet devient trompeur ; un passage trop long dilue l'information et rapproche des vecteurs qui mélangent plusieurs thèmes. Un chevauchement nul fait perdre les frontières, un chevauchement excessive double le coût d'indexation. Des valeurs courantes se situent entre quelques dizaines et quelques centaines de mots, avec un dixième de recouvrement, mais la seule règle fiable est de découper sur des séparateurs naturels, titres, phrases, puis de vérifier sur votre propre corpus que les passages restent autonomes.
+
+```python
+def decouper(texte, taille=200, chevauchement=40):
+    """Découpe en passages de `taille` caractères, avec recouvrement."""
+    if chevauchement >= taille:
+        raise ValueError("le chevauchement doit être inférieur à la taille")
+    passages = []
+    debut = 0
+    while debut < len(texte):
+        fin = debut + taille
+        passage = texte[debut:fin]
+        if fin < len(texte):
+            dernier_espace = passage.rfind(" ")
+            if dernier_espace > taille // 2:
+                passage = passage[:dernier_espace]
+        passages.append(passage.strip())
+        if fin >= len(texte):
+            break
+        debut += len(passage) - chevauchement
+    return [p for p in passages if p]
+
+texte = ("La recherche augmentée améliore la fiabilité des réponses. " * 12).strip()
+blocs = decouper(texte, taille=80, chevauchement=20)
+print(len(blocs), "passages")
+for bloc in blocs[:3]:
+    print("-", bloc)
+```
+
+L'indexation, troisième étape, est la plus simple à écrire et la plus critique à fiabiliser. Pour chaque passage, on calcule le vecteur, on l'enregistre avec son texte, son identifiant et l'identifiant du modèle d'encodage, puis on persiste l'ensemble dans un fichier. Le format n'a aucune importance tant qu'il est lisible et versionné : du JSON suffit largement pour un corpus de quelques centaines de documents, et il a l'avantage d'être inspectable à la main quand quelque chose cloche. On ajoute volontiers une empreinte du corpus, afin de savoir si la base indexée correspond bien aux sources, et une date, afin de savoir quand elle a été construite.
+
+```python
+import hashlib
+import json
+
+def indexer(passages, encoder):
+    """Construit un index : vecteurs, textes, modèle utilisé, empreinte."""
+    entrees = []
+    for identifiant, texte in enumerate(passages):
+        entrees.append({"id": identifiant, "texte": texte,
+                        "vecteur": encoder(texte)})
+    charge = json.dumps(entrees, ensure_ascii=False, sort_keys=True)
+    return {
+        "mode": "embedding-demo-v1",
+        "empreinte": hashlib.sha256(charge.encode("utf-8")).hexdigest()[:12],
+        "entrees": entrees,
+    }
+
+index = indexer(["le chien aboie", "le chat dort"], lambda t: [1.0, 0.0])
+print(index["mode"], index["empreinte"], len(index["entrees"]), "entrées")
+```
+
+## Robustesse : quand la recherche se trompe
+
+Un pipeline de recherche augmentée échoue toujours de la même manière : il fournit au modèle de mauvais matériaux, puis on reproche au modèle d'avoir mal bâti. Repérer ce moment précis est l'essentiel du métier. Quatre symptômes reviennent régulièrement, et chacun a son remède. Si aucun passage n'est retourné, la requête est hors vocabulaire ou l'index est vide : on affiche alors un message d'indisponibilité plutôt que de laisser le modèle improviser. Si les scores sont tous proches de zéro, la question est trop générique ou mal formulée : on la reformule, on ajoute des termes, on interroge l'utilisateur. Si le bon passage arrive en quatrième position, la valeur de k est trop faible ou le seuil de pertinence est mal calé. Et si les passages sont corrects mais que la réponse s'en écarte, le gabarit est fautif : la consigne de rester dans le contexte manque, ou elle est noyée.
+
+```python
+def scorer_reponse(reponse_vecteur, passages, cosine):
+    """Retourne la similarité maximale entre la réponse et chaque passage."""
+    if not passages:
+        return 0.0
+    meilleure = 0.0
+    for passage in passages:
+        valeur = cosine(reponse_vecteur, passage["vecteur"])
+        if valeur > meilleure:
+            meilleure = valeur
+    return round(meilleure, 4)
+```
+
+La version naïve de cette fonction, celle que l'on écrit spontanément, réencode la réponse à l'intérieur de la boucle, une fois par passage, pour obtenir exactement le même résultat. Extrayez cet encodage hors de la boucle, transmettez-le déjà calculé, et vous divisez le temps d'exécution par le nombre de passages. Ce type d'optimisation n'a rien d'exotique : il consiste simplement à ne pas recomputer une valeur constante, et il s'applique à l'ensemble du pipeline. La requête est encodée une seule fois, les vecteurs des documents sont précalculés à l'indexation, et la seule chose qui change d'une requête à l'autre est le vecteur de la question.
+
+La deuxième ligne de défense est le garde-fou. Quand aucun passage ne dépasse un seuil de similarité, la réponse honnête vaut mieux qu'une réponse inventée : on renvoie un message explicite indiquant que l'information n'a pas été trouvée, accompagné éventuellement des documents les plus proches pour que l'utilisateur vérifie. Ce comportement transforme une défaillance silencieuse en défaillance visible, et c'est la différence entre un outil auquel on fait confiance et un outil qu'on double d'une vérification manuelle.
+
+La troisième est la traçabilité, déjà évoquée pour l'appel d'API mais décuplée ici. Chaque réponse doit pouvoir être reconstituée : version du gabarit, identifiant du modèle, liste des passages retenus avec leurs scores, paramètres de génération et horodatage. Avec ces éléments, un litige se résout en quelques minutes ; sans eux, chaque mauvaise réponse relance le débat sur le modèle, le prompt, les documents et la météo. En pratique, un journal JSON ligne à ligne, un identifiant de session et une convention de nommage de version suffisent amplement à pérenniser cette mémoire.
+
+Enfin, la sécurité du système se joue aussi dans le contenu fourni. Un document du corpus peut contenir des instructions malveillantes qui se trouvent injectées dans le prompt, par exemple une ligne demandant d'ignorer les consignes précédentes. La parade n'est pas technique mais architecturale : on délimite strictement le rôle du contexte dans le gabarit, on rappelle que le contexte est une donnée et non une instruction, et on interdit au modèle d'obéir à ce qu'il contient. Ce réflexe, à installer dès la première version, évite une famille entière de dysfonctionnements.
+
+## Bonnes pratiques de production
+
+Passer du prototype à la production ne demande pas d'autres algorithmes, seulement de la discipline. La première règle est l'immutabilité des artefacts : gabarit de prompt, modèle d'encodage, index, seuils et paramètres de génération sont versionnés ensemble, et toute modification produit une nouvelle version identifiable. Si les performances chutent, on sait exactement quel élément est responsable, et on peut revenir en arrière. Sans versionnement, la seule alternative est de restaurer l'état par intuition, ce qui ne fonctionne pas.
+
+La deuxième règle est la budgétisation. Chaque appel a un coût en tokens et une latence ; multiplié par le trafic, il devient une dépense prévisible qu'il faut estimer avant le lancement, pas après la facture. On compte les tokens d'entrée moyens par requête, on ajoute le contexte, on multiplie par le nombre de requêtes journalier, puis on applique le tarif du modèle choisi. Ce calcul, aussi approximatif soit-il, suffit à trancher entre un modèle rapide et un modèle réfléchi, ou à décider de réduire le contexte fourni. Les systèmes qui ignorent ce calcul découvrent leur coût au moment où il devient insoutenable.
+
+La troisième règle est la supervision. Une alerte doit se déclencher quand le taux d'erreur dépasse un seuil, quand la latence médiane s'allonge, quand plus de la moitié des réponses tombent sous le seuil de similarité, ou quand l'index n'a pas été reconstruit depuis trop longtemps. Ces quatre alertes coûtent quelques lignes à mettre en place et détectent la très grande majorité des dégradations silencieuses, y compris celles causées par un changement de modèle côté fournisseur que vous n'avez pas initié.
+
+Le déploiement progressif s'applique ici comme partout ailleurs. On expose la nouvelle version du gabarit à une fraction du trafic, on compare les scores et la latence avec l'ancienne, puis on généralise ou on revient. L'ancienne version reste déployée pendant une période de sécurité, et l'index n'est reconstruit qu'après validation, jamais pendant une fenêtre de trafic soutenu. Ces précautions paraissent lourdes pour un outil de génération, mais l'expérience montre qu'un système de restitution de documents bénéficie exactement des mêmes exigences qu'un service transactionnel.
+
+```python
+# Journal d'une requête, formaté pour être relu et agrégé.
+import json
+import time
+
+def journaliser(entree, sorties, latence, version):
+    trace = {
+        "horodatage": int(time.time()),
+        "version_prompt": version,
+        "tokens_entree": entree,
+        "tokens_sortie": sorties,
+        "latence_ms": round(latence * 1000),
+        "fin_arret": "longueur" if sorties >= 500 else "naturelle",
+    }
+    print(json.dumps(trace, ensure_ascii=False))
+    return trace
+
+journaliser(320, 84, 0.62, "prompt-v3.2")
+```
+
+Une dernière pratique, souvent négligée, concerne la documentation du système. Décrivez, en une page, ce que fait l'assistant, ce qu'il ne fait pas, sur quel corpus il s'appuie, avec quelle fréquence l'index est reconstruit, et quel comportement adopter quand il répond qu'il ne sait pas. Cette page devient le contrat entre les utilisateurs et l'équipe, elle réduit les attentes irréalistes et elle sert de base aux tests d'acceptation. Un système de génération sans contrat écrit est un système dont chacun attend des choses différentes, et dont personne ne peut dire s'il fonctionne.
+
+## Assembler la génération augmentée
+
+Tous les morceaux sont maintenant sur la table : prompt structuré, appel d'API, tokenisation, embeddings, similarité cosinus, pipeline en cinq étapes, garde-fous. Il reste à les coudre ensemble dans une fonction unique qui prend une question et rend une réponse, avec ses traces. L'assemblage n'a rien de spectaculaire, et c'est précisément le signe qu'il est correct : chacune des étapes tient en quelques lignes, chacune est testable isolément, et aucune ne cache de magie. Le code ci-dessous tient entièrement en bibliothèque standard et peut être exécuté tel quel dans l'environnement de ce cours.
+
+```python
+import math
+
+def cosine(a, b):
+    produit = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return 0.0 if na == 0.0 or nb == 0.0 else produit / (na * nb)
+
+def repondre(question, index, k=2, gabarit=None):
+    """Recherche les passages proches, puis construit le prompt final."""
+    cible = index["vecteurs"].get(question, [0.0] * index["dimension"])
+    scores = sorted(
+        ((cosine(cible, entree["vecteur"]), entree["texte"])
+         for entree in index["entrees"]),
+        reverse=True,
+    )
+    retenus = [texte for score, texte in scores[:k] if score > 0.0]
+    if not retenus:
+        return "Aucun passage pertinent n'a été trouvé.", []
+    gabarit = gabarit or "Contexte :\n{contexte}\n\nQuestion : {question}\nRéponse :"
+    prompt = gabarit.format(
+        contexte="\n".join("- " + p for p in retenus),
+        question=question,
+    )
+    return prompt, retenus
+```
+
+Observez ce que renvoie la fonction : le prompt construit et les passages retenus, pas seulement une promesse de réponse. Cette API de retour est volontairement expéditive. Elle permet d'afficher, avant tout appel de génération, exactement ce que le modèle va recevoir, ce qui est la seule façon fiable de comprendre une sortie décevante. Dans un système réel, la génération s'ajoute en fin de fonction, avec l'appel urllib vu plus haut, et la même fonction renvoie alors la réponse, les passages, les scores et les métadonnées de coût.
+
+Un point d'architecture mérite d'être tranché maintenant : où vit la génération ? Trois positions se rencontrent, et elles n'ont pas le même coût d'évolution. La génération peut être intégrée au même module que la recherche, ce qui va vite mais empêche de faire évoluer les deux indépendamment. Elle peut vivre derrière une frontière nette, la recherche renvoyant des passages, la génération consommant ces passages, ce qui permet de remplacer le modèle sans toucher à l'index. Elle peut enfin être décomposée davantage encore, en chaînes d'étapes intermédiaires avec reprise sur erreur, ce qui convient aux traitements longs mais complique le débogage. Pour un premier système, la deuxième position est le meilleur rapport souplesse et simplicité.
+
+```text
+question
+   |
+   v
+[ recherche ] -- passages + scores --> [ generation ] --> reponse
+   |                                        ^
+   |                                        |
+   +----------- journal d'execution --------+
+```
+
+## Évaluer une chaîne complète
+
+Tester la recherche et tester la génération séparément ne suffit pas : c'est leur interaction qui produit la qualité finale. On évalue donc la chaîne entière, avec un jeu de questions représentatives, et on note chaque sortie selon plusieurs critères indépendants. La pertinence des passages retenus se juge d'abord : les documents fournis contiennent-ils l'information demandée ? La fidélité vient ensuite : la réponse s'appuie-t-elle sur ces documents sans les déformer ? Le format intervient enfin : la structure demandée a-t-elle été respectée ? Trois notes simples valent mieux qu'une note globale impossible à interpréter.
+
+```python
+def evaluer(entrees, repondre, noter):
+    """Exécute le jeu d'évaluation et agrège les résultats."""
+    lignes = []
+    for question, reference in entrees:
+        prompt, passages = repondre(question)
+        note = noter(question, reference, passages, prompt)
+        lignes.append({"question": question, "note": note,
+                       "passages": len(passages)})
+    moyenne = sum(ligne["note"] for ligne in lignes) / max(len(lignes), 1)
+    return lignes, round(moyenne, 3)
+
+JEU = [
+    ("Qu'est-ce qu'un embedding ?", "vecteur représentant un texte"),
+    ("Comment règle-t-on le hasard ?", "température et top_p"),
+    ("Combien de passages retenir ?", "trois à cinq"),
+]
+
+def noter(question, reference, passages, prompt):
+    if not passages:
+        return 0.0
+    mots = set(reference.lower().split())
+    couverture = sum(1 for m in mots if any(m in p.lower() for p in passages))
+    return round(couverture / len(mots), 2)
+
+lignes, moyenne = evaluer(JEU, lambda q: repondre(q, index), noter)
+print("moyenne :", moyenne)
+for ligne in lignes:
+    print(ligne["note"], "-", ligne["question"])
+```
+
+Le seuil de réussite se fixe avant l'exécution, jamais après. Si vous décidez que soixante-quinze pour cent de couverture constitue un passage acceptable, cette valeur se note en tête du fichier d'évaluation, et toute version qui descend en dessous est rejetée. Définir le critère après avoir vu les résultats transforme l'évaluation en exercice de justification, et il n'y a plus moyen de savoir si le système progresse ou si c'est la barre qui a bougé. Une équipe qui tient ce carnet depuis quelques mois possède un actif rare : la preuve mesurable que ses modifications améliorent réellement le produit.
+
+La surveillance en production reprend les mêmes critères, mais calculés en continu et sur des échantillons. On ne peut pas noter chaque réponse à la main, alors on prélève au hasard quelques pourcents des interactions, on leur applique les mêmes métriques automatiques, et on surveille la tendance. Une baisse progressive signale presque toujours une dérive des sources, une rupture brutale signale un changement de modèle ou de gabarit, et une hausse sans modification côté équipe trahit un changement silencieux chez le fournisseur. Dans les trois cas, la détection repose uniquement sur la continuité de la mesure.
+
+## Du prototype à l'usage réel
+
+Le passage à l'échelle ne se fait pas en multipliant par mille le code du prototype, mais en déplaçant le travail hors du chemin critique. L'indexation, qui ne dépend d'aucune requête utilisateur, se déclenche en tâche de fond, à la demande ou par planification, et remplace l'ancien index d'un bloc une fois complet. La génération, qui dépend de la requête, reste en chemin critique et doit donc rester minimal : prompt court, contexte resserré, gabarit stable. Ce découpage en temps différé et temps réel est la structure qui tient tous les systèmes de recherche documentaire.
+
+Le dimensionnement s'exprime en trois grandeurs : le nombre de requêtes par seconde, la latence acceptable pour l'utilisateur, et le budget alloué. Ces trois grandeurs sont en conflit permanent, et la résolution de ce conflit constitue l'essentiel de la conception. On réduit la latence en raccourcissant le contexte et en choisissant le modèle rapide ; on augmente la qualité en faisant l'inverse ; on augmente le débit en mettant en cache les réponses aux questions déjà posées. Le cache mérite une attention particulière : une question reformulée mais équivalente ne justifie pas un nouvel appel, et une table de hachage sur la question normalisée suffit à absorber une part importante du trafic.
+
+```python
+import hashlib
+
+class CacheReponses:
+    """Mémoire de premier niveau, indicative et expirée, pour les questions vues."""
+
+    def __init__(self, duree=3600, max_entrees=1000):
+        self.duree = duree
+        self.max_entrees = max_entrees
+        self.table = {}
+
+    def cle(self, question):
+        texte = " ".join(question.lower().split())
+        return hashlib.sha256(texte.encode("utf-8")).hexdigest()[:16]
+
+    def obtenir(self, question):
+        entree = self.table.get(self.cle(question))
+        if entree is None:
+            return None
+        horodatage, reponse = entree
+        return reponse
+
+    def mettre(self, question, reponse):
+        import time
+        if len(self.table) >= self.max_entrees:
+            self.table.clear()
+        self.table[self.cle(question)] = (time.time(), reponse)
+
+cache = CacheReponses()
+cache.mettre("Qu'est-ce qu'un embedding ?", "Un vecteur représentant un texte.")
+print("cache :", cache.obtenir("qu'est-ce qu'un  embedding ?"))
+print("manquant :", cache.obtenir("Combien de dimensions ?"))
+```
+
+Le code de ce cache illustre deux choix assumés. La clé est calculée sur la question normalisée, espaces superflus et casse retirés, ce qui regroupe les reformulations mécaniques ; et la table est vidée plutôt que purgée minutieusement quand elle est pleine, solution grossière mais prévisible, adaptée à un premier niveau de cache. Les gains de performance s'accompagnent toujours d'une perte : ici, une réponse potentiellement périmée. On l'assume, on documente la durée de validité, et l'utilisateur le sait.
+
+```python
+# Le même pipeline, version minimale, pour vérifier l'ensemble en une lecture.
+def pipeline(question, documents, encoder, k=3):
+    vecteurs = [encoder(doc) for doc in documents]
+    cible = encoder(question)
+    scores = sorted(
+        ((cosine(cible, v), i, documents[i]) for i, v in enumerate(vecteurs)),
+        reverse=True,
+    )
+    retenus = [texte for score, i, texte in scores[:k] if score > 0.0]
+    if not retenus:
+        return {"reponse": "information introuvable", "passages": []}
+    prompt = "Contexte :\n" + "\n".join(retenus) + "\n\nQuestion : " + question
+    return {"reponse": "SIMULEE : " + prompt.splitlines()[-1], "passages": retenus}
+
+print(pipeline("le chat dort", ["le chien aboie", "le chat dort"],
+               lambda t: [1.0, 0.0] if "chat" in t else [0.0, 1.0], k=1))
+```
+
+Toute la chaîne tient dans cette fonction : encodage, comparaison, sélection, construction du contexte. Le remplacement du dernier par un vrai appel d'API est un changement local, d'une dizaine de lignes, qui ne touche à rien de ce qui précède. C'est la marque d'une bonne frontière : on peut substituer un composant sans réécrire les autres, et les tester séparément avant de les réunir.
+
+## À retenir
+
+- Un grand modèle de langage prédit la suite d'un texte ; il ne consulte aucune base et n'a pas de mémoire hors du contexte qu'on lui fournit.
+- Un prompt efficace se compose d'un rôle, d'une consigne, de variables, d'exemples et d'un format de sortie explicite.
+- Les limites et les coûts se comptent en tokens, et la tokenisation découpe en sous-mots plutôt qu'en mots.
+- Régler la température à zero rend la génération stable ; l'augmenter apporte de la variété au prix de la fiabilité.
+- Un embedding est un vecteur dense qui place les textes de sens proche dans des directions voisines.
+- La similarité cosinus mesure l'angle entre deux vecteurs, indépendamment de leur longueur, et renvoie zéro pour un vecteur nul.
+- Le pipeline de recherche augmentée comporte cinq étapes : ingestion, découpage, indexation, récupération, génération.
+- Avant de soupçonner le modèle, vérifiez toujours les passages qui lui ont été fournis.
+- Versionnez gabarit, modèle d'encodage, index et paramètres ensemble ; ils forment un seul artefact.
+- Un jeu d'évaluation figé, tenu dans le temps, transforme les intuitions en améliorations mesurables.
+
+## Erreurs fréquentes
+
+- Fournir la question au modèle sans lui fournir de contexte, puis s'étonner qu'il invente une réponse plausible.
+- Indexer avec un modèle d'encodage et interroger avec un autre, ce qui rend tous les scores inexploitables sans message d'erreur.
+- Découper les documents à une taille fixe sans chevauchement, ce qui coupe les phrases en plein milieu et perd le sens.
+- N'augmenter k qu'après un échec, sans mesurer que des passages supplémentaires diluent le contexte et allongent la facture.
+- Écrire un prompt qui interdit sans dire ce que faire, et laisser le modèle deviner la conduite à tenir.
+- Comparer la sortie du modèle à un souvenir subjectif plutôt qu'à une réponse de référence versionnée.
+- Oublier la raison de l'arrêt de génération : une réponse tronquée ressemble à une réponse complète tant qu'on ne regarde pas ce champ.
+- Ne pas tracer les passages et les scores, ce qui rend chaque réponse fausse indiagnostiquable.
+- Faire dépendre un test du réseau en direct, qui échouera au pire moment et inondera le jeu de résultats faussés.
+- Laisser une clé d'API dans le code source ou dans un journal, y compris dans un exemple pédagogique.
+
+## Pour aller plus loin
+
+Trois documentations officielles suffisent à ancrer tout ce qui précède dans la pratique réelle. La documentation de la plateforme OpenAI, sur platform.openai.com/docs, détaille les paramètres de génération, la structure des messages et les formats de sortie structurés ; elle reste la référence la plus lisible pour comprendre ce que contient réellement une requête et sa réponse. Le guide de Hugging Face, sur huggingface.co/docs, explique les pipelines de texte, les modèles d'encodage et la manière dont vocabulaires et plongements sont stockés ; il est indispensable dès que l'on veut manipuler soi-même les vecteurs. Enfin la documentation de LangChain en Python, sur python.langchain.com, montre comment les cinq étapes du pipeline sont découpées en objets réutilisables, ce qui aide beaucoup à lire le code des frameworks une fois les concepts maîtrisés.
+
+Au-delà des trois lectures obligatoires, deux habitudes valent mieux que dix tutoriels. La première consiste à lire, pour chaque réponse, ce qui a été envoyé : le prompt complet, les passages, les paramètres, et à faire varier un seul élément à la fois. La seconde consiste à noter systématiquement ce qui échoue, question par question, dans un fichier. Au bout de quelques dizaines d'entrées, les faiblesses de votre système sont classées, quantifiées et priorisées, et vous savez exactement quoi améliorer ensuite. C'est ainsi que la recherche documentaire cesse d'être un art et devient une discipline d'ingénierie mesurable, itérative et reproductible.
+
+## Et maintenant : construisez votre assistant documentaire
+
+Vous avez désormais tous les éléments pour bâtir, seul, un assistant qui répond à partir de vos propres documents. Prenez un corpus qui vous est familier, quelques dizaines de pages de documentation interne, un manuel ou des notes de cours, puis écrivez le pipeline complet : nettoyage, découpage avec chevauchement, indexation en vecteurs, recherche par similarité cosinus, assemblage du gabarit et enfin appel du modèle. Commencez sans appel réseau, avec la simulation de réponse que propose l'exemple de clôture, afin de valider la mécanique de recherche dans des conditions entièrement déterministes, puis branchez l'appel réel une fois les passages vérifiés à l'œil.
+
+Quand le système répond de bout en bout, ajoutez les trois éléments qui séparent un prototype d'un outil : un jeu d'évaluation de dix questions avec leurs réponses de référence, un journal d'exécution qui conserve les passages et leurs scores, et un garde-fou qui répond honnêtement quand rien de pertinent n'est trouvé. Prenez l'habitude de faire varier k, la taille des passages et la consigne de fidélité, en notant les scores à chaque fois. Vous constaterez alors, sur votre propre corpus, ce que toute la littérature du domaine répète : la qualité d'un système de génération augmentée se joue à quatre-vingts pour cent dans la qualité de ce qu'on lui donne à lire, et seulement à vingt pour cent dans le modèle lui-même. À vous de jouer.

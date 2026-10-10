@@ -1,0 +1,88 @@
+## Gérer les fichiers téléversés
+
+Beaucoup d'applications permettent aux utilisateurs de téléverser des fichiers : une photo de profil, un document PDF, une image pour un article. Django gère ce besoin avec deux champs de modèle : `FileField` pour les fichiers génériques et `ImageField` pour les images. La configuration correspondante utilise `MEDIA_ROOT` pour le dossier de stockage et `MEDIA_URL` pour l'adresse de service. Un modèle déclarant `ImageField` stocke le fichier sur le disque et conserve dans la base le chemin relatif du fichier.
+
+Le téléversement d'un fichier suit un cycle précis. Le formulaire doit utiliser la méthode `POST` et l'attribut `enctype="multipart/form-data"`, sans quoi les fichiers ne seront pas transmis. La vue récupère le fichier depuis `request.FILES`, et le formulaire le valide comme un champ standard. La méthode `save()` enregistre le fichier sur le disque et le chemin dans la base. La plupart du temps, vous n'avez pas besoin d'écrire ce code à la main, car `ModelForm` gère déjà ce mécanisme.
+
+Un formulaire de téléversement déclare un champ `FileField` ou `ImageField`. Les règles de validation peuvent inclure la taille maximale, le type de fichier ou les dimensions pour les images. Vous pouvez écrire une validation personnalisée pour vérifier l'extension du fichier ou son contenu réel. Cette précaution est importante : faire confiance à l'utilisateur sur le contenu d'un fichier est une faille de sécurité courante. Un fichier exécutable renommé en image doit être détecté et rejeté.
+
+La configuration des médias est simple mais doit être correctement posée. `MEDIA_ROOT` désigne le dossier où les fichiers sont stockés ; `MEDIA_URL` définit l'adresse à partir de laquelle ils sont servis. En production, le serveur web ou un stockage distant sert ces fichiers, car le serveur de développement n'est pas adapté à cet usage. Un stockage objet comme Amazon S3, configuré avec une bibliothèque tierce, est une solution courante pour les applications à fort trafic.
+
+Le téléversement de fichiers soulève des questions de sécurité spécifiques. Ne faites jamais confiance au nom du fichier fourni par le navigateur : renommez-le avec un identifiant unique, par exemple un UUID. Limitez la taille maximale dans la configuration et dans le formulaire. Stockez les fichiers en dehors du dossier statique public si leur accès doit être contrôlé. Ces précautions, appliquées systématiquement, préservent votre serveur des fichiers malveillants.
+
+```python
+from django import forms
+from .models import Document
+
+class DocumentForm(forms.ModelForm):
+    class Meta:
+        model = Document
+        fields = ["titre", "fichier"]
+        widgets = {
+            "fichier": forms.ClearableFileInput(attrs={"accept": ".pdf,.docx"}),
+        }
+```
+
+Ce formulaire utilise un `ModelForm` pour le modèle `Document`. Le champ fichier est personnalisé avec un attribut HTML `accept` qui suggère au navigateur de n'afficher que les fichiers PDF et Word. Cette indication, bien que non contraignante, améliore l'expérience utilisateur. La validation supplémentaire de l'extension et du contenu doit être ajoutée dans une méthode de nettoyage pour garantir la sécurité.
+
+## Mettre en place le framework de messages
+
+Le framework de messages est un mécanisme simple et élégant pour afficher des notifications à l'utilisateur après une action. Un message est une chaîne courte, associée à un niveau — succès, information, avertissement, erreur — qui détermine sa présentation. Les messages sont stockés dans la session ou dans un cookie signé, puis affichés sur la page suivante, ce qui les rend éphémères par nature.
+
+Dans une vue, vous ajoutez un message avec `messages.success(request, "L'article a été publié.")`. Le message est stocké et restera disponible jusqu'à sa prochaine lecture. Dans le template, vous itérez sur `messages` et affichez chaque message avec son niveau. Ce découplage entre la vue qui génère et le template qui affiche permet d'afficher des notifications depuis n'importe quelle vue, y compris les vues génériques, sans modifier le template à chaque fois.
+
+Les niveaux de message ont une signification précise. `debug` sert pendant le développement, `info` pour une information neutre, `success` pour une action réussie, `warning` pour une situation à surveiller, et `error` pour un problème. L'usage correct de ces niveaux permet d'appliquer un style différent à chaque type de notification. Un message de succès s'affiche en vert, un message d'erreur en rouge, ce qui améliore la lisibilité de l'interface.
+
+La configuration du framework de messages est minimale. Le stockage par défaut utilise la session, ce qui est adapté à la majorité des applications. Vous pouvez aussi choisir un stockage par cookie pour des applications sans session. Les messages sont automatiquement purgés après affichage, ce qui évite leur accumulation. Une petite fonction dans le template de base suffit pour les afficher sur toutes les pages.
+
+```html
+{% if messages %}
+  <ul class="messages">
+    {% for message in messages %}
+      <li class="{{ message.tags }}">{{ message }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}
+```
+
+Ce fragment, placé dans le template de base, affiche les messages avec leur classe de niveau. Le message est automatiquement supprimé du stockage après affichage. Cette présentation simple peut ensuite être enrichie avec du CSS pour donner un aspect plus soigné. Le framework de messages, par sa simplicité, est l'un des outils les plus appréciés des développeurs Django.
+
+## Erreurs fréquentes
+
+La première erreur classique est d'oublier la balise `csrf_token` dans un formulaire POST. Django rejette alors la requête avec une erreur 403, ce qui peut être déroutant pour un débutant. La solution est simple : la balise doit être présente à l'intérieur de la balise `form`, avant le bouton de soumission. Si vous utilisez `render` pour afficher le formulaire, le contexte contient déjà le jeton, mais la balise reste indispensable dans le HTML.
+
+La deuxième erreur concerne l'enctype du formulaire. Sans `enctype="multipart/form-data"`, les fichiers téléversés ne sont pas transmis et `request.FILES` reste vide. Cette omission est facile à détecter : le fichier est absent, mais les champs texte sont présents. Pensez toujours à cet attribut dès qu'un champ `FileField` est présent.
+
+La troisième erreur consiste à coder les URL en dur dans les templates ou les vues. Si le motif change, tous les liens cassent. La fonction `reverse` et la balise `url` résolvent ce problème en générant les adresses à partir des noms. Cette discipline, acquise dès les premiers projets, évite de nombreuses heures de débogage.
+
+La quatrième erreur est de placer trop de logique dans les templates. Les templates doivent afficher des données, pas les calculer. Si vous vous retrouvez à écrire des conditions complexes ou à interroger la base depuis un template, c'est le signe que cette logique doit être déplacée dans une méthode du modèle, une fonction utilitaire ou la vue. Les templates simples sont plus faciles à maintenir et à déboguer.
+
+La cinquième erreur est de ne pas tester la validation des formulaires en conditions réelles. Un formulaire qui fonctionne avec des données propres peut échouer avec des données inattendues : caractères spéciaux, valeurs vides, formats inhabituels. Écrivez des tests qui soumettent des données valides et invalides, et vérifiez que les messages d'erreur sont corrects. Les tests unitaires des formulaires sont rapides à écrire et évitent de nombreuses régressions.
+
+## Pour aller plus loin
+
+Une fois les bases maîtrisées, plusieurs pistes s'approfondissent naturellement. Les vues génériques basées sur les classes, comme `CreateView`, `UpdateView` et `DeleteView`, implémentent automatiquement le traitement des formulaires de modèle. Apprendre à les utiliser vous fera gagner un temps considérable sur les opérations courantes. Vous pouvez aussi explorer les `FormSets`, qui permettent de gérer plusieurs instances d'un formulaire sur une même page, par exemple pour modifier une liste d'objets en une seule soumission.
+
+Le framework de messages peut être enrichi avec des messages persistants ou des notifications en temps réel via des technologies comme les WebSockets. Les bibliothèques tierces, comme `django-widget-tweaks`, offrent un contrôle fin sur l'affichage des formulaires sans écrire de HTML à la main. Le système de tags et de filtres personnalisés permet d'étendre le langage de template avec des fonctions propres à votre projet.
+
+La gestion des fichiers peut être poussée plus loin avec des bibliothèques comme `django-storages`, qui délègue le stockage à des services distants, ou `Pillow`, qui permet de redimensionner les images au moment du téléversement. La validation des types de fichiers par analyse du contenu, et non pas seulement par l'extension, est une bonne pratique pour renforcer la sécurité. Ces techniques, appliquées avec discernement, produisent des applications professionnelles.
+
+```
+https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Django_reinhardt_-_1946.jpg/960px-Django_reinhardt_-_1946.jpg
+| Le guitariste de jazz Django Reinhardt, dont le nom a été choisi pour le framework.
+```
+
+Les ressources officielles de Django, notamment la documentation et le tutoriel, sont d'excellente qualité et méritent d'être consultées régulièrement. La communauté est vivante, et les conférences comme la DjangoCon offrent des présentations enrichissantes. La lecture du code source de Django, remarquablement bien écrit, est une excellente façon de progresser. Votre maîtrise des vues, templates et formulaires vous ouvre la porte vers des projets de plus en plus ambitieux.
+
+## Et maintenant
+
+Vous avez parcouru les mécanismes essentiels qui permettent à Django de transformer une requête en une page complète : les vues qui traitent la logique, les templates qui structurent la présentation, les formulaires qui valident les données et les fichiers statiques et médias qui enrichissent l'interface. Chaque brique, prise isolément, est simple ; leur combinaison produit des applications web robustes et maintenables.
+
+La prochaine étape consiste à assembler ces connaissances dans un projet concret. Créez une petite application qui permet de publier des articles avec une image, de les modifier et de les commenter. Vous réutiliserez les vues, les templates, les formulaires et la gestion des fichiers téléversés. Cette mise en pratique ancre durablement les concepts et vous prépare à des sujets plus avancés comme l'authentification, les permissions et les API.
+
+Prenez le temps d'expérimenter avec les vues basées sur les classes, de créer des tags et filtres personnalisés, et de configurer le stockage distant des fichiers. Chaque essai, chaque erreur, chaque correction renforce votre compréhension. Le web est un vaste terrain de jeu, et Django vous donne les outils pour le construire avec confiance.
+
+```
+https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Django_unchained_logo.svg/960px-Django_unchained_logo.svg.png
+| Une illustration ludique évoquant la liberté de création offerte par Django.
+```

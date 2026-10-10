@@ -1,0 +1,535 @@
+Bienvenue dans le dernier chapitre du parcours bases de données, celui où tout ce que vous avez appris pendant les cinq leçons précédentes se rassemble en un seul projet. Nous ne découvrirons plus de concept nouveau : ni clé primaire, ni forme normalisée, ni jointure. Nous allons les employer, dans l'ordre où un professionnel les emploie, sur un cas concret qui ressemble à ce que vous rencontrerez en entreprise : la boutique en ligne, avec son catalogue de produits, ses clients, ses commandes et ses factures. Ce chapitre est volontairement plus long et plus dense que les autres, parce qu'un projet se juge à sa cohérence d'ensemble et non à la qualité isolée de ses pièces.
+
+Le fil rouge de ce chapitre est une boutique de vente de matériel d'outillage et de fournitures pour le bricolage, nommée Atelier & Compagnon. Elle référence plusieurs centaines de références, appartient à une dizaine de catégories, accueille des clients particuliers et professionnels, et doit produire chaque mois un chiffre d'affaires, un palmarès de produits et des indicateurs de fidélité. Ces exigences, exprimées en langage commercial, se traduisent en tables, en contraintes, en index et en requêtes d'agrégation. Vous verrez qu'il n'y a pas de saut magique entre les deux : il y a une méthode, une discipline de rédaction et beaucoup de vérifications.
+
+La méthode que nous suivrons reprend les cinq phases d'un projet de base de données. On commence par le besoin, c'est-à-dire des entretiens avec les personnes qui utiliseront l'information et des questions très précises sur ce qu'elles doivent savoir à la fin du mois. On modélise ensuite, en dessinant des entités et des liens, sans écrire une ligne de SQL. On implémente, ce qui consiste à traduire ce dessin en commandes CREATE TABLE soigneusement ordonnées. On peuple, c'est-à-dire que l'on insère un jeu de données suffisamment réaliste pour éprouver le schéma. On restitue enfin, en écrivant les rapports demandés, puis on optimise ceux qui répondent trop lentement. Chacune de ces phases a son livrable et ses pièges propres, et nous les verrons tour à tour.
+
+Une remarque sur la manière de suivre ce chapitre. Rien ne vaut la copie : recopiez les scripts dans votre client SQL préféré, exécutez-les, puis cassez-les volontairement. Insérez une commande dont le client n'existe pas, modifiez le prix d'un produit qui est déjà dans l'historique, supprimez une catégorie encore utilisée. Lisez le message d'erreur que la base vous renvoie, reformulez-le avec vos mots, puis corrigez. Un schéma appris par lecture paraît fragile dès la première manipulation ; un schéma éprouvé par l'échec devient un réflexe. Gardez également sous la main la leçon sur la normalisation, car nous allons l'appliquer sans relâche, en particulier sur la question du prix d'un article commandé.
+
+## Méthodologie de projet : du besoin à la base exploitable
+
+Un projet de base de données commence par une conversation, et non par un éditeur de texte ouvert sur une commande CREATE TABLE. La première semaine d'un projet sérieux se passe en réunion avec les personnes qui vivront avec les données : le responsable commercial qui veut un palmarès, la comptabilité qui veut une recette par mois, le service client qui veut retrouver l'historique d'un acheteur. Chacun arrive avec des phrases, pas avec des schémas. Votre première tâche consiste à transformer ces phrases en questions auxquelles une base peut répondre, et à écarter celles qui n'appartiennent pas au domaine des données, comme les prévisions de marché ou l'avis d'un conseil d'administration.
+
+Cette phase de recueil produit un document court mais décisif, le cahier des charges fonctionnel. Il énumère les entités, les informations que l'on doit conserver sur chacune, les règles invariantes et les opérations attendues. On y lit par exemple qu'un client peut passer zéro, une ou plusieurs commandes, qu'une commande contient au moins une ligne, qu'un produit appartient exactement à une catégorie, qu'un prix une fois commandé ne doit plus changer même si le tarif du catalogue évolue. Chaque phrase de ce genre correspondra plus tard à une contrainte SQL. Un cahier des charges bien rédigé se lit par un non-technicien, ce qui permet de le faire valider avant d'engager le travail technique.
+
+La deuxième phase, la modélisation, produit un diagramme entité-association. Vous y représentez des rectangles pour les entités, des losanges pour les relations et des cardinalités sur chaque extrémité. Cette étape se fait sur papier ou sur un outil de dessin, jamais dans le code. Elle a l'avantage de rendre les désaccords visibles très tôt : discuter de savoir si une commande peut exister sans ligne coûte quelques minutes sur un schéma dessiné, et plusieurs jours une fois les tables construites et les données chargées. Les professionnels consacrent volontiers un tiers du temps du projet à cette étape, consciente qu'elle est la seule vraiment difficile à modifier ensuite.
+
+La troisième phase implémente le dessin en SQL, la quatrième le peuple, la cinquième le met en service avec les requêtes de restitution. Ces trois étapes forment une boucle, et non une suite linéaire : dès que vous écrivez le premier rapport, vous découvrez qu'il manque une colonne, une table ou un index. Il est normal de revenir en arrière. Ce qui n'est pas normal, c'est de modifier une base déjà en production sans migration versionnée ni sauvegarde. Dès le début du projet, adoptez une règle simple : tout ce qui touche au schéma vit dans un fichier SQL versionné avec le reste du code applicatif, et toute modification passe par un script exécutable sur une base vide.
+
+Le livrable final d'un tel projet se compose donc de plusieurs pièces distinctes : le cahier des charges validé, le diagramme, le script de création du schéma, le script de peuplement, les requêtes ou vues de rapport, et une courte note d'exploitation qui indique comment lancer l'ensemble. Ces artefacts sont souvent plus importants que le code lui-même, car c'est par eux qu'un nouveau membre d'équipe reprendra le travail six mois plus tard. Une base dont personne ne peut expliquer l'origine d'une colonne est une base condamnée à être réécrite.
+
+## Du cahier des charges au modèle : entités, attributs et cardinalités
+
+Traduire le cahier des charges en modèle commence par repérer les noms communs qui reviennent dans les phrases métier. Dans notre boutique, on parle constamment de clients, d'adresses de livraison, de catégories, de produits, de commandes, de lignes de commande, de paiements et de stocks. Chacun de ces noms devient une entité candidate. Pour trancher, posez les trois questions de la première leçon : puis-je compter ces objets ? puis-je leur attribuer un identifiant unique ? puis-je décrire leurs propriétés ? Un client se compte et se décrit, donc c'est une entité. Un total de chiffre d'affaires ne se compte pas, c'est une mesure calculée à la volée, donc ce n'est pas une table : c'est le résultat d'une agrégation.
+
+Les attributs se déduisent des questions posées par les métiers. Pour un produit, il faut un identifiant, une référence interne, un libellé, une description, un poids, un tarif de vente courant et un indicateur de disponibilité. Pour une commande, un numéro, une date, un statut, une adresse de livraison figée, un montant total et la référence du client. Attention à ne pas confondre l'attribut et sa valeur affichée : le nom complet d'un client se déduit du prénom et du nom, et il est préférable de ne pas stocker cette redondance si elle peut être calculée, à moins qu'une exigence de recherche plein texte ne justifie la duplication.
+
+Les cardinalités demandent la plus grande attention, car c'est là que se cachent les erreurs coûteuses. Un client passe zéro, une ou plusieurs commandes : la relation est un-versus-plusieurs, du côté plusieurs se place la clé étrangère, donc la table commandes contient client_id. Une commande contient une ou plusieurs lignes : même schéma, ligne_commande porte commande_id. Une ligne concerne exactement un produit, et un produit apparaît dans zéro, une ou plusieurs lignes. Une catégorie regroupe zéro, un ou plusieurs produits, mais un produit appartient à une seule catégorie si l'on ne gère pas d'arborescence à plusieurs niveaux, ou à plusieurs si l'on autorise les taxonomies croisées : ce choix, purement métier, doit être tracé dans le cahier des charges, car il change la structure d'une table d'association.
+
+La question du prix mérite une section à elle seule, tant elle revient dans tous les projets e-commerce. Si vous ne stockez le prix que dans la table produits, alors augmenter le tarif d'un outil réécrira l'historique de toutes les commandes passées : la comptabilité affichera un chiffre d'affaires qui n'a jamais existé. Si vous le stockez uniquement dans la ligne de commande, vous perdez la possibilité d'afficher le prix courant du catalogue sans jointure. La bonne réponse consiste à garder les deux informations avec des noms qui disent ce qu'elles sont : prix_catalogue dans le produit, et prix_unitaire figé dans la ligne de commande, renseigné au moment de la validation du panier. Cette règle illustre une vérité générale du modèle : une base décrit le passé tel qu'il a été, pas tel qu'il serait aujourd'hui.
+
+Le schéma de référence que nous allons construire compte huit tables. La table clients regroupe les identités, avec courriel unique, mot de passe haché, téléphone et date d'inscription. La table adresses conserve les lieux de livraison et de facturation rattachés à un client, plusieurs adresses par personne. La table categories organise le catalogue en arborescence, une catégorie pouvant avoir une catégorie mère. La table produits porte les articles eux-mêmes, avec leur catégorie, leur référence unique et leur tarif courant. La table stocks suit les quantités disponibles par produit et par entrepôt, ce qui évite d'ajouter une colonne de quantité sur le produit lui-même. La table commandes enregistre les en-têtes de vente, avec statut, date et client. La table lignes_commande détaille chaque article commandé, sa quantité et son prix unitaire figé. La table paiements associe à chaque commande le moyen de paiement, la somme réglée et l'état de la transaction.
+
+```sql
+CREATE TABLE categories (
+  identifiant  INTEGER PRIMARY KEY,
+  libelle      TEXT    NOT NULL UNIQUE,
+  parent_id    INTEGER REFERENCES categories (identifiant)
+);
+
+CREATE TABLE produits (
+  identifiant   INTEGER PRIMARY KEY,
+  reference     TEXT    NOT NULL UNIQUE,
+  libelle       TEXT    NOT NULL,
+  prix_catalogue NUMERIC(10, 2) NOT NULL CHECK (prix_catalogue >= 0),
+  categorie_id  INTEGER NOT NULL REFERENCES categories (identifiant)
+);
+```
+
+Ces deux tables suffisent à illustrer plusieurs principes vus précédemment. La clé primaire est technique et auto-incrémentée, tandis que la référence commerciale porte une contrainte d'unicité. La relation catégorie-produit est un-versus-plusieurs et la clé étrangère se trouve côté produit. La relation catégorie-catégorie, dite récursive, est traitée par une clé étrangère qui pointe vers la même table, ce qui permet de construire une arborescence sans table supplémentaire. Enfin, la contrainte CHECK interdit un prix négatif, règle métier simple que la base saura faire respecter mieux que n'importe quel contrôle dans le code applicatif.
+
+## De la spécification au DDL : l'ordre des opérations
+
+Le passage du diagramme au script DDL, c'est-à-dire au langage de définition des données, obéit à une contrainte mécanique : une clé étrangère ne peut référencer que l'identifiant d'une table qui existe déjà. Il en résulte un ordre de création déterminé par les dépendances. Les tables sans dépendance, comme categories et clients, viennent en premier. Vient ensuite produits, qui dépend de categories, puis adresses et stocks, qui dépendent de clients et de produits. Enfin commandes, lignes_commande et paiements ferment le script, puisque chacune s'appuie sur des tables créées avant elles. Un script qui respecte cet ordre s'exécute d'un bloc sur une base vierge.
+
+Il existe trois façons de déclarer les clés étrangères. La première consiste à écrire la contrainte à l'intérieur de la table, avec la clause REFERENCES : c'est la plus lisible et la plus commune. La seconde consiste à créer toutes les tables sans liens, puis à ajouter les contraintes avec ALTER TABLE et ADD CONSTRAINT : elle permet d'imposer un nom explicite à chaque contrainte, ce qui facilite grandement le diagnostic des erreurs ultérieures, car le message reçu mentionne alors un nom lisible plutôt qu'une colonne. La troisième méthode, qui consiste à désactiver temporairement la vérification des clés étrangères pour tout insérer, est celle qu'il faut absolument éviter : elle ne fait que déplacer le problème, car il faudra tout revalider ensuite, et la base se retrouvera pendant un instant dans un état que ses propres règles interdisent.
+
+L'ordre d'écriture du script n'est pas le seul ordre à respecter. L'ordre de peuplement s'impose de la même manière, mais dans l'autre sens de la flèche : on insère toujours la table référencée avant la table référencée. On crée les catégories avant les produits, les clients avant leurs adresses, les produits et les commandes avant les lignes de commande. C'est le piège numéro un des premiers projets : un INSERT échoue avec une erreur de clé étrangère et le débutant, persuadé d'avoir mal écrit la requête, passe une heure à relire sa syntaxe alors que le problème est purement séquentiel. La fin de ce chapitre vous donnera une méthode robuste pour échapper à cet embarras.
+
+Un point souvent négligé : la gestion des identifiants lors du peuplement. Si la colonne identifiant est auto-incrémentée, vous ne la mentionnez pas dans vos INSERT et vous devez ensuite récupérer les valeurs produites pour les référencer dans les tables dépendantes. Si, à l'inverse, vous fixez explicitement des identifiants pendant le chargement d'un jeu de test, vos scripts deviennent déterministes et reproductibles, ce qui simplifie énormément le débogage des rapports, car une même requête renverra toujours les mêmes chiffres. Pour un jeu de données de démonstration, la seconde approche est généralement préférable ; pour une reprise de données réelles, on conserve souvent l'identifiant d'origine, ce qui suppose de le déclarer explicitement dans le script.
+
+Enfin, un projet professionnel ne se contente pas d'un script de création. On versionne les évolutions dans des fichiers numérotés, on les applique dans l'ordre, et on s'interdit toute modification manuelle d'une base partagée. Si le schéma doit gagner une colonne remise, on écrit une nouvelle migration qui exécute ALTER TABLE, on la teste sur une copie, on la documente dans un commentaire de tête, puis on la rejoue sur l'environnement de recette. Cette discipline paraît lourde pour un exercice ; elle devient vitale dès que plusieurs personnes et plusieurs applications touchent la même base, car elle permet de reconstruire l'état exact de n'importe quelle instance en une commande.
+
+## Le schéma e-commerce de référence : huit tables
+
+Présentons maintenant les huit tables dans l'ordre où elles seront créées, en indiquant pour chacune son rôle, ses colonnes essentielles et la raison d'être de ses contraintes. La table clients stocke l'identité : identifiant auto-incrémenté, courriel obligatoire et unique, mot de passe haché, prénom, nom, téléphone facultatif, date d'inscription et drapeau indiquant un compte professionnel. Le courriel porte une contrainte UNIQUE parce qu'il sert d'identifiant de connexion : deux comptes ne peuvent partager la même adresse, et la base doit le garantir, pas seulement le code du formulaire d'inscription.
+
+La table adresses contient l'identifiant, la référence du client, le libellé du lieu, la rue, le code postal, la ville, le pays et un drapeau indiquant si cette adresse est celle utilisée par défaut pour la livraison. Elle référence clients par une clé étrangère, et sa politique de suppression interdit de supprimer un client qui a encore des adresses, sauf à choisir une suppression en cascade parfaitement assumée. Une contrainte UNIQUE sur la paire client et libellé empêche d'enregistrer deux fois le même lieu pour une même personne.
+
+La table categories porte l'identifiant, le libellé, la clé étrangère vers la catégorie mère et un chemin de navigation qui accélère les recherches d'arborescence. Sa clé étrangère récursive est déclarée avec la même syntaxe que les autres, ce qui illustre que le relationnel ne fait aucune différence entre un lien vers une autre table et un lien vers soi-même. Le libellé est unique au sein d'une même branche, règle que l'on peut approcher avec une contrainte d'unicité sur le couple parent et libellé.
+
+La table produits, nous l'avons vu, porte l'identifiant, la référence unique, le libellé, la description, le prix catalogue, le poids, la catégorie et un actif. Le prix utilise un type décimal monétaire plutôt que le type flottant, parce que les arrondis d'une addition de nombres binaires produisent des centimes fantômes en comptabilité. Un index sur categorie_id accélère les filtres d'affichage, et un index sur le libellé soutient la recherche plein texte avec un module adapté.
+
+La table stocks associe produit, entrepôt et quantité, avec une clé primaire composite sur le couple produit et entrepôt : on ne stocke pas deux fois la même référence dans le même endroit. Une contrainte CHECK interdit les quantités négatives, et une règle métier, éventuellement portée par un déclencheur ou par l'application, empêche de descendre sous zéro lors d'une sortie. La table commandes, elle, enregistre l'en-tête de vente : numéro de commande unique lisible par un client, référence du client, date de commande, statut parmi une liste fermée, adresse de livraison figée en texte, montant total et note interne.
+
+La table lignes_commande relie une commande à un produit, avec quantité, prix unitaire figé, remise éventuelle et montant calculé. Sa clé primaire est la paire commande et produit, car une même référence ne doit apparaître qu'une fois dans une commande donnée : pour en ajouter une seconde, on augmente la quantité. La table paiements referme le schéma avec l'identifiant, la commande, la date, le moyen de paiement, la somme, la devise et le statut de la transaction. Elle permet de rapprocher l'encaissement de la vente sans mélanger les deux préoccupations, une commande pouvant être réglée en plusieurs fois ou annulée.
+
+Ce schéma atteint la troisième forme normalisée tout en conservant deux dérogations assumées : l'adresse figée sur la commande et le prix figé sur la ligne. Ce ne sont pas des redondances par négligence, ce sont des instantanés délibérés, et c'est exactement le type de décision qu'un cahier des charges doit tracer. À vous maintenant de le mettre en œuvre : dans la section suivante, nous écrivons le script complet de création, dans le bon ordre, prêt à être exécuté sur une base vide.
+
+Voici le moment de tout assembler. Le script que nous allons écrire tient en une centaine de lignes, mais il concentre toutes les décisions prises dans la leçon précédente : huit tables, des clés primaires techniques, des clés étrangères nommées, des contraintes d'unicité, des contraintes de domaine et des index ciblés. Exécutez-le sur une base vide, ligne à ligne si besoin, et observez le message renvoyé après chaque bloc : un script qui réussit du premier coup est rare, et chaque échec vous apprendra plus que sa version corrigée. Nous garderons le même vocabulaire français que dans tout le parcours, en rappelant que les bases professionnelles anglophones emploient les mêmes structures avec d'autres noms.
+
+Un mot sur le dialecte SQL utilisé ici. Les types NUMERIC, TEXT, TIMESTAMP et les mots-clés CHECK et REFERENCES appartiennent au standard et sont compris par PostgreSQL, MySQL récent, MariaDB, SQLite et SQL Server avec de légères variations de syntaxe. Deux détails diffèrent fréquemment : la création d'un identifiant auto-incrémenté se fait avec GENERATED ALWAYS AS IDENTITY dans le standard, avec SERIAL dans PostgreSQL historique, avec AUTO_INCREMENT dans MySQL ; et les commentaires de bloc s'écrivent différemment. Adaptez ces deux points à votre moteur, tout le reste de la structure reste identique.
+
+L'ordre du script n'est pas décoratif. Nous créons d'abord les tables qui ne dépendent de personne, puis celles qui s'appuient sur elles, en terminant par les tables de transaction. Si vous inversez deux étages, le moteur vous préviendra immédiatement avec un message du type relation inexistante ou table de référence absente. Ce message n'est pas une erreur de débutant : c'est le moteur qui vous rappelle le graphe de dépendances que vous avez vous-même dessiné. Lire un script DDL dans l'ordre des dépendances est aussi une excellente façon de relire un modèle, car chaque clé étrangère est une phrase que l'on peut prononcer à voix haute.
+
+Enfin, avant de plonger dans le code, fixons une habitude de travail : exécutez toujours ce genre de script sur une base de test, jamais directement sur une base partagée, et gardez la possibilité de tout rejouer depuis zéro. Un schéma que l'on peut détruire et reconstruire en une seconde est un schéma que l'on peut apprisser sans crainte. C'est aussi la condition pour écrire des tests automatisés sur les rapports : des données de départ connues, un script déterministe, des résultats reproductibles.
+
+## Le script DDL complet : création dans le bon ordre
+
+Commençons par les deux tables sans aucune dépendance : clients et categories. Elles ouvrent le script parce que toutes les autres s'y réfèrent d'une manière ou d'une autre. Notez la présence systématique d'une clé primaire, de colonnes obligatoires marquées NOT NULL, et d'une contrainte UNIQUE sur les attributs qui servent d'identifiant de connexion ou de libellé de référence. La colonne mot_de_passe est de type TEXT : il ne faut jamais y stocker un mot de passe en clair, mais son empreinte calculée par un algorithme adapté, et cette précision appartient au schéma autant qu'au code applicatif.
+
+```sql
+CREATE TABLE clients (
+  identifiant     INTEGER PRIMARY KEY,
+  courriel        TEXT    NOT NULL UNIQUE,
+  mot_de_passe    TEXT    NOT NULL,
+  prenom          TEXT    NOT NULL,
+  nom             TEXT    NOT NULL,
+  telephone       TEXT,
+  professionnel   BOOLEAN NOT NULL DEFAULT FALSE,
+  cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE categories (
+  identifiant  INTEGER PRIMARY KEY,
+  libelle      TEXT    NOT NULL,
+  parent_id    INTEGER REFERENCES categories (identifiant),
+  chemin       TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX uq_categories_parent_libelle
+  ON categories (COALESCE(parent_id, 0), libelle);
+```
+
+La suite du script introduit produits, qui référence categories, puis adresses, qui référence clients. Le type monétaire NUMERIC(10, 2) fixe deux décimales, largement suffisantes pour des prix d'outillage et exactes pour des calculs de total. Le CHECK sur le prix interdit les valeurs négatives dès l'écriture, ce qui protège les rapports de sommation. Le drapeau actif permet de retirer un produit du catalogue sans supprimer l'historique de ses ventes, une suppression logique qui est toujours préférable à une suppression physique sur des tables de transaction.
+
+```sql
+CREATE TABLE produits (
+  identifiant     INTEGER PRIMARY KEY,
+  reference       TEXT    NOT NULL UNIQUE,
+  libelle         TEXT    NOT NULL,
+  description     TEXT,
+  prix_catalogue  NUMERIC(10, 2) NOT NULL CHECK (prix_catalogue >= 0),
+  poids_grammes   INTEGER CHECK (poids_grammes > 0),
+  categorie_id    INTEGER NOT NULL REFERENCES categories (identifiant),
+  actif           BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+CREATE INDEX ix_produits_categorie ON produits (categorie_id);
+
+CREATE TABLE adresses (
+  identifiant    INTEGER PRIMARY KEY,
+  client_id      INTEGER NOT NULL REFERENCES clients (identifiant),
+  libelle        TEXT    NOT NULL,
+  rue            TEXT    NOT NULL,
+  code_postal    TEXT    NOT NULL,
+  ville          TEXT    NOT NULL,
+  pays           TEXT    NOT NULL DEFAULT 'France',
+  par_defaut     BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE (client_id, libelle)
+);
+```
+
+Le cœur du schéma est la chaîne commandes, lignes_commande et paiements. La table commandes porte l'en-tête : identifiant, numéro lisible par le client, référence du client, date, statut contraint à une liste fermée, adresse livrée figée, montant total et note. La table lignes_commande porte le détail, avec une clé primaire composite sur commande et produit afin d'interdire deux lignes identiques, une quantité strictement positive et un prix unitaire figé. La table paiements détache l'encaissement, avec son propre statut et sa propre date, pour gérer remboursements et paiements échelonnés sans toucher à l'historique de vente.
+
+```sql
+CREATE TABLE commandes (
+  identifiant       INTEGER PRIMARY KEY,
+  numero            TEXT    NOT NULL UNIQUE,
+  client_id         INTEGER NOT NULL REFERENCES clients (identifiant),
+  cree_le           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  statut            TEXT    NOT NULL DEFAULT 'en_attente'
+                    CHECK (statut IN ('en_attente', 'payee', 'expediee', 'livree', 'annulee')),
+  adresse_livraison TEXT    NOT NULL,
+  montant_total     NUMERIC(10, 2) NOT NULL DEFAULT 0 CHECK (montant_total >= 0)
+);
+
+CREATE INDEX ix_commandes_client ON commandes (client_id);
+CREATE INDEX ix_commandes_date   ON commandes (cree_le);
+
+CREATE TABLE lignes_commande (
+  commande_id    INTEGER NOT NULL REFERENCES commandes (identifiant),
+  produit_id     INTEGER NOT NULL REFERENCES produits (identifiant),
+  quantite       INTEGER NOT NULL CHECK (quantite > 0),
+  prix_unitaire  NUMERIC(10, 2) NOT NULL CHECK (prix_unitaire >= 0),
+  remise         NUMERIC(10, 2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (commande_id, produit_id)
+);
+
+CREATE INDEX ix_lignes_produit ON lignes_commande (produit_id);
+
+CREATE TABLE paiements (
+  identifiant   INTEGER PRIMARY KEY,
+  commande_id   INTEGER NOT NULL REFERENCES commandes (identifiant),
+  regle_le      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  moyen         TEXT    NOT NULL CHECK (moyen IN ('carte', 'virement', 'cheque', 'especes')),
+  montant       NUMERIC(10, 2) NOT NULL CHECK (montant > 0),
+  statut        TEXT    NOT NULL CHECK (statut IN ('autorise', 'capture', 'rembourse', 'echoue'))
+);
+```
+
+La huitième table, stocks, relie produits et entrepôts. Elle illustre la clé primaire composite sur une relation plusieurs-à-plusieurs : un produit peut être présent dans plusieurs entrepôts, un entrepôt contient plusieurs produits, et la paire suffit à identifier une ligne de stock. Son index en cascade, index sur produit puis sur entrepôt, permet les deux directions de lecture, celle du réapprovisionnement qui part d'un produit et celle de la préparation qui part d'un entrepôt.
+
+```sql
+CREATE TABLE entrepots (
+  identifiant INTEGER PRIMARY KEY,
+  code        TEXT NOT NULL UNIQUE,
+  ville       TEXT NOT NULL
+);
+
+CREATE TABLE stocks (
+  produit_id   INTEGER NOT NULL REFERENCES produits (identifiant),
+  entrepot_id  INTEGER NOT NULL REFERENCES entrepots (identifiant),
+  quantite     INTEGER NOT NULL DEFAULT 0 CHECK (quantite >= 0),
+  PRIMARY KEY (produit_id, entrepot_id)
+);
+
+CREATE INDEX ix_stocks_entrepot ON stocks (entrepot_id);
+```
+
+Une fois le script exécuté, vérifiez ce que la base a réellement créé plutôt que de supposer. Chaque moteur propose un moyen d'inspecter le catalogue : la vue des informations sur les tables, la commande de description d'une table ou la consultation du schéma système. Repérez la liste des clés étrangères, des index et des contraintes : si une contrainte manque, c'est qu'une ligne a été perdue, et mieux vaut le découvrir maintenant que lors du premier rapport faux.
+
+## Contraintes, types et index : ce que le script garantit
+
+Les contraintes de ce script ne sont pas des décorations, chacune répond à une défaillance observée en production quelque part. L'unicité du courriel empêche deux comptes de se disputer le même identifiant de connexion. La contrainte de domaine sur le statut interdit les valeurs libres telles que payé avec un accent ou PAYE en majuscules, qui ruinent les regroupements de rapports. La borne de quantité positive empêche des retours négatifs d'être enregistrés comme des ventes. Le prix figé sur la ligne de commande garantit que le rapport de chiffre d'affaires du mois dernier restera exact même après une hausse tarifaire.
+
+Le choix des types mérite autant d'attention que celui des contraintes. On utilise un entier pour les compteurs et les quantités, un NUMERIC à précision fixe pour les montants, un TIMESTAMP pour les événements datés, un BOOLEAN pour les drapeaux, un TEXT pour les libellés, avec une longueur limitée uniquement lorsque la réalité métier l'impose, comme pour un code postal ou un pays. On évite soigneusement le type flottant pour l'argent, on évite de stocker des dates dans du texte, et on refuse les colonnes qui mélangent plusieurs informations, par exemple un champ adresse complet au lieu de rue, code postal, ville et pays. Une colonne non atomique rend impossible tout regroupement par ville.
+
+Les index doivent être choisis en fonction des requêtes réelles, et non par réflexe. Une clé primaire crée automatiquement un index unique, ce qui signifie que les identifiants sont déjà rapides. Une clé étrangère n'est pas indexée par défaut dans la plupart des moteurs : comme les rapports et les jointures passent fréquemment par commandes.client_id et lignes_commande.produit_id, ces colonnes méritent un index explicite. Les colonnes filtrées par des plages de dates, comme commandes.cree_le pour le chiffre d'affaires mensuel, en demandent un autre. En revanche, créer un index sur chaque colonne ralentit les écritures et consomme de l'espace : chaque index doit pouvoir justifier sa présence par une requête identifiée.
+
+Un index composite obéit à une règle de lecture simple : il accélère les filtrages qui commencent par sa colonne de gauche. Un index sur (categorie_id, prix_catalogue) sert les recherches filtrées par catégorie et triées par prix, mais pas les recherches triées uniquement par prix. Cette asymétrie explique bon nombre de requêtes étonnamment lentes : l'index existe, mais son ordre ne correspond pas à la requête. Pour vérifier, on consulte le plan d'exécution avec la commande EXPLAIN, qui indique si le moteur parcourt un index ou lit la table en entier.
+
+Enfin, les contraintes portées par le schéma ne couvrent pas tout, et il est sain de le savoir. Le montant total d'une commande pourrait être recalculé à partir de ses lignes, et laisser ce champ modifiable ouvre la porte à des incohérences. On peut l'interdire par un déclencheur, par une règle, ou accepter de le recalculer à chaque écriture dans l'application. De même, la décrémentation du stock lors d'une commande relève d'une opération composite qui dépasse une simple contrainte. Ces limites ne discréditent pas le schéma : elles dessinent la frontière entre ce que la base garantit seule et ce que la base partage avec le code.
+
+## Le peuplement : jeu de données et ordre des INSERT
+
+Un schéma vide ne prouve rien. Il faut le peupler d'un jeu de données suffisamment réaliste pour révéler les défauts : au moins une dizaine de catégories, cinquante produits répartis entre elles, cent clients, plusieurs cents commandes étalées sur dix-huit mois, des lignes en quantités variées et quelques paiements annulés. Ce volume minimum permet aux agrégations de donner des chiffres non triviaux et aux index d'avoir quelque chose à trier. Des données trop propretes, où chaque mois affiche exactement le même total, masquent les bugs de regroupement.
+
+L'ordre de peuplement suit exactement l'ordre de création : d'abord les tables sans dépendance, puis leurs filles. Concrètement, on insère les catégories, puis les entrepôts, puis les clients, puis les adresses, puis les produits qui référencent des catégories, puis le stock qui relie produits et entrepôts, puis les commandes qui référencent des clients, puis les lignes de commande qui référencent commandes et produits, et enfin les paiements qui référencent les commandes. Si vous insérez une ligne de commande avant sa commande, le moteur refusera l'écriture avec une erreur de clé étrangère : ce n'est pas un défaut du script, c'est la protection qui fonctionne.
+
+```sql
+INSERT INTO categories (identifiant, libelle, parent_id, chemin) VALUES
+  (1, 'Outillage main',  NULL, 'outillage-main'),
+  (2, 'Outillage electrique', NULL, 'outillage-electrique'),
+  (3, 'Visserie', NULL, 'visserie'),
+  (4, 'Perceuses', 1, 'outillage-electrique/perceuses'),
+  (5, 'Marteaux', 1, 'outillage-main/marteaux');
+
+INSERT INTO clients (identifiant, courriel, mot_de_passe, prenom, nom, telephone) VALUES
+  (1, 'camille@exemple.fr', 'hache-3f9d', 'Camille', 'Renard', '0612345678'),
+  (2, 'yanis@exemple.fr',   'hache-8ab1', 'Yanis',  'Lopez',  NULL);
+
+INSERT INTO produits (identifiant, reference, libelle, prix_catalogue, poids_grammes, categorie_id) VALUES
+  (1, 'PER-001', 'Perceuse a percussion 850 W', 89.90, 2100, 4),
+  (2, 'MAR-001', 'Marteau d'ecoincon 600 g', 18.50, 600, 5),
+  (3, 'VIS-001', 'Boite de vis inox 200 pieces', 9.90, 350, 3);
+```
+
+Observez la façon dont les identifiants sont fixés explicitement dans ces INSERT. Cette technique rend le jeu de données déterministe : la commande numéro 42 portera toujours les mêmes articles, ce qui permet de comparer vos résultats de rapport avec ceux de la leçon, et de reprendre un débogage là où vous l'aviez laissé. Dans un chargement réel, vous préférerez souvent laisser la base générer les identifiants et récupérer ensuite les valeurs produites, à l'aide d'une clause de retour ou d'une requête de sélection immédiate. Les deux approches sont légitimes, à condition de choisir la même pour tout le script.
+
+Le remplissage des tables de transaction demande une astuce : les dates. En laissant CURRENT_TIMESTAMP par défaut, toutes vos commandes se retrouvent à la même seconde, et un rapport mensuel ne renverra qu'un seul mois rempli. Il faut donc fournir explicitement la colonne de date, en répartissant les commandes sur plusieurs mois avec des valeurs étales. C'est une erreur classique de peuplement : le schéma est bon, les données sont présentes, mais le rapport de tendance affiche une ligne unique et personne ne comprend pourquoi.
+
+```sql
+INSERT INTO commandes (identifiant, numero, client_id, cree_le, statut, adresse_livraison, montant_total) VALUES
+  (1, 'CMD-2025-0001', 1, '2025-01-14 10:23:00', 'livree',  '12 rue des Lilas, 93100 Montreuil', 118.30),
+  (2, 'CMD-2025-0002', 2, '2025-03-02 15:07:00', 'payee',   '5 avenue du Pre, 75019 Paris', 89.90),
+  (3, 'CMD-2025-0003', 1, '2025-06-21 09:41:00', 'annulee', '12 rue des Lilas, 93100 Montreuil', 28.40);
+
+INSERT INTO lignes_commande (commande_id, produit_id, quantite, prix_unitaire, remise) VALUES
+  (1, 1, 1, 89.90, 0),
+  (1, 3, 2, 9.90, 1.30),
+  (2, 1, 1, 89.90, 0),
+  (3, 2, 1, 18.50, 0),
+  (3, 3, 1, 9.90, 0);
+
+INSERT INTO paiements (commande_id, moyen, montant, statut) VALUES
+  (1, 'carte', 118.30, 'capture'),
+  (2, 'carte', 89.90,  'capture'),
+  (3, 'carte', 28.40,  'rembourse');
+```
+
+Après chaque lot d'insertions, contrôlez le résultat au lieu de faire confiance à l'absence d'erreur. Comptez les lignes de chaque table, vérifiez que le total des lignes de commande correspond au montant total de chaque en-tête, cherchez les clients sans commande et les produits jamais vendus. Ces contrôles, exécutés avec quelques requêtes d'agrégation simples, constituent la première ligne de défense contre les données de test inutilisables. Un jeu de données qui ne passe pas ces contrôles ne servira à rien pour valider vos rapports.
+
+## Transactions de peuplement : charger vite et sans risque
+
+Le mot transaction désigne, vous vous en souvenez, une suite d'opérations traitée comme une unité indivisible : elle s'applique entièrement ou pas du tout. Pour le peuplement, cela change tout. Si vous chargez mille commandes et que la ligne numéro six cent trente-sept échoue parce qu'un produit référencé n'existe pas, une exécution sans transaction laisse votre base dans un état intermédiaire, six cents commandes chargées et le reste absent. Une exécution dans une transaction annule l'intégralité du lot et vous rend une base propre, sur laquelle vous corrigez la cause réelle puis rejouez.
+
+```sql
+BEGIN;
+INSERT INTO clients (courriel, mot_de_passe, prenom, nom)
+VALUES ('lea@exemple.fr', 'hache-77cd', 'Lea', 'Moreau');
+
+-- Identifiant attribué au client : récupération selon le moteur,
+--   PostgreSQL : RETURNING identifiant dans l'INSERT
+--   MySQL      : LAST_INSERT_ID()
+--   SQLite     : last_insert_rowid()
+
+INSERT INTO adresses (client_id, libelle, rue, code_postal, ville)
+VALUES (1, 'Domicile', '3 boulevard Voltaire', '75011', 'Paris');
+
+INSERT INTO commandes (numero, client_id, adresse_livraison, montant_total)
+VALUES ('CMD-2025-0099', 1, '3 boulevard Voltaire, 75011 Paris', 42.00);
+
+
+COMMIT;
+```
+
+Ce bloc illustre le motif d'une opération multi-tables. La commande BEGIN ouvre la transaction, les trois INSERT forment un ensemble, et COMMIT valide l'ensemble. Si l'une des écritures échoue, on exécute ROLLBACK et rien n'a été écrit. Dans un script de chargement, on enveloppe généralement chaque lot de quelques milliers de lignes dans une transaction, on commit au besoin, et on termine par un ROLLBACK global si le script complet doit être annulable. Sans cette discipline, un chargement interrompu laisse des dizaines de milliers de lignes orphelines qu'il faudra repérer et effacer à la main.
+
+La question des identifiants revient dans ce contexte avec une acuité particulière. Dans la transaction ci-dessus, la deuxième écriture doit connaître l'identifiant attribué à la première, alors que la colonne est auto-incrémentée. Chaque moteur propose une solution : une clause RETURNING en PostgreSQL, une fonction d'accès à la dernière valeur insérée dans MySQL, ou bien la fixation explicite des identifiants pour tout le lot, méthode que nous avons utilisée plus haut et qui évite complètement le problème. L'important est d'être cohérent : alterner les deux approches dans le même script est la meilleure façon de produire des références erronées.
+
+Un second piège de peuplement concerne l'ordre des tables de transaction. Il est tentant d'insérer d'abord toutes les commandes pour ensuite remplir les lignes, ce qui fonctionne tant que tout va bien. Mais si vous devez annuler la moitié du chargement, la contrainte de clé étrangère sur les lignes vous empêchera de supprimer les commandes avant leurs filles, à moins de préciser une politique en cascade ou d'inverser l'ordre des suppressions. Pensez donc aussi à la fin de vie des données : chaque script d'insertion devrait être accompagné de sa procédure d'annulation, au moins en environnement de test.
+
+Le contrôle de cohérence après chargement est le dernier maillon. Une transaction garantit l'intégrité référentielle et l'atomicité, pas la justesse métier. Vérifiez que le montant total de chaque commande est bien la somme de ses lignes, que les paiements ne dépassent pas le montant dû, que les quantités de stock sont cohérentes avec les mouvements, et que la répartition des dates couvre bien la période attendue. Ces contrôles se formulent en quelques requêtes avec SUM et GROUP BY, que vous écrirez de toute façon plus loin pour les rapports. Une base chargée, contrôlée et transactionnelle est enfin prête à répondre à des questions : c'est l'objet de la section suivante.
+
+Un schéma peuplé ne vaut que par ce qu'il permet d'en dire. Les métiers ne demandent jamais une table : ils demandent un chiffre, un classement, une courbe, un taux. La restitution est donc la phase qui donne tout son sens aux choix de modélisation passés, et c'est aussi la phase où se révèlent les erreurs commises en amont. Si le rapport de chiffre d'affaires mensuel est faux, la cause se trouve presque toujours dans la conception : un statut non filtré, un montant recopié au mauvais endroit, une date enregistrée en texte. Nous allons construire quatre rapports utiles, puis regarder comment les rendre rapides.
+
+Avant toute chose, posons un cadre de travail. Exécutez chaque requête d'abord avec une clause de limite de lignes, pour vérifier la forme du résultat, puis retirez la limite pour observer les volumes réels. Contrôlez toujours au moins deux niveaux : le détail et le total. Si la somme des ventes par mois ne correspond pas au total général, l'une des deux requêtes est fausse, et le problème vient soit d'un filtre, soit d'une jointure qui duplique des lignes. Ce dernier cas est le plus fréquent : joindre une commande à ses lignes et à ses paiements en une seule opération multiplie les montants et double silencieusement les totaux.
+
+Un second réflexe, tout aussi important : distinguez dans votre tête ce qui est une mesure de ce qui est une dimension. Le chiffre d'affaires, la quantité vendue, le panier moyen, le nombre de commandes sont des mesures, c'est-à-dire des nombres agrégés. Le mois, la catégorie, le client, le statut sont des dimensions, c'est-à-dire les axes selon lesquels vous coupez ces mesures. Toute requête de rapport se lit alors de la même manière : je calcule cette mesure, groupée par cet axe, filtrée sur cette période. Cette grammaire unique vous suffira pour la quasi-totalité des demandes métier.
+
+Enfin, un rapport n'est pas seulement juste ou faux, il est aussi rapide ou lent. Sur quelques milliers de lignes, tout passe ; sur plusieurs millions, une jointure manquante ou un calcul sur colonne non indexée transforme un écran instantané en attente de vingt secondes. Chaque rapport présenté ci-dessous est donc accompagné, dans sa dernière partie, d'une réflexion sur l'index à prévoir et sur la manière de vérifier le plan d'exécution. La performance n'est pas un sujet réservé aux experts : elle se traite dès le premier rapport, avec une commande d'analyse et un index de bon sens.
+
+## Rapport 1 : le chiffre d'affaires mensuel
+
+La demande la plus classique tient en une phrase : combien avons-nous vendu chaque mois, sur les douze derniers mois, hors commandes annulées ? Traduisons-la. La mesure est la somme des montants des lignes de commande. L'axe est le mois de la commande. Le filtre porte à la fois sur la période et sur le statut, car une commande annulée ou en attente ne doit pas entrer dans le chiffre d'affaires constaté.
+
+```sql
+SELECT
+  DATE_TRUNC('month', c.cree_le) AS mois,
+  COUNT(DISTINCT c.identifiant)  AS nombre_commandes,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS chiffre_affaires
+FROM commandes AS c
+JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+  AND c.cree_le >= '2025-01-01'
+GROUP BY DATE_TRUNC('month', c.cree_le)
+ORDER BY mois;
+```
+
+Trois détails méritent qu'on s'y attarde. Le GROUP BY porte sur l'expression complète du mois, pas sur l'alias défini dans le SELECT : la plupart des moteurs acceptent l'alias, mais le standard exige l'expression, et écrire l'expression est toujours sans risque. Le COUNT(DISTINCT ...) compte les commandes distinctes, ce qui protège contre les doublons induits par la jointure avec les lignes : sans DISTINCT, une commande à trois articles serait comptée trois fois. Et le WHERE exclut les statuts non finalisés, ce qui évite d'intégrer au total des commandes qui seront peut-être remboursées.
+
+La manipulation des dates varie selon le moteur et c'est le point technique le plus fréquemment bloquant. PostgreSQL propose DATE_TRUNC, MySQL propose DATE_FORMAT avec un masque de mois et d'année, SQLite travaille sur du texte avec une fonction d'extraction, SQL Server dispose de DATEFROMPARTS et de fonctions de troncature. Quel que soit l'outil, cherchez la même opération : réduire un instantané à la valeur année-mois. Une fois la colonne mois obtenue, le reste de la requête est strictement identique. Notez que comparer un mois entier revient à choisir une borne inférieure incluse et une borne supérieure exclue, ce qui évite les erreurs de minuit au dernier jour du mois.
+
+Une variante consiste à agréger directement la table commandes plutôt que de rejoindre les lignes, lorsque le montant total de l'en-tête est fiable. Cette version est nettement plus rapide, car elle évite la multiplication des lignes, et elle suffit si votre seule mesure est le total. En revanche, dès que vous voulez des quantités vendues ou un détail par article, la jointure devient indispensable. Il faut donc décider, une fois pour toutes, si le montant de la table commandes est une valeur de référence ou un cache recalculable, et s'y tenir dans tous les rapports.
+
+Pour obtenir une courbe complète, y compris les mois sans vente, il faut partir d'une table de calendrier ou d'une série de nombres, puis faire une jointure externe. Sans cela, un mois creux disparaît simplement de la liste et le graphique monte une marche trompeuse. Ce cas de figure illustre une règle générale : un rapport qui affiche des données présentes est facile, un rapport qui affiche aussi les absences demande une démarche supplémentaire. Vérifiez toujours avec un contrôle de total : la somme des chiffres d'affaires mensuels doit égaler le chiffre d'affaires global sur la même période et les mêmes statuts.
+
+## Rapport 2 : les produits et catégories les plus vendus
+
+La deuxième demande du métier est un classement : quels sont les dix articles les plus vendus, et comment se répartissent les ventes entre les catégories ? La mesure principale est la quantité vendue, souvent complétée par le montant, car un article bon marché peut être très vendu sans peser dans la facture. L'axe est le produit ou sa catégorie, ce qui suppose une jointure supplémentaire vers la table produits, puis vers categories.
+
+```sql
+SELECT
+  p.reference,
+  p.libelle,
+  cat.libelle  AS categorie,
+  SUM(l.quantite)                     AS unites_vendues,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS montant
+FROM lignes_commande AS l
+JOIN produits   AS p   ON p.identifiant  = l.produit_id
+JOIN categories AS cat ON cat.identifiant = p.categorie_id
+JOIN commandes  AS c   ON c.identifiant  = l.commande_id
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY p.identifiant, p.reference, p.libelle, cat.libelle
+ORDER BY unites_vendues DESC
+LIMIT 10;
+```
+
+La clause GROUP BY mérite une explication attentive, car elle est au cœur de tout rapport. Après l'agrégation, chaque ligne du résultat correspond à un groupe, c'est-à-dire à une combinaison de valeurs de colonnes non agrégées. Toute colonne affichée doit soit figure dans le GROUP BY, soit être enfermée dans une fonction d'agrégation. Écrire le nom d'un produit sans le grouper et sans l'agréger fonctionne sur certains moteurs en mode permissif, puis casse le jour où la configuration change. Listez donc explicitement toutes les colonnes, même si cela semble redondant : c'est ce qui rend la requête lisible et portable.
+
+Pour les catégories, la jointure peut se faire de deux façons. On peut agréger d'abord les ventes par produit, puis remonter à la catégorie dans une sous-requête, ou agréger directement par catégorie en passant par les deux jointures. La seconde approche est plus simple et suffit ici. Attention cependant à la catégorisation : si un produit change de catégorie en cours d'année, le classement l'attribuera à la catégorie actuelle, pas à celle du moment de la vente. Pour un reporting comptable strict, il faudrait figer la catégorie sur la ligne de commande, exactement comme pour le prix. C'est un arbitrage classique entre simplicité et exactitude historique.
+
+Les classements introduisent une difficulté propre : les ex æquo et les bornes. Si trois produits sont à égalité pour la dixième place, un simple LIMIT en coupera deux. Les fonctions de fenêtre résolvent proprement le problème en attribuant un rang à chaque ligne selon une règle explicite. Le moteur range les ventes par quantité décroissante et attribue le même rang à des valeurs identiques, ce qui donne un palmarès honnête. Ces fonctions s'écrivent dans une sous-requête ou une clause dédiée, et leur lecture demande un peu d'habitude, mais elles font partie du vocabulaire courant du reporting.
+
+```sql
+SELECT
+  p.libelle,
+  SUM(l.quantite) AS unites_vendues,
+  RANK() OVER (ORDER BY SUM(l.quantite) DESC) AS rang
+FROM lignes_commande AS l
+JOIN commandes AS c ON c.identifiant = l.commande_id
+JOIN produits  AS p ON p.identifiant = l.produit_id
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY p.identifiant, p.libelle;
+```
+
+Un piège fréquent dans ce type de rapport est le produit jamais vendu. Une jointure interne le fait disparaître, et le classement affiche uniquement ce qui tourne. Si le métier veut aussi identifier les références en souffrance, il faut une jointure externe depuis produits, avec une somme rendue nulle par COALESCE. Le même raisonnement s'applique aux catégories sans vente. Rappelez-vous aussi que les produits retirés du catalogue doivent rester dans l'historique : filtrer sur actif faux ici fausserait tous les totaux passés.
+
+## Rapport 3 : panier moyen et clients récurrents
+
+Le panier moyen mesure la valeur moyenne d'une commande, et il se calcule en deux niveaux. On somme d'abord les lignes pour reconstituer chaque commande, puis on moyenne ces totaux. Directement moyenner les lignes donnerait la valeur moyenne d'un article, ce qui n'a aucun sens commercial et produit des chiffres faux. Cette distinction entre ce que l'on agrège par ligne et ce que l'on agrège par entité est la source d'erreur la plus courante des rapports de débutant.
+
+```sql
+SELECT
+  COUNT(*)                                   AS nombre_commandes,
+  AVG(total_commande)                        AS panier_moyen,
+  MIN(total_commande)                        AS panier_minimum,
+  MAX(total_commande)                        AS panier_maximum,
+  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_commande) AS panier_median
+FROM (
+  SELECT
+    l.commande_id,
+    SUM(l.quantite * l.prix_unitaire - l.remise) AS total_commande
+  FROM lignes_commande AS l
+  JOIN commandes AS c ON c.identifiant = l.commande_id
+  WHERE c.statut IN ('payee', 'expediee', 'livree')
+  GROUP BY l.commande_id
+) AS totaux;
+```
+
+Cette requête contient une sous-requête dérivée, aliasée totaux, qui se comporte comme une table à l'intérieur de la requête principale. Elle matérialise l'étape intermédiaire obligatoire : un total par commande. Sans elle, on ne pourrait pas moyenne correctement, puisque la requête extérieure verrait des lignes et non des commandes. La moyenne arithmétique n'est qu'un indicateur parmi d'autres : la médiane, calculée par la fonction d'extension concernée, résiste mieux aux commandes hors normes, comme un achat professionnel de plusieurs milliers d'euros qui ferait exploser la moyenne sans dire grand-chose du client lambda.
+
+La mesure des clients récurrents demande de compter, pour chaque acheteur, combien de commandes il a passées, puis de classer ces clients selon leur fidélité. Le vocabulaire est le même : une dimension, le client, et une mesure, le nombre de commandes. On peut ensuite répartir les clients en segments avec une expression CASE, qui se comporte comme un conditionnel dans le SELECT et qui, combinée à un GROUP BY, produit une distribution très lisible.
+
+```sql
+SELECT
+  tranches.segment,
+  COUNT(*) AS nombre_clients,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS part_pct
+FROM (
+  SELECT
+    CASE
+      WHEN COUNT(*) >= 6 THEN 'fidele'
+      WHEN COUNT(*) >= 2 THEN 'regulier'
+      ELSE 'occasionnel'
+    END AS segment
+  FROM clients AS cl
+  LEFT JOIN commandes AS c
+         ON c.client_id = cl.identifiant
+        AND c.statut <> 'annulee'
+  GROUP BY cl.identifiant
+) AS tranches
+GROUP BY tranches.segment
+ORDER BY nombre_clients DESC;
+```
+
+Deux subtilités apparaissent ici. La jointure externe à gauche depuis clients permet d'inclure les comptes qui n'ont jamais commandé, sinon ils disparaîtraient du décompte et le taux de fidélité serait surestimé. La condition sur le statut est placée dans la jointure et non dans un WHERE : placée dans le WHERE, elle transformerait la jointure externe en jointure interne et ferait disparaître les clients sans commande valide, renversant l'effet recherché. Cette différence entre filtre en ON et filtre en WHERE est l'une des plus délicates de SQL et mérite d'être éprouvée sur des données de test.
+
+On peut prolonger le travail avec un taux de réachat, c'est-à-dire la part de clients ayant passé au moins deux commandes sur une période donnée, ou avec l'écart entre la première et la dernière commande, qui mesure l'usure de la relation. Ces indicateurs se construisent avec les mêmes agrégats, en ajoutant des dates minimales et maximales par client. Leur valeur vient de la comparaison dans le temps : un taux de réachat en hausse malgré un panier moyen en baisse raconte une histoire très différente d'une courbe qui décroîtrait partout, et c'est cette mise en relation qui intéresse réellement un dirigeant.
+
+## Restituer et optimiser : vues, index d'agrégation et EXPLAIN
+
+Les quatre rapports précédents vont être relus chaque semaine par les mêmes personnes, avec les mêmes paramètres. Il est inutile de les maintenir en double dans plusieurs fichiers : on les matérialise dans des vues, c'est-à-dire des requêtes enregistrées sous un nom, que l'on interroge comme une table. La vue ne stocke aucune donnée, elle stocke une définition, ce qui garantit que tout le monde calcule le chiffre d'affaires avec exactement les mêmes filtres. C'est un outil de gouvernance autant qu'un raccourci de syntaxe.
+
+```sql
+CREATE VIEW v_chiffre_affaires_mensuel AS
+SELECT
+  DATE_TRUNC('month', c.cree_le) AS mois,
+  COUNT(DISTINCT c.identifiant)  AS nombre_commandes,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS chiffre_affaires
+FROM commandes AS c
+JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY DATE_TRUNC('month', c.cree_le);
+
+SELECT mois, nombre_commandes, chiffre_affaires
+FROM v_chiffre_affaires_mensuel
+WHERE mois >= '2025-01-01'
+ORDER BY mois;
+```
+
+Vient ensuite la question de la vitesse. Avant d'ajouter le moindre index, mesurez. Toute base relationnelle sait afficher le plan d'exécution d'une requête, c'est-à-dire la stratégie que l'optimiseur a choisie : quelles tables sont lues, dans quel ordre, avec quel index, combien de lignes sont estimées. Cette commande se place devant la requête, ne la modifie pas, et renvoie un tableau par étape. On y cherche deux choses : une lecture séquentielle complète d'une grande table là où un filtre sélectif est attendu, et un écart important entre le nombre de lignes estimées et le nombre de lignes réellement traitées.
+
+L'interprétation se fait sans mystère. Si le plan indique que la table lignes_commande est parcourue en entier pour calculer le chiffre d'affaires d'un mois, un index sur la date de la commande ou sur l'identifiant de commande réduira fortement la surface lue. Si le plan montre un renvoi individuel par ligne vers la table produits, c'est que l'index de jointure manque ou n'est pas utilisé. Attention toutefois aux illusions : sur une table de test de quelques centaines de lignes, le optimiseur préfère souvent une lecture complète, qui est plus rapide à ce volume. Les index ne deviennent décisifs qu'au-delà d'un certain seuil, et les mesurer sur de petites données conduit à des conclusions inverses.
+
+Un rapport peut aussi être rendu rapide sans changer le schéma, en pré-agrégant. Si le chiffre d'affaires mensuel est calculé chaque nuit, on peut écrire les résultats dans une table de synthèse, alimentée par une transaction périodique, et servir la requête depuis cette table : quelques lignes au lieu de millions. La contrepartie est une donnée en retard et un mécanisme de rafraîchissement à maintenir. Ce choix, entre calcul à la demande et résultat préparé, se pose à chaque fois que la requête dépasse le temps acceptable par l'utilisateur, et il se tranche par une mesure, pas par une intuition.
+
+Nous arrivons au terme de ce tour d'horizon. Vous avez vu un projet complet se dérouler de bout en bout : besoin, modèle, script ordonné, peuplement transactionnel, rapports et optimisation. Dans la section de synthèse qui suit, nous rassemblons les règles à conserver, les erreurs à surveiller et les pistes pour continuer, avant de vous envoyer vers l'exercice de fin de parcours.
+
+Cette dernière section referme le chapitre et, avec lui, le parcours bases de données. Elle a trois fonctions : rappeler en une page les règles qui vous accompagneront dans tous vos projets, décrire les pièges qui coûtent le plus de temps aux équipes, et ouvrir des portes vers les sujets qui prolongent naturellement ce que vous savez déjà faire. Lisez-la en y confrontant votre propre expérience des sections précédentes : si une ligne vous surprend, revenez au passage correspondant plutôt que de la mémoriser telle quelle.
+
+Le meilleur usage que vous puissiez en faire consiste à la transformer en liste de contrôle. Avant chaque relecture de schéma ou chaque mise en production, parcourez les points un par un et répondez par oui ou par non. Un projet qui coche toutes ces cases n'est pas parfait, mais il est défendable, et la relecture d'un collègue partira alors du fond plutôt que de la forme. C'est exactement la manière dont travaillent les équipes sérieuses : moins de génie, plus de discipline répétée.
+
+## À retenir
+
+Un projet de base de données se conduit en cinq phases qui se répondent : recueil du besoin, modélisation sur papier, implémentation en SQL, peuplement contrôlé, restitution et optimisation. La première phase produit le cahier des charges, texte court validé par les métiers, où chaque phrase se transformera plus tard en colonne ou en contrainte. La seconde produit le diagramme entité-association, seul endroit où l'on discute des cardinalités sans payer le coût d'une refonte. Les trois suivantes font la boucle : écrire, charger, mesurer, corriger, jusqu'à ce que les chiffres soient justes et le temps de réponse acceptable.
+
+Le schéma retenu pour ce projet compte huit tables principales, auxquelles s'ajoutent les entrepôts : clients, adresses, categories, produits, stocks, commandes, lignes_commande et paiements. Trois principes structurent l'ensemble. D'abord, une clé primaire technique simple par table, auto-incrémentée, à laquelle s'ajoutent des contraintes d'unicité sur les attributs métier fiables comme le courriel ou la référence produit. Ensuite, des clés étrangères explicites, nommées, chacune assortie d'une politique de suppression décidée et écrite. Enfin, une normalisation jusqu'à la troisième forme, respectée partout sauf sur deux instantanés assumés : l'adresse livrée figée sur la commande et le prix unitaire figé sur la ligne de commande.
+
+```sql
+-- Contrôle de cohérence à rejouer après chaque chargement :
+-- total des lignes, total des en-têtes, écart attendu nul.
+SELECT
+  c.numero,
+  c.montant_total,
+  COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0) AS total_calcule,
+  c.montant_total - COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0) AS ecart
+FROM commandes AS c
+LEFT JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+GROUP BY c.identifiant, c.numero, c.montant_total
+HAVING ABS(c.montant_total - COALESCE(SUM(l.quantite * l.prix_unitaire - l.remise), 0)) > 0.009;
+```
+
+L'ordre des opérations est la règle la plus concrète de tout le chapitre. On crée les tables indépendantes avant celles qui les référencent, et l'on insère dans le même ordre : catégories, clients, produits, adresses, stocks, commandes, lignes de commande, paiements. Un INSERT qui échoue par clé étrangère ne signifie pas que votre syntaxe est fausse, il signifie que vous avez écrit une fille avant son parent. Cette même logique gouverne les suppressions, qui doivent partir des feuilles de l'arbre de dépendances et non des racines.
+
+Le peuplement se fait dans des transactions, par lots cohérents, avec des dates fournies explicitement plutôt que laissées à la valeur par défaut. Un chargement interrompu sans transaction laisse un état intermédiaire impossible à diagnostiquer ; le même chargement dans une transaction se rejoue proprement après correction de la cause. Les identifiants, eux, se fixent explicitement pour un jeu de test déterministe, ou se récupèrent avec la fonction prévue par le moteur dans un chargement réel. Dans les deux cas, on choisit une méthode et on l'applique partout.
+
+Les rapports s'écrivent tous avec la même grammaire : une mesure agrégée, un axe de groupement, un filtre de période et de statut. Le chiffre d'affaires mensuel groupe les ventes valides par mois ; le classement des produits ordonne les quantités vendues, avec RANK() pour gérer les égalités ; le panier moyen s'obtient en deux niveaux, total par commande puis moyenne de ces totaux ; la fidélité compte les commandes par client et les répartit en segments avec CASE. Chacun se protège contre les doublons par DISTINCT, contre les mois vides par une jointure externe, et contre les erreurs de filtre en distinguant soigneusement la clause ON de la clause WHERE.
+
+L'optimisation suit une discipline en trois temps : mesurer, expliquer, corriger. On commence par chronométrer la requête telle quelle, on affiche ensuite son plan d'exécution pour comprendre où le temps part, et on n'ajoute un index qu'en réponse à un plan identifié. Les colonnes de clés étrangères fréquemment jointes et les dates filtrées par plage sont les premiers candidats ; un index sur chaque colonne, lui, ralentit les écritures sans rien apporter. Les vues regroupent les définitions partagées, et une table de synthèse alimentée périodiquement prend le relais dès que le calcul à la demande dépasse le seuil que l'utilisateur accepte d'attendre.
+
+Enfin, retenez la frontière de responsabilités. La base garantit la structure, l'unicité, le typage, l'intégrité référentielle et, avec les contraintes de domaine, la plausibilité des valeurs. Elle ne garantit pas à elle seule la justesse métier fine : le recalcul d'un montant total, la décrémentation d'un stock, la transition d'un statut, le respect d'une règle de remise relèvent de l'application ou de traitements dédiés. Un schéma sain pose cette frontière explicitement, au lieu de la deviner, et c'est ce qui permet à plusieurs équipes de travailler sur la même base sans se marcher dessus.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus fréquente chez les débutants, est l'oubli d'une clé étrangère. On crée la table lignes_commande avec une colonne produit_id qui ressemble à un identifiant de produit, mais sans REFERENCES, et la base accepte alors une ligne qui désigne un produit inexistant. Le schéma paraît identique dans un aperçu rapide, les inserts passent, et les rapports affichent des articles fantômes dont personne ne connaît la référence. Le symptôme est facile à reconnaître : des jointures qui retournent moins de lignes que prévu, ou des totaux par catégorie inférieurs au total général.
+
+La seconde erreur est l'inverse : ajouter la clé étrangère, mais oublier la table référencée lors du peuplement. Le message du moteur est alors explicite, et pourtant beaucoup de temps y est perdu, parce qu'on relit la syntaxe de l'INSERT au lieu de se demander quel est le parent de cette table. Imprimez près de votre écran l'ordre de dépendance du schéma, sous forme de liste ou de diagramme, et comparez-le à l'ordre de vos commandes. Cette simple habitude élimine la quasi-totalité des échecs de chargement.
+
+L'ordre de peuplement inversé vient généralement avec une autre pratique à proscrire : désactiver les clés étrangères pour tout faire passer d'un coup. Cela semble efficace, jusqu'au moment où l'on doit valider la base, car toutes les incohérences se découvrent alors en une seule fois, mélangées, sans qu'on sache lesquelles sont antérieures au chargement. Préférez des lots cohérents, une transaction par lot, et un contrôle immédiat après chacun. La vitesse apparente gagnée en désactivant les contraintes est toujours rattrapée, avec intérêt, au moment du débogage.
+
+```sql
+-- Repérer les lignes de commande orphelines, si les contraintes
+-- ont été désactivées ou si la base a été importée sans contrôle.
+SELECT l.commande_id, l.produit_id
+FROM lignes_commande AS l
+LEFT JOIN commandes AS c ON c.identifiant = l.commande_id
+LEFT JOIN produits  AS p ON p.identifiant = l.produit_id
+WHERE c.identifiant IS NULL
+   OR p.identifiant IS NULL;
+```
+
+La troisième erreur concerne les totaux faux. Elle a trois variantes : oublier le filtre sur le statut, ce qui intègre les commandes annulées ; joindre deux tables one-to-many dans la même requête, ce qui multiplie les montants ; moyenner des lignes au lieu de moyenne des commandes. Chacune produit un chiffre plausible, légèrement trop élevé ou trop bas, que personne ne conteste parce qu'il a l'air raisonnable. C'est la raison pour laquelle il faut toujours recouper : somme des détails égale total général, et comparaison de deux chemins de calcul indépendants pour la même mesure.
+
+La quatrième erreur porte sur les dates. Les stocker en texte, comparer des chaînes au lieu de vraies valeurs, oublier le fuseau horaire ou laisser CURRENT_TIMESTAMP par défaut lors d'un chargement sont autant de moyens d'obtenir des rapports silencieusement absurdes. Utilisez le type de date ou d'horodatage du moteur, formatez uniquement à l'affichage, et fournissez toujours les dates d'un jeu de test. Une règle simple : si une colonne représente un instant, elle ne doit jamais être de type texte, quelle que soit la simplicité apparente du cas.
+
+La cinquième erreur est le choix du type monétaire. Utiliser un type flottant pour des prix produit des totaux comme 89,899999999999995 et des écarts que la comptabilité refuse. Utiliser un entier exprimé en centimes fonctionne, à condition d'être rigoureux dans toutes les conversions d'affichage. La solution la plus sûre reste le type à précision fixe, avec deux décimales, sur toutes les colonnes monétaires, y compris celles qui semblent secondaires comme les remises. Un arrondi mal placé dans une remise se propage dans tous les totaux.
+
+Viennent ensuite les oublis de contraintes de domaine : un statut acceptant n'importe quelle valeur, une quantité négative, un prix sans borne, un courriel dupliqué parce que la contrainte d'unicité n'a jamais été écrite. Chacun de ces oublis déplace la vérification vers le code applicatif, où elle sera oubliée par un futur développeur et contournée par un import. Règle générale, si une règle ne change jamais et que la base saurait l'exprimer, elle appartient à la base.
+
+Les problèmes de performance ont eux aussi leurs causes classiques. Un index oublié sur une clé étrangère utilisée en jointure, un index sur une colonne filtrée avec un opérateur qui ne l'utilise pas, une fonction appliquée à la colonne indexée dans la clause WHERE, un rapport qui recalcule à chaque appel une valeur pourtant stable. Avant d'accuser le moteur, affichez le plan d'exécution : dans la grande majorité des cas, il désigne lui-même la ligne responsable, et la correction tient en un index ou en une réécriture mineure de la condition.
+
+Enfin, citez les défauts de méthode : modifier un schéma directement dans l'outil graphique d'un environnement partagé, sans script ni version ; laisser des comptes de test avec des mots de passe devinables ; omettre la documentation d'une colonne qui a une raison d'être non évidente, comme le prix figé ; et surtout, sauter le relecture croisée avant mise en production. Un schéma se relit à voix haute avec quelqu'un d'autre, en prononçant chaque clé étrangère sous la forme d'une phrase : chaque phrase invraisemblable est un défaut de modèle en attente.
+
+## Pour aller plus loin
+
+Vous maîtrisez l'essentiel du relationnel, et plusieurs sujets prolongent directement ce travail. Le premier est la gestion des migrations : comment faire évoluer un schéma en production sans interruption, en écrivant des scripts numérotés, en les testant sur une copie, en prévoyant un retour arrière. Le second est la concurrence et les transactions avancées, avec les niveaux d'isolation, les lectures sales, les verrous et la façon dont deux utilisateurs peuvent toucher la même ligne sans se perdre. Ces deux thèmes transforment un exercice fonctionnel en système exploitable.
+
+L'optimisation mérite un approfondissement à part entière : statistiques du moteur, estimations et plans, index couvrants, index partiels, agrégats matérialisés, partitionnement des grandes tables. Vous retrouverez ces notions dans les documentations officielles, qui sont très pédagogiques, et dans les retours d'expérience des équipes qui gèrent de gros volumes. Le réflexe à acquérir avant tout est le même : ne jamais optimiser sans mesure, et ne jamais conclure d'un plan d'exécution relevé sur un échantillon trop petit.
+
+La modélisation aussi offre des prolongements. La troisième forme normalisée n'est pas l'horizon : il existe des formes supérieures, utiles dans certains domaines, et des approches dénormalisantes assumées pour la lecture pure, courantes dans les entrepôts de données. À l'autre bout du spectre, la modélisation dimensionnelle, avec ses tables en étoile, est taillée pour l'analyse de données et change volontairement les règles que vous avez apprises, en favorisant la redondance contrôlée au nom de la simplicité des requêtes. Savoir quand quitter la forme normalisée est une compétence, à condition de savoir pourquoi on le fait.
+
+Les langages et les outils voisins méritent aussi un regard. Le langage de requête structuré est partout, mais les besoins de recherche plein texte, de requêtes récursives sur une arborescence de catégories, ou de calculs analytiques avancés mènent vers des extensions spécifiques à chaque moteur. Prenez le temps de lire la documentation de celui que vous utilisez réellement, car les écarts de syntaxe entre moteurs sont précisément là où se cachent les problèmes de portabilité d'un script à l'autre.
+
+Pour consolider, le meilleur exercice reste de refaire ce projet sur un autre domaine. Concevez la gestion d'une salle de sport avec des adhérents, des cours, des créneaux, des inscriptions et des paiements, ou celle d'une librairie avec des auteurs, des éditions, des exemplaires et des locations. Reprenez la même méthode, du cahier des charges aux rapports, en réutilisant les réflexes acquis : entités d'abord, cardinalités à voix haute, ordre de dépendance, peuplement transactionnel, mesures et dimensions. Si vous arrivez à un schéma propre sans relecture des chapitres précédents, le parcours a fait son travail.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice final vous demande de mener ce projet de bout en bout, sur le domaine que l'énoncé vous donne, sans réutiliser tel quel le schéma de la boutique. Vous partirez d'un cahier des charges rédigé en français, vous en tirerez un diagramme entité-association avec les cardinalités, vous écrirez le script de création complet dans l'ordre des dépendances, avec les clés primaires, les clés étrangères nommées, les contraintes d'unicité et de domaine, puis vous chargerez un jeu de données couvrant au moins dix-huit mois d'historique, inséré dans l'ordre correct et par transactions. Terminez par les quatre rapports attendus, avec leurs contrôles de total, et par une note d'indexation qui justifie chaque index par un plan d'exécution observé.
+
+Traitez les points de la liste de contrôle comme un vrai relecteur le ferait. Aucune colonne non atomique, aucune clé primaire composite sauf justification, aucune dépendance transitive, aucune clé étrangère sans politique de suppression, aucun montant en virgule flottante, aucun statut libre, aucune date en texte, aucun rapport sans filtre de statut, aucun index sans mesure. Si vous cochez tout cela, votre script sera défendable devant n'importe quel relecteur technique, et le reste relèvera du goût et de l'optimisation fine.
+
+Si vous bloquez, revenez d'abord au message d'erreur exact, puis à la section qui traite de l'ordre des opérations et du peuplement : la très grande majorité des blocages en début de projet viennent de là, et non de la syntaxe. Ensuite, comparez votre schéma à celui de la leçon, non pour le copier, mais pour repérer les divergences et formuler la raison de chacune. Une différence assumée et argumentée est un signe de compréhension ; une différence subie et inexpliquée est un défaut latent.
+
+Une fois votre script validé et vos rapports produits, le parcours bases de données est terminé. Vous savez désormais décrire un domaine, construire un schéma cohérent, le peupler sans casser l'intégrité, en extraire des indicateurs et les rendre rapides. Ces compétences se réunissent avec celles des autres tracks du programme pour former le socle d'un développement back-end solide. Poursuivez avec l'exercice pratique, prenez le temps de le faire proprement plutôt que vite, puis explorez les ressources proposées ci-dessus pour approfondir les points qui vous intéressent le plus.

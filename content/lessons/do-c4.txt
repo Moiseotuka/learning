@@ -1,0 +1,325 @@
+Les chapitres précédents de ce parcours vous ont appris à fabriquer une image, à la lancer sur votre machine, à la pousser dans un registre et à la faire tourner en local avec quelques commandes. Tout fonctionnait, et surtout tout fonctionnait une seule fois : un conteneur, une machine, un port. La production ne ressemble pas à cela. Une application sérieuse tourne sur plusieurs serveurs, doit survivre à la panne d'un d'entre eux, doit grandir le vendredi soir et rétrécir le lundi matin, et doit être mise à jour sans que les utilisateurs ne voient d'interruption. Dès que vous quittez le poste de développement, la question n'est plus « mon conteneur démarre-t-il », mais « qui décide où il tourne, qui le redémarre quand il meurt, et comment les autres le trouvent-ils ».
+
+Kubernetes est la réponse que l'industrie a majoritairement adoptée à cette question. Le nom signifie pilote en grec, et le projet vient d'un outil interne de Google nommé Borg, qui gérait des centaines de milliers de conteneurs bien avant que le mot conteneur n'existe. Remis au grand jour en 2014 puis confié à la fondation Cloud Native Computing Foundation, Kubernetes est aujourd'hui le standard de facto de l'orchestration : presque tous les hébergeurs managés, qu'ils soient chez un grand fournisseur public ou dans un datacenter d'entreprise, en exposent une couche. Apprendre Kubernetes, ce n'apprendre pas un produit de niche, c'apprendre le vocabulaire commun de l'exploitation moderne.
+
+Le principe tient en une phrase : vous ne donnez plus d'ordres, vous décrivez un état désiré. Vous n'écrivez pas « lance trois exemplaires de mon conteneur sur le serveur 2 », vous écrivez « je veux trois exemplaires de cette application », et vous confiez ce document à un cluster qui s'occupe du reste. Si un exemplaire meurt, le cluster en recrée un. Si une machine disparaît, les exemplaires qui s'y trouvaient sont ressuscités ailleurs. Si vous demandez cinq exemplaires au lieu de trois, le cluster en ajoute deux. Cette inversion, du commandement à la déclaration, change radicalement la manière de concevoir le déploiement : l'outil de supervision ne se contente pas de vous dire que quelque chose est cassé, il répare.
+
+Cette leçon parcourt la chaîne complète du déploiement. Elle commence par le vocabulaire : le pod, brique minimale, la node, machine du cluster, les contrôleurs, moteurs de réconciliation, puis l'architecture du plan de contrôle qui tient tout cela ensemble. Elle se poursuit avec le Deployment, objet qui pilote les mises à jour et les réplicas, puis avec les mécanismes de mise à jour progressive et de retour arrière. Elle traite ensuite de l'exposition des applications avec les Services et l'Ingress, et de la configuration avec les ConfigMaps et les Secrets. Elle se termine par les pièges classiques, en tête desquels se trouvent les déploiements sans limites de ressources et les secrets écrits en clair dans un manifeste.
+
+## Pourquoi Kubernetes
+
+Le premier argument en faveur de Kubernetes est négatif : il faut avoir connu l'alternative. Avant l'orchestration, le déploiement se faisait à la main ou avec des scripts. On avait une liste de serveurs, un fichier d'instructions, quelques commandes de reprise, et beaucoup d'espoir. Chaque machine devait connaître le port à ouvrir, la variable d'environnement à définir, le chemin du volume à monter. Une machine nouvelle rejoignait le parc en suivant une procédure écrite une fois, puis modifiée douze fois sans que personne ne tienne à jour le document. L'échelle vaut d'ailleurs pour la remise en service : quand un serveur tombe, la restauration est un événement manuel, rare, donc stressant et riche en erreurs.
+
+Kubernetes remplace cette mémoire humaine par un état déclaratif stocké dans un registre. Vous soumettez un document YAML au serveur d'API, il le conserve, et des boucles de contrôle ne cessent de comparer la réalité observée à cette intention. Le résultat concret se nomme auto-réparation : la health check d'un conteneur échoue, le conteneur est redémarré, et si la node entière devient injoignable, les pods qui s'y trouvaient sont recréés sur une autre node. À cela s'ajoute l'équilibrage de charge interne : plutôt qu'une adresse fixe, vos composants s'adressent à un nom de service que le cluster résout vers n'importe quel exemplaire disponible, ce qui rend la redondance invisible pour le code applicatif.
+
+Le second bénéfice est la montée en charge horizontal. Plutôt que d'agrandir un serveur, on ajoute des exemplaires identiques, ce qui suppose que l'application soit conçue pour être multi-instances : pas de session en mémoire, pas de fichier local irremplaçable, aucune instance qui revendique un verrou. Kubernetes ne crée pas cette état d'esprit, mais il la rend payante, puisqu'il peut dupliquer un déploiement en changeant un seul nombre. Le troisième bénéfice est la mise à jour sans interruption : le cluster peut créer de nouveaux exemplaires, attendre qu'ils soient prêts, basculer le trafic puis retirer les anciens, si bien que l'utilisateur ne perçoit qu'un service toujours disponible.
+
+Il serait malhonnête de présenter Kubernetes comme une solution universelle. L'outil coûte cher : il faut des machines pour le plan de contrôle, une formation, une grille de surveillance, et du temps pour comprendre des concepts abstraits. Une application monolithique unique servie à quelques centaines d'utilisateurs n'a besoin de rien de tout cela : une VM bien configurée, un processus supervisé et un redémarrage automatique suffisent. De même, si votre besoin se limite à exécuter un conteneur sans gérer de cluster, un service managé de type fonction ou une plateforme d'hébergement intégré sera moins coûteux. Kubernetes devient pertinent quand vous avez plusieurs applications, plusieurs équipes, une exigence de disponibilité, ou simplement l'envie de standardiser votre façon de déployer.
+
+## Le pod, unité minimale de déploiement
+
+Le pod est la plus petite unité que Kubernetes accepte de créer, et il est fréquent de le confondre avec le conteneur alors qu'il en est l'enveloppe. Un pod contient un ou plusieurs conteneurs qui partagent le même réseau : une seule adresse IP, la même boucle de localhost et les mêmes ports leur sont communs. Ils partagent également les volumes déclarés dans le pod, ce qui permet à un conteneur secondaire de lire les fichiers produits par le premier. Cette définition explique l'usage courant du conteneur d'accompagnement : une sidecar qui journalise, pousse des métriques ou tourne un proxy, à côté du conteneur principal qui porte l'application.
+
+Deux conséquences pratiques découlent de cette définition. La première est l'éphémérabilité : un pod possède une adresse IP qui naît avec lui et disparaît avec lui. Dès qu'un pod est remplacé, son adresse change, ce qui interdit tout référencement direct par IP et impose l'usage des services, que nous détaillerons plus loin. La seconde est que le pod est un objet transitoire : on ne le crée pas à la main, on le laisse produire par un contrôleur. En tapant la commande équivalente à un lancement direct, vous obtenez effectivement un pod, mais il ne sera jamais recréé s'il échoue, car aucun mécanisme ne garde d'intention à son sujet.
+
+Le passage en revue des phases d'un pod aide à lire la sortie des outils de ligne de commande. En Pending, le pod attend qu'une node lui soit attribuée ou qu'une image soit téléchargée. En Running, au moins un conteneur s'exécute. En Succeeded, les conteneurs ont terminé sans erreur, ce qui est normal pour une tâche ponctuelle. En Failed, l'un d'eux s'est arrêté avec un code d'erreur. En CrashLoopBackOff, typiquement, l'application démarre puis plante en boucle, et le cluster espère de plus en plus longtemps entre deux tentatives. Savoir lire ces états distingue un problème de scheduling, un problème d'image et un problème d'application, trois causes qui n'appellent pas les mêmes correctifs.
+
+Le stockage mérite une mention à part, parce qu'il heurte frontalement l'éphémérabilité du pod. Un disque déclaré dans un pod est détruit avec lui : c'est parfait pour des fichiers temporaires, c'est inutilisable pour une base de données. La réponse de la plateforme consiste à séparer le volume, objet persistent, du pod qui l'utilise, en demandant une capacité dans un espace de stockage prédéfini. Le pod qui démarre, lui, est monté sur le disque existant, ce qui lui donne la continuité nécessaire. Cette séparation a un prix : le volume est généralement attaché à une zone, ce qui restreint la mobilité des pods, et une application qui doit être réellement sans état évite de s'en servir, en confiant plutôt la persistance à un service externe. La question à se poser avant chaque volume est simple : que perd-on si ce pod disparaît à l'instant même ?
+
+Un dernier mot sur les ressources, car c'est ici que se préparent les accidents les plus coûteux. Chaque conteneur d'un pod déclare des demandes, qui réservent la capacité nécessaire à la planification, et des limites, qui plafonnent ce qu'il peut consommer. Sans ces déclarations, le cluster ne dispose d'aucun critère pour placer le pod, et surtout aucun garde-fou n'empêche une fuite mémoire d'une instance d'aspirer la node entière. Nous reviendrons sur ce point dans la section des erreurs fréquentes, mais retenez dès maintenant que le champ des ressources fait partie du manifeste, pas d'une option avancée.
+
+## Les nodes du cluster
+
+Une node est une machine du cluster, physique ou virtuelle, qui dispose de sa capacité de calcul. Il en existe deux grandes familles. Le plan de contrôle, anciennement appelé maître, héberge les composants qui prennent les décisions : le serveur d'API, le stockage d'état, l'ordonnanceur et les boucles de réconciliation. Les nodes de travail, ou workers, sont celles qui exécutent réellement vos applications. Un cluster de démarrage comprend souvent un plan de contrôle et deux ou trois workers ; un environnement de production en compte davantage, répartis entre plusieurs zones de disponibilité pour qu'une panne localisée ne vide pas le cluster.
+
+Sur chaque node de travail, trois éléments font le travail. Le kubelet est l'agent qui reçoit du plan de contrôle la description des pods à exécuter, les transcrit en appels au runtime conteneur, puis remonte l'état de santé et les événements. Le runtime, généralement containerd ou CRI-O, exécute effectivement les conteneurs ; Docker n'est plus le moteur utilisé directement depuis les versions récentes. Enfin le mécanisme de routage, historiquement kube-proxy et de plus en plus des programmes de politique réseau, traduit les adresses de service en règles de redirection vers les pods. Retrouver ces trois noms dans un diagnostic vous indique immédiatement la couche à inspecter.
+
+Chaque node annonce ses ressources : nombre de cœurs, mémoire, nombre maximal de pods, ainsi que des étiquettes et des annotations. Les étiquettes, appelées labels, sont des paires clé-valeur sans signification propre pour le moteur : c'est vous qui décidez que tel label désigne l'environnement de recette, telle autre la couche applicative. Elles servent à deux opérations fondamentales, la sélection, qui permet à un service ou à un contrôleur de désigner un ensemble de pods, et l'affinité, qui permet de demander à ce qu'un pod soit placé préférablement à côté d'un autre. Des noms de labels cohérents valent mieux qu'une longue documentation.
+
+Les nodes peuvent aussi être mise hors service, ce qu'on appelle un taint. Une node contaminée n'accepte que les pods qui tolèrent explicitement cette contamination. C'est la mécanique qui permet de réserver une machine à des tâches d'administration, de préparer un reboot en évacuant délicatement les charges, ou d'interdire temporairement la planification sur une machine malade. Combinée aux limites de ressources, cette mécanique donne à l'administrateur un contrôle précis sans jamais intervenir directement sur les pods.
+
+## Contrôleurs et architecture du cluster
+
+Le cœur de Kubernetes est un serveur d'API auquel tous les autres composants parlent. Vous envoyez un document, il l'enregistre, et tout le reste découle de cette écriture. Autour de lui gravitent les pièces du plan de contrôle : le stockage d'état, traditionnellement etcd, qui conserve la vérité sous forme de paires clé-valeur ; l'ordonnanceur, qui décide à chaque création de pod sur quelle node le placer en fonction des demandes de ressources et des contraintes ; le gestionnaire de contrôleurs, qui héberge les boucles de réconciliation ; et l'agent du fournisseur cloud, quand le cluster doit créer des adresses publiques ou des disques chez un hébergeur.
+
+Le modèle de la boucle de réconciliation mérite d'être compris, car il est partout. Un contrôleur observe l'état réel, le compare à l'état déclaré, puis émet des corrections jusqu'à ce que les deux coïncident. Le contrôleur de réplicas veut trois pods et n'en voit que deux : il en crée un. Le contrôleur de nœuds constate une node disparue : il marque ses pods comme éliminables. Ce principe explique la résilience du système, mais aussi ses symptômes parfois déroutants : si vous supprimez manuellement un pod qu'un contrôleur est censé piloter, il réapparaît, et c'est normal puisque votre suppression n'a pas modifié l'état déclaré.
+
+Chaque type d'objet possède son contrôleur, et chacun répond à un besoin. Le ReplicaSet maintient un nombre d'exemplaires, mais on ne l'utilise presque jamais directement. Le Deployment s'appuie sur lui pour piloter les versions et l'historique. Le DaemonSet garantit qu'un pod tourne sur chaque node, ce qui convient aux agents de journalisation ou de surveillance. Le StatefulSet gère des applications qui exigent une identité stable et un stockage attaché, comme une base de données. Le Job exécute une tâche jusqu'à son terme, et le CronJob la planifie. Choisir le bon contrôleur, c'est choisir la garantie que vous obtiendrez.
+
+L'architecture se complète par des extensions installées dans le cluster : l'addon DNS qui donne un nom résolvable à chaque service, les plugins de réseau qui attribuent une interface à chaque pod et rendent possible la communication entre nodes, et les fournisseurs de stockage qui branchent les disques persistants. Le client kubectl, lui, n'est qu'un façade qui encode votre requête en appel d'API ; toute la magie se situe de l'autre côté. C'est d'ailleurs la première habitude à prendre : quand une commande échoue, demandez-vous quel objet a été soumis et quel contrôleur est chargé de le réaliser, plutôt que de chercher un service à redémarrer à la main.
+
+```table
+| Composant | Où il tourne | Rôle principal |
+| --- | --- | --- |
+| kube-apiserver | Plan de contrôle | Point d'entrée unique, valide et expose les objets |
+| etcd | Plan de contrôle | Stockage clé-valeur de l'état déclaré |
+| kube-scheduler | Plan de contrôle | Attribution d'une node à chaque pod créé |
+| controller-manager | Plan de contrôle | Boucles de réconciliation de tous les contrôleurs |
+| kubelet | Node de travail | Exécute et surveille les pods confiés à la node |
+| runtime conteneur | Node de travail | Démarre réellement les conteneurs, containerd ou CRI-O |
+| CoreDNS | Cluster | Résolution des noms de services pour les pods |
+| CNI | Node de travail | Adresses réseau des pods et communication entre nodes |
+```
+
+Une question revient chez tous les débutants : à quoi sert la réconciliation puisque j'ai déjà lancé la commande ? Elle sert précisément à ce que vous ne soyez plus la personne qui relance la commande. Tant que l'objet existe dans l'API, le cluster travaille pour le maintenir, même quand votre terminal est fermé, même quand vous êtes en congé. C'est ce décalage entre intention et exécution qui fait de Kubernetes un système de contrôle et non une collection de scripts. Les sections suivantes appliquent ce principe au cas le plus courant, le déploiement d'une application avec plusieurs exemplaires et sa mise à jour sans interruption.
+
+## Le Deployment, déclarer une application
+
+Le pod est l'unité que l'on observe, mais il n'est presque jamais l'unité que l'on crée. Entre votre intention et le pod se dresse un contrôleur, et le plus utilisé de tous est le Deployment. Comprendre ce décalage est la clé de tout le reste de la leçon : vous ne demandez jamais trois pods, vous demandez un Deployment dont la spécification indique trois réplicas, et c'est ce Deployment qui, à travers un ReplicaSet, fabriquera, comptera, remplacera et nettoiera les pods. Cette indirection n'est pas une complication gratuite, elle est ce qui rend possibles l'historique des versions, la montée en charge automatique et le retour arrière.
+
+Un Deployment fait trois choses simultanément. Il conserve l'état déclaré de votre application, à savoir l'image à utiliser, le nombre d'exemplaires et les paramètres de démarrage. Il pilote un ReplicaSet, c'est-à-dire une machine à maintenir un effectif, qui lui-même fabrique les pods. Il garde en mémoire plusieurs révisions, ce qui vous permet de revenir à la précédente en une commande. Quand vous modifiez le manifeste, par exemple en changeant l'étiquette de l'image, le Deployment ne touche pas les pods existants : il en crée un nouveau ReplicaSet qui fabrique les nouveaux, puis réduit progressivement l'ancien. C'est le mécanisme de mise à jour progressive, et il est décrit en détail plus loin.
+
+La distinction entre ce que vous déclarez et ce que le cluster exécute se vérifie en trois commandes. La première liste les objets de déploiement, la seconde montre combien d'exemplaires sont prêts par rapport à ceux qui sont désirés, la troisième relie enfin le Deployment à la liste concrète des pods qu'il pilote. Lire cette chaîne dans cet ordre est la méthode la plus rapide pour comprendre un incident : si le compte de prêts est incomplet, le problème est en amont des pods ; si les pods existent mais répondent mal, il est en aval.
+
+```bash
+kubectl get deployments
+kubectl rollout status deployment/api
+kubectl get pods -l app=api -o wide
+```
+
+Il est utile de savoir que le même résultat s'obtient de façon impérative, en demandant au cluster de fabriquer un objet à partir d'une ligne de commande. Cette approche convient à un essai sur une table de laboratoire, car elle ne laisse aucune trace durable hors du registre d'API : personne d'autre ne saura comment recréer ce que vous avez lancé. La discipline adoptée dans la pratique consiste à écrire les manifestes dans un dépôt de code, à les faire relire comme du code, puis à les appliquer. Le fichier devient alors la source de vérité, la seule que l'on puisse versionner, comparer et relancer ailleurs.
+
+Cette démarche possède un atout découpé rarement exploité par les débutants : la possibilité de visualiser l'écart avant de le produire. La commande de comparaison soumet votre fichier au serveur et renvoie la différence entre l'état actuel et l'état que votre fichier produirait, sans rien modifier. Elle permet de répondre à la question que tout intégrateur devrait se poser : si j'applique ce fichier, qu'est-ce qui va réellement changer dans le cluster ? Un champ modifié par erreur, une étiquette retirée, un nombre de réplicas qui repart à une valeur par défaut, tout cela apparaît dans le diff avant que la moindre ressource ne soit recréée. Après l'application, une commande de comparaison du déploiement confirme que l'objet attendu est bien en place, et l'historique indique si une nouvelle révision a été créée. Trois gestes, comparer, appliquer, confirmer, qui transforment une opération à risque en procédure maîtrisée. Conservez-les quel que soit l'outil de gestion de configuration que vous adopterez plus tard, car ils sont le fondement de toute livraison reproductible vers un cluster partagé.
+
+## Les réplicas : combien d'exemplaires et pourquoi
+
+Le champ des réplicas est le nombre d'exemplaires que le cluster doit maintenir en vie. Sa valeur dépend d'objectifs qui n'ont rien de technique en eux-mêmes : la capacité à absorber la charge, la tolérance aux pannes, et la capacité à effectuer une mise à jour sans coupure. Pour un service critique, deux exemplaires ne suffisent pas car la maintenance d'une node peut emporter les deux à la fois ; trois ou plus, répartis sur des zones distinctes, permettent d'en perdre un tout en restant servi. Pour un worker asynchrone, un seul peut suffire s'il n'y a pas d'enjeu de disponibilité.
+
+Le calcul de la capacité est le second critère. Si une instance absorbe deux cents requêtes par seconde et que vous attendez six cents, il vous en faut trois, mais cette estimation doit être vérifiée par le mesurage et non par l'intuition. Réduire le nombre de réplicas au-dessous du nécessaire produit des files d'attente, puis des délais, puis des timeouts en cascade. En augmenter sans réfléchir multiplie le coût et peut épuiser le cluster, ce qui déclenche l'éviction des pods les plus gourmands. La bonne valeur est celle que vous pouvez justifier par une métrique, et elle se réévalue à chaque évolution significative du trafic.
+
+Un troisième paramètre intervient souvent : la capacité du cluster à accueillir vos pods. Si les demandes de ressources, ce que chaque pod réclame pour être planifié, dépassent la capacité libre des nodes, les nouveaux pods restent en attente. Le champ des réplicas affiche alors trois souhaités, un prêt, et la liste des pods en révèle un autre qui attend une place. La correction n'est pas d'augmenter les réplicas mais d'ajouter de la capacité, de réduire les demandes si elles sont excessives, ou de libérer des ressources en supprimant des objets inutiles. Ce cas de figure est fréquent après une première montée en charge et trompe souvent l'opérateur pressé.
+
+La relation entre réplicas et mise à jour mérite d'être posée maintenant, car elle commande tout le mécanisme suivant. Pour interrompre une mise à jour sans jamais couper le service, il faut pouvoir exécuter côte à côte, le temps d'une transition, plus d'exemplaires que la valeur finale. Avec un seul réplica, il est impossible de démarrer la nouvelle version avant d'avoir arrêté l'ancienne, et la coupure est inévitable. D'où une règle simple : tout service exposé publiquement mérite au moins deux réplicas, non par goût de la redondance, mais parce que c'est la condition de base d'une mise à jour sans interruption.
+
+## Mises à jour progressives et retour arrière
+
+La mise à jour progressive, ou rolling update, remplace les pods un par un ou par petits groupes, en veillant à ce que la capacité disponible ne descende jamais sous un seuil. Le Deployment définit deux paramètres pour cela : la valeur maximale de pods excédentaires par rapport au nombre désiré, et le nombre maximal de pods qui peuvent être indisponibles pendant l'opération. Avec trois réplicas, un maximum de un indisponible et un maximum de un excédentaire, le cluster crée un quatrième pod, attend qu'il soit prêt, en arrête un ancien, recommence, et ainsi de suite jusqu'à ce que les trois anciens aient été remplacés. À aucun instant le service ne se retrouve sans serveur.
+
+Cette patience a un coût : la mise à jour est lente. Le cluster attend que chaque nouveau pod franchisse sa vérification de disponibilité avant de poursuivre. Si l'image est volumineuse, le téléchargement rallonge l'opération ; si l'application met trente secondes à être prête, trente secondes s'ajoutent à chaque vague. Un déploiement qui semble bloqué n'est presque jamais bloqué : il attend une condition. La commande de suivi de progression affiche le nombre de pods prêts et l'état de l'opération, et il faut la consulter avant de conclure à une panne, sous peine d'interrompre une mise à jour qui allait aboutir.
+
+Le retour arrière est l'autre moitié du dispositif, et il est conçu pour être rapide puisque les anciens pods ne sont pas détruits mais mis à l'échelle à zéro dans leur ReplicaSet. Déclarer un retour à la révision précédente ne reconstruit rien : le cluster reprend la configuration conservée, en relance les pods, et remet l'effectif où il était. Conservez donc toujours un historique suffisant, cinq révisions par défaut, et pratiquez le retour arrière au moins une fois en environnement de recette. Une procédure d'urgence qu'on n'a jamais exécutée n'est pas une procédure, c'est une espérance.
+
+Deux commandes complètent la boîte à outils du déploiement. La première met l'opération en pause, ce qui suspend la création de nouveaux pods sans annuler ce qui a déjà été fait : elle est utile quand vous voulez inspecter la première vague de pods, vérifier leurs métriques et décider ensuite s'il faut poursuivre ou annuler. La seconde reprend l'opération ou la révoque définitivement, en ramenant l'ensemble à la révision précédente. Le mot révoque est important : il ne s'agit pas d'effacer l'historique, mais de créer une nouvelle révision qui reproduit l'ancienne configuration, de sorte que l'audit reste intact et que chaque bascule soit datée.
+
+L'historique lui-même se consulte avant toute décision sensible. La commande d'historique affiche le numéro de chaque révision, le nombre de pods associés et la date du changement, et il est d'usage d'annoter chaque révision avec le numéro de build ou l'identifiant du commit. Sans cette annotation, la liste montre bien qu'une version a changé, mais pas laquelle, et le retour arrière devient un pari. Une équipe qui relie le numéro de révision à l'identifiant de build peut remonter de l'incident observé en production jusqu'au code exact qui l'a introduit, ce qui réduit considérablement le temps de diagnostic.
+
+Les garde-fous valent mieux que l'habitude. Une vérification de disponibilité bien écrite, qui appelle un endpoint répondant seulement quand l'application est réellement prête, empêche le cluster de router du trafic vers un processus encore en cours d'initialisation. Des limites de ressources, enfin, évitent le scénario inverse où la nouvelle version, plus gourmande, monopolise la node et provoque l'éviction d'autres pods pendant le déploiement. Ces deux points, la vérification et les limites, reviendront dans la section des erreurs fréquentes.
+
+## Anatomie d'un manifeste YAML
+
+Un manifeste est un document YAML soumis à l'API. Sa structure suit toujours le même squelette : la version de l'API, le type d'objet, ses métadonnées, puis sa spécification, qui porte les champs propres à ce type. Le YAML étant sensible à l'indentation, deux espaces par niveau et jamais de tabulation, la principale qualité d'un manifeste lisible est la constance. Regardez le déploiement suivant : l'image est épinglée à une étiquette de version, le nombre de réplicas est explicite, la vérification de disponibilité interroge un endpoint, et les ressources sont déclarées avant même la première exécution.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  labels:
+    app: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: registry.example.com/api:1.4.2
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: api-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            periodSeconds: 5
+```
+
+Chaque bloc de ce document mérite une explication courte. Le champ du sélecteur relie le Deployment aux pods qu'il pilote, et il doit correspondre exactement aux étiquettes du gabarit, sous peine que le contrôleur en revendique d'autres ou aucun. L'étiquette app: api sert à la sélection par le sélecteur, par les services et par vos requêtes de lecture ; c'est une convention que vous choisissez et que vous devez tenir. Le conteneur reçoit un nom, une image, un port et, cruciallement, une section de ressources qui n'est pas facultative.
+
+Les deux vérifications ne jouent pas le même rôle. La vérification de disponibilité décide si le pod peut recevoir du trafic ; tant qu'elle échoue, le pod existe mais reste hors rotation, ce qui protège vos utilisateurs pendant le démarrage. La vérification de vivacité décide si le conteneur doit être redémarré ; un échec répété déclenche un redémarrage du conteneur, mesure utile contre les dépendances qui se figent, dangereuse si elle est trop agressive, car elle provoque une boucle de redémarrages qui vide la mémoire de vos données. Commencez par la seule vérification de disponibilité, puis ajoutez la seconde seulement si vous savez ce qu'elle répare.
+
+La question des ressources se formule ainsi : les demandes servent à la planification, le cluster additionne les demandes des pods d'une node et refuse d'y placer ce qui ne tient pas ; les limites servent à la contention, un conteneur qui dépasse sa limite mémoire est tué et redémarré, un conteneur qui dépasse sa limite processeur est simplement ralenti. Oublier les demandes rend la planification aveugle, oublier les limites rend la node vulnérable. Un manifeste sans cette section est un manifeste incomplet, et c'est l'erreur la plus répandue que nous détaillerons plus loin.
+
+Un dernier réflexe avant d'appliquer un manifeste : demandez au cluster ce qu'il en pense, sans rien modifier. La commande de validation côté serveur vérifie la structure, les champs inconnus et la cohérence du sélecteur, et renvoie une erreur explicite avant que quoi que ce soit ne soit créé. Elle coûte une seconde et vous évite le message incompréhensible d'une ressource refusée en pleine intégration. Appliquez ensuite, puis affichez le résultat pour confirmer que l'objet attendu existe bien avec la forme attendue. L'organisation des fichiers compte autant que leur contenu. Deux conventions coexistent : un fichier multi-documents séparé par des marqueurs, qui garde l'ensemble d'une application au même endroit et se valide d'un seul geste, ou un fichier par objet, plus commode à relire et à modifier en revue de code. Les deux fonctionnent, à condition d'être appliqués par un répertoire plutôt qu'à la main, pour que rien ne soit oublié. Quel que soit le choix, nommez les objets de façon stable et prévisible, car ces noms apparaissent dans les journaux, les alertes et les scripts de diagnostic ; un nom changeant à chaque version rend l'outillage aveugle.
+
+Les étiquettes et annotations méritent la même attention. Les étiquettes structurées selon un schéma commun, avec les valeurs de l'application, de la composante, de la version et d'environnement, permettent de sélectionner par requête tout un ensemble, de filtrer les journaux et de rattacher un pod à la version qui l'a produit. Les annotations, elles, portent de l'information que le moteur ignore, comme l'identifiant du build, le lien vers le ticket ou la date de la revue : elles ne participent à aucune sélection, mais elles relient l'objet déployé à son histoire. Une équipe qui tient ces deux listes à jour gagne un temps considérable dès le premier incident, parce que la question « quelle version tourne et depuis quand » trouve sa réponse dans les métadonnées plutôt que dans la mémoire de quelqu'un.
+
+Cette discipline, valider puis appliquer puis vérifier, s'applique à tous les objets que cette leçon va parcourir.
+
+```bash
+kubectl apply --dry-run=server -f deployment.yaml
+kubectl apply -f deployment.yaml
+kubectl get deployment api -o wide
+```
+
+Un Deployment donne à votre application des exemplaires stables en nombre, mais ces exemplaires sont éphémères : leur adresse disparaît dès qu'ils sont remplacés, et leur nombre change au gré des mises à jour. Si un composant doit appeler un autre, il lui faut donc un point d'ancrage qui survit aux pods. Le Service remplit exactement ce rôle : il possède un nom et une adresse durables dans le cluster, et il sélectionne en permanence l'ensemble des pods compatibles vers lesquels répartir le trafic. À cela s'ajoute une découverte de service fournie par le DNS du cluster, ce qui permet à vos applications de se référencer par nom plutôt que par configuration d'adresse.
+
+Le Service repose sur un mécanisme simple : un étiquetage et une sélection. Vous déclarez que le Service vise les pods portant l'étiquette app égale à api, et le cluster construit et maintient une table de redirection vers tous les pods qui répondent à ce critère. Quand un pod naît ou meurt, la table est mise à jour automatiquement, sans redémarrage du client ni reconfiguration. C'est ce qui rend possible la mise à jour progressive vue précédemment : pendant la transition, les anciens et les nouveaux pods coexistent, et le Service distribue le trafic entre les deux, ce qui garantit que la capacité ne s'effondre jamais.
+
+Chaque Service reçoit une adresse IP virtuelle, dite cluster IP, qui n'appartient à aucune machine et ne peut être jointe que depuis l'intérieur du cluster. Ce choix est volontaire : les applications se parlent par des identités stables, et l'exposition publique devient une décision séparée, confiée à un autre objet. Trois types couvrent l'essentiel des besoins, et le choix entre eux dépend d'une seule question : qui doit pouvoir joindre ce service, le cluster seul, un test externe, ou le monde entier.
+
+## ClusterIP, NodePort et LoadBalancer
+
+Le type ClusterIP est le défaut, et il convient à la grande majorité des communications internes. Le Service est joignable à une adresse unique à l'intérieur du réseau du cluster, sur un port que vous choisissez, et il n'est atteignable ni de l'extérieur ni depuis une autre machine du réseau. C'est le bon choix pour une API appelée par une application web, pour une base de données, pour un worker ou pour un service de fichiers. Un avantage souvent sous-estimé est le verrouillage : si personne d'autre ne peut joindre votre base, la surface d'attaque se réduit d'autant, sans qu'aucun pare-feu ne soit à configurer.
+
+Le type NodePort ouvre le Service sur un port élevé, compris dans une plage définie par le cluster, sur l'adresse de chacune des nodes. N'importe quelle machine capable d'atteindre une node peut alors joindre le service, et le trafic est acheminé vers les pods. Ce type est pratique pour un test rapide, un webhook d'un fournisseur externe ou un endpoint de santé surveillé depuis l'extérieur, mais il est rarement adapté à la production : l'adresse expose toutes les nodes, le port est choisi dans une plage partagée, et aucun contrôle de trafic n'est proposé. Il reste néanmoins un excellent outil de diagnostic, car il permet de vérifier en trente secondes que la chaîne complète, réseau, sélection, pods, fonctionne.
+
+Le type LoadBalancer demande au fournisseur cloud de créer une adresse publique équilibrée, de la relier au service et de gérer l'acheminement. C'est la solution la plus simple pour exposer une application sur internet depuis un cluster managé, et la plus coûteuse, puisque chaque service de ce type engendre souvent une ressource facturée, avec un adresse dédiée. Il s'agit également de la solution la moins portable : écrit sur un fournisseur, il ne fonctionne pas tel quel ailleurs. Une équipe qui a dix services exposés de cette façon se retrouve avec dix adresses publiques et dix factures, ce qui explique le recours systématique à l'Ingress dans les installations un peu matures.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+```
+
+Quelques précisions pratiques sur la lecture d'un Service. Le champ du port est celui que le client appelle, le champ du port cible est celui qu'écoute le conteneur, et les deux peuvent différer, ce qui permet de conserver une adresse publique stable même si l'application change de port. Le nom de port, facultatif, devient essentiel quand un service expose plusieurs protocoles, car il permet de distinguer le trafic. La vérification de disponibilité, elle, est héritée du pod : si aucun pod n'est prêt, la table de redirection est vide et le client reçoit un refus, ce qui se diagnostique en listant les pods sélectionnés et leur état de préparation.
+
+La résolution par nom mérite d'être expliquée, car elle est la source d'une bonne partie de la magie apparente. Le DNS du cluster attribue à chaque Service un nom composé de son nom d'espace de noms et de son nom, si bien qu'un pod de l'espace de travail appelle la base de données par un identifiant stable, sans jamais connaître d'adresse. Ce nom résout vers l'adresse du Service, laquelle redirige vers les pods : trois niveaux qui se réécrivent indépendamment les uns des autres. Un Service peut également être déclaré sans adresse virtuelle, dit sans en-tête, auquel cas le DNS renvoie directement les adresses des pods. Ce mode convient aux clients qui doivent joindre chaque exemplaire individuellement, comme un cluster de bases de données qui doit se contacter entre pairs.
+
+Un piège de sélection mérite d'être signalé, car il produit le symptôme le plus déroutant pour un débutant : un Service qui existe, une adresse qui répond, et pourtant aucune connexion. La cause la plus fréquente est une étiquette différente entre le Service et le gabarit du Deployment, parfois une simple coquille ou une majuscule. Le service sélectionne alors zéro pod. La commande de description du Service affiche le nombre de endpoints, c'est-à-dire les adresses réellement servies ; zéro endpoint signifie que le problème est une histoire d'étiquettes, pas un problème réseau.
+
+## L'Ingress : un routeur au-dessus des services
+
+L'Ingress est la couche qui décide comment le trafic entrant est routé vers l'un des services internes. Plutôt que d'exposer chaque application sur sa propre adresse publique, on expose un point d'entrée unique et l'on déclare des règles : les requêtes pour un nom d'hôte donné ou un chemin d'URL vont vers tel Service, les autres vers tel autre. Cette organisation correspond exactement à la structure d'un site disposant d'une application web, d'une interface de programmation et d'un service d'images : une seule adresse TLS, trois destinations internes, et aucun besoin de multiplier les adresses publiques.
+
+Concrètement, un objet Ingress porte des règles conditionnées par l'hôte et le chemin, chacune renvoyant vers un Service et un port. Le chiffrement est géré par une référence à un secret contenant le certificat, de sorte que le même objet décrit à la fois le routage et la politique de sécurité. Le routeur qui applique ces règles n'est pas inclus dans Kubernetes : il s'agit d'un contrôleur, souvent un proxy matériel ou logiciel installé dans le cluster, qui observe les objets Ingress et génère sa configuration. Sans ce contrôleur, un objet Ingress existe dans l'API mais n'a aucun effet, une panne classique lors d'une installation minimale.
+
+Le contrôle d'accès et la réécriture d'URL dépendent du contrôleur choisi : certains ajoutent l'authentification, la limitation de débit, la compression ou la réécriture d'en-têtes via des annotations, d'autres exigent un objet dédié. Cette dépendance à une implémentation est la limite principale de l'Ingress, et elle explique l'apparition d'une spécification plus complète, nommée Gateway API, conçue pour rendre ces comportements explicites et portables. Pour débuter, retenez que l'Ingress résout le routage de niveau sept, c'est-à-dire la compréhension de l'URL et de l'hôte, alors que le Service résout le routage de niveau quatre, c'est-à-dire l'adresse et le port.
+
+Le parcours complet d'une requête se décrivait ainsi : le client interroge le DNS public, qui renvoie vers l'adresse de l'équilibreur devant le contrôleur d'Ingress ; le contrôleur lit les règles, trouve l'hôte demandé et le chemin, puis sélectionne le Service correspondant ; le Service, à son tour, choisit un pod prêt parmi ceux dont les étiquettes correspondent ; enfin le pod traite la demande et répond. Chaque maillon de cette chaîne a son propre journal et son propre diagnostic, et savoir lequel examiner est la moitié du travail d'exploitation.
+
+## Les ConfigMaps : sortir la configuration de l'image
+
+Une application qui contient ses paramètres dans l'image doit être reconstruite pour chaque environnement, et le moindre changement de mot de passe ou d'adresse de service déclenche une nouvelle version. La ConfigMap résout ce problème en séparant la configuration de l'exécutable : elle est un ensemble de paires clé-valeur, ou de fichiers entiers, stocké dans l'API et adressable par nom. Le conteneur la reçoit soit sous forme de variables d'environnement, soit montée comme un répertoire de fichiers, et l'image reste identique d'un environnement à l'autre.
+
+Les deux formes d'injection ne sont pas équivalentes. Les variables d'environnement sont simples et immédiatement lisibles par le code, mais elles sont figées au démarrage du conteneur : une modification de la ConfigMap ne se propage que lors du redémarrage suivant. Le montage en fichier offre le comportement inverse, le pod voit la nouvelle valeur sans redémarrage, à condition que l'application relise le fichier, ce que la plupart ne font pas spontanément. La règle d'usage qui en découle est de privilégier le montage pour les configurations volumineuses et de considérer tout changement de ConfigMap comme un motif de mise à jour du déploiement.
+
+Une ConfigMap ne doit contenir aucune donnée sensible. Elle est lisible par quiconque dispose des droits de lecture sur l'objet, et elle apparaît telle quelle dans les journaux d'API et les fichiers de déploiement. Adresse de service de la base de données, identifiant d'environnement, seuil de mise en cache, log applicatif : tout cela y trouve naturellement sa place. Le champ des clés doit respecter quelques contraintes de nommage, et les valeurs longues, comme un fichier de configuration complet, s'écrivent sous la forme d'un fichier unique dans le document, ce qui se lit ensuite dans le conteneur comme un fichier ordinaire.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-config
+data:
+  APP_ENV: recette
+  LOG_LEVEL: info
+  cache-ttl: "60"
+  config.yaml: |
+    serveur:
+      hote: api.interne
+      port: 8080
+    pistes:
+      niveau: info
+```
+
+Le cycle de vie de la ConfigMap impose une discipline. On la modifie, puis il faut penser à propager le changement, ce qui veut dire en général redémarrer les pods ou déclencher une mise à jour du déploiement avec une étiquette de version. Une équipe qui modifie une configuration sans redémarrer se croit alors face à un bug de l'application, alors que le processus, chargé en mémoire, continue simplement d'utiliser les valeurs de son démarrage. Indiquez systématiquement la version de configuration dans le nom ou dans une étiquette : le déploiement devient alors traçable et le retour arrière possible.
+
+## Les Secrets : des données sensibles sans les exposer
+
+Le Secret utilise la même structure qu'une ConfigMap, mais il est conçu pour les données que l'on ne veut pas rendre publiques : mots de passe, jetons d'accès, clés privées, identifiants de connexion. Les valeurs y sont encodées en base soixante-quatre, un format qui permet de les représenter sans caractère problématique mais qui ne constitue pas un chiffrement. Toute personne captable le flux entre le serveur d'API et le stockage d'état, ou disposant simplement des droits de lecture, obtient la donnée dans un état immédiatement exploitable. C'est précisément la raison pour laquelle il ne faut jamais écrire un mot de passe en clair dans un manifeste déposé dans un dépôt versionné.
+
+Le premier réflexe à prendre est d'éviter que la donnée sensible n'entre jamais dans le dépôt de code. La génération d'un secret s'effectue à partir d'un modèle, avec une valeur substituée à la volée depuis le gestionnaire de secrets de votre organisation, ou avec un outil de chiffrement du dépôt qui conserve le document chiffré et ne le décrypte qu'au moment de l'application. La commande de création à partir d'une chaîne convient aux essais, mais elle laisse une trace dans l'historique de la ligne de commande, d'où l'utilité des modes d'entrée par fichier ou par flux. Une fois appliqué, le secret est stocké chiffré dans etcd si le chiffrement au repos est activé, ce qui constitue la seconde protection.
+
+L'injection dans les conteneurs reprend les mécanismes de la ConfigMap : variables d'environnement ou montage en fichiers, avec les mêmes compromis. Le montage en fichiers est généralement préféré pour les certificats, car il permet un renouvellement sans redémarrage lorsque l'application sait recharger ses fichiers. Quel que soit le mode, soyez conscient que la variable d'environnement est visible par tout processus de l'hôte qui peut inspecter l'environnement du conteneur, et qu'un journal applicatif qui imprime sa configuration révèle alors la donnée. Le principe du moindre privilège s'applique aussi aux droits : un secret doit être monté uniquement dans les pods qui en ont besoin, et la politique d'accès du cluster doit l'interdire aux autres.
+
+Il existe enfin des mécanismes d'intégration avec les gestionnaires externes, qui évitent de stocker le secret dans le cluster même : le conteneur le récupère au démarrage auprès d'un service dédié, par identification du pod, et le conserve en mémoire. Ces solutions ajoutent une dépendance et une latence, mais elles suppriment la question du stockage et offrent une rotation centralisée. Quel que soit l'approche retenue, la règle reste la même : la valeur ne se trouve dans aucun fichier versionné, elle n'apparaît dans aucun journal, et son changement ne demande jamais de reconstruire l'image.
+
+Vous avez désormais la chaîne complète : le cluster décrit un état, les contrôleurs le maintiennent, les Deployments gèrent les versions et les réplicas, les Services offrent des adresses stables, l'Ingress route le trafic externe, et les ConfigMaps et Secrets séparent la configuration de l'image. Il reste à apprendre ce que l'on fait quand la réalité refuse de correspondre à l'intention, car c'est là que se joue l'essentiel du métier. Un cluster en fonctionnement ne demande aucune intervention ; c'est précisément au moment où quelque chose cloche que la qualité de votre méthode de diagnostic devient déterminante.
+
+La démarche efficace suit toujours le même ordre, du plus général au plus particulier. On commence par confirmer que l'objet existe et que le contrôleur est satisfait, c'est-à-dire que les comptes souhaités et prêts coïncident. On passe ensuite aux pods, en vérifiant leur état et leur nombre, puis on lit les événements du cluster, qui racontent ce que le moteur a tenté et pourquoi il a échoué. On consulte enfin les journaux du conteneur, où l'application expose sa propre version de l'histoire. Inverser cet ordre, en plongeant d'abord dans les journaux, conduit à debugger l'application alors que le vrai problème est une image introuvable, une étiquette erronée ou une demande de ressources impossible à satisfaire.
+
+Trois commandes couvrent la majorité des situations et méritent d'être mémorisées. La première décrit un objet en profondeur, y compris ses événements récents, qui sont le journal des intentions du cluster. La seconde montre les journaux d'un conteneur, avec la possibilité de suivre en continu et de remonter dans le temps. La troisième liste les événements de l'espace de noms, triés par heure, ce qui donne une chronologie des échecs de planification, des échecs de téléchargement d'image et des redémarrages en boucle. Ces trois vues, état, intention et journal, suffisent presque toujours à localiser la couche fautive.
+
+```bash
+kubectl describe deployment api
+kubectl logs -l app=api --tail=100 --prefix
+kubectl get events --sort-by=.lastTimestamp
+```
+
+Un réflexe complémentaire consiste à raisonner en contrôleur plutôt qu'en processus. Quand un pod manque, ne cherchez pas qui doit le démarrer, cherchez quel objet le réclame et pourquoi sa demande n'est pas satisfaite : capacité insuffisante, étiquette incompatible, image refusée, secrets absents. Quand un pod refuse de s'arrêter, demandez-vous si une vérification de vivacité trop stricte empêche le contenu de se terminer proprement. Ce déplacement du regard, de l'exécution vers la déclaration, est la compétence qui distingue un opérateur Kubernetes expérimenté d'un utilisateur de commandes.
+
+Un mot enfin sur la supervision, qui prolonge naturellement le diagnostic. Les états et les événements du cluster racontent ce que le moteur a fait, mais pas ce que l'application ressent : pour cela, il faut des métriques, des journaux structurés et des traces, collectés depuis tous les pods et corrélés avec les changements de déploiement. Une alerte pertinente ne cible pas le symptôme, comme un pod redémarré, mais la promesse contractuelle, comme un taux d'erreur au-dessus d'un seuil sur une fenêtre glissante. Relier chaque mise à jour à une variation observable de ces métriques transforme le déploiement en expérience contrôlable : vous savez alors non seulement que la nouvelle version tourne, mais qu'elle fait mieux que l'ancienne, et vous disposez d'un motif objectif de revenir en arrière si ce n'est pas le cas.
+
+## À retenir
+
+Kubernetes est un système de réconciliation : vous décrivez un état désiré dans un manifeste, vous le soumettez à l'API, et des boucles de contrôle ne cessent de comparer la réalité à cette description jusqu'à coïncidence. Toute la puissance du système découle de ce décalage, et toute la confusion des débutants vient de l'habitude inverse, celle d'agir directement sur les processus. Retenez que supprimer un pod piloté par un contrôleur ne résout rien, puisque l'intention reste inchangée : c'est l'objet déclaré qu'il faut modifier.
+
+La hiérarchie des objets se résume ainsi. Le pod est l'unité minimale, éphémère, dotée d'une adresse IP qui naît et meurt avec lui. La node est la machine qui héberge les pods et qui fournit leurs ressources. Le Deployment est l'objet que vous manipulez au quotidien : il conserve l'historique des révisions et pilote un ReplicaSet qui maintient le nombre d'exemplaires. Le Service donne un nom et une adresse durables à un ensemble de pods sélectionnés par étiquettes. L'Ingress route le trafic entrant en fonction de l'hôte et du chemin. Les ConfigMaps et les Secrets portent la configuration et les données sensibles hors de l'image.
+
+Les garanties offertes par la plateforme se commandent les unes aux autres. La résilience suppose plusieurs réplicas répartis sur des nodes distinctes. La mise à jour sans coupure suppose au moins deux réplicas et une vérification de disponibilité honnête. La planification suppose des demandes de ressources, et la sécurité d'exécution suppose des limites. Aucune de ces garanties n'est automatique : elles résultent de champs que vous écrivez dans le manifeste, et l'absence d'un de ces champs désactive silencieusement la protection correspondante.
+
+Enfin, retenez que la maîtrise se mesure à la capacité de diagnostic. Savoir lire un état de pod, interpréter un événement, distinguer un échec de planification d'un échec d'application, et remonter la chaîne de la commande à l'objet déclaré : voilà ce qui transforme une collection de commandes en compétence. Les sections suivantes détaillent les erreurs qui reviennent le plus souvent dans les installations réelles, avec pour chacune sa cause et son correctif.
+
+## Erreurs fréquentes
+
+La première erreur, de loin la plus répandue, consiste à déployer sans limites de ressources. Un manifeste qui ne déclare ni demandes ni limites laisse le cluster sans critère de planification et l'application sans garde-fou. Les conséquences sont progressives et trompeuses : tant que la node dispose de réserve, tout semble aller ; puis une fuite mémoire ou une charge inattendue fait dépasser un conteneur, qui consomme au-delà de sa part, ralentit ses voisins, et finit par provoquer l'éviction de pods sains par le mécanisme de pression sur la node. Le correctif tient en quelques lignes, à placer systématiquement dans chaque conteneur : des demandes qui reflètent la consommation réelle, observée en recette, et des limites qui plafonnent l'usage en évitant de déclencher un redémarrage pour une simple pointe. Traitez cette section comme obligatoire, au même titre que le nom et l'image.
+
+La seconde erreur consiste à écrire un secret en clair dans un manifeste. Mot de passe de base de données, jeton d'API ou clé privée collés dans un fichier YAML, poussés dans un dépôt, appliqués sur trois environnements : la donnée est alors présente dans l'historique de version, dans les journaux d'API et dans chaque copie locale des développeurs, et il faudra changer la valeur partout pour la révoquer. L'encodage en base soixante-quatre, souvent pris pour du chiffrement, n'apporte aucune protection. Le correctif est structurel : générez la valeur en dehors du dépôt, stockez-la chez un gestionnaire de secrets, injectez-la au moment de l'application, et limitez les droits de lecture aux seuls espaces qui en ont besoin. Appliquez la même vigilance aux mots de passe codés en dur dans les variables d'environnement d'une ConfigMap, qui revient exactement au même défaut.
+
+La troisième erreur est la rupture silencieuse de la sélection par étiquettes. Le Service ou le Deployment cible une étiquette que les pods ne portent plus après une modification du gabarit, et le symptôme est un service joignable qui refuse toute connexion, avec zéro endpoint. La description du Service révèle immédiatement le nombre d'endpoints, et la comparaison des étiquettes entre le sélecteur et le gabarit identifie l'écart. Une convention de nommage stricte et une relecture des diff avant application évitent l'essentiel de ces incidents.
+
+La quatrième erreur est l'utilisation d'une étiquette d'image mutable, du type latest, pour désigner la version déployée. Le cluster ne sait plus quelle version tourne réellement, le retour arrière devient ambigu, et un redémarrage de pod peut récupérer une image différente de celle que vous croyiez tester. Épinez chaque déploiement sur un numéro de version ou sur l'empreinte exacte de l'image, et laissez la construction d'image attribuer ce numéro. La cinquième erreur, enfin, est l'absence de vérification de disponibilité : les nouveaux pods reçoivent du trafic dès leur démarrage, avant d'être prêts, et la mise à jour provoque des erreurs que l'on attribue alors à tort au code. Une vérification simple et honnête corrige le problème en quelques lignes.
+
+D'autres pièges méritent d'être connus, sans être aussi fréquents. Un espace de noms oublié fait appliquer un manifeste dans le contexte courant, souvent l'espace par défaut, d'où des ressources introuvables lors du diagnostic. Un port déjà utilisé sur une node empêche le démarrage d'un DaemonSet, avec un événement explicite mais peu remarqué. Une vérification de vivacité trop agressive transforme un démarrage lent en boucle de redémarrages, et chaque redémarrage repart de zéro, aggravant exactement le symptôme qu'elle devait réparer. Une variable d'environnement issue d'une ConfigMap modifiée sans redémarrage donne l'impression que la configuration n'a pas d'effet, alors que le processus, chargé une seule fois, continue d'utiliser ses valeurs initiales.
+
+Enfin, soyez prudent avec les manipulations directes effectuées en dehors des manifestes. Une modification faite à la main sur un objet géré par un contrôleur sera écrasée lors de la prochaine réconciliation, ce qui crée un décalage entre ce que vous avez constaté et ce que le cluster va faire. Pour les opérations d'urgence, temporaire, la commande de mise à l'échelle reste légitime, mais elle doit être suivie d'une remise en conformité du manifeste. Le dépôt de configuration reste la source de vérité, et toute divergence entre le dépôt et le cluster doit être traitée comme un défaut à corriger, pas comme une situation stable.
+
+## Pour aller plus loin
+
+La documentation officielle de Kubernetes est la référence incontournable, et elle est remarquablement pédagogique. Le guide des concepts explique chaque objet avec le vocabulaire exact utilisé par le moteur, la fiche de référence des objets détaille tous les champs d'un manifeste, et la documentation des commandes répond à la quasi-totalité des questions de diagnostic. Commencez par la page des concepts, puis revenez fréquemment à la référence des objets lorsque vous rédigez un manifeste un peu plus complet que d'habitude.
+
+- https://kubernetes.io/docs/concepts/ — les concepts fondamentaux, pods, contrôleurs, services et stockage
+- https://kubernetes.io/docs/reference/kubectl/ — la commande kubectl, ses sous-commandes et ses options de formatage
+- https://kubernetes.io/docs/concepts/services-networking/ — le modèle réseau, les services et l'ingress
+
+Pour mettre la main à la pâte sans infrastructure, les environnements locaux suffisent. Minikube et kind construisent un cluster complet dans une machine virtuelle ou un conteneur de votre poste, ce qui permet de pratiquer les mises à jour progressives, les retours arrière et les pannes simulées en toute sécurité. Le tutoriel interactif officiel est particulièrement efficace : il fournit un environnement prêt à l'emploi et vous fait déployer une application, l'exposer, la mettre à jour et la faire monter en charge en moins d'une heure. Pratiquez-y au moins la séquence complète, puis reproduisez-la sur votre propre cluster.
+
+En complément, la page consacrée aux bonnes pratiques pour les manifestes résume les recommandations de sécurité et de fiabilité, et le guide du déploiement sans interruption détaille les options de la mise à jour progressive. Côté outillage, l'outil de gestion de configuration qui vous est familier reste précieux pour appliquer des manifestes de manière reproductible et détecter les dérives. Terminez par une lecture du modèle de réconciliation : une fois compris, presque tous les comportements du cluster deviennent prévisibles, y compris ceux qui semblent d'abord étranges.
+
+- https://kubernetes.io/docs/concepts/configuration/ — ConfigMaps, secrets et configuration des pods
+- https://kubernetes.io/docs/concepts/workloads/controllers/deployment/ — le Deployment, sa stratégie et son historique
+- https://fr.wikipedia.org/wiki/Kubernetes — origines, gouvernance et positionnement du projet
+
+## Et maintenant : passez à l'exercice
+
+Cette leçon vous a donné la carte complète du déploiement : l'état déclaré et sa réconciliation, le pod et la node, le Deployment et ses réplicas, la mise à jour progressive et son retour arrière, les trois types de Service, le routage d'Ingress, et la séparation entre configuration et secrets. Chaque concept répond à une question précise du passage en production, et aucun ne se substitue aux autres : le Service ne remplace pas l'Ingress, la ConfigMap ne remplace pas le Secret, et le pod ne se pilote pas directement. L'exercice qui accompagne le chapitre vous demande de traduire toute cette chaîne en manifestes cohérents.
+
+Vous allez écrire un jeu de fichiers YAML complet : un Deployment à plusieurs réplicas avec demandes et limites de ressources et des vérifications de disponibilité, un Service de type ClusterIP, une règle d'Ingress, une ConfigMap portant la configuration non sensible, et un Secret dont la valeur est injectée au moment de l'application sans jamais figurer dans le dépôt. Vous appliquerez ensuite ces objets, observerez l'état de la mise à jour, provoquerez une montée en charge, puis déclencherez un retour arrière et vérifierez qu'il s'effectue sans coupure de service.
+
+Avant de soumettre les fichiers, relisez-les avec la liste des erreurs fréquentes en main : chaque conteneur doit porter ses ressources, aucune donnée sensible ne doit être en clair, les étiquettes du sélecteur et du gabarit doivent correspondre, et l'image doit être épinglée à une version précise. Le quiz qui suit vérifie ces mêmes points sous une forme plus abrupte. Si une question vous surprend, revenez à la section correspondante plutôt que de mémoriser la réponse : ces mécanismes se comprennent, et ce qui se comprend se retrouve.

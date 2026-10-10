@@ -1,0 +1,129 @@
+## Journaux et SIEM : la matière première de la détection
+
+Les journaux sont la matière première de toute détection, et cette matière n'est pas produite pour vous. Un système écrit des traces parce qu'il doit se déboguer, répondre à un contrôle d'audit, facturer un usage ou respecter une obligation légale ; la sécurité en est un usager secondaire qui récupère ce qui existe déjà. Il en découle une conséquence pratique immédiate : les journaux dont vous aurez besoin ne sont pas toujours ceux que la machine produit par défaut, et certains de ceux qu'elle produit sont inutiles, volumineux et coûteux. Le travail du défenseur commence donc par un inventaire honnête des sources disponibles, avant toute règle, avant tout outil, avant même de parler de corrélation.
+
+Quatre questions suffisent à caractériser chaque source, et vous devez pouvoir y répondre par écrit pour chacune d'elles. La première est la nature de l'événement : que se passe-t-il concrètement quand cette ligne s'écrit. La seconde est la liste des champs utiles : quelles informations permettent d'identifier l'acteur, la ressource, le contexte et le résultat. La troisième est la durée de conservation : combien de temps cette source permet-elle de remonter dans le passé, ce qui conditionne directement la capacité à reconstituer un incident. La quatrième est la personne qui la consulte réellement, et la réponse « personne » est fréquente. Prenons l'exemple de l'ouverture de session Windows : l'événement 4624 porte l'identité du compte, l'adresse source, le type de connexion, le poste d'origine et l'identifiant de processus, mais il ne dit rien sur l'intention et devient inexploitable si la conservation se limite à quarante-huit heures.
+
+La collecte elle-même se fait par trois voies, dont il faut connaître les compromis. Un agent installé sur la machine pousse les événements vers le collecteur, ce qui offre le plus de détails et permet d'auditer l'état de la collecte, mais demande une gestion des versions et des droits. Le protocole syslog pousse ou fait pousser des messages vers un récepteur central, ce qui est simple à mettre en place sur les équipements réseau mais repose sur un format peu structuré. Une interrogation par interface applicative tire les données à intervalle régulier, ce qui convient aux sources qui ne savent pas pousser, mais introduit un délai et rate les événements entre deux tirs. Dans le lab Comptoir, la règle est simple : tout ce qui peut pousser pousse, et le collecteur refuse les sources qui ne peuvent pas fournir un horodatage fiable.
+
+```json
+{
+  "timestamp": "2026-03-09T09:14:02.417+01:00",
+  "host": "POSTE-ACC01",
+  "source": "windows-security",
+  "event_id": 4624,
+  "actor": { "user": "compta.stage", "domain": "COMPTOIR" },
+  "target": { "logon_type": 3, "process": "powershell.exe" },
+  "origin": { "address": "10.42.7.31", "port": 50412 },
+  "result": "success",
+  "ingested_at": "2026-03-09T09:14:33.902+01:00"
+}
+```
+
+La normalisation consiste à ramener ces événements hétérogènes dans une forme unique, avec des noms de champs stables, afin qu'une même question puisse être posée à Windows, à Linux, au pare-feu et à l'application web. Sans elle, chaque règle devient spécifique à une source, la maintenance explose et toute comparaison entre périodes devient impossible. L'exemple ci-dessus montre la forme attendue : un horodatage au format ISO 8601 avec décalage horaire, une identité d'hôte, une source nommée, un identifiant d'événement brut, des acteurs et des cibles structurés, un résultat explicite et l'heure d'ingestion séparée de l'heure du fait. Cette dernière distinction est essentielle : elle seule permet de calculer le retard de la chaîne de collecte et de savoir si un délai de détection vient du système ou de votre propre pipeline.
+
+La conservation et le volume se posent ensemble, car ils sont deux faces d'une même contrainte budgétaire. Une organisation moyenne produit des téraoctets de journaux par mois, et l'indexation en temps réel de tout est rarement soutenable. On trie donc : les sources qui servent à détecter sont indexées et interrogables en continu, celles qui servent uniquement à l'investigation sont conservées à froid dans un stockage moins cher, et celles qui ne servent à rien sont supprimées. La tentation consiste à conserver le minimum, précisément ce qui rend les règles intenables : tester une règle exige de l'historique. Comptez trente jours glissants pour ajuster un seuil, davantage si votre activité est saisonnière, et considérez qu'une source conservée vingt-quatre heures rend tout réglage statistique impossible.
+
+L'horodatage est le point faible le plus fréquent et le plus facile à corriger. Si le poste, le serveur et le collecteur ne partagent pas la même référence de temps, la chronologie que vous construirez sera fausse, et une corrélation peut être renversée : l'événement paraîtra antérieur à sa cause. La synchronisation sur un serveur d'horodatage commun n'est pas une subtilité de gestionnaire de parc, c'est la condition de possibilité de toute analyse de séquence. Vérifiez-la avant chaque session purple : une dérive de quatre minutes sur un poste a suffi, dans un exercice que j'ai vu, à faire conclure à un mouvement latéral inexistant et à faire perdre une journée entière d'investigation à trois personnes.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/e/e3/Wazuh_SIEM_screenshot.webp/960px-Wazuh_SIEM_screenshot.webp
+| Console d'une plateforme SIEM open source qui affiche une alerte détaillée et les événements ayant déclenché sa règle.
+```
+
+Le SIEM, acronyme de plateforme de gestion des informations et des événements de sécurité, rassemble ces fonctions : recevoir, normaliser, indexer, corréler, alerter, présenter, et ouvrir un dossier d'analyse. Il ajoute l'étage que la simple centralisation ne fourit pas : la comparaison dans le temps et entre sources. C'est lui qui peut dire que le même compte a échoué chez le contrôleur de domaine et chez l'application web dans la même minute, alors que chaque source prise isolément paraît normale. Il faut cependant résister à deux idées reçues. La première est qu'un SIEM crée de la visibilité : il ne fait que rendre exploitable ce qui lui est livré, et il est parfaitement capable d'être rempli, indexé et admiré tout en ignorant un sous-réseau entier. La seconde est qu'il suffit de l'installer : une plateforme sans propriétaire, sans règles testées et sans procédure d'analyse produit de l'alerte, donc du bruit, donc de l'aveuglement.
+
+Pour évaluer sérieusement la qualité d'une collecte, retenez trois critères mesurables. La complétude s'exprime par le pourcentage d'actifs du périmètre qui fournissent effectivement leurs journaux, à comparer au pourcentage théorique prévu au recensement ; un écart de dix pour cent se voit immédiatement et se corrige en une semaine. La fidélité mesure le décalage entre l'heure du fait et l'heure d'ingestion, dont la médiane et le quatre-vingt-quinzième centile doivent être publiés, car la moyenne masque les extrêmes. La traçabilité vérifie qu'une entrée du collecteur renvoie vers la source d'origine, faute de quoi l'analyste ne pourra jamais prouver ce qu'il affirme. Ces trois indicateurs coûtent peu à produire et changent radicalement la qualité des discussions sur la détection.
+
+## Écrire une règle de détection qui tient debout
+
+Une règle de détection n'est pas un filtre, c'est une hypothèse. Elle affirme que tel ensemble d'observations, dans tel contexte, a une probabilité suffisante de correspondre à tel comportement pour justifier l'attention d'un humain. Formulée ainsi, elle impose sa structure : une sélection qui décrit le fait, des exclusions qui retirent les contextes légitimes connus, une condition qui relie le tout, un niveau de gravité qui décide du canal et de l'urgence, une liste de faux positifs attendus qui permet de vérifier la règle plus tard, et les champs affichés à l'analyste pour qu'il puisse trancher sans ouvrir dix écrans. Une règle dépourvue de faux positifs documentés est une règle que personne n'a jamais testée.
+
+La méthode de départ n'est pas l'outil mais la technique. On part d'un comportement observé du côté offense, on identifie la tactique et la technique correspondantes dans la matrice ATT&CK, on repère la donnée qui fait foi pour cette technique, et seulement ensuite on écrit la condition. Pour la création de tâche planifiée à des fins de maintien, la donnée fait foi lorsque le planificateur enregistre la création d'une tâche avec son chemin d'exécution ; la condition portera donc sur ce chemin et sur son emplacement, pas sur le nom de l'outil que l'attaquant aurait pu choisir. Ce décalage volontaire, chercher la donnée avant de chercher la syntaxe, est ce qui distingue une règle robuste d'un copier-coller de catalogue.
+
+```yml
+title: Création d'une tâche planifiée pointant vers un chemin utilisateur
+id: 7f2b91c4-5d3e-4a18-9b6c-2e0f4a7c1d55
+status: test
+description: >-
+  Une tâche planifiée vient d'être créée dont le programme est exécuté depuis
+  un profil utilisateur ou une mémoire vive, configuration inhabituelle pour
+  un poste de travail de ce parc et cohérente avec un maintien de présence.
+references:
+  - https://attack.mitre.org/techniques/T1053/005/
+author: équipe détection du lab Comptoir
+date: 2026/03/10
+logsource:
+  product: windows
+  service: taskscheduler
+detection:
+  selection:
+    EventID: 4698
+    TaskContent|contains:
+      - '\AppData\Local\Temp\'
+      - '\Users\Public\'
+      - '%TEMP%\'
+  filter_sauvegarde:
+    TaskName: '\Microsoft\Windows\Backup\'
+  condition: selection and not filter_sauvegarde
+falsepositifs:
+  - script d'inventaire déployé par l'équipe système dans un dossier temporaire
+  - poste de test sur lequel un administrateur crée des tâches manuellement
+fields:
+  - TaskName
+  - Author
+  - Date
+  - UserId
+level: high
+```
+
+Les exclusions méritent une attention particulière, car elles sont l'endroit où les règles meurent. Retirer du bruit est normal : un service de sauvegarde crée légitimement des tâches, un agent d'inventaire aussi. Mais chaque exclusion élargie réduit la surface que la règle couvre, et une chaîne de trois exclusions généreuses suffit à rendre une règle parfaitement silencieuse sur la totalité de votre parc. Deux disciplines évitent ce glissement. La première consiste à toujours exclure par une valeur précise, un compte, un chemin, un identifiant, plutôt que par un motif large. La seconde consiste à mesurer chaque exclusion : combien de déclenchements elle retire, et lesquels. Si vous ne pouvez pas chiffrer l'effet d'un filtre, vous ne devriez pas le déployer.
+
+Les seuils et les fenêtres transforment un événement isolé en séquence suspecte, et leur choix se justifie par des données, jamais par intuition. Douze échecs d'authentification sur un même compte en cinq minutes évoquent une pulvérisation ; les mêmes douze échecs répartis sur une journée évoquent un utilisateur qui oublie son mot de passe. La fenêtre doit être assez courte pour que les événements soient liés par une cause commune et assez longue pour absorber la latence de la collecte. En pratique, on part d'une fenêtre large, on l'affine après lecture de l'historique, et on documente la valeur retenue avec sa justification, comme le montre le commentaire en fin d'exemple. Une règle sans justification de seuil ne pourra jamais être défendue lorsqu'un incident réel viendra la contester.
+
+Le test sur historique est l'étape que l'on saute toujours, et c'est celle qui décide de la qualité finale. On rejoue la règle sur trente jours de journaux, on compte les déclenchements, on ouvre chaque alerte produite et on classe : pertinente, non pertinente, indécidable. Le quotient des pertinences sur le total donne le taux de pertinence, indicateur brutal mais honnête. Sous soixante-dix pour cent dans un périmètre réduit, la règle doit être retravaillée ; au-dessus de quatre-vingt-quinze pour cent, il est probable qu'elle soit trop étroite et laisse passer des variantes. Une période d'observation de deux semaines en mode non alertant, avec enregistrement silencieux des déclenchements, permet de valider sans inonder les analystes.
+
+Le cycle de vie d'une règle se gère comme du code, puisque c'en est. Chaque règle porte un statut qui évolue au fil des tests, un responsable identifié, une date de dernière revue et un historique de versions conservé hors de la plateforme, dans un dépôt versionné. Une règle stable dont personne ne relit la configuration pendant six mois finit par décrire un environnement qui n'existe plus : les machines ont changé de nom, les comptes ont été renommés, l'application a été migrée. La revue périodique n'a pas pour objet de changer la logique, mais de vérifier que les champs référencés existent toujours et que la source délivre encore l'événement attendu. Une règle qui ne se déclenche plus depuis trois mois doit être investiguée : elle est soit devenue inutile, soit aveugle.
+
+L'écriture de l'alerte est la dernière étape et souvent la plus rentable. L'analyste dispose de quelques secondes pour décider s'il approfondit ; il lui faut donc une phrase de fait, une gravité, le périmètre concerné et l'action immédiate attendue. Comparez deux formulations : « activité suspecte détectée sur POSTE-ACC01 » n'apprend rien et n'indique aucune suite, tandis que « création d'une tâche planifiée exécutant un script depuis un dossier temporaire sur le poste POSTE-ACC01 à 09:16:35, compte compta.stage ; vérifier l'origine de la tâche et isoler le poste si le chemin n'est pas connu » donne le fait, l'heure, l'acteur, la ressource et la conduite à tenir. Cette exigence se vérifie simplement : montrez l'alerte à un collègue qui n'a pas participé à son écriture et demandez-lui ce qu'il ferait.
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Network_based_intrusion_detection_system.png/960px-Network_based_intrusion_detection_system.png
+| Schéma d'un système de détection d'intrusion basé réseau : la sonde analyse une copie du trafic et signale les correspondances de règles.
+```
+
+Un piège mérite enfin d'être signalé, parce qu'il ruine silencieusement des semaines de travail : une règle parfaitement écrite sur une source qui n'envoie rien. Le cas le plus fréquent est celui du journal d'exécution de scripts, désactivé par défaut sur beaucoup de postes, ou celui des journaux applicatifs d'une application nouvellement migrée dont l'agent n'a pas été redéployé. Avant de valider une règle, vérifiez qu'elle se déclenche au moins une fois dans des conditions contrôlées, par exemple en déclenchant volontairement le comportement dans le lab. Cette vérification, que l'on peut automatiser par une sonde de couverture qui déclenche chaque règle une fois par semaine, transforme une collection de règles en un système de détection dont on connaît l'état réel.
+
+## ATT&CK en pratique : de la matrice aux tests
+
+ATT&CK est une base de connaissances décrivant les comportements observés chez des adversaires réels, organisée en tactiques qui correspondent aux objectifs poursuivis et en techniques qui décrivent la manière d'y parvenir. Elle est publique, versionnée, documentée pour chaque technique avec des exemples, des détecteurs possibles et surtout des sources de données associées. Sa valeur n'est pas encyclopédique : elle est sociale. Offense et défense y gagnent un vocabulaire commun qui supprime les ambiguïtés quotidiennes. Lorsqu'un opérateur écrit qu'il a exercé la technique de création de tâche planifiée pour le maintien de la présence, tout le monde sait de quoi il parle, et le défenseur sait immédiatement dans quelles données aller chercher la preuve.
+
+L'erreur classique consiste à utiliser la matrice comme un tableau de score. Compter les techniques couvertes produit des pourcentages flatteurs qui ne résistent à aucune question : couverte selon quel critère, testée quand, par qui, avec quel délai, sur combien d'actifs. Une technique dite couverte parce que sa source de données est présente dans le collecteur n'est pas détectée, elle est seulement observable. La distinction est décisive et il faut l'imposer dans vos rapports : non couverte, signifie que la donnée n'existe pas ; observée, signifie que la donnée existe mais qu'aucune règle ne l'exploite ; détectée, signifie qu'une règle s'est réellement déclenchée lors d'un test, avec un délai connu. Seule la dernière catégorie doit compter dans vos indicateurs.
+
+Le premier usage concret d'ATT&CK dans une session purple est la sélection du périmètre. Plutôt que de viser un grand nombre de techniques, on en choisit un petit pourcentage justifié : les techniques fréquentes dans votre secteur, celles que votre exposition rend plausibles, et celles dont vous soupçonnez la couverture faible. Douze techniques bien choisies et correctement instrumentées valent mieux que quatre-vingts techniques exécutées sans observation, car c'est le nombre d'observations exploitables qui détermine la quantité d'amélioration produite. Chaque technique retenue fait l'objet d'une ligne de préparation : donnée attendue, source qui la fournit, règle associée, et comportement de test reproductible.
+
+Le deuxième usage est le plus précieux et le moins pratiqué : la dérivation des sources de données. Chaque technique d'ATT&CK liste les données susceptibles de la révéler. Cette liste se transforme directement en grille de collecte : pour cette technique, avons-nous cette donnée, sur quel périmètre, avec quelle rétention. C'est ainsi que se découvrent les angles morts, non par intuition mais par comparaison systématique entre ce que la connaissance publique dit nécessaire et ce que votre infrastructure fournit réellement. Une session de revue d'une heure sur douze techniques suffit souvent à révéler trois ou quatre sources absentes, dont certaines sont gratuites à activer.
+
+```json
+{
+  "technique": "T1053.005",
+  "intitule": "Tâche planifiée pour le maintien de la présence",
+  "source_de_donnees_attendue": "Création d'événement 4698 dans le journal du planificateur",
+  "collecte": { "presente": true, "perimetre": "18 postes sur 18", "retention_jours": 90 },
+  "regle": "creation-tache-planifiee-chemin-utilisateur",
+  "resultat_du_test": {
+    "session": "COMPTOIR-03",
+    "etape": 4,
+    "statut": "detecte",
+    "delai_secondes": 74,
+    "pertinence": true
+  },
+  "decision": "stabiliser la règle et l'étendre aux serveurs d'applications"
+}
+```
+
+Le troisième usage consiste à aligner les tests et les corrections sur une même référence. L'exemple ci-dessus montre une fiche de couverture complète : technique, donnée attendue, état réel de la collecte, règle associée, résultat du test avec son délai, puis décision prise. Cette fiche est l'unité de base du reporting purple team, et sa construction est mécanique une fois la session terminée. Elle a l'immense avantage d'être falsifiable : n'importe qui peut venir vérifier que la donnée existe bien et relancer le test. À l'inverse, un tableau récapitulatif de pourcentages, sans détaillage, ne peut être ni vérifié ni amélioré, et finit par être cru sur parole.
+
+Il faut aussi mesurer les limites de la matrice. Elle décrit des comportements observés chez des adversaires étudiés, ce qui la rend inévitablement incomplète pour votre contexte : elle sous-représente certaines menaces internes, ignore vos configurations métier et évolue par versions, ce qui impose de figer la version utilisée lors d'une campagne pour garder des comparaisons valides. Elle décrit également l'attaque, pas la défense : pour les contre-mesures, d'autres référentiels décrivent les actions défensives correspondantes, et le lien entre les deux se fait par votre propre analyse. Enfin, elle ne remplace aucun jugement : une technique absente de la matrice peut parfaitement être celle que vous subiriez, et votre veille doit alimenter une liste locale de comportements à tester en complément.
+
+L'erreur inverse consiste à abandonner la matrice au motif qu'elle est imparfaite. Elle apporte exactement ce dont une équipe a besoin pour sortir du ressenti : une échelle stable, des intitulés partagés, des sources de données exploitables et un historique que l'on peut comparer entre exercices. Adoptez-la comme un cadre de conversation, pas comme une vérité. Concrètement, réunissez l'offense et la défense autour de la grille une fois par trimestre, revenez sur les techniques marquées non couvertes, décidez lesquelles vous renoncez à couvrir en l'état, et inscrivez les autres au programme de la prochaine session. C'est à ce rythme, modeste et régulier, que la matrice cesse d'être une affiche pour devenir un outil de pilotage.

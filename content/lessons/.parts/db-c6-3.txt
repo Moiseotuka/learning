@@ -1,0 +1,154 @@
+Un schéma peuplé ne vaut que par ce qu'il permet d'en dire. Les métiers ne demandent jamais une table : ils demandent un chiffre, un classement, une courbe, un taux. La restitution est donc la phase qui donne tout son sens aux choix de modélisation passés, et c'est aussi la phase où se révèlent les erreurs commises en amont. Si le rapport de chiffre d'affaires mensuel est faux, la cause se trouve presque toujours dans la conception : un statut non filtré, un montant recopié au mauvais endroit, une date enregistrée en texte. Nous allons construire quatre rapports utiles, puis regarder comment les rendre rapides.
+
+Avant toute chose, posons un cadre de travail. Exécutez chaque requête d'abord avec une clause de limite de lignes, pour vérifier la forme du résultat, puis retirez la limite pour observer les volumes réels. Contrôlez toujours au moins deux niveaux : le détail et le total. Si la somme des ventes par mois ne correspond pas au total général, l'une des deux requêtes est fausse, et le problème vient soit d'un filtre, soit d'une jointure qui duplique des lignes. Ce dernier cas est le plus fréquent : joindre une commande à ses lignes et à ses paiements en une seule opération multiplie les montants et double silencieusement les totaux.
+
+Un second réflexe, tout aussi important : distinguez dans votre tête ce qui est une mesure de ce qui est une dimension. Le chiffre d'affaires, la quantité vendue, le panier moyen, le nombre de commandes sont des mesures, c'est-à-dire des nombres agrégés. Le mois, la catégorie, le client, le statut sont des dimensions, c'est-à-dire les axes selon lesquels vous coupez ces mesures. Toute requête de rapport se lit alors de la même manière : je calcule cette mesure, groupée par cet axe, filtrée sur cette période. Cette grammaire unique vous suffira pour la quasi-totalité des demandes métier.
+
+Enfin, un rapport n'est pas seulement juste ou faux, il est aussi rapide ou lent. Sur quelques milliers de lignes, tout passe ; sur plusieurs millions, une jointure manquante ou un calcul sur colonne non indexée transforme un écran instantané en attente de vingt secondes. Chaque rapport présenté ci-dessous est donc accompagné, dans sa dernière partie, d'une réflexion sur l'index à prévoir et sur la manière de vérifier le plan d'exécution. La performance n'est pas un sujet réservé aux experts : elle se traite dès le premier rapport, avec une commande d'analyse et un index de bon sens.
+
+## Rapport 1 : le chiffre d'affaires mensuel
+
+La demande la plus classique tient en une phrase : combien avons-nous vendu chaque mois, sur les douze derniers mois, hors commandes annulées ? Traduisons-la. La mesure est la somme des montants des lignes de commande. L'axe est le mois de la commande. Le filtre porte à la fois sur la période et sur le statut, car une commande annulée ou en attente ne doit pas entrer dans le chiffre d'affaires constaté.
+
+```sql
+SELECT
+  DATE_TRUNC('month', c.cree_le) AS mois,
+  COUNT(DISTINCT c.identifiant)  AS nombre_commandes,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS chiffre_affaires
+FROM commandes AS c
+JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+  AND c.cree_le >= '2025-01-01'
+GROUP BY DATE_TRUNC('month', c.cree_le)
+ORDER BY mois;
+```
+
+Trois détails méritent qu'on s'y attarde. Le GROUP BY porte sur l'expression complète du mois, pas sur l'alias défini dans le SELECT : la plupart des moteurs acceptent l'alias, mais le standard exige l'expression, et écrire l'expression est toujours sans risque. Le COUNT(DISTINCT ...) compte les commandes distinctes, ce qui protège contre les doublons induits par la jointure avec les lignes : sans DISTINCT, une commande à trois articles serait comptée trois fois. Et le WHERE exclut les statuts non finalisés, ce qui évite d'intégrer au total des commandes qui seront peut-être remboursées.
+
+La manipulation des dates varie selon le moteur et c'est le point technique le plus fréquemment bloquant. PostgreSQL propose DATE_TRUNC, MySQL propose DATE_FORMAT avec un masque de mois et d'année, SQLite travaille sur du texte avec une fonction d'extraction, SQL Server dispose de DATEFROMPARTS et de fonctions de troncature. Quel que soit l'outil, cherchez la même opération : réduire un instantané à la valeur année-mois. Une fois la colonne mois obtenue, le reste de la requête est strictement identique. Notez que comparer un mois entier revient à choisir une borne inférieure incluse et une borne supérieure exclue, ce qui évite les erreurs de minuit au dernier jour du mois.
+
+Une variante consiste à agréger directement la table commandes plutôt que de rejoindre les lignes, lorsque le montant total de l'en-tête est fiable. Cette version est nettement plus rapide, car elle évite la multiplication des lignes, et elle suffit si votre seule mesure est le total. En revanche, dès que vous voulez des quantités vendues ou un détail par article, la jointure devient indispensable. Il faut donc décider, une fois pour toutes, si le montant de la table commandes est une valeur de référence ou un cache recalculable, et s'y tenir dans tous les rapports.
+
+Pour obtenir une courbe complète, y compris les mois sans vente, il faut partir d'une table de calendrier ou d'une série de nombres, puis faire une jointure externe. Sans cela, un mois creux disparaît simplement de la liste et le graphique monte une marche trompeuse. Ce cas de figure illustre une règle générale : un rapport qui affiche des données présentes est facile, un rapport qui affiche aussi les absences demande une démarche supplémentaire. Vérifiez toujours avec un contrôle de total : la somme des chiffres d'affaires mensuels doit égaler le chiffre d'affaires global sur la même période et les mêmes statuts.
+
+## Rapport 2 : les produits et catégories les plus vendus
+
+La deuxième demande du métier est un classement : quels sont les dix articles les plus vendus, et comment se répartissent les ventes entre les catégories ? La mesure principale est la quantité vendue, souvent complétée par le montant, car un article bon marché peut être très vendu sans peser dans la facture. L'axe est le produit ou sa catégorie, ce qui suppose une jointure supplémentaire vers la table produits, puis vers categories.
+
+```sql
+SELECT
+  p.reference,
+  p.libelle,
+  cat.libelle  AS categorie,
+  SUM(l.quantite)                     AS unites_vendues,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS montant
+FROM lignes_commande AS l
+JOIN produits   AS p   ON p.identifiant  = l.produit_id
+JOIN categories AS cat ON cat.identifiant = p.categorie_id
+JOIN commandes  AS c   ON c.identifiant  = l.commande_id
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY p.identifiant, p.reference, p.libelle, cat.libelle
+ORDER BY unites_vendues DESC
+LIMIT 10;
+```
+
+La clause GROUP BY mérite une explication attentive, car elle est au cœur de tout rapport. Après l'agrégation, chaque ligne du résultat correspond à un groupe, c'est-à-dire à une combinaison de valeurs de colonnes non agrégées. Toute colonne affichée doit soit figure dans le GROUP BY, soit être enfermée dans une fonction d'agrégation. Écrire le nom d'un produit sans le grouper et sans l'agréger fonctionne sur certains moteurs en mode permissif, puis casse le jour où la configuration change. Listez donc explicitement toutes les colonnes, même si cela semble redondant : c'est ce qui rend la requête lisible et portable.
+
+Pour les catégories, la jointure peut se faire de deux façons. On peut agréger d'abord les ventes par produit, puis remonter à la catégorie dans une sous-requête, ou agréger directement par catégorie en passant par les deux jointures. La seconde approche est plus simple et suffit ici. Attention cependant à la catégorisation : si un produit change de catégorie en cours d'année, le classement l'attribuera à la catégorie actuelle, pas à celle du moment de la vente. Pour un reporting comptable strict, il faudrait figer la catégorie sur la ligne de commande, exactement comme pour le prix. C'est un arbitrage classique entre simplicité et exactitude historique.
+
+Les classements introduisent une difficulté propre : les ex æquo et les bornes. Si trois produits sont à égalité pour la dixième place, un simple LIMIT en coupera deux. Les fonctions de fenêtre résolvent proprement le problème en attribuant un rang à chaque ligne selon une règle explicite. Le moteur range les ventes par quantité décroissante et attribue le même rang à des valeurs identiques, ce qui donne un palmarès honnête. Ces fonctions s'écrivent dans une sous-requête ou une clause dédiée, et leur lecture demande un peu d'habitude, mais elles font partie du vocabulaire courant du reporting.
+
+```sql
+SELECT
+  p.libelle,
+  SUM(l.quantite) AS unites_vendues,
+  RANK() OVER (ORDER BY SUM(l.quantite) DESC) AS rang
+FROM lignes_commande AS l
+JOIN commandes AS c ON c.identifiant = l.commande_id
+JOIN produits  AS p ON p.identifiant = l.produit_id
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY p.identifiant, p.libelle;
+```
+
+Un piège fréquent dans ce type de rapport est le produit jamais vendu. Une jointure interne le fait disparaître, et le classement affiche uniquement ce qui tourne. Si le métier veut aussi identifier les références en souffrance, il faut une jointure externe depuis produits, avec une somme rendue nulle par COALESCE. Le même raisonnement s'applique aux catégories sans vente. Rappelez-vous aussi que les produits retirés du catalogue doivent rester dans l'historique : filtrer sur actif faux ici fausserait tous les totaux passés.
+
+## Rapport 3 : panier moyen et clients récurrents
+
+Le panier moyen mesure la valeur moyenne d'une commande, et il se calcule en deux niveaux. On somme d'abord les lignes pour reconstituer chaque commande, puis on moyenne ces totaux. Directement moyenner les lignes donnerait la valeur moyenne d'un article, ce qui n'a aucun sens commercial et produit des chiffres faux. Cette distinction entre ce que l'on agrège par ligne et ce que l'on agrège par entité est la source d'erreur la plus courante des rapports de débutant.
+
+```sql
+SELECT
+  COUNT(*)                                   AS nombre_commandes,
+  AVG(total_commande)                        AS panier_moyen,
+  MIN(total_commande)                        AS panier_minimum,
+  MAX(total_commande)                        AS panier_maximum,
+  PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY total_commande) AS panier_median
+FROM (
+  SELECT
+    l.commande_id,
+    SUM(l.quantite * l.prix_unitaire - l.remise) AS total_commande
+  FROM lignes_commande AS l
+  JOIN commandes AS c ON c.identifiant = l.commande_id
+  WHERE c.statut IN ('payee', 'expediee', 'livree')
+  GROUP BY l.commande_id
+) AS totaux;
+```
+
+Cette requête contient une sous-requête dérivée, aliasée totaux, qui se comporte comme une table à l'intérieur de la requête principale. Elle matérialise l'étape intermédiaire obligatoire : un total par commande. Sans elle, on ne pourrait pas moyenne correctement, puisque la requête extérieure verrait des lignes et non des commandes. La moyenne arithmétique n'est qu'un indicateur parmi d'autres : la médiane, calculée par la fonction d'extension concernée, résiste mieux aux commandes hors normes, comme un achat professionnel de plusieurs milliers d'euros qui ferait exploser la moyenne sans dire grand-chose du client lambda.
+
+La mesure des clients récurrents demande de compter, pour chaque acheteur, combien de commandes il a passées, puis de classer ces clients selon leur fidélité. Le vocabulaire est le même : une dimension, le client, et une mesure, le nombre de commandes. On peut ensuite répartir les clients en segments avec une expression CASE, qui se comporte comme un conditionnel dans le SELECT et qui, combinée à un GROUP BY, produit une distribution très lisible.
+
+```sql
+SELECT
+  tranches.segment,
+  COUNT(*) AS nombre_clients,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS part_pct
+FROM (
+  SELECT
+    CASE
+      WHEN COUNT(*) >= 6 THEN 'fidele'
+      WHEN COUNT(*) >= 2 THEN 'regulier'
+      ELSE 'occasionnel'
+    END AS segment
+  FROM clients AS cl
+  LEFT JOIN commandes AS c
+         ON c.client_id = cl.identifiant
+        AND c.statut <> 'annulee'
+  GROUP BY cl.identifiant
+) AS tranches
+GROUP BY tranches.segment
+ORDER BY nombre_clients DESC;
+```
+
+Deux subtilités apparaissent ici. La jointure externe à gauche depuis clients permet d'inclure les comptes qui n'ont jamais commandé, sinon ils disparaîtraient du décompte et le taux de fidélité serait surestimé. La condition sur le statut est placée dans la jointure et non dans un WHERE : placée dans le WHERE, elle transformerait la jointure externe en jointure interne et ferait disparaître les clients sans commande valide, renversant l'effet recherché. Cette différence entre filtre en ON et filtre en WHERE est l'une des plus délicates de SQL et mérite d'être éprouvée sur des données de test.
+
+On peut prolonger le travail avec un taux de réachat, c'est-à-dire la part de clients ayant passé au moins deux commandes sur une période donnée, ou avec l'écart entre la première et la dernière commande, qui mesure l'usure de la relation. Ces indicateurs se construisent avec les mêmes agrégats, en ajoutant des dates minimales et maximales par client. Leur valeur vient de la comparaison dans le temps : un taux de réachat en hausse malgré un panier moyen en baisse raconte une histoire très différente d'une courbe qui décroîtrait partout, et c'est cette mise en relation qui intéresse réellement un dirigeant.
+
+## Restituer et optimiser : vues, index d'agrégation et EXPLAIN
+
+Les quatre rapports précédents vont être relus chaque semaine par les mêmes personnes, avec les mêmes paramètres. Il est inutile de les maintenir en double dans plusieurs fichiers : on les matérialise dans des vues, c'est-à-dire des requêtes enregistrées sous un nom, que l'on interroge comme une table. La vue ne stocke aucune donnée, elle stocke une définition, ce qui garantit que tout le monde calcule le chiffre d'affaires avec exactement les mêmes filtres. C'est un outil de gouvernance autant qu'un raccourci de syntaxe.
+
+```sql
+CREATE VIEW v_chiffre_affaires_mensuel AS
+SELECT
+  DATE_TRUNC('month', c.cree_le) AS mois,
+  COUNT(DISTINCT c.identifiant)  AS nombre_commandes,
+  SUM(l.quantite * l.prix_unitaire - l.remise) AS chiffre_affaires
+FROM commandes AS c
+JOIN lignes_commande AS l ON l.commande_id = c.identifiant
+WHERE c.statut IN ('payee', 'expediee', 'livree')
+GROUP BY DATE_TRUNC('month', c.cree_le);
+
+SELECT mois, nombre_commandes, chiffre_affaires
+FROM v_chiffre_affaires_mensuel
+WHERE mois >= '2025-01-01'
+ORDER BY mois;
+```
+
+Vient ensuite la question de la vitesse. Avant d'ajouter le moindre index, mesurez. Toute base relationnelle sait afficher le plan d'exécution d'une requête, c'est-à-dire la stratégie que l'optimiseur a choisie : quelles tables sont lues, dans quel ordre, avec quel index, combien de lignes sont estimées. Cette commande se place devant la requête, ne la modifie pas, et renvoie un tableau par étape. On y cherche deux choses : une lecture séquentielle complète d'une grande table là où un filtre sélectif est attendu, et un écart important entre le nombre de lignes estimées et le nombre de lignes réellement traitées.
+
+L'interprétation se fait sans mystère. Si le plan indique que la table lignes_commande est parcourue en entier pour calculer le chiffre d'affaires d'un mois, un index sur la date de la commande ou sur l'identifiant de commande réduira fortement la surface lue. Si le plan montre un renvoi individuel par ligne vers la table produits, c'est que l'index de jointure manque ou n'est pas utilisé. Attention toutefois aux illusions : sur une table de test de quelques centaines de lignes, le optimiseur préfère souvent une lecture complète, qui est plus rapide à ce volume. Les index ne deviennent décisifs qu'au-delà d'un certain seuil, et les mesurer sur de petites données conduit à des conclusions inverses.
+
+Un rapport peut aussi être rendu rapide sans changer le schéma, en pré-agrégant. Si le chiffre d'affaires mensuel est calculé chaque nuit, on peut écrire les résultats dans une table de synthèse, alimentée par une transaction périodique, et servir la requête depuis cette table : quelques lignes au lieu de millions. La contrepartie est une donnée en retard et un mécanisme de rafraîchissement à maintenir. Ce choix, entre calcul à la demande et résultat préparé, se pose à chaque fois que la requête dépasse le temps acceptable par l'utilisateur, et il se tranche par une mesure, pas par une intuition.
+
+Nous arrivons au terme de ce tour d'horizon. Vous avez vu un projet complet se dérouler de bout en bout : besoin, modèle, script ordonné, peuplement transactionnel, rapports et optimisation. Dans la section de synthèse qui suit, nous rassemblons les règles à conserver, les erreurs à surveiller et les pistes pour continuer, avant de vous envoyer vers l'exercice de fin de parcours.

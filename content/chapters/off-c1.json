@@ -1,0 +1,48 @@
+{
+  "exercise": "Réalisez une reconnaissance complète et documentée du domaine example.com, réservé à la documentation, en une demi-journée de travail, puis remettez un dossier unique. Livrez un fichier inventaire.csv d'au moins quinze lignes distinctes, avec les colonnes nom, adresse, source, date et niveau de confiance ; un fichier journal.csv détaillant chaque action selon le modèle du chapitre ; une synthèse en prose d'une page présentant les serveurs de nom, les enregistrements MX et TXT, les sous-domaines découverts avec leur origine, et trois constats hiérarchisés par criticité ; enfin un schéma sur une page reliant les actifs observés. Conservez dans un sous-dossier les sorties brutes de chaque commande, horodatées. Toute affirmation du rapport doit remonter à une sortie brute datée : à défaut, écrivez-la comme hypothèse. Terminez par une liste de trois angles morts assumés et par la première question que vous poseriez au client.",
+  "resources": [
+    {
+      "label": "Wikipédia FR — Footprinting : le relevé méthodique des empreintes numériques",
+      "url": "https://fr.wikipedia.org/wiki/Footprinting"
+    },
+    {
+      "label": "Wikipédia FR — Domain Name System : résolution et enregistrements",
+      "url": "https://fr.wikipedia.org/wiki/Domain_Name_System"
+    },
+    {
+      "label": "OWASP — Guide de test de la sécurité des applications web, phase d'information",
+      "url": "https://owasp.org/www-project-web-security-testing-guide/"
+    },
+    {
+      "label": "Grafikart — Sécurité offensive : bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20offensive"
+    },
+    {
+      "label": "Grafikart — Outils de pentest : Burp Suite, Nmap",
+      "url": "https://www.youtube.com/@grafikart/search?query=burp%20suite%20nmap"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# RECON — reconnaissance passive et enumeration documentee d'un domaine\n# Usage : ./recon.sh example.com livrables/2026-10-09\nset -euo pipefail\n\nDOMAINE=\"${1:-}\"\nSORTIE=\"${2:-}\"\n\n# TODO 1 : refuser le lancement si DOMAINE ou SORTIE est vide, si le domaine\n#         ne respecte pas un format simple (lettres, chiffres, tirets, points),\n#         si SORTIE existe deja, et si un outil indispensable est absent\n\n# TODO 2 : creer SORTIE, initialiser journal.csv (horodatage;action;source;\n#         resultat) et inventaire.csv (nom;adresse;source;confiance)\n\n# TODO 3 : collecte passive — whois, enregistrements NS, A, MX, TXT, puis les\n#         noms publices des certificats ; chaque sortie dans son fichier brut\n#         horodate, chaque etape ecrite dans le journal\n\n# TODO 4 : normalisation — passer en minuscules, retirer les jokers, garder\n#         uniquement les noms du perimetre, trier et dedoubonner, puis tester\n#         le DNS en etoile avec un nom manifestement inexistante\n\n# TODO 5 : resolution des candidats avec dig, une ligne par nom, en refusant\n#         tout nom hors perimetre ; alimenter inventaire.csv avec la confiance\n\n# TODO 6 : afficher un resume (candidats evalues, noms resolus, chemin des\n#         livrables) et ecrire la ligne de fin dans le journal\n",
+  "solution_code": "#!/usr/bin/env bash\n# RECON — reconnaissance passive et enumeration documentee d'un domaine\n# Usage : ./recon.sh example.com livrables/2026-10-09\nset -euo pipefail\n\nDOMAINE=\"${1:-}\"\nSORTIE=\"${2:-}\"\n\nif [ -z \"$DOMAINE\" ] || [ -z \"$SORTIE\" ]; then\n  echo \"usage : $0 <domaine> <dossier-sortie>\" >&2\n  exit 2\nfi\n\necho \"$DOMAINE\" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || {\n  echo \"domaine invalide : $DOMAINE\" >&2\n  exit 2\n}\n\nif [ -e \"$SORTIE\" ]; then\n  echo \"erreur : $SORTIE existe deja, aucun ecrasement\" >&2\n  exit 1\nfi\n\nfor outil in dig whois curl; do\n  command -v \"$outil\" >/dev/null 2>&1 || { echo \"outil manquant : $outil\" >&2; exit 1; }\ndone\n\nmkdir -p \"$SORTIE/bruts\"\nJOURNAL=\"$SORTIE/journal.csv\"\nINVENTAIRE=\"$SORTIE/inventaire.csv\"\nprintf 'horodatage;action;source;resultat\\n' > \"$JOURNAL\"\nprintf 'nom;adresse;source;confiance\\n' > \"$INVENTAIRE\"\n\nlog() {\n  printf '%s;%s;%s;%s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$1\" \"$2\" \"$3\" >> \"$JOURNAL\"\n}\n\nlog debut recon \"demarrage sur $DOMAINE\"\n\n# 1. collecte passive : registre, DNS publie, journaux de certification\nwhois \"$DOMAINE\" > \"$SORTIE/bruts/whois.txt\" 2>&1 || true\ndig +short NS \"$DOMAINE\" > \"$SORTIE/bruts/ns.txt\"\ndig +short A \"$DOMAINE\" > \"$SORTIE/bruts/apex.txt\"\ndig +short MX \"$DOMAINE\" > \"$SORTIE/bruts/mx.txt\"\ndig +short TXT \"$DOMAINE\" > \"$SORTIE/bruts/txt.txt\"\ncurl -sS -m 30 \"https://crt.sh/?q=%25.$DOMAINE&output=json\" > \"$SORTIE/bruts/crt.json\" || true\nlog passif collecte \"whois, NS, A, MX, TXT, crt.sh\"\n\n# 2. candidats issus des certificats, normalises et limites au perimetre\nCANDIDATS=\"$SORTIE/candidats.txt\"\ngrep -oE '\"name_value\":[[:space:]]*\"[^\"]+\"' \"$SORTIE/bruts/crt.json\" 2>/dev/null \\\n  | sed -E 's/.*\"name_value\":[[:space:]]*\"//; s/\"$//' \\\n  | tr '[:upper:]' '[:lower:]' | tr -d '\\r' | sed 's/^\\*\\.//' \\\n  | grep -E \"(^|\\.)$DOMAINE$\" | sort -u > \"$CANDIDATS\" || true\n\nprintf '%s\\n' \"www.$DOMAINE\" \"mail.$DOMAINE\" \"vpn.$DOMAINE\" \\\n  \"api.$DOMAINE\" \"intranet.$DOMAINE\" \"recette.$DOMAINE\" \\\n  | grep -E \"(^|\\.)$DOMAINE$\" | sort -u >> \"$CANDIDATS\" || true\nsort -u \"$CANDIDATS\" -o \"$CANDIDATS\"\nlog passif candidats \"$(wc -l < \"$CANDIDATS\") noms uniques\"\n\n# 3. detection du DNS en etoile avant toute enumeration\nABSENTE=\"inexistante-8f3k.$DOMAINE\"\nETOILE=$(dig +short \"$ABSENTE\" | head -n 1 || true)\nif [ -n \"$ETOILE\" ]; then\n  log avertissement dns \"zone en etoile : $ETOILE renvoye pour $ABSENTE\"\nelse\n  log verification dns \"aucune reponse pour $ABSENTE\"\nfi\n\n# 4. resolution des candidats, une ligne par nom du perimetre\nRESOLUS=\"$SORTIE/resolus.txt\"\n: > \"$RESOLUS\"\nwhile IFS= read -r nom; do\n  [ -n \"$nom\" ] || continue\n  echo \"$nom\" | grep -Eq \"(^|\\.)$DOMAINE$\" || { log refuse hors_perimetre \"$nom\"; continue; }\n  ip=$(dig +short \"$nom\" | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$' | head -n 1 || true)\n  if [ -n \"$ip\" ]; then\n    echo \"$nom;$ip\" >> \"$RESOLUS\"\n    printf '%s;%s;crt.sh+dig;haute\\n' \"$nom\" \"$ip\" >> \"$INVENTAIRE\"\n  fi\ndone < \"$CANDIDATS\"\nlog actif enumeration \"$(wc -l < \"$RESOLUS\") noms resolus\"\n\n# 5. synthese remise au client\necho \"perimetre          : $DOMAINE\"\necho \"candidats evalues  : $(wc -l < \"$CANDIDATS\")\"\necho \"noms resolus       : $(wc -l < \"$RESOLUS\")\"\necho \"inventaire         : $INVENTAIRE\"\necho \"journal            : $JOURNAL\"\nlog fin recon \"livrables ecrits dans $SORTIE\"\n",
+  "concepts": [
+    "Renseignement passif vs actif",
+    "Recherche WHOIS/DNS",
+    "Sous-domaines",
+    "Cartographie de périmètre",
+    "Cadrage légal d'audit"
+  ],
+  "lecon": "off-c1.txt",
+  "videos": [
+    {
+      "title": "Sécurité offensive : bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20offensive",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Outils de pentest : Burp Suite, Nmap",
+      "url": "https://www.youtube.com/@grafikart/search?query=burp%20suite%20nmap",
+      "channel": "Grafikart"
+    }
+  ]
+}

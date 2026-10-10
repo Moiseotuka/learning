@@ -1,0 +1,139 @@
+## Kubernetes : abaisser les privilèges au niveau du pod
+
+Un orchestrateur tel que Kubernetes ne se contente pas de lancer vos conteneurs : il décide où ils tournent, avec quels droits, sur quel nœud, et il applique des règles que vous pouvez rendre contraignantes. Le pod, unité de déploiement, regroupe un ou plusieurs conteneurs partageant réseau et stockage ; c'est à ce niveau que se placent les garde-fous, parce que c'est aussi à ce niveau qu'un conteneur compromis pourrait sinon toucher le nœud hôte. Le principe directeur tient en une phrase : chaque pod doit tourner avec le minimum de droits qui lui permet de faire son travail, et ce minimum doit être imposé par le contrôle du plan de gestion, pas seulement déclaré dans un fichier que n'importe qui peut modifier.
+
+Kubernetes propose trois profils de sécurité applicables par espace de noms, qui remplacent avantageusement les anciens plug-ins de restriction. Le profil strict interdit presque tout, le profil de base exclut les pratiques les plus dangereuses sans entraver les usages courants, et le profil restreint — celui à retenir — impose l'exécution sans privilège, l'absence d'élévation, le refus des accès au nœud et le filtre d'appels système par défaut. Étiqueter un espace de noms selon le profil restreint revient à refuser le déploiement de tout pod qui ne respecte pas ces règles : la déclaration devient alors une garantie, et l'équipe découvre l'écart au moment du déploiement plutôt qu'après un incident.
+
+Le cœur de la configuration tient dans un bloc de champs relativement court. Exiger l'exécution sans privilège, fixer un identifiant numérique non nul, refuser toute élévation de privilèges, rendre la racine du système de fichiers inécritable, retirer toutes les capacités système, n'autoriser que le filtre d'appels système par défaut et déposer les données temporaires sur un volume dédié. Chacun de ces réglages a une conséquence visible : si l'application échoue à démarrer parce qu'elle veut écrire dans son répertoire d'installation, ce n'est pas le réglage qui est en cause, c'est l'application qui écrit là où elle ne devrait pas, et la correction appartient au code.
+
+S'y ajoutent des interdictions qui ne se négocient pas : ne pas partager les espaces de noms du nœud, ne pas monter le système de fichiers du nœud, ne pas ouvrir le réseau du nœud depuis un pod applicatif, ne pas passer en mode privilégié. Ces options existent pour des workloads très particuliers — démons de surveillance, contrôleurs de stockage — et leur usage doit être réservé à ces cas, dans un espace de noms dédié et avec une justification écrite. Toute équipe qui réclame le mode privilégié pour une application web doit d'abord démontrer que la demande vient d'un besoin réel et non d'une configuration héritée d'un tutoriel.
+
+```image
+kubernetes
+| L'hélice de Kubernetes règle le placement des pods : la sécurité se déclare au niveau du pod, puis elle s'impose par le contrôle d'admission.
+```
+
+Le tableau ci-dessous sert de grille de relecture d'un manifeste. Avant d'approuver un déploiement, parcourez chaque ligne et exigez la valeur de la colonne de droite ; toute valeur différente doit être motivée par écrit, datée et rattachée à une personne. C'est la même discipline que pour la fiche de durcissement d'un poste, transposée à un objet déclaratif qui, lui, se redéploie automatiquement.
+
+| Champ du manifeste | Valeur par défaut risquée | Valeur exigée |
+|---|---|---|
+| securityContext.runAsNonRoot | false ou absent | true |
+| securityContext.runAsUser | 0 | Identifiant non nul dédié |
+| securityContext.allowPrivilegeEscalation | true ou absent | false |
+| securityContext.readOnlyRootFilesystem | false | true, volume pour /tmp |
+| securityContext.capabilities.drop | aucune | ALL |
+| seccompProfile.type | Unconfined | RuntimeDefault |
+| resources.limits | aucune limite | limite mémoire et processeur |
+| serviceAccountName | défaut du namespace | compte dédié à l'application |
+| image | tag flottant | empreinte épinglée |
+
+## Secrets et identités dans un cluster Kubernetes
+
+Commençons par le point qui surprend toujours : un secret Kubernetes n'est pas chiffré par défaut. Il est encodé en base64, ce qui est un format de représentation et non une protection, et il est stocké dans l'état du cluster. Quiconque dispose d'un droit de lecture sur les secrets voit donc les mots de passe en clair après une conversion triviale. La protection exige deux mesures distinctes : le chiffrement de l'état au repos, configuré par le fournisseur du service ou par l'administrateur du cluster, et la restriction radicale des droits de lecture sur la ressource secret. Si vous ne pouvez obtenir ni l'une ni l'autre, déplacez vos secrets hors du cluster, dans un gestionnaire externe qui les distribue à la demande.
+
+La manière dont le secret est remis au processus compte autant que son stockage. Sous forme de variable d'environnement, il apparaît dans la description du pod, il est visible par un utilisateur qui peut lire les pods, il est hérité par tous les processus enfants et il ressort dans les journaux d'application qui impriment leur environnement. Sous forme de fichier monté, il reste hors de la ligne de commande, il peut être rendu accessible à un seul conteneur et il est rechargé sans redémarrer le pod lorsque le gestionnaire de secrets le renouvelle. La règle à retenir est brève : secret monté en fichier, droits de lecture limités, jamais passé par la ligne de commande ni par une variable héritée.
+
+L'identité du pod, elle, se nomme compte de service. Chaque espace de noms en possède un par défaut, réutilisé par tous les pods qui n'en déclarent pas, et ce compte dispose souvent d'un jeton d'accès à l'API monté automatiquement. Le résultat est prévisible : une application qui n'a aucun besoin d'interroger l'API emporte néanmoins un jeton capable de le faire. Déclarez un compte de service dédié pour chaque charge de travail, désactivez le montage automatique du jeton pour celles qui n'en ont pas besoin, et attribuez à chacune exactement les droits qu'elle exerce. Un compte partagé entre dix applications rend impossible l'imputation d'une action, exactement comme un compte informatique partagé entre dix personnes.
+
+Ces droits s'expriment par des liaisons de rôle : un rôle décrit des verbes sur des ressources, une liaison rattache ce rôle à un compte de service ou à un groupe. Le principe du moindre privilège s'applique ici avec une sévérité particulière, car l'API de gestion est le centre du système : posséder le droit de créer des pods avec des privilèges élevés, ou de monter des fichiers depuis le nœud, revient à obtenir la maîtrise du cluster. Commencez par un droit nul, accordez la lecture avant l'écriture, refusez par défaut les actions sur les ressources sensibles, et vérifiez le résultat avec la commande d'interrogation des autorisations plutôt qu'avec la lecture du manifeste.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalogue-web
+  namespace: catalogue
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: catalogue-lecture-secrets
+  namespace: catalogue
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["catalogue-configuration"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: catalogue-web-lecture
+  namespace: catalogue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: catalogue-lecture-secrets
+subjects:
+  - kind: ServiceAccount
+    name: catalogue-web
+    namespace: catalogue
+```
+
+Avant de rendre cette configuration pour bonne, interrogez-la depuis le point de vue de l'identité elle-même. Les deux commandes suivantes prennent quelques secondes et répondent à la question que personne ne se pose avant l'incident : que peut réellement faire ce compte de service, et surtout, peut-il faire quelque chose que je n'attendais pas de lui. Conservez la sortie datée dans votre dossier de déploiement, elle fait office de preuve exactement comme l'export des habilitations dans la section précédente.
+
+```bash
+# Que peut faire ce compte de service dans son espace de noms ?
+kubectl auth can-i --list --namespace=catalogue \
+  --as=system:serviceaccount:catalogue:catalogue-web
+
+# Verification ciblee : droit de creer des pods privilegies ?
+kubectl auth can-i create pods --namespace=catalogue \
+  --as=system:serviceaccount:catalogue:catalogue-web
+```
+
+Le renouvellement complète le dispositif. Un secret distribué dans un cluster a une durée de vie ; si personne ne la définit, les jetons restent valides des mois après le départ d'un prestataire. Fixez la durée de rotation pour chaque type de secret, nommez la personne qui déclenche le renouvellement, et automatisez ce qui peut l'être. La combinaison chiffrement au repos, droits de lecture restreints, comptes de service dédiés, jetons montés en fichiers et rotation datée constitue le socle : rien de spectaculaire, mais chaque maillon retire une porte que l'attaquant aurait ouverte sans bruit.
+
+## IAM chez le fournisseur : rôles, politiques et moindre privilège
+
+Chez le fournisseur cloud, l'identité devient le principal périmètre de sécurité. Il n'y a plus de pare-feu physique à proximité, plus de port Ethernet à débrancher, et les accès transitent par l'interface de programmation depuis n'importe où. La question n'est donc plus de savoir qui se trouve dans le bâtiment, mais quelle identité détient quel droit, depuis quand et pour faire quoi. Une identité, dans ce contexte, désigne aussi bien une personne qu'une application, un compte de déploiement ou un service externe ; ces identités partagent toutes le même mécanisme de politiques d'autorisation, et c'est ce mécanisme qu'il faut maîtriser avant tout le reste.
+
+Une politique d'autorisation s'articule autour de quatre éléments : l'effet, qui accorde ou refuse ; l'action, qui décrit l'opération, créer un conteneur, lire un objet, attacher un rôle ; la ressource, qui précise sur quoi l'opération s'exécute ; enfin la condition, qui restreint selon l'heure, l'adresse source, la présence d'un second facteur ou un étiquetage. Le raccourci à éviter est unique : l'astérisque en action combiné à l'astérisque en ressource. Cette formulation signifie accorder tout le reste du service, y compris ce qui n'existe pas encore comme fonctionnalité, et elle transforme une identité applicative en administrateur complet sans que personne ne s'en aperçoive dans la console.
+
+Le second raccourci dangereux consiste à conserver des clés d'accès longue durée dans un dépôt, un fichier de configuration ou un gestionnaire de mots de passe partagé. Ces clés sont permanentes jusqu'à leur révocation, elles ne portent aucun contexte, et leur vol passe inaperçu des mois durant. La pratique moderne remplace ces clés par des jetons éphémères obtenus par fédération : le compte de déploiement s'identifie auprès du fournisseur avec une identité à durée courte, souvent fondée sur l'identité de l'intégration continue, et reçoit un jeton valable quelques minutes. Pour une personne, la même logique s'applique avec le second facteur et une session courte ; pour un service externe, avec une fédération entre fournisseurs.
+
+```image
+cloud-security
+| Le nuage fermé à clé ne protège que la porte qu'on a ouverte : chez le fournisseur, c'est la politique d'autorisation qui décide de qui entre.
+```
+
+La séparation des comptes constitue le troisième pilier. Un compte pour la production, un autre pour la recette, un troisième pour l'expérimentation, jamais les mêmes identités d'un compte à l'autre, et aucune identité ne possède de droits à la fois sur la production et sur le poste de travail. Cette règle nuit à la commodité et rend les dépannages un peu plus lents ; elle empêche en revanche la compromission d'un poste de débogage de se transformer en compromission des données des adhérents. S'y ajoute l'habillage des politiques par étiquetage et par conditions, qui permet de dire : ce droit s'exerce uniquement depuis le réseau interne, uniquement avec un second facteur actif, uniquement sur les ressources étiquetées comme préproduction.
+
+Enfin, l'audit n'est pas une option. Les politiques accordent des droits qui ne sont jamais utilisés, et un droit accordé puis oublié finit par être exercé, par vous ou par quelqu'un d'autre. Revoyez trimestriellement la dernière utilisation réelle de chaque rôle, révoquez ce qui dort depuis plus de quatre-vingt-dix jours, établissez une alerte sur toute élévation de privilège et sur toute création de nouvelle politique ouverte, et faites relire les écarts par une personne qui n'est pas l'auteur de la demande. Le tableau ci-dessous résume les cinq contrôles attendus, avec la preuve que vous devez pouvoir produire pour chacun.
+
+| Contrôle | Question à laquelle il répond | Preuve à conserver |
+|---|---|---|
+| Absence de rôle complet | Une identité peut-elle tout faire ? | Politique sans effet global d'accord |
+| Pas de clé longue durée | Une fuite de dépôt donne-t-elle un accès permanent ? | Liste des jetons actifs et leur échéance |
+| Fédération et sessions courtes | Un accès volé reste-t-il valable des heures ? | Durée de session configurée et vérifiée |
+| Séparation des comptes | Un poste de débogage peut-il toucher la production ? | Matrice des comptes et des identités autorisées |
+| Revue et alertes | Un droit oublié est-il détecté ? | Export daté de la dernière utilisation par rôle |
+
+Le moindre privilège, chez le fournisseur, ne se décrète pas : il se retire. Partez d'une identité qui ne peut rien, accordez l'opération précise nécessaire à la tâche, sur la ressource précise concernée, avec une condition qui limite le contexte, puis mesurez. Chaque retrait se vérifie en lançant réellement l'opération et en constatant le refus, tout comme vous aviez vérifié la disparition d'un service après redémarrage dans le chapitre sur le durcissement. La preuve d'un droit révoqué est un message d'erreur daté, pas une ligne cochée dans un tableau.
+
+## La chaîne d'approvisionnement : d'où vient l'image que vous exécutez
+
+Tout ce que vous venez de durcir suppose une image dont vous êtes l'auteur. En pratique, vous exécuterez majoritairement des images que d'autres ont construites : une base de données officielle, une bibliothèque fournie par un éditeur, un outil d'équipe publié dans un registre partagé. La chaîne d'approvisionnement logicielle désigne l'ensemble des étapes qui séparent le code source de l'exécution : dépendances récupérées, compilation, assemblage, signature, publication, transfert puis admission dans le cluster. Une compromission à n'importe lequel de ces maillons produit une image qui paraît parfaitement normale et qui ne l'est pas.
+
+Les attaques les plus fréquentes ne sont pas exotiques. Une dépendance dont le nom se rapproche d'une bibliothèque connue attend d'être installée par inadvertance. Un fichier de configuration d'intégration continue copié depuis un modèle contient un accès réel. Une image de base récupérée d'un registre public et retaguée contient un logiciel d'écoute. Une étape de construction qui exécute un script téléchargé à la volée donne un accès complet à la machine de construction et, par suite, à toutes les images produites. Le défenseur ne peut pas empêcher ces événements ; il peut en revanche s'assurer qu'une image non conforme ne dépasse jamais le portail du registre ni l'étape d'admission du cluster.
+
+La première barrière est la reproductibilité : construction dans l'intégration continue et non sur un poste, dépendances verrouillées par version exacte et par empreinte, image de base épinglée, et journal de construction conservé. La seconde est la traçabilité : une attestation de provenance indique qui a construit quoi, à partir de quel dépôt et avec quelle configuration ; une signature rattache l'image à ce journal ; un inventaire des composants détaille chaque bibliothèque embarquée avec sa version. Ces trois artefacts permettent de répondre, au moment de l'admission, à une question que la simple lecture du tag ne pose jamais : est-ce bien cette équipe, depuis ce dépôt, qui a produit cet objet ?
+
+La troisième barrière s'exerce dans le cluster, au moment du déploiement. Refusez tout ce qui ne vient pas du registre autorisé, exigez la signature valide, refusez les tags flottants, interdisez le mode de mise à jour qui redirige vers une autre image, et imposez un compte de service de tirage dédié dont la clé n'est connue que du système. Un contrôle d'admission, qu'il soit déclaratif ou piloté par une politique, transforme ces règles en refus automatique ; sans lui, la règle repose sur la bonne volonté de chaque équipe, ce qui a été suffisant exactement le temps de la première urgence.
+
+```bash
+# Signature de l'image apres publication, avec la cle privee de l'equipe
+cosign sign --key cosign.key registre.exemple.fr/catalogue@sha256:9f2c...
+
+# Verification obligatoire avant admission dans le cluster
+cosign verify --key cosign.pub registre.exemple.fr/catalogue@sha256:9f2c...
+
+# Inventaire des composants produit automatiquement a la construction
+syft registre.exemple.fr/catalogue@sha256:9f2c... -o spdx-json > sbom.json
+
+# Controle de depart : quelles dependances, quelles versions, quels defauts
+trivy image --severity HIGH,CRITICAL registre.exemple.fr/catalogue:1.4.0
+```
+
+Un point mérite d'être dit sur les dépendances elles-mêmes, car c'est le maillon le plus négligé. Verrouillez le fichier de résolution, examinez les ajouts avant acceptation, écartez les paquets qui n'ont pas d'auteur identifié ou dont la dernière publication date de plusieurs années sans maintenance, et refusez les scripts de préinstallation qui exécutent du code arbitraire au moment de l'installation. Faites remonter les alertes de sécurité dans le flux de travail de l'équipe, avec une échéance et un responsable, comme pour les correctifs système du chapitre précédent. La chaîne d'approvisionnement n'est pas un sujet séparé : c'est la même discipline de correctifs, appliquée à des objets que vous ne compilez plus vous-même.

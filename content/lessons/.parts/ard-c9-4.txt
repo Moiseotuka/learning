@@ -1,0 +1,156 @@
+## OTA en production : HTTPS, authentification, version et retour arrière
+
+La mise à jour à distance se décline en deux familles, dont l'écart est plus moral que technique. La première, ArduinoOTA, transmet le firmware par le réseau local en utilisant la découverte automatique de service : elle est merveilleuse sur l'établi, où l'on change de version plusieurs fois par heure, et inadéquate en production, car elle suppose que l'objet et le poste de développement partagent le réseau, qu'aucun intermédiaire n'intercepte le flux et que le retour arrière est géré par vos soins. La seconde famille fait de l'objet un client qui va chercher lui-même une image signée depuis un point d'accès distant. C'est celle qui convient à une flotte, et c'est celle que la suite de cette leçon décrit.
+
+Le contrat de sécurité se compose de quatre exigences indissociables. Le transport est chiffré par TLS, avec le certificat de l'autorité embarqué dans le firmware afin d'écarter toute substitution d'identité. L'objet s'authentifie par un jeton propre à l'appareil, révocable indépendamment des autres. L'image elle-même est signée, et sa signature est vérifiée par le module d'amorce avant exécution. Enfin, la version est monotone : le serveur refuse de servir une image antérieure à celle déjà installée, de sorte qu'une vulnérabilité corrigée ne puisse pas être réintroduite par rejeu. Omettre l'une de ces quatre conditions revient à fermer la porte après le cambriolage.
+
+Le moment du téléchargement se décide côté objet, jamais par ordre impératif du serveur. À chaque réveil, l'objet interroge le point d'accès, compare les versions et, si une mise à jour est disponible, évalue d'abord ses propres conditions : batterie au-dessus du seuil convenu, signal radio suffisant, aucune action critique en cours, fin de fenêtre de mesure. S'il manque l'une de ces conditions, il remise l'opération au réveil suivant, avec une limite stricte d'une tentative par jour. Cette discipline évite le scénario catastrophe d'une mise à jour lancée à deux pour cent de batterie, en plein envoi d'une commande d'ouverture, à trente mètres du point d'accès.
+
+```cpp
+#include <Update.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+const char* URL_MAJ      = "https://depot.exemple.fr/sonde/sonde.bin";
+const char* VERSION_CUR  = "1.4.0";
+const char* JETON_APPAREIL = "sonde-parcelle-07";
+const size_t TAILLE_SLOT = 1966080;
+
+bool telechargerLaMiseAJour() {
+  WiFiClientSecure client;
+  client.setCACert(CERTIFICAT_AUTORITE);
+
+  HTTPClient https;
+  if (!https.begin(client, URL_MAJ)) return false;
+  https.addHeader("Authorization", String("Bearer ") + JETON_APPAREIL);
+  https.addHeader("X-Version-Installee", VERSION_CUR);
+
+  if (https.GET() != 200) { https.end(); return false; }
+  int taille = https.getSize();
+  if (taille <= 0 || (size_t)taille > TAILLE_SLOT) { https.end(); return false; }
+  if (!Update.begin(taille)) { https.end(); return false; }
+
+  size_t ecrit = Update.writeStream(*https.getStreamPtr());
+  https.end();
+  if (ecrit != (size_t)taille) { Update.abort(); return false; }
+  if (!Update.end()) return false;
+
+  Serial.println("image ecrite, bascule au prochain redemarrage");
+  return true;
+}
+```
+
+Le flux mérite d'être lu lentement, parce que chaque échec y est bénin. Une taille hors limites est refusée avant toute écriture. Une connexion interrompue laisse une image inachevée dans l'emplacement libre, jamais dans l'emplacement courant : l'objet continue de fonctionner sur sa version d'origine. La commutation n'intervient qu'après réception complète et vérification. Seul un redémarrage engage la nouvelle version, et c'est alors que la logique de retour arrière prend le relais.
+
+Après le redémarrage, le nouveau firmware exécute son auto-contrôle : il lit son capteur, établit la connexion, publie un relevé, annonce sa version, puis déclare explicitement sa validité. S'il échoue avant cette déclaration, le chien de garde ou la panique le font redémarrer, et le module d'amorce remet l'ancienne version en service. L'objet revient donc toujours à un état connu, sans intervention humaine. Cette promesse n'est tenable qu'à une condition : l'auto-contrôle doit être réellement représentatif, c'est-à-dire vérifier ce qui fait vivre l'appareil, et non simplement allumer une LED.
+
+La dernière pièce est la visibilité. Chaque connexion remonte la version installée, le nombre de redémarrages, la tension de batterie et l'état de la dernière mise à jour. Sans ce retour, vous ne saurez jamais si la mise à jour s'est répandue, si une carte est restée en attente ou si deux objets tournent en versions divergentes depuis six semaines. C'est cette visibilité qui rend la diffusion par vagues réellement exploitable.
+
+## Étude de cas : corriger quinze sondes sans se déplacer
+
+Au troisième mois d'exploitation, un défaut remonte : les relevés d'humidité dérivent après plusieurs semaines de fonctionnement, parce que la valeur initiale du capteur est mémorisée sans être recalée, et que la période de sécheresse l'a emmenée hors plage. Le défaut est réel mais non bloquant. Quinze sondes sont installées, quatre sur un terrain difficile d'accès, deux sans couverture radio fiable le matin. Vous disposez d'une semaine et vous ne vous déplacerez pas. Voici comment se déroule une mise à jour responsable.
+
+La première étape est de réduire la correction au strict nécessaire. On isole le défaut, on écrit le correctif le plus court possible, on n'y accole aucune refonte. Une mise à jour à distance n'est pas l'endroit où l'on améliore l'architecture : c'est l'endroit où l'on réduit le périmètre de risque au minimum compatible avec la correction. On crée une branche, on incrémente la version de patch, on la nomme, et on conserve l'artefact binaire avec son empreinte. Le binaire partant en production doit être reproductible depuis le dépôt, jamais reconstruit au dernier moment sur un poste perso.
+
+Ensuite, on prépare le déploiement par vagues, selon le tableau ci-dessous.
+
+| Vague | Cibles | Critère d'entrée | Surveillance |
+| --- | --- | --- | --- |
+| Banc | 1 carte sur établi | batterie artificielle, port série ouvert | auto-contrôle complet |
+| Pilote | 2 sondes proches | signal fort, batterie au-dessus de 60 % | version et redémarrages |
+| Générale | 8 sondes en zone accessible | batterie au-dessus de 40 % | journal d'adoption |
+| Difficile | 4 sondes éloignées | fenêtre météo favorable, batterie au-dessus de 50 % | tentatives reportées |
+
+La vague de banc paraît superflue et n'est jamais inutile : elle vérifie que l'image produite par la chaîne de construction démarre réellement, se déclare valide et publie, dans des conditions contrôlées. La vague pilote confirme le même comportement sur le terrain, où le point d'accès est à cinquante mètres et où le délai d'association n'est plus celui du laboratoire. Ce n'est qu'après lecture de ces deux retours que l'on ouvre la vague générale, puis la dernière, qui attend sa fenêtre.
+
+Les objets injoignables ne posent pas de problème structurel : ils réessaient à chaque réveil, dans la limite d'une tentative quotidienne, jusqu'à ce que les conditions de réussite se présentent. Le même objet reste en version ancienne pendant des jours sans bloquer personne, et la vague suivante le rattrape. Ce comportement est une force à condition de le mesurer : sans remontée de version, vous croyez une flotte homogène alors que trois appareils vivent avec la précédente. Le journal d'adoption répond à une question unique : quelle proportion de la flotte tourne sur la nouvelle version, et depuis quand.
+
+Arrive enfin le moment où quelque chose se passe mal. Sur deux sondes de la vague pilote, l'auto-contrôle échoue : la publication ne part pas, la version n'est jamais déclarée valide, les deux cartes redémarrent et repassent automatiquement à la version précédente. Le déploiement est immédiatement gelé côté serveur, les vagues suivantes ne reçoivent plus l'image, et l'enquête commence avec deux objets fonctionnels en version antérieure. C'est précisément pour ce scénario que le retour arrière existe : le coût total de l'incident se réduit à quelques redémarrages, sans déplacement ni démontage.
+
+Clôturé, l'incident laisse trois obligations. On conserve les deux binaires, la version défaillante pour l'analyse et la version précédente comme référence de repli. On publie une note de version qui décrit le défaut, la correction et la raison de l'échec, afin que la prochaine personne en charge ne réapprenne rien par cœur. On remet enfin le déploiement avec un correctif dont l'auto-contrôle a été élargi pour couvrir le cas défaillant. Une mise à jour à distance qui ne produit jamais d'incident est une mise à jour qui n'a jamais été testée sur autre chose qu'un établi.
+
+## Du prototype à la série : la checklist de mise en production
+
+La distance entre un prototype qui fonctionne et un produit qui tient se mesure au nombre de questions auxquelles on ne peut pas répondre. Sur l'établi, tout est connu : l'alimentation, le réseau, l'accès au port série, la présence de l'opérateur. Dans la série, chacune de ces certitudes disparaît, et il ne reste que ce qui a été vérifié, écrit et conservé. La checklist n'est pas une formalité administrative : c'est la mémoire du chantier, la trace de ce qui a été prouvé avant l'expédition.
+
+```image
+arduino-uno
+| Une carte Arduino Uno, fidèle compagnon du prototype : elle reste branchée sur un ordinateur et se redémarre à la main, ce qui suffit sur l'établi et ne suffit plus une fois l'objet expédié.
+```
+
+Les domaines à couvrir sont fixes depuis le début du chapitre : autonomie, alimentation, robustesse, protection, mise à jour, industrialisation. Chaque ligne de la table qui suit doit être associée à une preuve tangible, une mesure, une capture, un enregistrement de port série, un fichier conservé avec la version du logiciel. Une case cochée sans preuve n'est pas cochée : elle est supposée.
+
+| Domaine | Point de contrôle | Preuve attendue |
+| --- | --- | --- |
+| Autonomie | Consommation mesurée en veille | relevé du banc sur vingt-quatre heures |
+| Autonomie | Budget énergétique validé | calcul daté, marges comprises |
+| Alimentation | Seuil de coupure respecté | courbe de décharge sous charge réelle |
+| Robustesse | Chien de garde actif | message de déclenchement provoqué |
+| Robustesse | Redémarrages comptabilisés | journal transmis avec les relevés |
+| Robustesse | Perte de réseau testée | reconnexion avec délai croissant observée |
+| Protection | Secrets hors du code source | revue du dépôt, recherche des identifiants |
+| Protection | Amorce et chiffrement actifs | lecture des eFuses sur l'appareil final |
+| Mise à jour | Retour arrière éprouvé | essai de firmware invalide documenté |
+| Mise à jour | Taille d'image vérifiée | marge restante dans l'emplacement |
+| Mise à jour | Version remontée à chaque connexion | journal d'adoption d'un déploiement-test |
+| Industrialisation | Version figée et étiquetée | marque de version et empreinte de l'image |
+| Industrialisation | Boîtier et antenne contrôlés | fiche de test avec le boîtier fermé |
+
+Trois lignes de ce tableau méritent un commentaire particulier, car elles sont celles que l'on coche le plus souvent par optimisme. Le retour arrière, parce qu'il ne se prouve qu'en provoquant un échec réel, ce que personne n'a envie de faire à la veille d'une expédition. L'antenne sous boîtier, parce que le plastique se comporte différemment du métal, et qu'un objet validé nu perd une partie de sa portée une fois enfermé. La remontée de version, enfin, parce qu'elle fait défaut exactement le jour où l'on en a besoin.
+
+Le dernier point de contrôle est humain. Une version figée correspond à un étiquetage dans le dépôt, à une note de version, à un binaire conservé avec son empreinte, à une liste de connus non corrigés assumés et à un exemplaire de réserve maintenu en état de fonctionnement. C'est ce qui vous permet, six mois plus tard, de répondre à la question d'un client sans fouiller dans la mémoire de personne. Un objet ne devient produit qu'au moment où un autre que vous peut le maintenir.
+
+## À retenir
+
+- L'autonomie se calcule avant de se mesurer : convertissez chaque état du programme en milliampères-heures par jour.
+- La radio domine le budget par instants très brefs, la durée du pic compte davantage que sa valeur.
+- Veille légère, veille profonde et hibernation s'ordonnent par coût croissant et perte de contexte croissante.
+- Le domaine RTC survit à la veille profonde : il accueille les compteurs, les causes de réveil et les broches de déclenchement.
+- Une sortie non maintenue retombe pendant la veille profonde, ce qui peut couper une alimentation ou ouvrir un relais.
+- Le réveil doit avoir une cause identifiée, traitée une fois, puis neutralisée avant le rendormissement.
+- Un pont diviseur de mesure non commuté consomme plus que la puce endormie, et le second groupe d'entrées analogiques sature dès que le Wi-Fi tourne.
+- Le chien de garde transforme un blocage en redémarrage, à condition de ne jamais allonger son délai pour faire taire l'alarme.
+- Chiffrement de la flash, amorce sécurisée et partition de préférences chiffrée traitent trois menaces distinctes.
+- Les eFuses se programment une fois pour toutes : sauvegardez leur état et validez la procédure sur une carte jetable.
+- La mise à jour à distance n'écrit jamais par-dessus l'emplacement courant, elle bascule entre deux emplacements de taille égale.
+- Le retour arrière impose au nouveau firmware de se déclarer valide après un auto-contrôle réel.
+- Sans remontée de version à chaque connexion, une flotte paraît homogène alors qu'elle vit avec plusieurs versions.
+
+## Erreurs fréquentes
+
+- Choisir la veille légère pour des pauses de trente minutes et gaspiller dix fois l'énergie économisée.
+- Laisser la radio connectée pendant la veille profonde, puis conclure que la puce consomme dix fois la valeur annoncée.
+- Ignorer la cause du réveil et se retrouver en boucle de redémarrage déclenchée par une broche restée à l'état actif.
+- Oublier de couper le pont diviseur de mesure, qui décharge la batterie en quelques jours alors que le logiciel est parfait.
+- Allonger le délai du chien de garde pour supprimer l'alerte au lieu de trouver l'attente qui bloque.
+- Oublier la chute de tension au moment de l'émission Wi-Fi, très fréquente sur une batterie fatiguée.
+- Graver une eFuse avant d'avoir sauvegardé son état et validé la commande sur une autre carte.
+- Stocker les identifiants dans le code source sous prétexte qu'ils sont chiffrés dans la flash.
+- Expédier une carte en mode de développement, où l'amorce sécurisée accepte toute image.
+- Téléverser par-dessus la partition en cours d'exécution, au lieu d'utiliser l'emplacement libre.
+- Oublier de se déclarer valide après le démarrage, ce qui déclenche un retour arrière permanent.
+- Omettre la contrainte de version minimale et permettre la réinstallation d'une version vulnérable.
+- Déployer sur toute une flotte d'un seul jet, sans vague pilote ni fenêtre d'observation.
+- Cocher une ligne de checklist sans conserver la preuve correspondante.
+
+## Pour aller plus loin
+
+La documentation d'Espressif reste la référence pour le sommeil et l'énergie : les fiches techniques détaillent les courants par mode, les guides d'alimentation traitent de la mesure sur shunt et des contraintes de l'alimentation par batterie, et les pages du gestionnaire de veille décrivent chaque source de réveil, y compris le coprocesseur de très faible consommation. La documentation d'Arduino consacre une section aux mises à jour à distance et à la gestion de partition, avec des exemples directement compilables.
+
+Trois pistes progressives pour consolider le chapitre, dans l'ordre. Premièrement, écrivez le firmware de votre propre objet sur batterie, calculez son budget, puis mesurez-le et publiez l'écart entre le théorique et le réel, en le corrigeant jusqu'à obtenir moins de dix pour cent. Deuxièmement, préparez la table de partitions et le flux de mise à jour, puis éprouvez les trois pannes volontaires décrites plus haut : image invalide, coupure pendant l'écriture, échec de l'auto-contrôle. Troisièmement, rédigez la checklist de mise en production de votre projet en y ajoutant les cinq lignes qui vous manquent, puis faites-la valider par quelqu'un qui n'a jamais vu votre code.
+
+Des ressources utiles accompagnent cette lecture :
+
+- Documentation Espressif sur le gestionnaire de veille et les sources de réveil.
+- Documentation Espressif sur les mises à jour à distance, partitions et retour arrière.
+- Documentation Arduino sur la bibliothèque de mise à jour à distance.
+- Guides d'alimentation et de consommation publiés par Espressif.
+- Exemples de mise à jour à distance et de veille profonde sur les sites de tutoriels reconnus de l'écosystème.
+
+## Et maintenant : votre objet quitte l'établi
+
+Ce neuvième chapitre achève le parcours en transformant vos programmes en produits. Vous savez chiffrer une autonomie avant de la promettre, endormir une carte sans perdre son état, choisir une batterie et un régulateur qui tiennent sur la durée, diagnostiquer un redémarrage, verrouiller une carte contre la lecture et l'écriture indésirables, puis déployer une correction chez plusieurs objets sans jamais déplacer qui que ce soit. Aucune de ces compétences n'est spectaculaire, toutes décident de la durée de vie réelle de ce que vous construisez.
+
+Le critère de sortie est simple à formuler, exigeant à tenir : votre objet doit pouvoir rester seul six mois, tomber en panne sans rester hors service, et être corrigé depuis votre bureau. Si vous pouvez répondre oui, avec une preuve à l'appui, pour chacun des points de la checklist, vous avez franchi la frontière que ce parcours avait pour but de faire traverser. S'il vous manque une ligne, sachez exactement laquelle et pourquoi, ce qui est déjà une compétence de niveau professionnel.
+
+La suite appartient désormais au terrain. Reprenez le projet mené depuis le premier chapitre, appliquez-lui l'intégralité de cette checklist, corrigez ce qui ne tient pas, documentez ce qui tient, puis laissez-le tourner. Un objet que vous oubliez pendant six mois, qui se réveille à l'heure, qui envoie ses relevés et se met à jour sans vous, voilà la preuve finale que vous maîtrisez l'embarqué connecté.

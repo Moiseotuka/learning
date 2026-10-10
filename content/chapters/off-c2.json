@@ -1,0 +1,48 @@
+{
+  "exercise": "Vous recevez un mandat d'analyse de vulnerabilites pour le reseau de test 192.168.56.0/24, autorise du lundi 20 h au vendredi 6 h, techniques limitee au scan et a l'enumere sans exploitation. Produisez un inventaire complet et reproducible. Livrables : un script bash inventory.sh qui execute une decouverte d'hotes, un scan SYN des 1 000 ports courants si vous etes administrateur ou un scan CONNECT sinon, une detection de versions avec -sV, et l'enumere web des serveurs HTTP decouverts via les scripts http-enum et http-headers ; chaque execution ecrit ses resultats horodates dans un dossier dated du type inventaire/AAAA-MM-JJ/ au format XML et texte. Ensuite, redigez un rapport findings.md contenant un resume d'une page, un tableau de synthese des findings prioritaires avec identifiant, severite contextuelle et hote, et une fiche detaillee par finding comportant la preuve, le cas echant la CVE et le score CVSS obtenus auprès d'une base publique, la recommandation et le delai de correction justifie. Documentez egalement vos faux positifs ecartes et les commandes exactes permettant de reproduire chaque constat.",
+  "resources": [
+    {
+      "label": "Wikipedia FR — Nmap, presentation de l'outil de scan reseau",
+      "url": "https://fr.wikipedia.org/wiki/Nmap"
+    },
+    {
+      "label": "Manuel officiel de Nmap — reference complete des options et etats de port",
+      "url": "https://nmap.org/book/man.html"
+    },
+    {
+      "label": "Calculateur FIRST CVSS 3.1 — calcul officiel des scores de severite",
+      "url": "https://www.first.org/cvss/calculator/3.1"
+    },
+    {
+      "label": "Grafikart — Sécurité offensive : bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20offensive"
+    },
+    {
+      "label": "Grafikart — Outils de pentest : Burp Suite, Nmap",
+      "url": "https://www.youtube.com/@grafikart/search?query=burp%20suite%20nmap"
+    }
+  ],
+  "code_language": "bash",
+  "starter_code": "#!/usr/bin/env bash\n# Inventaire de vulnerabilites — reseau 192.168.56.0/24\n# Mandat : scan et enumere uniquement, sans exploitation.\nset -euo pipefail\n\n# TODO : definir le perimetre et le dossier de sortie date\nCIBLE=\"192.168.56.0/24\"\nDATE=$(date +%F)\nSORTIE=\"inventaire/${DATE}\"\nmkdir -p \"$SORTIE\"\n\n# TODO : choisir le mode de scan selon vos privileges\n# - sS avec sudo si disponible\n# - sT sinon\nif [ \"$(id -u)\" -eq 0 ]; then\n  MODE=\"-sS\"\nelse\n  MODE=\"-sT\"\nfi\n\n# TODO : decouverture des hotes actifs (ping sweep), résultats dans SORTIE\n# Indice : utiliser nmap -sn avec -oA pour écrire XML, greppable et normal\n\n# TODO : scan des 1000 ports courants sur chaque hôte actif, timing prudent (-T2)\n# Indice : récupérer la liste des hôtes actifs depuis le fichier greppable généré\n\n# TODO : détection de versions (-sV) sur les ports ouverts, même dossier de sortie\n\n# TODO : pour chaque serveur web détecté, exécuter http-enum et http-headers\n# Indice : boucler sur les hôtes dont les ports 80/443/8080 sont ouverts\n\n# TODO : générer à la fin un récapitulatif à l'écran (hôtes, ports ouverts, bannières)\n\n# TODO : rappeler dans un commentaire le moyen de relancer proprement l'inventaire\n# et la commande de comparaison entre deux dates pour mesurer l'évolution",
+  "solution_code": "#!/usr/bin/env bash\n# Inventaire de vulnerabilites — réseau 192.168.56.0/24\n# Mandat : scan et enumération uniquement, sans exploitation.\nset -euo pipefail\n\nCIBLE=\"192.168.56.0/24\"\nDATE=$(date +%F)\nSORTIE=\"inventaire/${DATE}\"\nmkdir -p \"$SORTIE\"\n\nif [ \"$(id -u)\" -eq 0 ]; then\n  MODE=\"-sS\"\nelse\n  MODE=\"-sT\"\nfi\n\necho \"[1/4] Découverte des hôtes actifs...\"\n nmap -sn \"$CIBLE\" -oA \"$SORTIE/hotes\"\n\nHOTES=$(grep '^Host:' \"$SORTIE/hotes.gnmap\"\\n  | awk '/Up$/{print $2}' || true)\n\nif [ -z \"$HOTES\" ]; then\n  echo \"Aucun hôte actif détecté dans le périmètre.\"\n  exit 0\nfi\n\necho \"[2/4] Scan des ports courants (mode $MODE, timing -T2)...\"\n# shellcheck disable=SC2086\nnmap $MODE -T2 --max-hostgroup 4 --max-parallelism 8 \\\n  -p 21,22,25,53,80,110,135,139,143,443,445,993,995,1433,3306,3389,5432,5900,6379,8080,8443,27017 \\\n  $HOTES -oA \"$SORTIE/ports\"\n\necho \"[3/4] Détection de versions sur les ports ouverts...\"\n# shellcheck disable=SC2086\nnmap -sV -T2 -p 22,80,443,3306,6379,8080 $HOTES -oA \"$SORTIE/versions\"\n\necho \"[4/4] Énumération web des serveurs détectés...\"\nfor h in $HOTES; do\n  for p in 80 443 8080; do\n    if grep -q \"${p}/tcp open\" \"$SORTIE/ports.nmap\" 2>/dev/null; then\n      protocole=\"http\"\n      [ \"$p\" = 443 ] && protocole=\"https\"\n      nmap --script http-enum,http-headers -p \"$p\" \\\n        \"${protocole}://${h}\" -oA \"$SORTIE/web-${h}-${p}\" || true\n    fi\n  done\ndone\n\necho\n echo \"=== Récapitulatif ===\"\ngrep -E '^(Nmap scan report|PORT|.*open)' \"$SORTIE/ports.nmap\" || true\n\necho\n echo \"Pour comparer deux inventaires :\"\n echo \"  diff inventaire/AAAA-MM-JJ-1/ports.nmap inventaire/AAAA-MM-JJ-2/ports.nmap\"\n echo \"Relancez inventory.sh pour actualiser l'inventaire du jour.\"",
+  "concepts": [
+    "Renseignement passif vs actif",
+    "Recherche WHOIS/DNS",
+    "Sous-domaines",
+    "Cartographie de périmètre",
+    "Cadrage légal d'audit"
+  ],
+  "lecon": "off-c2.txt",
+  "videos": [
+    {
+      "title": "Sécurité offensive : bases",
+      "url": "https://www.youtube.com/@grafikart/search?query=s%C3%A9curit%C3%A9%20offensive",
+      "channel": "Grafikart"
+    },
+    {
+      "title": "Outils de pentest : Burp Suite, Nmap",
+      "url": "https://www.youtube.com/@grafikart/search?query=burp%20suite%20nmap",
+      "channel": "Grafikart"
+    }
+  ]
+}

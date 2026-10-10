@@ -1,0 +1,558 @@
+Bienvenue dans le sixième chapitre du parcours Cybersécurité, un chapitre entièrement consacré à la détection et à la réponse à incident, c'est-à-dire à tout ce qui se passe après qu'un événement indésirable a commencé à se produire dans un système. Les chapitres précédents ont parlé de prévention : mises à jour, mots de passe, droits, sauvegardes, cloisonnement du réseau. Ces sujets restent essentiels, et aucun d'eux n'est obsolète. Mais aucune organisation, même bien outillée, n'évite indéfiniment les incidents : une configuration oubliée, un compte jamais désactivé, un lien convaincant ouvert par un collègue pressé, un équipement hors maintenance suffisent. La maturité d'une équipe de sécurité ne se mesure donc pas à l'absence d'incidents, elle se mesure à la qualité de la réaction : combien de temps avant de voir ce qui se passe, combien avant d'arrêter la propagation, combien avant de retrouver un service normal, et surtout ce qui a changé ensuite pour que la même défaillance ne se reproduise pas. Ce chapitre vous apprend à travailler dans cet intervalle, entre le premier signal et la reprise de service.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, et vous les aurez déjà manipulées sur un cas complet. Vous distinguerez un événement banal d'un incident à qualifier, et vous écrirez des critères de déclenchement écrits plutôt que des impressions. Vous choisirez les quatre familles de signaux à surveiller dans un parc de taille moyenne : journaux, fichiers, trafic réseau et comptes. Vous construirez des alertes utiles, c'est-à-dire des alertes qui remontent assez tôt pour agir et peu souvent pour être lues, avec des seuils justifiés et une procédure attachée à chacune. Vous connaîtrez le rôle respectif d'un SIEM, d'un EDR et d'un HIDS sans vous laisser éblouir par les brochures commerciales. Vous appliquerez les six phases classiques de la réponse, de la préparation aux leçons tirées. Vous constituerez une chronologie horodatée qui tient devant un tiers, vous isolerez un système sans détruire les preuves, vous préparerez la restauration à partir des sauvegardes, vous rédigerez une communication interne et un rapport d'incident, puis vous mènerez une rétrospective qui améliore réellement le plan. Le tout sera assemblé dans un mini-projet guidé : le rapport d'incident complet de la médiathèque, que vous récrierez seul juste après la leçon.
+
+Le fil rouge de ce chapitre est le parc informatique de la Médiathèque des Lilas. L'établissement exploite une trentaine de postes publics, deux postes d'accueil, un serveur de fichiers partagé entre les services, une messagerie interne et un réseau administratif partagé avec la mairie. Les sauvegardes sont quotidiennes, la nuit, hors ligne une fois par semaine. Un lundi matin d'octobre, une documentaliste ouvre son poste et constate que les fichiers de son dossier de travail ne s'ouvrent plus : les noms ont changé, le contenu est devenu illisible, et une note texte inconnue apparaît dans le dossier partagé. Le réseau fonctionne, les machines tournent, le service public continue à l'accueil, mais les données du service ne sont plus accessibles. L'incident est fictif ; les réflexes que nous allons déployer sont exactement ceux qu'une équipe informatique applique dans ce genre de matin. Nous resterons à chaque instant du côté défensif : nous observerons, nous qualifierons, nous isolerons, nous restaurerons. Rien de ce chapitre ne vous apprendra à produire un chiffrement malveillant, et rien ne vous apprendra non plus à traiter une demande comme si elle faisait partie d'un plan de reprise : la récupération s'appuie sur les sauvegardes et sur la propreté des systèmes, jamais sur d'éventuelles promesses.
+
+Une dernière recommandation avant d'entrer dans le vif du sujet. La détection et la réponse s'apprennent comme on apprend à conduire : en manipulant les commandes sur un cas simple, pas en mémorisant un tableau. Recopiez les extraits de journaux, retracez la chronologie à la main, relisez la communication interne à voix haute. Une heure sans source ? Écrivez la source manquante au lieu de l'inventer : c'est cette exigence de preuve qui distingue un rapport d'incident d'une conversation d'escalier. Le fil rouge de la médiathèque vous accompagnera dans chaque section, avec des signaux que son serveur de fichiers, son annuaire et son pare-feu produisent déjà, sans que personne ne les lise.
+
+## Un événement n'est pas un incident : la distinction qui commande tout
+
+Le premier réflexe à acquérir est lexical, parce que le vocabulaire détermine ce qu'on décide de faire. Un événement est une observation, un fait constaté dans un système : une connexion refusée, un service redémarré, un fichier modifié, une sauvegarde terminée, un pic de charge. Les événements sont légion, ils sont enregistrés en continu et la plupart n'ont aucune conséquence. Une journée ordinaire d'un parc de trente machines en produit des milliers, dont aucun ne mérite qu'on lève quelqu'un de son lit. L'événement est la matière première ; il n'est pas encore un sujet. Un incident, lui, est un événement ou un enchaînement d'événements qui menace réellement, ou menace de manière plausible, la confidentialité, l'intégrité ou la disponibilité d'un système ou des données qu'il contient. La différence n'est pas dans la gravité ressentie, elle est dans l'effet constaté ou pressenti sur ces trois promesses : mes données sont-elles vues par quelqu'un qui ne devrait pas les voir, modifiées sans autorisation, ou devenues inutilisables ?
+
+Reprenons le cas de la médiathèque pour rendre la distinction tangible. Un échec de connexion au poste d'accueil, isolé, à 9 h 15, parce que la collègue a inversé deux touches : c'est un événement. Quarante et un échecs consécutifs sur le même compte à 4 h 30 du matin, suivis d'une réussite, puis une session qui parcourt des dossiers que ce compte n'a jamais consultés : ce n'est plus un événement, c'est un incident soupçonné, parce qu'une personne ou un programme a obtenu un accès qu'il n'aurait pas dû obtenir. De même, la modification d'un document par son auteur pendant une réunion est un événement ; la modification de deux cents documents en quatre-vingt-dix secondes par un compte qui ne devrait pas écrire dans ce dossier est un incident, parce que l'intégrité du corpus est en jeu. Notez bien que la qualification précède toujours la certitude : on déclare un incident soupçonné, on enquête, et l'incident est soit confirmé, soit classé sans suite. Attendre d'être certain avant d'agir est la meilleure façon d'arriver trop tard.
+
+Cette qualification repose sur des critères écrits à l'avance, pas sur l'humeur du matin. Quatre questions suffisent à trancher dans la très grande majorité des cas. Quel est l'impact : un service public est-il arrêté, des données personnelles sont-elles potentiellement exposées, une activité administrative est-elle bloquée ? Quel est le périmètre : un seul poste, un service, l'ensemble du réseau partagé avec la mairie ? Quelles preuves avons-nous : des journaux exploitables, des captures, un fichier suspect conservé, ou rien du tout ? Et enfin, quelle est l'urgence : des signes de propagation sont-ils visibles en ce moment même ? À ces questions répond une échelle de gravité simple, que vous écrirez une fois pour toutes dans votre plan et que vous appliquerez ensuite machinalement : mineur, pour un incident localisé sans donnée sensible et sans service arrêté ; majeur, pour un périmètre plus large ou un service public dégradé ; critique, pour une compromission avérée d'un serveur partagé, une perte de disponibilité durable ou l'exposition de données personnelles. Trois niveaux suffisent, à condition que chacun ait une consigne de notification associée.
+
+```text
+FICHE DE QUALIFICATION RAPIDE — incident INC-2026-014
+------------------------------------------------------
+1. Observation initiale    Fichiers illisibles sur POSTE-ACC-07,
+                           note texte inconnue dans /Partage
+2. Type d'atteinte         Disponibilité avérée + intégrité soupçonnée
+3. Périmètre confirmé      1 poste, 1 dossier partagé en cours d'étude
+4. Périmètre pressenti     Serveur de fichiers (les renommages y sont visibles)
+5. Niveau retenu          MAJEUR — service public maintenu, données menacées
+6. Source de détection     Humaine (documentaliste, 08 h 05) + technique
+7. Actions immédiates      Isolement réseau, conservation des journaux
+8. Notifier                Référent SI, directeur d'établissement
+```
+
+Une distinction mérite d'être soulignée parce qu'elle provoque d'étranges comportements : la source humaine de détection. Dans la très grande majorité des petites structures, le premier indice n'est pas une alerte automatique, c'est un collègue qui téléphone en disant que ça ne tourne pas normal. Cette observation est une source de détection à part entière, au même titre qu'un outil, à trois conditions : elle est horodatée à sa prise, elle est consignée par écrit, et elle est rattachée aux journaux techniques qui la confirment ou l'infirment. L'erreur consiste à la traiter comme une rumeur, ou pire, à laisser chacun enquêter de son côté en déplaçant la machine, en la redémarrant ou en effaçant ce qui semble bizarre. Une détection humaine bien enregistrée vaut mieux qu'une alerte mal réglée, précisément parce qu'elle porte un contexte : qui était là, ce qui a changé, ce que la personne a fait juste avant.
+
+Enfin, déclarer tôt est toujours moins coûteux que déclarer tard. Un incident soupçonné classé sans suite après trente minutes d'analyse a coûté une demi-heure d'équipe. Le même incident non déclaré, découvert huit jours plus tard avec des journaux purgés par leur durée de conservation, coûte des semaines et parfois la perte définitive d'un dossier. Cette asymétrie justifie à elle seule que vous écriviez dans votre plan une phrase du type : toute personne qui soupçonne un incident ouvre une fiche, sans attendre de preuve définitive, et la fiche est refermée motivée si l'enquête conclut à un événement banal. La culture du signalement prévaut toujours sur la culture du silence, et elle ne se décrète pas, elle s'installe par la répétition.
+
+- Un événement est une observation ; un incident menace la confidentialité, l'intégrité ou la disponibilité.
+- Qualifier, c'est répondre à quatre questions : impact, périmètre, preuves, urgence.
+- Trois niveaux de gravité suffisent : mineur, majeur, critique, avec notification associée.
+- Un incident soupçonné se déclare avant d'être prouvé : on enquête ensuite.
+- La détection humaine est une source légitime : horodater, consigner, recouper avec les journaux.
+
+## Surveiller : les quatre familles de signaux
+
+Surveiller, ce n'est pas installer un maximum d'outils, c'est décider quels faits on veut voir passer devant ses yeux et s'assurer qu'ils sont enregistrés quelque part. Dans un parc de la taille de celui de la médiathèque, quatre familles de signaux couvrent l'essentiel, et chacune raconte une histoire différente. Les journaux d'authentification racontent qui a tenté d'entrer, avec quel compte, à quelle heure et depuis quel équipement. Les journaux de fichiers et d'intégrité racontent ce qui a changé sur les disques : créations, modifications, renommages, suppressions en masse. Le trafic réseau raconte ce qui circule : connexions sortantes, volumes anormaux, destinataires inhabituels. Les comptes et l'annuaire racontent qui dispose de droits, quels droits ont été ajoutés, quels comptes sont nés ou sont morts. Vous remarquerez que ces quatre familles répondent aux quatre questions de la qualification : qui, quoi, d'où, avec quels droits. C'est cette complémentarité qui fait leur force : une famille seule se contredit facilement, quatre familles croisées donnent une image difficile à réfuter.
+
+La première famille, les journaux d'authentification, est la plus rentable à mettre en place parce qu'elle existe presque partout sans investment supplémentaire. Un serveur de fichiers, un annuaire, une messagerie, un pare-feu et une machine d'administration produisent déjà l'essentiel : ouvertures de session, échecs, réinitialisations, modifications de droits. Ce qui manque rarement, ce n'est pas la donnée, c'est la conservation. De nombreux systèmes purgent leurs journaux au bout de quelques jours, par défaut, faute de place disque. La question à poser d'abord est donc brutale : sur combien de jours remonte-t-on, et ce délai couvre-t-il au moins une semaine de vacation ? Deuxième exigence, l'horodatage : tous les systèmes doivent pointer la même heure, alimentée par une source de temps unique, sinon votre chronologie sera un montage approximatif où un fait paraît précéder sa cause. Troisième exigence, la protection : les journaux doivent être écrits sur un emplacement que la machine compromise ne peut pas réécrire, sinon l'attaquant referme la porte derrière lui en effaçant ce qu'il a fait.
+
+La deuxième famille concerne les fichiers, et c'est elle qui parle le plus directement d'un chiffrement massif. Les signaux à surveiller tiennent en peu de mots : un volume anormal de créations, une vague de renommages suivie de suppressions, la modification soudaine d'un très grand nombre de fichiers sur un dossier partagé, l'apparition d'un fichier texte ou d'une archive là où il n'y en a jamais eu. Le chiffrement lui-même se traduit par un patron très lisible pour un outil qui compte : des milliers de fichiers touchés en quelques minutes, tous par le même processus, tous sur un même lecteur. La difficulté n'est pas de détecter ce patron une fois qu'il se produit, elle est de le détecter assez tôt et de ne pas le confondre avec une opération légitime de migration ou d'archivage. Un index d'intégrité, c'est-à-dire une empreinte calculée régulièrement sur les fichiers importants, transforme la question devinette en question chiffrée : si l'empreinte ne correspond plus, le contenu a changé.
+
+```text
+# Extrait — serveur de fichiers partage.lilas.local, lundi 6 octobre 2026
+# Format : horodatage | source | niveau | message
+
+06:58:12+02:00 fichier INFO  renommage par lot : 214 fichiers dans /Partage/Services/Rentree
+06:58:44+02:00 fichier WARN  renommage par lot : 507 fichiers dans /Partage/Services/Rentree
+06:59:07+02:00 fichier WARN  renommage par lot : 519 fichiers dans /Partage/Services/Rentree
+07:12:31+02:00 fichier WARN  ecriture massive : 3 ordres par seconde depuis POSTE-ACC-07
+07:26:03+02:00 partage  INFO  acces lecteur /Sauvegarde - compte stage.accueil - REFUSE
+07:26:09+02:00 partage  INFO  acces lecteur /Sauvegarde - compte stage.accueil - REFUSE
+08:05:47+02:00 (humain)  signal  documentaliste signale fichiers illisibles — POSTE-ACC-07
+
+# Extrait — journal d'authentification du même matin
+07:11:58+02:00 auth  NOTICE ouverture de session stage.accueil depuis POSTE-ACC-07
+07:12:04+02:00 auth  NOTICE liste des dossiers ouverts : /Partage, /Partage/Services
+07:13:40+02:00 auth  NOTICE ouverture de session stage.accueil depuis POSTE-ACC-07
+07:19:22+02:00 auth  NOTICE compte stage.accueil - 38 ecritures en 46 secondes
+```
+
+La troisième famille est le réseau. Un poste compromis communique presque toujours : il cherche un serveur, il envoie des données, il reçoit des instructions, il tente d'atteindre des emplacements du réseau interne qu'il n'a pas l'habitude de visiter. Les signaux sont donc de deux ordres. Vers l'extérieur : une connexion vers une destination que vous n'avez jamais vue, un volume sortant sans rapport avec l'activité habituelle de la machine, un protocole inhabituel sur un port inattendu. Vers l'intérieur : un poste d'accueil public qui tente de joindre des postes de direction, un ordinateur qui sonde des plages d'adresses, un accès à un lecteur de sauvegarde refusé plusieurs fois de suite. Le dernier signal figure dans nos extraits de journaux, et il est particulièrement parlant : deux tentatives refusées sur le lecteur de sauvegarde, à 7 h 26, signifient qu'un compte a cherché à atteindre les sauvegardes depuis un poste qui n'y touche jamais. Rien de tout cela ne prouve à lui seul un incident, mais tout cela se corréle.
+
+La quatrième famille, les comptes, est celle qu'on oublie le plus et qui cause les plus mauvaises surprises. Surveillez les créations de comptes, les ajouts de droits d'administration, les comptes dormants qui se réveillent, les mots de passe réinitialisés à un horaire inhabituel, et les comptes temporaires jamais fermés. Le compte stage.accueil de notre exemple appartient exactement à cette dernière catégorie : créé pour un stage de l'été, laissé actif par oubli, il n'appartenait à aucun changement récent et pourtant il était la clé. Un inventaire tenu à jour des comptes et de leurs propriétaires transforme cette question en quelques secondes : qui possède ce compte, que fait-il ici, pourquoi existe-t-il encore. Si la réponse est personne, vous venez de trouver une faiblesse structurelle bien avant d'avoir un incident.
+
+```table
+| Source surveillée | Ce qu'elle raconte | Signal utile à configurer |
+| --- | --- | --- |
+| Journaux d'authentification | Qui entre, avec quel compte | Échecs répétés suivis d'une réussite |
+| Journaux de fichiers | Ce qui change sur les disques | Onde de renommage ou de création en rafale |
+| Trafic réseau | Ce qui sort et ce qui entre | Destination inconnue ou accès refusé répété |
+| Comptes et annuaire | Qui a des droits, depuis quand | Compte dormant qui se réveille ou droits ajoutés |
+| Sauvegardes | Ce qui reste pour revenir en arrière | Job échoué, restauration non testée depuis longtemps |
+```
+
+- Les quatre familles se croisent : journaux, fichiers, réseau, comptes.
+- Vérifiez la durée de conservation des journaux : au moins une semaine, idéalement davantage.
+- Uniformisez l'heure de tous les équipements : une chronologie sans horodatage commun ne prouve rien.
+- Centralisez la collecte sur un emplacement que le poste suspecté ne peut pas réécrire.
+- Comptez les opérations sur les fichiers partagés : le chiffrement se voit comme une rafale.
+- Confiez la lecture des journaux à une personne et à un créneau, sinon personne ne les lira.
+
+## Des alertes utiles : signal, seuils et faux positifs
+
+Une alerte est un message qui dit : regardez maintenant, quelque chose mérite votre attention. Le danger n'est pas l'absence d'alertes, il est dans leur mauvaise qualité, et le symptôme est facile à reconnaître : quand toutes les alertes sonnent, plus personne n'écoute. On parle de bruit, ou de rapport signal sur bruit : la part du flux qui contient réellement de l'information utile. Si votre boîte reçoit deux cents messages par jour dont trois méritent une action, votre signal utile est de 1,5 %, et le réflexe humain appris en quelques semaines sera de tout filtrer. Le coût d'une alerte mal conçue n'est donc pas seulement du temps perdu, c'est la perte de confiance dans l'ensemble du dispositif. Une alerte que l'on ignore par habitude est plus dangereuse qu'une absence d'alerte, parce qu'elle crée l'illusion d'une surveillance qui ne fonctionne plus.
+
+Écrire une alerte utile commence par répondre à cinq questions, dans cet ordre. Quel fait précis déclenche ce message, formulé en une phrase que n'importe quel collègue comprend sans jargon ? Quelle est la gravité associée, en distinguant clairement ce qui attend le matin de ce qui réveille l'astreinte ? Quel est le périmètre concerné, c'est-à-dire la machine, le compte ou le dossier visé ? Quelle est l'action immédiate attendue, ne serait-ce qu'un paragraphe de trois lignes à joindre au message ? Et enfin, quelle est la procédure complète, ce fameux mode opératoire écrit qui dit quoi vérifier dans quel ordre. Une alerte sans action immédiate est une notification ; une notification sans procédure laisse la personne seule devant son écran à 7 h du matin. Le test est simple : montrez votre alerte à quelqu'un qui n'a jamais vu votre système et demandez-lui ce qu'il ferait. S'il ne sait pas, l'alerte n'est pas prête.
+
+Les seuils sont l'outil simple qui fait passer une règle de la théorie à la pratique. Un échec de connexion isolé n'intéresse personne ; dix échecs sur le même compte en deux minutes intéressent tout le monde ; quarante échecs répartis sur douze heures ne signifient probablement rien. Le seuil est donc une double borne : une quantité et une fenêtre de temps. Faites le raisonnement à rebours, à partir de ce que vous voulez détecter plutôt qu'à partir de ce que l'outil propose. Un chiffrement de dossier partagé se traduit par des centaines de modifications en quelques minutes : votre seuil doit se déclencher bien avant d'atteindre ce volume, par exemple à partir d'un ratio de modifications inhabituelles sur un dossier calme. Une intrusion par compte volé se traduit par des échecs puis une réussite : votre seuil doit couvrir la séquence, pas chaque échec isolé. Écrivez la justification du seuil dans un commentaire à côté de la règle : six mois plus tard, vous comprendrez pourquoi il a été choisi.
+
+```yaml
+# Exemple de règles d'alerte — document de configuration commenté
+# Chaque règle porte : fait observé, seuil, fenêtre, gravité, action.
+
+- nom: renommage-massif-partage
+  fait: ratio renommages/creations sur un dossier partage
+  seuil: 50 operations en 10 secondes
+  fenetre: 10 secondes
+  gravite: HAUTE
+  action_immediate: isoler le poste emetteur du reseau, ouvrir une fiche
+
+- nom: echecs-then-reussite
+  fait: 5 echecs de session puis une reussite sur un meme compte
+  fenetre: 5 minutes
+  gravite: HAUTE
+  action_immediate: desactiver le compte, verrouiller la session, interpeller le proprietaire
+
+- nom: acces-sauvegarde-refuse
+  fait: 2 tentatives refusees sur le lecteur de sauvegarde
+  fenetre: 15 minutes
+  gravite: MOYENNE
+  action_immediate: identifier le compte et le poste, verifier l'integrite des sauvegardes
+
+- nom: compte-dormant-active
+  fait: ouverture de session sur un compte inactif depuis plus de 90 jours
+  fenetre: 24 heures
+  gravite: BASSE
+  action_immediate: confirmer la propriete du compte, fermer si personne ne repond
+```
+
+Les faux positifs, ces alertes qui sonnent pour rien, font partie du paysage et il faut les traiter en connaissance de cause. Un script de sauvegarde qui modifie massivement des fichiers, une migration de données, un antivirus qui indexe tout le disque : autant de situations parfaitement légitimes qui déclenchent vos règles. Trois attitudes se font face. La première consiste à supprimer la règle dès qu'elle a crié une fois : on gagne du silence et on perd la détection. La seconde consiste à tout accepter : on garde tout et on finit par ne plus rien lire. La troisième, qui est la bonne, consiste à annoter : on ajoute à la règle une liste d'exceptions documentées, par exemple le compte de service de sauvegarde et la fenêtre de 22 h à 23 h 30, puis on mesure. Comptez chaque mois le nombre d'alertes levées et le nombre d'alertes qui ont conduit à une action réelle : ce taux de pertinence est l'indicateur de santé de votre surveillance. En dessous d'un quart, il faut revoir les seuils ; au-dessus des trois quarts, vous êtes peut-être trop étroit et vous risquez de rater l'inhabituel.
+
+- Une alerte répond à cinq questions : fait, gravité, périmètre, action immédiate, procédure.
+- Un seuil couple toujours une quantité et une fenêtre de temps, avec une justification écrite.
+- Mesurez votre taux d'alertes pertinentes : sous un quart, revoir les seuils ; au-dessus, élargir.
+- Traitez les faux positifs par des exceptions documentées, jamais par la suppression de la règle.
+- Associez chaque niveau de gravité à un destinataire et à un canal, astreinte comprise.
+- Testez la chaîne d'alerte par un exercice trimestriel, sinon elle cassera le jour utile.
+
+## Les outils de référence : SIEM, EDR et HIDS
+
+Trois sigles reviennent dans toutes les brochures de cybersécurité, et ils finissent par se confondre dans les conversations : SIEM, EDR, HIDS. Il faut les démêler, parce qu'ils ne répondent pas à la même question et que se tromper d'outil revient à installer une caméra là où il fallait une serrure. Le SIEM répond à la question qu'est-ce qui s'est passé sur l'ensemble de mon système, hier et cette semaine. L'EDR répond à la question que se passe-t-il sur ce poste, en ce moment, processus par processus. Le HIDS répond à la question est-ce que quelqu'un vient de violer une règle que je connais, en modifiant des fichiers ou en exécutant quelque chose d'inhabituel. Un quatrième terme complète le trio quand on parle du réseau : l'inspection de trafic, qui observe ce qui circule entre les machines. Aucun de ces outils ne remplace les sauvegardes, aucun ne remplace les mises à jour, et aucun ne travaille si personne ne lit ses sorties.
+
+Le SIEM, ou système de gestion des journaux et des alertes de sécurité, est une centrale : il collecte les journaux de vos équipements, les range, les corrèle et les présente. Sa force est la vue transverse. C'est le seul endroit où vous pouvez demander ce que faisait ce compte à 7 h 12 et obtenir en une réponse la connexion, les fichiers ouverts, les tentatives refusées et les connexions réseau correspondantes. Il conserve aussi l'historique, ce qui permet de remonter le temps lorsqu'un incident est découvert avec du retard. Sa faiblesse est bien connue : au démarrage, il est bruyant. Les premiers mois se passent à éteindre ce qui sonne pour rien et à affiner, ce qui demande du temps et un peu de méthode. Une structure modeste n'a pas besoin d'une plateforme industrielle pour commencer : un serveur de collecte qui centralise les journaux de dix équipements, conservés plusieurs mois, constitue déjà un SIEM à taille humaine.
+
+L'EDR, ou détection et réponse sur les postes, se déploie sous la forme d'un agent installé sur les machines. Là où un antivirus compare une signature connue, l'EDR observe le comportement : quels programmes se lancent, vers quels fichiers ils écrivent, quelles chaînes de processus s'enchaînent, quels réglages système sont modifiés. Pour notre incident de médiathèque, c'est l'outil qui parle le mieux : une vague de renommages exécutée par un processus né de telle application, sur un dossier ouvert par un compte de stagiaire, c'est exactement le patron que l'agent voit se dessiner. L'EDR apporte en plus une capacité de réaction : isoler un poste du réseau à distance, sans que quiconque ait à traverser la salle, et suspendre un processus en cours. Ses limites sont celles de tout agent : il faut le déployer partout, le régler pour ne pas saturer, et prévoir de la puissance pour héberger ses données.
+
+Le HIDS, ou détection d'intrusion hébergé, travaille lui aussi sur la machine, mais avec une autre méthode : il compare l'état du système à une référence. Il surveille l'intégrité de fichiers critiques, repère l'apparition d'un nouveau service, signale l'ouverture d'un port inhabituel, détecte l'exécution d'une commande inattendue. Un contrôle d'intégrité bien réglé sur les dossiers partagés aurait signalé, dès les premières minutes, que les fichiers du dossier Services ne correspondent plus à leur empreinte d'hier. Son cousin réseau, souvent désigné par la même famille de sigles, inspecte le trafic et applique des règles : connexion vers une destination jamais vue, protocole anormal, balayage d'adresses. Ces outils sont anciens, robustes, et ils restent d'excellents garde-fous pour une organisation qui veut de la détection sans poser un agent sur chaque poste.
+
+```text
+VUE DE CORRÉLATION — 6 octobre, 06 h 50 à 08 h 10 — parc Médiathèque des Lilas
+================================================================================
+
+[06:58] serveur partage   WARN   renommages en rafale (1 240 fichiers, 55 s)
+                                     |
+[07:11] journal auth      NOTICE ouverture stage.accueil @ POSTE-ACC-07
+                                     |
+[07:12] serveur partage   WARN   ecriture massive depuis le meme poste
+                                     |
+[07:26] serveur partage   INFO   2 acces refuses au lecteur /Sauvegarde
+                                     |
+                          +---------+----------+
+                          |  CORRELATION :     |
+                          |  meme compte,      |
+                          |  meme poste,       |
+                          |  fenetre de 28 min |
+                          +---------+----------+
+                                     |
+                                     v
+[08:05] signalement humain : fichiers illisibles sur le meme poste
+                                     |
+                                     v
+                       ALERTE HAUTE — INC-2026-014 ouverte
+                       action : isolation + conservation des journaux
+```
+
+Il existe aussi des solutions libres très répandues pour les trois familles, ce qui permet de commencer sans budget d'acquisition : des agents de contrôle d'intégrité de fichiers et de collecte de journaux pour le poste et le serveur, des moteurs d'inspection de trafic pour le réseau, et des outils de centralisation pour la corrélation. Citez-les dans votre plan comme des options, pas comme des obligations : l'essentiel est le comportement attendu, collecter, comparer, alerter, conserver, plutôt que la marque du produit. Une solution gratuite bien réglée vaut infiniment mieux qu'une solution chère installée puis oubliée derrière un onglet que personne n'ouvre.
+
+- Le SIEM répond à qu'est-ce qui s'est passé partout ; l'EDR à que se passe-t-il sur ce poste.
+- Le HIDS compare l'état actuel du système à une référence et signale les écarts.
+- Centraliser les journaux dès le début, même avec un simple serveur dédié, prime sur tout achat.
+- Commencez par la journalisation, les sauvegardes testées et l'authentification forte.
+- Une solution libre bien réglée vaut mieux qu'un tableau de bord chèrement acheté puis ignoré.
+
+## La réponse en six phases : de la préparation aux leçons
+
+Les modèles de gestion de crise convergent tous, quel que soit le référentiel que vous consultez : un incident se traverse en six phases, et ces phases ne sont pas une cérémonie administrative, ce sont des décisions à prendre dans un ordre donné. La première est la préparation, qui a lieu avant tout incident. La deuxième est la détection et la qualification, qui transforme un signal en fiche. La troisième est le confinement, qui arrête l'aggravation. La quatrième est l'éradication, qui supprime la cause. La cinquième est la récupération, qui remet le service en état. La sixième consiste à tirer les leçons et à améliorer le plan. Chaque phase a un livrable identifiable, ce qui permet de savoir, même en pleine nuit, où vous en êtes. Sans cette grille, une équipe se disperse : certains cherchent à comprendre pendant que d'autres réparent, et personne ne décide.
+
+La préparation est la phase la plus rentable et la moins visible, parce qu'elle ne se voit que le jour où elle fait défaut. Elle se résume à cinq choses écrites, quelque part, accessibles hors ligne. Un plan d'incident d'une ou deux pages qui dit qui décide, qui fait quoi et comment on se contacte. Une liste de contacts à jour : direction, référent technique, prestataire, autorité compétente en cas de déclaration obligatoire, assistance. Des rôles nommés : qui a le droit d'isoler un poste, qui a le droit de couper un service, qui parle aux usagers. Un kit de collecte : un support propre pour recueillir les journaux, une procédure de copie, une manière de calculer une empreinte pour vérifier qu'une copie n'a pas été altérée. Et des sauvegardes testées, parce que la seule phase qui échoue réellement dans la plupart des incidents, c'est la récupération, quand on découvre que la dernière restauration datait de deux ans. Un exercice de table, deux heures par an autour d'un scénario comme celui de notre médiathèque, vaut mieux que cent pages de théorie non lues.
+
+```text
+                     +----------------------------+
+                     |   1. PRÉPARATION           |
+                     | plan, rôles, contacts,     |
+                     | kit de collecte, sauvegarde|
+                     +-------------+--------------+
+                                   |
+                                   v
+              +--------------------+--------------------+
+              |  2. DÉTECTION ET QUALIFICATION          |
+              | signal + analyse -> fiche horodatée     |
+              +--------------------+--------------------+
+                                   |
+                                   v
+              +--------------------+--------------------+
+              |  3. CONFINEMENT                         |
+              | isoler le périmètre, nouvelle source ---+--> retour en 2
+              +--------------------+--------------------+
+                                   |
+                                   v
+              +--------------------+--------------------+
+              |  4. ÉRADICATION                         |
+              | supprimer la cause, nettoyer, prouver   |
+              +--------------------+--------------------+
+                                   |
+                                   v
+              +--------------------+--------------------+
+              |  5. RÉCUPÉRATION                        |
+              | restaurer, valider, surveillance        |
+              +--------------------+--------------------+
+                                   |
+                                   v
+              +--------------------+--------------------+
+              |  6. LEÇONS                              |
+              | rétrospective -> corrections -> étape 1 |
+              +--------------------+--------------------+
+
+Boucle : chaque nouveau signal en cours de phases ramène immédiatement
+à la détection, puis au confinement. On ne descend pas une fois pour toutes.
+```
+
+```table
+| Phase | Objectif principal | Livrable attendu | Question à se poser |
+| --- | --- | --- | --- |
+| 1. Préparation | Être prêt avant le jour J | Plan écrit, rôles, contacts, sauvegardes testées | Savons-nous qui fait quoi à 3 h du matin ? |
+| 2. Détection | Voir et qualifier | Fiche d'incident horodatée et périmètre | Qu'est-ce qui s'est passé, quand et jusqu'où ? |
+| 3. Confinement | Arrêter l'aggravation | Périmètre isolé, décisions tracées | Comment stopper sans effacer les traces ? |
+| 4. Éradication | Supprimer la cause | Éléments compromis retirés, preuves conservées | Tout est-il propre et vérifié ? |
+| 5. Récupération | Remettre en service | Systèmes restaurés, testés, surveillés | Les données reviennent d'où ? |
+| 6. Leçons | Progresser | Rapport et plan d'action daté | Que change-t-on pour que ça ne recommence pas ? |
+```
+
+Le confinement vise un seul objectif : empêcher l'aggravation pendant que l'on comprend. Il se décompose en deux horizons. Le court terme est souvent brutal et rapide : déconnecter un poste du réseau, suspendre un compte, fermer un accès à distance, basculer un service sur un mode dégradé. Le long terme vient juste après : mettre le poste en quarantaine dans un réseau isolé, conserver son état pour l'analyse, rétablir un service d'accueil sur un poste sain. Les deux se distinguent par leur durée et leur niveau de réflexion, pas par leur urgence. Nous y reviendrons en détail dans la section consacrée au confinement, car c'est le moment où l'on détruit le plus souvent, par précipitation, la capacité de comprendre ce qui s'est passé.
+
+L'éradication supprime la cause : le mécanisme qui a permis la compromission. Il peut s'agir d'un programme à retirer, d'un compte à recréer avec un mot de passe neuf, d'un accès à supprimer, d'une faille à corriger, d'un service mal configuré à remettre en état. Elle se distingue du confinement par un critère simple : le confinement stoppe les effets, l'éradication supprime la raison pour laquelle ils pouvaient se produire. La récupération qui suit restaure les données et les services à partir de sources fiables, teste chaque remise en marche, puis maintient une surveillance renforcée pendant plusieurs jours, parce que les heures qui suivent une remise en service sont celles où une rechute se repère le mieux. La phase de leçons, enfin, clôt la boucle : elle transforme l'incident en modifications concrètes du plan, des alertes et des configurations, avec un responsable et une date pour chacune.
+
+- Six phases : préparation, détection, confinement, éradication, récupération, leçons.
+- Chaque phase produit un livrable identifiable, sinon on ne sait pas où on en est.
+- La préparation se vérifie avant l'incident : plan, rôles, contacts, kit de collecte, sauvegardes testées.
+- Les phases ne sont pas linéaires : tout nouveau signal ramène à la détection et au confinement.
+- Le confinement stoppe les effets, l'éradication supprime la cause.
+- Les leçons doivent se traduire en actions datées et attribuées, pas en intentions.
+
+## Constituer la chronologie fiable : sources, horodatage et chaîne de preuve
+
+La chronologie est l'ossature du rapport d'incident et l'objet le plus précieux que vous produisiez. Elle répond à la question que tout le monde posera, direction comprise : dans quel ordre les choses se sont-elles réellement passées. Une chronologie honnête permet de distinguer ce qui a été observé de ce qui a été déduit, d'identifier le premier signal, de mesurer le temps de détection et le temps de confinement, et de répondre plus tard à un tiers qui examinera le dossier. À l'inverse, une chronologie approximative — quelques heures reconstituées de mémoire — fragilise tout le rapport, même excellent par ailleurs. C'est pourquoi il faut la construire dès les premières minutes, avec une méthode simple, plutôt que de la reconstituer trois semaines plus tard à partir de souvenirs et de courriels.
+
+Commencez par lister vos sources, et pour chacune, notez son niveau de fiabilité. Les journaux des équipements sont la meilleure source, à condition que leur horloge soit fiable et que le fichier n'ait pas pu être modifié. Les journaux centralisés, reçus sur un autre serveur, sont meilleurs encore, parce que la machine suspectée ne peut pas les réécrire. Viennent ensuite les relevés humains : la note prise par la documentaliste à 8 h 07, l'appel téléphonique consigné, la capture d'écran horodatée. Puis les journaux de sauvegarde, qui disent ce qui a été copié et quand. Enfin, les déductions, qui n'ont pas lieu d'être dans la colonne des faits. Une règle de classement simple vous évitera bien des discussions : ce qui provient d'un système avec une horloge synchronisée est un fait ; ce qui provient d'un humain est un témoignage, utile mais daté de sa prise et non de l'événement lui-même ; ce qui provient de votre mémoire est une hypothèse, à écrire comme telle.
+
+```text
+CHRONOLOGIE CONSOLIDÉE — INC-2026-014 — Médiathèque des Lilas
+Source de temps : UTC+2, synchronisée sur le contrôleur de domaine
+
+HEURE      FAIT OBSERVÉ                                     SOURCE               CONFIANCE
+--------   ----------------------------------------------   ------------------   ---------
+06:58:12   1re vague de renommages, 214 fichiers            journal serveur      haute
+06:59:07   3e vague : 1 240 fichiers touchés au total        journal serveur      haute
+07:11:58   Ouverture de session stage.accueil                journal auth         haute
+07:12:31   Écriture massive depuis POSTE-ACC-07              journal serveur      haute
+07:26:03   Deux accès refusés sur /Sauvegarde, même compte   journal partage      haute
+08:05:47   Signalement : fichiers illisibles                 note humaine         moyenne
+08:07:10   Première note prise par écrit, poste ouvert       note humaine         moyenne
+08:19:10   Poste déconnecté du réseau par le référent SI     registre d'actions   haute
+08:40:00   Sauvegarde de 22 h 10 vérifiée, intacte            journal sauvegarde   haute
+09:00:00   Ouverture de la fiche INC-2026-014                 registre             haute
+
+Colonnes obligatoires : heure, fait, source, confiance.
+Toute lacune est écrite tel quelle : "07:00 - 07:11 : rien, journaux absents ?"
+```
+
+Quelques règles d'or rendent la chronologie défendable. Premièrement, transcrivez les valeurs exactes des journaux, heure à la seconde comprise, sans les arrondir à la dizaine de minutes : c'est la précision qui permettra d'apparier un événement réseau avec un événement de fichiers. Deuxièmement, mentionnez systématiquement le fuseau et l'heure d'été ou d'hiver, car une chronologie mixte est inutilisable. Troisièmement, notez les trous : si rien n'est enregistré entre 7 h et 7 h 11, écrivez-le, un vide explicite vaut mieux qu'une ligne inventée. Quatrièmement, séparez soigneusement la colonne des faits de la colonne des interprétations ; le mot selon nous n'a pas sa place dans une chronologie, il a sa place dans l'analyse qui suit. Cinquièmement, datez chaque action de l'équipe : à quelle heure le poste a été isolé, par qui, sur quelle décision. Cette dernière colonne est celle que la direction lira avec le plus d'attention, puisqu'elle mesure votre réactivité.
+
+La chaîne de preuve complète la chronologie : elle raconte qui a manipulé quelle information, à quel moment, et comment vous savez qu'elle n'a pas été altérée. Concrètement, cela tient en quelques pratiques accessibles à tous. Conservez l'original du fichier de journal et travaillez sur une copie ; calculez une empreinte de la copie au moment de la collecte, ce petit résumé numérique unique qui change si un seul octet bouge, et notez cette empreinte dans la chronologie ; inscrivez chaque transfert sur une fiche, avec la date, la personne, le support et la destination ; rangez les éléments dans un dossier unique nommé avec l'identifiant de l'incident. Aucune de ces démarches ne demande de laboratoire, et toutes répondent à la même objection tardive : comment prouver que ce fichier que vous présentez aujourd'hui est bien celui qui existait ce matin-là. Sans cette rigueur, votre rapport racontera une histoire probablement exacte, mais invérifiable.
+
+```text
+FICHE DE MANIPULATION D'UNE PREUVE — INC-2026-014
+--------------------------------------------------
+Objet          copie journal_partage_20261006.log
+Origine        serveur partage.lilas.local, /var/log/partage
+Copie le       06/10/2026 08 h 24 par N. Ferrand (référent SI)
+Support        clé USB scellée, pochette A, rangement coffre
+Empreinte      SHA-256 9f2c... (calculée à la copie, notée ci-dessous)
+Modifié le     jamais — les analyses se font sur une seconde copie
+Transféré à    dossier INC-2026-014, le 06/10/2026 11 h 05
+Observations   une ligne manque à 07 h 04 : journal rotation à minuit
+```
+
+- Ouvrez la chronologie dès l'ouverture de la fiche, pas à la fin de l'enquête.
+- Une ligne = heure à la seconde, fait, source, niveau de confiance.
+- Notez les trous et les écarts d'horloge au lieu de les lisser.
+- Témoignage humain et fait système restent dans deux colonnes distinctes.
+- Travaillez sur copie, calculez une empreinte, consignez chaque transfert.
+- Chronométrez le temps de détection et le temps de confinement : ce sont vos indicateurs.
+
+## Confinement : isoler sans détruire les preuves
+
+Le confinement est le moment où la vitesse compte et où la précipitation coûte cher. L'objectif est double et ces deux moitiés tirent parfois dans des directions opposées : arrêter l'aggravation au plus vite, et conserver l'état du système suffisamment pour comprendre ce qui s'est passé. Une équipe qui ne pense qu'à la vitesse débranche, redémarre, réinstalle et efface au passage la seule trace qui aurait permis de savoir comment la compromission s'est produite. Une équipe qui ne pense qu'à la compréhension laisse tourner un poste qui continue de chiffrer un dossier partagé pendant que l'on discute. La bonne pratique consiste donc à séparer explicitement deux décisions : ce que l'on arrête maintenant, et ce que l'on préserve pour l'analyse, en notant l'heure et l'auteur de chaque geste.
+
+Les leviers de confinement sont peu nombreux, et il est utile de les connaître à l'avance pour ne pas improviser. Le premier est le réseau : déconnecter un poste du réseau, désactiver son port commutateur, le placer dans un segment isolé. C'est le geste le plus efficace contre la propagation, et il est réversible en quelques secondes. Le deuxième est le compte : suspendre la session ouver, réinitialiser le mot de passe, désactiver le compte suspect. Il est essentiel quand le mouvement a traversé plusieurs machines avec un même identifiant. Le troisième est le service : couper un accès à distance, mettre une file d'attente devant un service exposé, basculer l'accueil sur un poste sain. Le quatrième, enfin, est la machine elle-même : la mettre hors service, en la laissant allumée ou en l'éteignant selon une décision tracée, jamais par habitude.
+
+Cette dernière alternative mérite qu'on s'y attarde, car elle fait l'objet des plus grands malentendus. Laisser la machine allumée mais déconnectée conserve l'état de la mémoire vive, les processus en cours et les fichiers temporaires, autant d'éléments qui racontent ce qui se passait au moment précis de l'intervention. Éteindre la machine arrête net toute opération en cours, ce qui peut être souhaitable si elle détruit encore des données, mais fait disparaître ce que la mémoire contenait. Aucune règle universelle ne tranche : la décision dépend de ce qui se produit encore au moment où vous intervenez. Ce qui est universel, en revanche, c'est la traçabilité : vous écrivez à quelle heure la décision a été prise, par qui, sur quel constat, et quelles informations ont été relevées avant de passer à l'acte. Si vous optez pour la conservation, ajoutez une copie de la mémoire à votre dossier de preuves tant que la machine tourne encore, c'est l'une des rares informations qui disparaissent définitivement à l'extinction.
+
+```text
+LISTE DE CONTRÔLE — CONFINEMENT INC-2026-014
+=============================================
+[ ] 1. Constat écrit : heure de prise, personne, ce qui est observé
+[ ] 2. Chronologie ouverte, premières lignes saisies
+[ ] 3. Isolation réseau de POSTE-ACC-07 (câble ou port commutateur)
+[ ] 4. Compte stage.accueil suspendu, mot de passe réinitialisé
+[ ] 5. Session ouverte fermée après relevé des processus en cours
+[ ] 6. Fichiers partagés suspects : lecture seule, aucun déplacement
+[ ] 7. Note texte inconnue copiée dans le dossier de preuves
+[ ] 8. Journaux du serveur de fichiers copiés + empreinte calculée
+[ ] 9. Registre d'actions : heure, auteur, décision pour chaque ligne
+[ ] 10. Poste taggé "NE PAS UTILISER", état photographié
+[ ] 11. Service maintenu : accueil basculé sur poste sain
+[ ] 12. Direction informée, fiche INC-2026-014 mise à jour
+
+Une seule règle au-dessus de tout : rien n'est effacé, rien n'est
+redémarré, rien n'est réinstallé avant que la collecte soit faite.
+```
+
+Le confinement doit aussi prévoir la continuité du service public, ce qui est souvent absent des modèles importés du monde de l'entreprise. Une médiathèque ne peut pas annoncer que l'accueil est fermé pendant deux jours sans prévenir personne. Définissez à l'avance un mode dégradé : prêts et retours sur papier, inscription manuelle, poste de secours isolé du réseau principal, message d'information à l'entrée et sur le site. Ce volet n'est pas cosmétique, il réduit la pression sur l'équipe pendant l'incident : quand le service a un plan B, personne ne pousse l'équipe à rétablir trop vite un système qu'on n'a pas encore vérifié. Ajoutez-y la question des communications : qui informe les usagers, avec quel texte, et surtout qui évite de détailler publiquement ce qui a été trouvé, puisque la transparence totale pendant l'enquête aide souvent ceux qui observent de l'extérieur.
+
+- Confiner, c'est faire deux choses : arrêter l'aggravation et préserver l'état.
+- Quatre leviers : réseau, compte, service, machine — choisissez-les à l'avance.
+- Décidez explicitement entre conserver la machine allumée ou l'extinction, et tracez la décision.
+- Aucun nettoyage, aucune restauration par-dessus, aucune suppression pendant le confinement.
+- Tenez le registre d'actions : heure, auteur, décision, motif, pour chaque geste.
+- Maintenez un mode dégradé du service pour ne pas subir la pression du rétablissement rapide.
+
+## Éradication et récupération : sauvegardes, réinstallation et validation
+
+L'éradication répond à une question précise : pourquoi cela a-t-il pu se produire, et comment je fais pour que ce ne soit plus possible. Elle commence par un inventaire des éléments compromis, écrit ligne à ligne : le poste touché, le compte utilisé, le dossier partagé modifié, le service qui a servi de point d'entrée, la configuration défaillante qui a rendu l'exploitation possible. Cet inventaire conditionne tout le reste : on n'éradique pas ce qu'on n'a pas nommé. Vérifiez aussi ce qui a pu être ajouté sans laisser de trace immédiate : comptes locaux créés, droits accordés, tâches planifiées, programmateurs de tâches, accès distants, clés d'accès. Un incident de chiffrement est souvent la partie visible d'un mouvement plus large, et l'éradication consiste à fermer toutes les portes, pas seulement celle par laquelle on a vu entrer.
+
+Pour les postes, la règle professionnelle est simple et un peu sévère : on repart propre. Une réinstallation à partir de votre image de référence, ou une remise à neuf complète, vaut mieux qu'un nettoyage en place, parce que le nettoyage démonte ce qu'il trouve mais ne prouve jamais l'absence de ce qu'il n'a pas trouvé. La question n'est pas que l'outil ait retiré tel fichier, elle est de savoir si la machine est aujourd'hui exactement ce que vous décrivez dans votre documentation. Pour les comptes, la règle est du même ordre : mots de passe réinitialisés pour tout compte ayant ouvert une session sur le périmètre concerné, sessions en cours fermées, droits revus, et le compte stage.accueil de notre exemple clos définitivement puisqu'il n'avait plus de propriétaire. Pour les partagés, on compare avec une copie connue bonne et on restaure ce qui diffère, après s'être assuré que la source de restauration est elle-même saine.
+
+```text
+CHECKLIST DE REMISE EN SERVICE — INC-2026-014
+==============================================
+ÉTAT DES LIEUX
+[ ] Inventaire écrit des éléments compromis (postes, comptes, dossiers, services)
+[ ] Cause identifiée et correction appliquée (correctif, configuration, compte)
+
+POSTES
+[ ] POSTE-ACC-07 réinstallé à partir de l'image de référence
+[ ] Aucun compte local ajouté ne subsiste, aucune tâche inconnue
+[ ] Agent de surveillance en place et remontée vérifiée
+
+COMPTES ET DROITS
+[ ] stage.accueil clos, mot de passe des comptes exposés changé
+[ ] Sessions ouvertes fermées, droits administrateur revalidés
+
+DONNÉES
+[ ] Point de restauration choisi : avant 06 h 58, premier signal
+[ ] Restauration effectuée dans un environnement propre puis contrôlée
+[ ] Échantillon de fichiers ouverts et comparé à l'original
+[ ] Fichiers suspects déposés dans le dossier de preuves, jamais écrasés
+
+VALIDATION
+[ ] Test fonctionnel complet par le service concerné
+[ ] Surveillance renforcée 14 jours, alertes de suivi actives
+[ ] Rétablissement progressif des accès, moindre privilège
+```
+
+Les sauvegardes sont ici le cœur du sujet, et elles méritent trois précautions que l'on découvre trop tard. La première concerne le point de restauration : il doit être choisi avant le premier signal de l'incident, pas au plus proche de la découverte. Dans notre chronologie, la sauvegarde de 22 h 10 la veille est postérieure à aucune activité suspecte connue, elle constitue donc un point de départ légitime, à condition d'être vérifiée. La deuxième précaution concerne la propreté de la sauvegarde : une copie réalisée pendant la compromission peut contenir l'état abîmé, et restaurer sans vérifier revient à installer le problème à nouveau. D'où l'importance des copies hors ligne ou peu modifiables, que ni la machine compromise ni un compte de gestion standard ne peuvent altérer. La troisième précaution est la plus prosaïque : une sauvegarde jamais restaurée n'est pas une sauvegarde, c'est un espace disque occupé. Un test de restauration périodique, sur un échantillon représentatif, transforme une promesse en capacité démontrable.
+
+- Nommez chaque élément compromis avant de le traiter : on n'éradique pas l'implicite.
+- Privilégiez la réinstallation propre d'un poste au nettoyage en place, non vérifiable.
+- Choisissez le point de restauration avant le premier signal, jamais au plus proche de la découverte.
+- Vérifiez la propreté et la résistance de la sauvegarde avant de vous y fier.
+- Testez régulièrement une restauration réelle : sans test, la sauvegarde n'existe qu'en théorie.
+- Rétablissez les accès progressivement, au moindre privilège, sous surveillance renforcée.
+
+## Communication : à qui, quand et quoi dire
+
+Une réponse technique parfaite mal communiquée produit deux dégâts : la rumeur à l'intérieur, et la perte de confiance à l'extérieur. La communication pendant un incident n'est pas un supplément d'âme, c'est une phase de la réponse, avec ses règles et ses livrables. Elle répond à un besoin simple : pendant que l'équipe travaille, tout le monde cherche à savoir où en est, et dans ce vide s'installent les versions approximatives qui coûtent plus cher que l'incident lui-même. Une direction qui apprend l'incident par un agent inquiet, des usagers devant une porte fermée sans explication : autant de situations évitables par une information brève, régulière et exacte.
+
+La première décision est de nommer un seul porte-parole. Toute demande d'information, interne comme externe, converge vers cette personne, qui relaie à l'équipe technique les questions et à tous les interlocuteurs les réponses validées. Les techniciens, de leur côté, se concentrent sur la réponse et ne commentent pas l'incident parallèlement dans un message instantané ou sur un réseau social : deux versions, même légèrement différentes, suffisent à détruire la crédibilité du suivi. La chaîne hiérarchique se déclare à l'avance : référent technique, direction d'établissement, service intercommunal ou direction des systèmes d'information, puis, selon la nature de l'incident et les obligations applicables, l'autorité compétente ou le point de contact national de sécurité informatique, désigné en clair dans le plan sans jargon. Prévoyez aussi le prestataire d'assistance et, le cas échéant, l'assurance, avec les coordonnées déjà rédigées.
+
+```text
+MODÈLE DE COMMUNICATION INTERNE — 6 lignes, envoi à la direction
+----------------------------------------------------------------
+Objet : INC-2026-014 — point de situation du 6 octobre, 9 h 30
+1. Constat : chiffrement constaté ce matin sur un poste d'accueil, découvert à 8 h 05.
+2. Périmètre : 1 poste isolé, 1 dossier partagé touché, service public maintenu en mode dégradé.
+3. Causes : non établies ; un compte de stagiaire non désactivé est en cours de vérification.
+4. Actions : poste isolé à 8 h 19, compte suspendu, journaux conservés, sauvegarde vérifiée.
+5. Restauration : envisagée à partir de la copie de la nuit, test préalable en cours.
+6. Prochain point : 11 h. Contact unique : référent SI, poste 42.
+```
+
+Quoi dire, en pratique, tient en quatre catégories de contenu. Les faits confirmés, avec leurs heures et leurs sources. L'impact réel sur les usagers et sur les services, y compris ce qui continue de fonctionner, car l'absence d'information est toujours comblée par le pire des scénarios. Les actions en cours et celles qui sont déjà prises, ce qui montre que la situation est tenue. Et le canal de contact, c'est-à-dire la personne à qui poser les questions. En dehors de ces catégories, deux silences s'imposent : on ne communique pas les détails techniques d'exploitation tant que l'enquête court, et on ne discute pas publiquement du contenu d'une éventuelle note laissée par les attaquants. Aucune instruction figurant dans un tel document n'est suivie, son contenu n'est pas diffusé, et la récupération repose exclusivement sur les systèmes remis en état et les sauvegardes vérifiées : cette position, écrite à l'avance, évite d'improviser sous pression.
+
+- Un seul porte-parole ; les techniciens ne commentent pas l'incident en parallèle.
+- Informez dès la qualification, même avec un périmètre encore flou.
+- Annoncez toujours l'heure du prochain point plutôt qu'un délai de résolution incertain.
+- Quatre blocs de contenu : faits confirmés, impact, actions en cours, contact.
+- Ne divulguez pas les détails d'exploitation pendant l'enquête ni le contenu d'une note.
+- Conservez des traces horodatées des communications : elles font partie de la chronologie.
+
+## Le rapport d'incident : structure type
+
+Le rapport d'incident est le document qui transforme une matinée chaotique en un acquis durable. Il s'adresse à plusieurs lecteurs à la fois : la direction, qui veut comprendre ce qui s'est passé et ce que cela a coûté ; l'équipe technique, qui veut retrouver les détails ; un tiers, autorité ou assurance, qui examinera le dossier avec un œil extérieur. Ces trois lectures imposent une règle unique : le rapport doit se comprendre sans qu'on ait besoin d'expliquer à voix haute ce que l'auteur voulait dire. Il se rédige après la récupération, mais il se nourrit de tout ce qui a été écrit pendant l'incident : fiche de qualification, chronologie, registre d'actions, communications envoyées. C'est pour cela que la discipline de la journée paie si bien : le rapport n'est alors qu'un assemblage, pas une reconstitution.
+
+La structure type comporte huit parties, dans cet ordre. Un résumé exécutif d'une page, écrit en dernier, qui dit quoi, quand, sur quel périmètre, avec quel impact et quelles mesures ont été prises. Une chronologie complète, issue du travail horodaté. Un périmètre et un impact chiffrés : postes, comptes, dossiers, nombre de fichiers concernés, durée d'indisponibilité, service maintenu ou dégradé. Un récit des actions menées, phase par phase, avec les décisions et leurs motifs. Les causes et les facteurs contributifs, c'est-à-dire non seulement le fait déclenchant mais les conditions qui l'ont rendu possible : compte oublié, sauvegarde non testée, alerte non configurée. Les preuves et sources, avec les empreintes et les emplacements de conservation. Les recommandations, hiérarchisées. Et les annexes : captures, extraits de journaux, modèles utilisés.
+
+```text
+GABARIT — RAPPORT D'INCIDENT INC-2026-014
+==========================================
+1. RÉSUMÉ EXÉCUTIF (1 page, rédigé en dernier)
+   Quoi / Quand / Où / Impact / Ce qui a été fait / Ce qui reste à faire
+
+2. CHRONOLOGIE
+   Tableau heure / fait / source / confiance + temps de détection, de
+   confinement et de restauration
+
+3. PÉRIMÈTRE ET IMPACT
+   Postes, comptes, dossiers, fichiers concernés, services dégradés,
+   durée d'indisponibilité, données potentiellement exposées
+
+4. ACTIONS MENÉES
+   Phase par phase : décisions, auteurs, heures, résultats
+
+5. CAUSES ET FACTEURS CONTRIBUTIFS
+   Déclencheur + conditions (compte dormant, sauvegarde, alerte, droit)
+
+6. PREUVES ET SOURCES
+   Journaux copiés, empreintes, emplacements, conservation
+
+7. RECOMMANDATIONS
+   Mesure | Responsable | Échéance | Indicateur de réussite
+
+8. ANNEXES
+   Fiche de qualification, communications envoyées, extraits de journaux
+```
+
+Les règles d'écriture font la différence entre un rapport lu et un rapport rangé. Restez factuels : un compte n'a pas été désactivé lors du départ d'un stagiaire, plutôt que tel collaborateur a oublié de le faire. Chiffrez : temps de détection de trente-cinq minutes, mille deux cent quarante fichiers renommés, un poste isolé, quatorze jours de surveillance. Expliquez le jargon en une phrase, parce que le lecteur de direction n'a pas votre vocabulaire. Ne noyez pas : si le lecteur doit chercher, il ne lira pas. Et signalez honnêtement les zones d'ombre : ce que vous n'avez pas pu déterminer, avec la raison, et ce que vous proposez pour le découvrir. Un rapport qui prétend tout savoir perd sa crédibilité dès la première question, alors qu'un rapport qui délimite précisément son savoir est difficile à contester.
+
+- Le rapport suit huit parties : résumé, chronologie, périmètre, actions, causes, preuves, recommandations, annexes.
+- Écrivez le résumé exécutif en dernier, une page maximum.
+- Chiffrez tout : durées, volumes, nombres de postes et de comptes.
+- Restez factuels et attribuez les faits à des systèmes, pas à des personnes.
+- Signalez les zones d'ombre et leur cause plutôt que de les masquer.
+- Diffusez largement le plan d'action, gardez le rapport complet sous contrôle.
+
+## Rétrospective et amélioration du plan
+
+La rétrospective est la sixième phase, celle qu'on saute toujours quand le service est rétabli et que tout le monde est fatigué. C'est pourtant celle qui décide si l'incident se reproduira. Organisez-la dans les jours qui suivent la remise en service, avec les personnes qui ont réellement agi, celles qui ont subi l'incident côté métier, et si possible une personne extérieure à l'équipe qui posera les questions gênantes. La règle d'or de cette réunion est qu'elle ne recherche pas de coupable : chercher qui est fautif produit des récits défensifs et des informations tronquées, alors que chercher ce qui a permis l'incident produit des corrections. Le compte stage.accueil n'a pas de coupable, il a une procédure de départ de stagiaire qui ne prévoyait pas la fermeture des comptes, et c'est exactement cette phrase qui doit finir dans le compte rendu.
+
+Trois questions structurent l'échange. Qu'est-ce qui a bien marché : la détection humaine à 8 h 05, la sauvegarde de la nuit, la procédure d'isolement. Qu'est-ce qui a fait défaut : l'absence d'alerte sur les renommages, le compte dormant, le délai de conservation des journaux. Qu'aurions-nous voulu savoir une heure plus tôt, et comment faire pour que la prochaine fois cette information soit disponible ? Mesurez ensuite avec les indicateurs que la chronologie vous a permis d'établir : temps entre le premier signal et la détection, temps entre la détection et le confinement, temps entre la décision de restauration et le service rétabli, taux d'alertes pertinentes sur le mois. Des chiffres, pas des impressions, sinon l'an prochain vous ne saurez pas si vous avez progressé.
+
+```text
+PLAN D'ACTION POST-INCIDENT — INC-2026-014 — arrêté le 13/10/2026
+==================================================================
+ACTION                                    RESP.      ÉCHÉANCE   INDICATEUR
+----------------------------------------  ---------  ---------  --------------------
+Alerte renommage massif sur partagé        Réf. SI    20/10     1 test, 1 alerte reçue
+Procédure de fermeture des comptes         RH + SI    31/10     0 compte dormant > 30 j
+Inventaire trimestriel des comptes         Réf. SI    30/11     Inventaire signé
+Test de restauration documenté            Réf. SI    15/11     Restauration de 100 fichiers
+Durée des journaux portée à 90 jours       Réf. SI    30/11     Vérification mensuelle
+Exercice de crise sur scénario chiffré     Direction  T1 2027   Compte rendu + actions
+```
+
+Les corrections doivent ensuite être répercutées là où elles prennent effet, ce qui va au-delà du fichier de compte rendu. Votre plan d'incident est mis à jour : contacts, rôles, procédure d'isolement enrichie de ce que vous avez appris. Vos alertes sont revues : la règle de renommage massif qui a manqué est écrite et testée. Vos procédures métiers changent : la fiche de départ de stagiaire comporte désormais une case désactivation des comptes. Votre budget, s'il y a lieu, est argumenté par des faits datés plutôt que par des craintes. Et vous fixez la date du prochain exercice, idéalement sur ce même scénario, pour vérifier que les six mois qui vont passer n'ont pas effacé les acquis. Une leçon non traduite en action datée reste une anecdote.
+
+- Faites la rétrospective à froid, dans les jours qui suivent la remise en service.
+- Cherchez ce qui a permis l'incident, jamais qui est fautif.
+- Mesurez temps de détection, de confinement et de restauration, en chiffres.
+- Répercutez les leçons dans le plan, les alertes, les procédures métiers et le budget.
+- Reprogrammez un exercice sur le scénario vécu pour ancrer les acquis.
+
+## Mini-projet guidé : le rapport d'incident de la médiathèque
+
+Il est temps d'assembler toutes les pièces du chapitre dans un document unique : le rapport d'incident de la Médiathèque des Lilas, au fil rouge depuis le début de la leçon. Ce projet mobilise chacune des notions abordées : fiche de qualification, chronologie horodatée, registre d'actions, décisions de confinement tracées, communication de direction en six lignes, contrôle de la restauration, rétrospective et plan d'action. Travaillez sur un fichier texte ou un traitement de texte, nommez-le avec l'identifiant de l'incident, et tenez-vous à la règle qui a gouverné tout le chapitre : chaque affirmation s'appuie sur une source datée, chaque lacune est écrite comme telle, chaque recommandation porte un responsable et une échéance. Vous récrirez ensuite ce rapport seul, dans l'exercice pratique qui suit la leçon, en partant des seuls indices fournis.
+
+Commencez par les éléments que vous avez déjà : la chronologie consolidée, la fiche de qualification, la checklist de remise en service. Recopiez-les, complétez les colonnes manquantes, vérifiez que les heures se suivent sans contradiction. Rédigez ensuite la communication que vous auriez adressée à la direction à 9 h 30, en respectant les six lignes du modèle : constat, périmètre, causes, actions, restauration, prochain point. Passez au périmètre chiffré, en distinguant toujours ce qui est confirmé de ce qui est pressenti : un poste confirmé, un dossier partagé en cours d'étude, un compte suspendu, une sauvegarde vérifiée. Terminez par les recommandations : elles sont l'unique partie que tout le monde lira attentivement, et elles doivent pouvoir être appliquées par quelqu'un qui n'était pas là ce matin-là.
+
+```text
+EXTRAIT — RAPPORT INC-2026-014, partie 1 : résumé exécutif
+===========================================================
+Le 6 octobre 2026 à 8 h 05, une documentaliste signale que les fichiers
+de son poste d'accueil ne s'ouvrent plus. L'enquête établit des
+renommages massifs sur le dossier partagé Services à partir de 6 h 58,
+puis une ouverture de session du compte stage.accueil à 7 h 11 et deux
+tentatives d'accès refusées sur le lecteur de sauvegarde à 7 h 26.
+
+Périmètre confirmé : un poste, un compte suspendu, un dossier partagé.
+Service public maintenu en mode dégradé. Sauvegarde de la nuit
+vérifiée et exploitable, point de restauration retenu avant 6 h 58.
+
+Le poste est isolé à 8 h 19, soit 14 minutes après le signalement et
+71 minutes après le premier signal technique. La restauration est
+planifiée le lendemain après test de l'échantillon. La cause
+contributive principale est un compte de stagiaire jamais fermé.
+
+Recommandations prioritaires : alerte sur renommage massif (20/10),
+procédure de fermeture des comptes (31/10), test de restauration
+documenté (15/11), exercice de crise sur scénario chiffré (T1 2027).
+```
+
+Une liste de contrôle pour conclure le projet. Le rapport contient-il les huit parties prévues, dans l'ordre ? La chronologie comporte-t-elle heure, fait, source et confiance pour chaque ligne, avec les trous assumés ? Les temps de détection, de confinement et de restauration sont-ils chiffrés ? Les actions du registre portent-elles une heure et un auteur ? La communication interne tient-elle en six lignes et annonce-t-elle le prochain point ? Les recommandations ont-elles chacune un responsable, une échéance et un indicateur ? Enfin, relisez le document en cherchant une seule chose : chaque affirmation sans source. Remplacez-la, précisez-la ou supprimez-la. Un rapport qui passe ce test se lit par un tiers sans avoir besoin de vous, et c'est exactement le but.
+
+- Distinguez systématiquement le confirmé du pressenti, le fait de l'hypothèse.
+- Rédigez la communication de direction en six lignes, avec l'heure du prochain point.
+- Chiffrez le périmètre et les trois temps de réponse.
+- Donnez à chaque recommandation un responsable, une échéance et un indicateur.
+- Relisez en chassant toute affirmation sans source.
+
+## À retenir
+
+- Un événement est une observation ; un incident menace confidentialité, intégrité ou disponibilité.
+- Qualifier, c'est répondre à quatre questions : impact, périmètre, preuves, urgence, puis classer en mineur, majeur ou critique.
+- Quatre familles de signaux se croisent : journaux, fichiers, réseau, comptes.
+- Une alerte utile dit le fait, la gravité, le périmètre, l'action immédiate et renvoie à une procédure.
+- Un seuil couple une quantité et une fenêtre de temps, et sa justification est écrite à côté de la règle.
+- Le taux d'alertes pertinentes est l'indicateur de santé de la surveillance.
+- Le SIEM donne la vue transverse, l'EDR la vue poste, le HIDS la comparaison à une référence.
+- La réponse suit six phases : préparation, détection, confinement, éradication, récupération, leçons.
+- La chronologie aligne heure, fait, source et confiance, avec les trous et les écarts d'horloge assumés.
+- La chaîne de preuve, c'est copie, empreinte, fiche de manipulation et dossier unique.
+- Confiner, c'est arrêter l'aggravation tout en préservant l'état : rien n'est effacé ni redémarré.
+- La récupération choisit son point de restauration avant le premier signal et valide à trois niveaux.
+- Une sauvegarde n'existe que si elle a été restaurée au moins une fois avec succès.
+- Un seul porte-parole, l'heure du prochain point, et aucun détail d'exploitation pendant l'enquête.
+- Le rapport suit huit parties, chiffre tout et attribue chaque recommandation.
+
+## Erreurs fréquentes
+
+- Piège : traiter chaque signal comme un incident et épuiser l'équipe → Correction : qualifiez avec les quatre questions et retenez un niveau de gravité écrit.
+- Piège : attendre d'être certain avant d'ouvrir une fiche → Correction : déclarez l'incident soupçonné, classez ensuite, motivé par écrit.
+- Piège : laisser les journaux locaux purgés après quelques jours → Correction : centralisez la collecte et fixez une durée de conservation d'au moins une semaine.
+- Piège : ne pas synchroniser les horloges des équipements → Correction : source de temps unique, fuseau mentionné, écarts consignés.
+- Piège : configurer des alertes sans action associée → Correction : écrivez l'action immédiate et le lien vers la procédure, sinon c'est une notification.
+- Piège : acheter une plateforme avant d'avoir les journaux et les sauvegardes → Correction : journaliser, fermer les accès, sauvegarder et tester, puis alerter, puis acheter.
+- Piège : débrancher, redémarrer ou nettoyer avant la collecte → Correction : isoler du réseau, relever l'état, copier les journaux, puis seulement agir.
+- Piège : restaurer la sauvegarde la plus récente sans vérifier sa propreté → Correction : point de restauration avant le premier signal, sauvegarde contrôlée, échantillon testé.
+- Piège : annoncer un délai de résolution avant de le connaître → Correction : donnez l'heure du prochain point et dites ce qui est confirmé.
+- Piège : terminer l'incident une fois le service rétabli → Correction : rétrospective, plan daté, alertes corrigées et exercice programmé.
+
+## Pour aller plus loin
+
+La première référence à fréquenter est celle des centres de réponse. Le site du CISA, à l'adresse https://www.cisa.gov/, publie des guides de détection et de réponse écrits pour des équipes opérationnelles : on y trouve des fiches consacrées à la qualification d'incident, à la conservation des preuves et aux procédures de récupération après chiffrement de données, le tout rédigé à l'usage de personnels qui doivent agir vite. Côté européen, l'Agence européenne pour la sécurité des réseaux et de l'information, sur le site https://www.enisa.europa.eu/, produit des recommandations et des rapports sur la détection, la notification et la gestion de crise, utiles pour cadrer une démarche institutionnelle. Prenez le temps de feuilleter ces ressources plutôt que de les lire d'un bout à l'autre : revenez-y le jour où une question précise se pose, par exemple le matin où vous devrez décider en dix minutes si votre signal vaut incident.
+
+Deuxièmement, ancrez la pratique dans des référentiels reconnus, que vous citerez dans votre plan. Les modèles de gestion de crise internationaux décrivent les six phases que vous avez appliquées, et les guides nationaux ajoutent des attentes explicites en matière de notification et de traçabilité des décisions ; deux heures passées à comparer un de ces documents à votre plan actuel valent mieux qu'une journée d'achat d'outil. Troisièmement, la communauté OWASP, consultable sur https://owasp.org/, reste une mine pour tout ce qui touche aux applications et aux points d'entrée web que vos services exposent, avec des listes de contrôle directement exploitables par une petite équipe. Enfin, pratiquez : reprenez le scénario de la médiathèque une fois par an, changez une variable, supprimez un signal, mesurez le temps que met votre équipe à qualifier et à confiner. C'est ce rythme d'entraînement, bien plus que le choix d'une marque, qui fait la différence le jour où le constat arrive.
+
+## Et maintenant : passez à l'exercice pratique
+
+Vous disposez maintenant de la méthode complète : voir, qualifier, confiner, éradiquer, restaurer, communiquer et tirer les leçons. L'étape suivante est l'exercice pratique qui accompagne ce chapitre : on vous remet les cinq indices de l'incident de la médiathèque — horodatages, extraits de journaux, fichier détecté, compte suspecté et sauvegarde disponible — et vous construisez seul la chronologie, choisissez les trois actions de confinement en justifiant leur ordre, rédigez la communication interne en six lignes et remplissez la structure du rapport. Travaillez sans rouvrir la leçon : c'est dans cet écart entre ce que vous croyez savoir et ce que vous écrivez que la compétence se révèle, puis corrigez avec les modèles fournis.
+
+Le quiz de quatre questions qui accompagne le chapitre vous permet de vérifier en quelques minutes les notions essentielles : la distinction événement et incident, la structure d'une alerte utile, l'ordre des phases de réponse et le rôle respectif des outils de surveillance. Passé cet exercice, poursuivez le parcours Cybersécurité : les chapitres suivants élargiront le champ à d'autres facets de la sécurité des systèmes d'information, et vous mesurerez alors à quel point la discipline acquise ici — source datée, décision tracée, leçon traduite en action — vous servira dans tous les sujets. Gardez le rapport de la médiathèque dans vos dossiers : c'est un modèle que vous pourrez réutiliser tel quel, en changeant les noms, le jour où votre propre matin de lundi ressemblera à celui-ci.

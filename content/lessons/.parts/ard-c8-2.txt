@@ -1,0 +1,168 @@
+## Anatomie d'une trame CAN : identifiants, stuff bit et CRC
+
+Une trame CAN classique, dite trame de données standard, se lit de gauche à droite comme une phrase très courte. Elle s'ouvre par un bit de début, unique et dominant, qui réveille tous les récepteurs et cale leurs horloges. Vient ensuite le champ d'arbitrage, composé de l'identifiant sur onze bits et du bit de requête à distance ; c'est ce champ qui départage les émetteurs concurrents. Puis le champ de contrôle porte l'indicateur de format étendu, un bit réservé et la longueur de données sur quatre bits, qui autorise de zéro à huit octets. Les données suivent, puis le CRC, son délimiteur, l'acquittement, la fin de trame et une intervalle durant laquelle personne n'a le droit d'émettre.
+
+Le champ d'identifiant est la partie que vous paramétrerez le plus souvent, et il mérite qu'on s'y attarde. Onze bits donnent deux mille quarante-huit valeurs possibles, de 0x000 à 0x7FF ; l'identifiant zéro est le plus prioritaire de tous, l'identifiant 0x7FF le moins. Dans le format étendu, vingt-neuf bits sont disponibles pour les applications qui en ont besoin, ce qui est courant en diagnostic de véhicule et rare sur une machine. La sertiuse de l'atelier utilise le format standard : 0x120 pour l'état de la tête de serrage, 0x121 pour la consigne, 0x122 pour les compteurs de cycle. Ces valeurs ne sont pas choisies au hasard, elles sont lues dans le dossier de la machine et attribuées de façon unique sur toute la ligne.
+
+Le mécanisme qui porte le nom de bit de remplissage, ou stuff bit, est une contrainte d'encodage et non une information. Pour que chaque récepteur puisse resynchroniser son horloge sur les fronts du signal, la règle impose qu'aucune suite de bits ne dépasse cinq bits de même niveau : dès que cinq bits identiques ont été émis, l'émetteur ajoute automatiquement un bit de niveau opposé, et les récepteurs le retirent aussitôt de la trame reçue. Le remplissage s'applique du début de trame jusqu'à la fin de la séquence CRC ; le CRC lui-même est calculé sur la trame une fois les bits de remplissage retirés. Cette règle explique pourquoi la longueur réelle en bits d'une trame CAN n'est jamais exactement la somme des champs : elle dépend du contenu des données.
+
+```image
+can-bus
+| Trame CAN avec bit de remplissage et CRC correct : après cinq bits consécutifs de même niveau, un bit opposé est inséré, puis le CRC à quinze bits valide l'intégrité de la trame.
+```
+
+Le CRC de la trame CAN occupe quinze bits et couvre le début de trame, l'arbitrage, le contrôle et les données, après retrait des bits de remplissage. Vient ensuite un champ d'acquittement d'un bit : l'émetteur y maintient le niveau récessif, et tous les récepteurs qui ont validé la trame y imposent le dominant en même temps. C'est une confirmation collective et immédiate : si l'émetteur ne lit pas de dominant à cet endroit, il sait que personne n'a reçu sa trame, par exemple parce que son débit diffère de celui du bus. La trame se termine par sept bits récessifs et une intervalle de trois bits, pendant lesquels le bus reste disponible pour le prochain émetteur.
+
+Le tableau suivant donne, champ par champ, la structure que vous retrouverez sur n'importe quel analyseur CAN. Apprenez à la reconnaître : c'est l'équivalent, pour ce bus, de la connaissance du tableau de registres pour un capteur I2C.
+
+| Champ | Taille | Rôle |
+|---|---|---|
+| Début de trame | 1 bit | synchronise les récepteurs |
+| Identifiant | 11 bits | contenu et priorité de la trame |
+| Requête à distance | 1 bit | demande de données sans charge utile |
+| Contrôle et longueur | 4 bits utiles | format et nombre d'octets de données |
+| Données | 0 à 8 octets | charge utile réelle |
+| Remplissage | variable | maintien des transitions pour la resynchronisation |
+| CRC | 15 bits | détection d'erreur sur le contenu |
+| Acquittement | 1 bit | confirmation collective par les récepteurs |
+| Fin et intervalle | 7 et 3 bits | libération du bus |
+
+En pratique, un analyseur CAN vous montrera quelque chose d'aussi lisible que ceci, avec l'horodatage, l'identifiant en hexadécimal, la longueur et la charge utile :
+
+```text
+TRAME CAN 2.0A observee sur la console de maintenance
+  identifiant standard : 0x123 (291 en decimal), priorite forte
+  requete a distance   : non (trame de donnees)
+  longueur DLC         : 2 octets
+  donnees              : 55 AA
+  interpretation       : consigne de vitesse, 0x55 = 85 et 0xAA = 170
+
+Champs successifs, cote a cote sur le fil :
+  SOF (1 bit dominant) | identifiant 11 bits | RTR | IDE | reserve |
+  DLC (4 bits) | donnees (0 a 8 octets) | CRC 15 bits + delimiteur |
+  acquittement + delimiteur | fin de trame (7 bits recessifs) |
+  intervalle inter-trames (3 bits recessifs)
+```
+
+Le protocole distingue cinq types d'erreur, et les connaître vous fera gagner un temps considérable au dépannage. L'erreur de bit signale qu'un émetteur a lu un niveau différent de celui qu'il envoyait. L'erreur de remplissage apparaît quand six bits de même niveau se suivent. L'erreur de forme détecte un bit de structure invalide à un endroit précis de la trame. L'erreur de CRC apparaît quand le calcul du récepteur diffère de celui transmis. L'erreur d'acquittement signale l'absence de confirmation. Dans tous les cas, le nœud impose un drapeau d'erreur que les autres reconnaissent, la trame est annulée et son émetteur la renvoie — sauf s'il a dépassé ses compteurs, auquel cas il bascule en état passif puis hors bus.
+
+## CAN avec Arduino et ESP32 : MCP2515 et TWAI
+
+L'Arduino Uno ne possède aucun contrôleur CAN : son seul périphérique série intégré est l'UART. On y ajoute donc un circuit externe, le MCP2515, qui est un vrai contrôleur CAN complet relié au microcontrôleur par le bus SPI. À lui seul, il ne suffit pas : il faut aussi un émetteur-récepteur, ou transceiver, qui convertit les niveaux logiques en signaux différentiels CAN haute et CAN basse. Le binôme courant est donc un MCP2515 pour 8 MHz de quartz couplé à un TJA1050 ou un MCP2551 pour le niveau 5 volts de l'Uno. Les bibliothèques disponibles se comptent par dizaines ; retenez que toutes exigent les mêmes réglages : fréquence du quartz, débit du bus et masque d'acceptation.
+
+L'ESP32, lui, embarque directement le contrôleur matériel compatible avec la norme ISO 11898, que la documentation Espressif nomme TWAI pour Two-Wire Automotive Interface. Vous gagnez le circuit SPI et l'intégration est native, y compris avec les tâches FreeRTOS. En revanche, l'émetteur-récepteur reste externe : l'ESP32 ne fournit que des niveaux logiques 3,3 volts, incompatibles avec la paire du bus. On lui adjoint donc un transceiver 3,3 volts, du type SN65HVD230 ou équivalent, avec sa résistance de terminaison sur le module. La documentation officielle précise d'ailleurs que, pour un essai sur bureau sans bus, on peut relier directement les broches d'émission et de réception : ce montage ne sert qu'au test du pilote, jamais à la communication réelle.
+
+```cpp
+#include "driver/twai.h"
+
+const gpio_num_t PIN_TX = GPIO_NUM_5;
+const gpio_num_t PIN_RX = GPIO_NUM_4;
+
+void setup() {
+  Serial.begin(115200);
+
+  twai_general_config_t config = TWAI_GENERAL_CONFIG_DEFAULT(PIN_TX, PIN_RX, TWAI_MODE_NORMAL);
+  twai_timing_config_t timing = TWAI_TIMING_CONFIG_500KBITS();
+  twai_filter_config_t filtre = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+
+  if (twai_driver_install(&config, &timing, &filtre) != ESP_OK) {
+    Serial.println("Impossible d'installer le pilote TWAI");
+    return;
+  }
+  twai_start();
+
+  twai_message_t consigne = {};
+  consigne.identifier = 0x121;
+  consigne.data_length_code = 2;
+  consigne.data[0] = 0x00;
+  consigne.data[1] = 0x64;
+  twai_transmit(&consigne, pdMS_TO_TICKS(100));
+}
+
+void loop() {
+  twai_message_t reception;
+  if (twai_receive(&reception, pdMS_TO_TICKS(1000)) == ESP_OK) {
+    Serial.printf("ID=0x%03X DLC=%u ", reception.identifier, reception.data_length_code);
+    for (uint8_t i = 0; i < reception.data_length_code; i++) {
+      Serial.printf("%02X ", reception.data[i]);
+    }
+    Serial.println();
+  }
+}
+```
+
+Trois réglages décident de la réussite de cette mise en route. Le débit doit être identique sur tous les nœuds, quartz compris : dans l'atelier, la sertiuse, sa console et l'interface de test tournent toutes à 500 kbit/s, et un seul appareil réglé à 250 kbit/s suffit à provoquer des erreurs en cascade. Les identifiants doivent être uniques lorsqu'ils expriment une information périodique. Et la terminaison doit être présente exactement deux fois, aux deux extrémités du bus.
+
+Le filtrage, lui, mérite qu'on y pense : le masque d'acceptation de l'ESP32 ne réveille votre programme que pour les identifiants utiles, tandis que la console de maintenance tourne en arrière-plan sans le solliciter. En dépannage, on ouvre ce filtre pour tout voir.
+
+L'intégration avec le reste du parcours se fait naturellement : une tâche FreeRTOS reçoit les trames dans une file, une seconde les publie en MQTT sur les topics du chapitre six, une troisième alimente le journal des erreurs. Le pilote expose pour cela l'état du nœud, les compteurs d'erreurs d'émission et de réception, et le nombre d'erreurs de bus cumulées : ces trois nombres, publiés comme métriques, valent mieux que dix allumages de diode. Notez que les versions récentes d'ESP-IDF proposent une interface par poignées de nœud, distincte de l'interface historique montrée ici ; les concepts, eux, n'ont pas bougé.
+
+Le dernier piège est le passage en hors bus. Si un nœud détecte trop d'erreurs d'émission, son contrôleur se coupe physiquement du bus : les autres continuent de fonctionner, et la panne se lit comme une absence de données venue d'un seul appareil. La récupération est explicite, votre programme doit la demander, sous peine de voir le sketch redémarrer en boucle au moindre coup de fil électrique.
+
+## La ligne RS-485 : pourquoi le différentiel gagne
+
+Le standard RS-485 définit uniquement les caractéristiques électriques des émetteurs et des récepteurs : niveaux, impédance, plage de tension admissible, nombre d'appareils supportés. Il ne définit aucun protocole, aucun adressage, aucune trame. C'est ce qui en fait un socle : Modbus, Profibus, BACnet MS/TP et le DMX de l'éclairage s'y appuient, tout comme le SPI s'appuie sur des lignes électriques. Comprendre RS-485, c'est comprendre la moitié inférieure de la pile, celle qui décide si le message survit au trajet.
+
+Le principe est le signal différentiel. Au lieu de faire varier une tension par rapport à la masse commune, l'émetteur produit une paire de tensions opposées sur deux fils ; le récepteur ne mesure pas chaque fil par rapport à la masse, il mesure la différence entre les deux fils. Or le bruit induit par un variateur, un moteur ou un contacteur se couple à peu près également dans les deux conducteurs d'une même paire torsadée : il se retrouve ajouté aux deux tensions, donc annulé lors de la soustraction. Seule la différence de signal subsiste. À cette immunité s'ajoute une plage de mode commun large, qui autorise plusieurs volts d'écart entre les masses des appareils, ce qui est inévitable sur une ligne de cent mètres répartie entre plusieurs armoires.
+
+Les conséquences pratiques se lisent sur le câble : une paire torsadée, souvent blindée, d'environ cent ohms d'impédance caractéristique, le blindage rattaché à la masse en un seul point pour éviter les boucles de courant. Les longueurs atteignent douze cents mètres aux débits modestes, mais le débit chute avec la distance.
+
+```image
+rs485
+| Schéma de câblage RS-485 : tous les appareils partagent une même paire torsadée A et B, reliée en chaîne et terminée par une résistance de 120 ohms à chaque extrémité.
+```
+
+Le tableau ci-dessous donne l'ordre de grandeur à retenir pour dimensionner une liaison. Il suppose un câble conforme, un câblage soigné et une terminaison correctement posée ; un défaut de l'un des trois réduit fortement ces portées.
+
+| Débit annoncé | Portée conseillée | Usage typique |
+|---|---|---|
+| 10 Mbit/s | une dizaine de mètres | liaison intra-armoire, remplacement d'une nappe |
+| 1 Mbit/s | environ une centaine de mètres | petit atelier, quelques appareils |
+| 100 kbit/s | jusqu'à douze cents mètres | distribution Modbus dans un bâtiment |
+| 19,2 kbit/s et moins | douze cents mètres | grande longueur, nombreux esclaves |
+
+Reste la règle de la parole, et c'est là que la demi-duplex entre en scène. Sur deux fils, une seule transmission à la fois est possible : quand un appareil émet, il ne peut pas écouter correctement la même paire. On pilote donc l'émetteur et le récepteur avec deux broches de contrôle que l'on manipule ensemble : pendant l'émission on coupe le récepteur, à la fin de la trame on rend la main au bus. La variante quatre fils, dite plein duplex, réserve une paire par sens, mais elle double le câblage et reste rare sur les lignes de process.
+
+Cette règle a une conséquence qu'il faut intégrer dès l'écriture du code : sur une liaison demi-duplex, on n'envoie pas et on n'écoute pas en même temps. Le maître écrit sa requête complète, relâche le bus, puis attend la réponse ; l'esclave fait exactement l'inverse. Toute tentative de superposition produit une collision qui détruit les deux trames, sans détection matérielle, contrairement au CAN qui règle le conflit tout seul. C'est aussi pourquoi un seul maître est admis par segment : deux maîtres simultanés, même parfaitement câblés, se brouillent mutuellement.
+
+## Terminer et câbler une liaison RS-485 qui tient
+
+La terminaison concentre la moitié des pannes de terrain, et elle tient en une phrase : une ligne de transmission se ferme par une résistance égale à son impédance caractéristique, à ses deux extrémités et nulle part ailleurs. Le câble industriel impose donc 120 ohms à l'extrémité la plus proche du premier appareil et autant à l'extrémité du dernier. Aucun appareil intermédiaire ne doit en porter une sur sa carte, sans quoi la ligne est surchargée et les fronts s'arrondissent.
+
+La vérification se fait en trente secondes, hors tension, au multimètre en position ohmmètre, entre les deux bornes A et B du segment. Deux terminaisons de 120 ohms en parallèle donnent environ 60 ohms : le câblage est conforme. Une seule terminaison donne environ 120 ohms : il en manque une, souvent sur un module qu'on a oublié de sauter ou sur un connecteur d'extrémité non monté. Une valeur élevée ou instable indique l'absence totale de terminaison, ou une mauvaise connexion. Cette mesure, faite avant toute mise sous tension, élimine une proportion considérable des diagnostics.
+
+Un second réglage, plus subtil, porte sur l'état du bus au repos. Quand aucun émetteur n'est actif, la différence entre A et B est naturellement proche de zéro, c'est-à-dire exactement dans la zone morte où le récepteur ne peut plus décider s'il lit un zéro ou un un. Deux remèdes existent : des résistors de polarisation qui tirent légèrement la ligne vers un état déterminé, ou un émetteur-récepteur moderne qui intègre cette fonction de façon transparente. Si votre liaison fonctionne par intermittence dès que le maître cesse d'interroger, cherchez de ce côté avant de soupçonner le câble.
+
+La topologie, elle, ne souffre aucune discussion : le bus est une ligne, pas un arbre. Les appareils se branchent l'un après l'autre, par des dérivations courtes de quelques dizaines de centimètres au maximum ; aucune étoile, aucun empilement de fils sous une borne, aucun long fils mort qui se comporterait comme une antenne. Les connecteurs vissés des modules industriels tiennent sous vibration, là où un bornier à vis desserré finit par créer une résistance intermittente. La masse de référence se raccorde aussi, sauf si vos équipements sont isolés.
+
+Le programme, enfin, doit respecter la cadence de la demi-duplex. Le fragment suivant, écrit pour une carte Arduino reliée à un module émetteur-récepteur classique, montre les trois gestes : activer l'émission, envoyer, relâcher le bus immédiatement après la dernière trame partie.
+
+```cpp
+const int PIN_DE = 7;
+const int PIN_RE = 8;
+
+void envoyer_RS485(const uint8_t *trame, size_t taille) {
+  digitalWrite(PIN_DE, HIGH);
+  digitalWrite(PIN_RE, HIGH);
+  delayMicroseconds(50);
+  Serial.write(trame, taille);
+  Serial.flush();
+  delayMicroseconds(50);
+  digitalWrite(PIN_DE, LOW);
+  digitalWrite(PIN_RE, LOW);
+}
+```
+
+Notez l'appel à la fonction d'attente d'achèvement de l'émission : sans elle, on désactive l'émetteur pendant que les derniers octets sont encore dans le tampon matériel, et la fin de trame disparaît. Le court délai avant et après l'activation couvre le temps de montée du module. Une fois ces réglages posés, le segment est prêt à recevoir un protocole : c'est l'objet de la section suivante, où nous construirons nos premières trames Modbus.
+
+```text
+CONTROLE DE CÂBLAGE RS-485 — à faire avant toute mise sous tension
+------------------------------------------------------------------
+1. Resistance entre A et B, alimentation coupee  : environ 60 ohms
+2. Nombre de terminaisons de 120 ohms           : exactement deux
+3. Longueur des derives sous borne               : quelques dizaines de cm
+4. Sens du blindage                              : raccorde a la masse en un seul point
+5. Continuite de la masse de reference           : mesuree, ou isolation assumee
+6. Aucun appareil intermediaire ne porte de terminaison
+7. Adresses Modbus uniques sur le segment         : verifiees un a un
+```

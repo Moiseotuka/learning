@@ -1,0 +1,632 @@
+Bienvenue dans ce chapitre consacré à la mise en production d'un modèle. Jusqu'ici, dans ce parcours data science, vous avez nettoyé des données, construit des variables, entraîné des classifieurs et des régresseurs, comparé leurs métriques et affiné des hyperparamètres. Tout ce travail vivait dans un notebook, ce document personnel où l'on expérimente, où l'on recommence, où l'on laisse parfois une cellule morte parce qu'elle raconte une erreur que l'on a comprise. Le notebook est l'atelier du chercheur : il est souple, il autorise la gourmandise du code, il accepte que l'on change d'avis à la dixième cellule. Mais l'atelier a une frontière très nette. Le jour où une personne extérieure à votre équipe, un utilisateur, un client ou un autre logiciel, a besoin de la réponse de votre modèle au moment précis où il la demande, le notebook ne suffit plus : il faut un service. Mettre un modèle en production, c'est précisément cette transformation : faire d'un artefact de recherche une fonctionnalité fiable, adressable, observable et maintenable dans la durée.
+
+Ce changement de statut est plus profond qu'un simple changement d'outil. Dans un notebook, vous êtes le seul utilisateur, vous voyez toutes les sorties, vous tolérez une exécution de quatre minutes et vous relancez à la main quand quelque chose casse. En production, votre code reçoit des dizaines ou des centaines de requêtes par seconde, certaines bien formées, d'autres incomplètes ou malicieuses, pendant que vous dormez, pendant que votre équipe est en congé, pendant qu'un déploiement de votre compagnie modifie la manière dont les données arrivent. Le modèle n'est plus seulement un algorithme : c'est un composant d'un système plus grand, qui a des contractualités, des attentes de latence, des exigences de sécurité et une responsabilité métier. Comprendre cette révolution d'échelle est la première compétence de ce chapitre, bien avant toute ligne de code, parce qu'elle détermine toutes les décisions techniques qui suivent.
+
+À la fin de cette leçon, vous saurez faire trois choses concrètes, et vous les aurez déjà manipulées dans du code exécutable. Premièrement, vous saurez concevoir une interface de programmation applicative, souvent appelée API, qui accepte un échantillon de données sous forme structurée, le valide, le transmet au modèle et renvoie une prédiction accompagnée des métadonnées qui la rendent traçables. Deuxièmement, vous saurez versionner un modèle : le rendre identifiable de manière unique, associer à chaque artefact les données et les métriques qui l'ont produit, et permettre un retour arrière sans panique. Troisièmement, vous saurez suivre la dérive, c'est-à-dire détecter le moment où les données reçues en production s'éloignent de celles de l'entraînement, où les prédictions dérivent elles-mêmes, et où la qualité métier descend sous un seuil qui impose un réentraînement. Ces trois compétences forment le triptyque de la mise en production : servir, tracer, surveiller.
+
+Nous illustrerons l'ensemble avec deux outils très répandus, que nous décrirons en français courant avant de les utiliser, sans que leur installation soit nécessaire pour pratiquer. FastAPI est un framework moderne, écrit en Python, qui permet de décrire une API avec quelques lignes de code, de valider automatiquement les requêtes et de servir du HTTP avec un moteur asynchrone rapide ; il produit en bonus une documentation interactive à partir de vos propres définitions de données. Joblib est une bibliothèque de persistance, très utilisée dans l'écosystème scikit-learn, qui enregistre un objet entraîné dans un fichier binaire et le relit à l'identique, compression comprise. Tous deux sont excellent choix en entreprise, mais aucun n'est indispensable pour comprendre le fond : c'est pourquoi les blocs de code de démonstration de ce chapitre n'utilisent que la bibliothèque standard de Python, afin que vous puissiez les exécuter tels quels, y compris dans un environnement Pyodide embarqué dans une page web, sans réseau ni installation. La logique que vous y apprendrez, elle, se transfère à FastAPI, à joblib et à n'importe quel orchestrateur sans le moindre changement de mentalité.
+
+Un dernier conseil avant de commencer, sur la manière d'aborder cette leçon. La mise en production se comprend par les pannes autant que par les succès : lisez chaque avertissement comme un incident que vous n'aurez pas à vivre. Réfléchissez systématiquement à la question que se posera l'ingénieur d'astreinte à trois heures du matin, à savoir d'où vient ce modèle, quelle version tourne, ce qu'il a reçu en entrée et pourquoi il a répondu cela. Cette obsession de la trace est la vraie culture de production, et elle se cultive dès le premier exemple.
+
+## Pourquoi la mise en production change tout
+
+La première différence tient au contrat. Un notebook n'a aucun contrat : il promet seulement à son auteur d'afficher quelque chose si tout se passe bien. Un service en production, lui, promet un comportement à des inconnus. Il promet qu'une requête conforme recevra une réponse dans un délai donné, qu'une requête non conforme recevra une erreur explicite et non un plantage, que le serveur restera joignable même si un panier de données est absurde, et que deux appels identiques produiront des réponses cohérentes. Ce contrat se traduit en spécifications vérifiables : schéma d'entrée, codes HTTP, budgets de latence, taux d'erreur toléré, disponibilité visée. Dès que vous le formulez, vous découvrez que votre modèle n'est qu'une brique parmi d'autres, entourée de validation, de journalisation, de mise en cache et de supervision.
+
+La deuxième différence est la concurrence. Dans un notebook, une seule exécution occupe le processeur et personne d'autre n'attend. Sur un service, plusieurs requêtes arrivent en même temps, souvent par dizaines ou par centaines, et chacune réclame une réponse rapide. Vous devez donc réfléchir au coût d'un appel : combien de temps votre fonction de prédiction consomme-t-elle, que se passe-t-il si elle est trop lente, faut-il une file d'attente, un découpage en lots, un cache pour les profils déjà calculés. Un modèle lent n'est pas seulement désagréable, il devient un point de saturation : la file s'allonge, les requêtes expirent, les clients abandonnent, et l'observabilité du système se dégrade au moment précis où elle serait le plus utile. La performance d'un modèle en production se mesure donc en deux dimensions, la qualité statistique de ses réponses et la vitesse avec laquelle il les délivre.
+
+La troisième différence concerne la reproductibilité. Un résultat de notebook est reproductible si vous gardez le fichier, les données et la version des bibliothèques ; en pratique, ces trois éléments vivent sur votre machine et parfois seulement dans votre tête. En production, il faut que n'importe quel collègue, depuis une machine vierge, puisse reconstruire exactement l'environnement qui a produit le service, puis déployer la même version du modèle avec les mêmes pré-traitements. Cette exigence impose de figer les dépendances, de versionner le code d'application comme le code de données, de figer la graine aléatoire lors de l'entraînement, et d'enregistrer l'empreinte des jeux d'entraînement. Sans cela, la question « quel modèle tourne réellement ? » n'a pas de réponse vérifiable, et toute analyse ultérieure d'un incident devient une enquête archéologique.
+
+La quatrième différence est la propriété. Un notebook appartient à une personne, un service appartient à une équipe et à ses utilisateurs. Quand la prédiction est faussée, quelqu'un doit le savoir, le diagnostiquer et le corriger : c'est ce qu'on appelle la responsabilité de service. Elle se traduit par des alertes, des tableaux de bord, des seuils décidés à l'avance et une procédure d'incident. Elle implique aussi que l'on distingue deux familles de défaillances, celles qui se voient immédiatement, comme une erreur 500 ou une absence de réponse, et celles qui restent invisibles, comme un modèle qui répond correctement mais sur des données qui ne ressemblent plus à celles de l'entraînement. Les secondes sont de loin les plus coûteuses, et tout le troisième temps de ce chapitre leur est consacré.
+
+Le tableau suivant résume, en termes concrets, ce que l'on abandonne et ce que l'on gagne en passant de l'atelier au service.
+
+```table
+| Aspect | Notebook d'expérimentation | Service de prédiction |
+| --- | --- | --- |
+| Utilisateur | Vous seul | Applications, humains, autres services |
+| Entrée | Cellules exécutées à la main | Requêtes validées par un schéma |
+| Sortie | Cellules affichées | Réponses JSON avec codes HTTP |
+| Fréquence | Quelques exécutions par jour | Des appels continus, parfois en rafale |
+| Défaillance | Message d'erreur visible | Incident à détecter, alerter, corriger |
+| Traçabilité | Historique du notebook | Journal de chaque appel, modèle et version |
+| Version | Dossier renommé à la main | Identifiant unique, retour arrière possible |
+| Dérive des données | Non observée | Mesurée, alertée, corrigée par réentraînement |
+```
+
+
+Ne pas assumer ces différences produit des pannes célèbres et très ordinaires à la fois : un chemin de fichier absolu qui n'existe que sur votre machine, un champ obligatoire que personne ne vérifie, un modèle qui renvoie un nombre alors que l'application attend une étiquette, une unité de mesure changée en amont, un modèle entraîné sur des données dupliquées qui semblent parfaites jusqu'au premier mois réel. Aucune de ces pannes n'exige une attaque : elles se produisent toutes seules, parce que le monde change plus vite que vos données d'entraînement. La mise en production n'est donc pas une formalité de fin de projet, c'est la discipline qui fait d'un modèle un produit.
+
+## Le parcours d'un modèle, de l'entraînement à la réponse
+
+Le parcours d'un modèle en production se décompose en étapes distinctes, chacune avec son livrable, son propriétaire et son critère de réussite. Comprendre cette chaîne dans son intégralité est utile avant d'écrire le moindre serveur, car chaque brique conditionne la suivante : un modèle mal sérialisé ne peut pas être versionné, un service sans journal ne peut pas être surveillé, une surveillance sans seuil ne peut pas déclencher de décision. Nous allons détailler chaque maillon, puis vous verrez le schéma d'ensemble sous forme de schéma ASCII, volontairement placé dans un bloc de code pour rester lisible dans tous les afficheurs.
+
+La première étape est l'entraînement, qui se déroule dans votre environnement de développement ou de calcul. Elle produit deux choses que l'on confond trop souvent : une métrique de performance, qui sert à convaincre, et un artefact, c'est-à-dire l'objet réellement exécutable, qui contient les paramètres appris, le pré-traitements associés et, idéalement, la liste des variables attendues avec leur ordre. Un modèle sans ses pré-traitements est un modèle incomplet : la normalisation, l'encodage des catégories, les seuils de transformation doivent voyager avec les coefficients, sinon la prédiction en production calculera quelque chose d'autre que ce que vous avez évalué. C'est l'une des causes les plus fréquentes d'écart entre les métriques de recette et les résultats réels.
+
+La deuxième étape est la sérialisation, qui transforme l'objet mémoire en un fichier que l'on peut copier, archiver et transmettre. joblib est l'outil courant dans l'écosystème scikit-learn parce qu'il gère efficacement les tableaux volumineux et la compression ; à l'autre bout du spectre, un modèle simple tient parfaitement dans un fichier JSON, qui a l'immense avantage d'être lisible, diffable et contrôlable sans bibliothèque spécialisée. Les deux approches répondent au même besoin : produire un artefact stable, dont le contenu puisse être vérifié par une empreinte numérique. Cette empreinte, calculée par une fonction de hachage comme SHA-256, deviendra l'identifiant objectif du modèle, indépendant de tout nom de fichier que quelqu'un pourrait écraser.
+
+La troisième étape est le versionnage et l'enregistrement. À partir du moment où l'artefact existe, il reçoit un numéro de version et il est déposé dans un registre, un emplacement central où l'on conserve les modèles, leurs métadonnées, leurs métriques de référence et leur historique. Le registre peut être un dossier Git, un stockage objet versionné, ou un outil dédié comme MLflow qui ajoute recherche, comparaison et historique. L'essentiel n'est pas l'outil mais la règle : chaque modèle déployé doit être traçable jusqu'à ses données d'entraînement et à son code source, et l'inverse doit être vrai aussi, c'est-à-dire qu'à partir d'un modèle en production, on doit pouvoir dire quel code l'a fabriqué. Sans cette bidirectionalité, les audits et les retours arrière deviennent impossibles.
+
+La quatrième étape est le déploiement, qui consiste à mettre le service à la disposition de ses appelants. On y range généralement plusieurs environnements : un environnement de développement pour l'équipe, un environnement de recette où l'on valide la version candidate avec des jeux de tests réalistes, puis la production, seul endroit où de vraies requêtes arrivent. Un déploiement réussi n'est pas seulement un serveur qui démarre : c'est un serveur dont on a vérifié les réponses de référence, dont on a mesuré la latence sur des charges représentatives, dont on a préparé le retour arrière, et dont on a confirmé que les journaux sont bien écrits. La règle du retour arrière, souvent négligée, se formule simplement : avant de publier une version, s'assurer que la précédente reste installable en une commande.
+
+La cinquième étape est le service lui-même, c'est-à-dire l'API qui écoute sur un port, accepte des requêtes, les valide, appelle le modèle et répond. La validation n'est pas une formalité : elle constitue la frontière entre le monde extérieur, imprévisible, et votre code, qui suppose des types propres. Une requête sans champ, avec un nombre à la place d'une chaîne, ou avec une valeur hors plage, doit être refusée proprement avec une erreur explicite, jamais laissée passer jusqu'au calcul. FastAPI, que nous avons évoqué, illustre bien cette philosophie : on décrit le schéma une fois, et la validation, la sérialisation de la réponse et la documentation sont déduites automatiquement de cette description unique.
+
+La sixième étape est la journalisation, souvent appelée logging. Chaque appel utile laisse une trace : horodatage, identifiant de requête, entrées reçues, prédiction produite, version du modèle, temps de calcul et, quand elle est disponible, l'étiquette réelle tardive. Cette trace est le carburant de tout le suivi qui vient ensuite : sans journal d'entrées, on ne mesure pas la dérive des données ; sans journal de sorties, on ne mesure pas la dérive des prédictions ; sans étiquettes retardées, on ne mesure pas l'erreur réelle. Il faut cependant rester sobre : journaliser des données sensibles ou des volumes bruts sans politique de rétention crée à la fois un risque juridique et un coût de stockage, donc on journalise des statistiques agrégées et des échantillons représentatifs plutôt que tout.
+
+La septième étape est la surveillance, qui transforme les journaux en indicateurs et les indicateurs en décisions. On y mesure la disponibilité et la latence, bien sûr, mais surtout la qualité : dérive des distributions en entrée, dérive des prédictions, dégradation des métriques quand les étiquettes arrivent, respect des seuils métier. La huitième étape boucle le système : le réentraînement, déclenché soit à calendrier fixe, soit par une alerte de dérive, soit par une baisse de performance constatée, qui produit une nouvelle version et repart dans le registre. Le cycle ainsi décrit n'a pas de fin, et c'est exactement ce qui distingue un système de production d'un modèle ponctuel.
+
+```text
+  [ données brutes ]
+          |
+          v
+  +-------------------+     +---------------------+
+  | entrainement      |---->| artefact + metrics  |
+  | (code, seed, jeu) |     | empreinte SHA-256   |
+  +-------------------+     +----------+----------+
+                                       |
+                                       v
+                            +---------------------+
+                            | registre / versions |
+                            | v1  v2  v3  (rollback)|
+                            +----------+----------+
+                                       |
+                                       v
+  [ appels ] ---> +-----------------------------+ ---> [ reponse JSON ]
+                  | API : validation + modele   |        + version
+                  | journal : entrees/sorties   |
+                  +-------------+---------------+
+                                |
+                                v
+                    +-------------------------+
+                    | suivi de derive (PSI,   |
+                    | metriques, alertes)     |
+                    +-----------+-------------+
+                                |
+                                v
+                    +-------------------------+
+                    | reentrainement + nouvelle|
+                    | version dans le registre |
+                    +-------------------------+
+```
+
+Ce schéma mérite d'être relu une seconde fois, car il contient les deux boucles qui structurent toute mise en production moderne. La boucle courte est la boucle de requête : entrée, validation, prédiction, journal, réponse, en quelques millisecondes, sans état conservé d'un appel à l'autre. La boucle longue est la boucle d'amélioration : agrégation des journaux, mesure de la dérive, décision humaine ou automatique, réentraînement, validation, nouvelle version. Une équipe mature sépare ces deux boucles dans son organisation comme dans son code, parce qu'elles n'ont ni la même fréquence, ni les mêmes responsables, ni le même niveau de risque. Confondre les deux, par exemple en réentraînant le modèle à chaque requête, conduit à des systèmes impossibles à valider ; ignorer la seconde, c'est livrer un modèle qui vieillit sans que personne ne le sache.
+
+## Ce qu'est réellement une API de prédiction
+
+Une API de prédiction, ou interface de programmation applicative, est un point d'entrée unique et stable par lequel d'autres logiciels sollicitent votre modèle. Concrètement, c'est un processus qui écoute sur un port réseau, comprend le protocole HTTP, accepte des messages structurés, généralement en JSON, et renvoie des messages structurés eux aussi. Le point essentiel est que l'appelant ne sait rien de votre modèle : il ignore si vous utilisez un réseau de neurones, une régression ou une règle de trois, il connaît seulement le contrat d'entrée et le contrat de sortie. Cette ignorance est une force : elle vous permet de remplacer le modèle, de changer sa version, de le mettre en cache ou de le faire tourner sur une autre machine, sans jamais casser l'application qui vous appelle.
+
+Prenons le contrat d'entrée. Une requête contient typiquement un identifiant d'appel optionnel, un horodatage implicite fourni par le transport, et un objet de caractéristiques, c'est-à-dire les valeurs sur lesquelles le modèle doit raisonner. La difficulté, toujours la même, est que le monde extérieur produit ce qu'il veut : des chaînes là où vous attendiez des nombres, des nombres négatifs pour une surface, des catégories inconnues, des champs oubliés, des objets imbriqués qui débordent la profondeur autorisée. La validation existe pour transformer ce chaos en une décision binaire, conforme ou non conforme, avant que la moindre ligne de votre logique métier ne s'exécute. Elle protège votre modèle, mais elle protège aussi l'appelant, qui reçoit un message précis indiquant le champ fautif au lieu d'une exception interne qui ne lui dirait rien.
+
+Le contrat de sortie porte la prédiction, bien sûr, mais il porte aussi du contexte, et c'est là que beaucoup de débutants s'arrêtent trop tôt. Une réponse utile contient au minimum la valeur prédite, l'identifiant de version du modèle qui l'a produite, un horodatage, parfois un intervalle d'incertitude ou les contributions des principales variables quand l'interprétabilité est demandée. Le pourquoi est simple : six mois plus tard, un support client réclamera l'explication d'une décision, et vous devrez reconstruire exactement ce que le système a répondu, avec quel modèle, sur quelles valeurs. Sans version et sans horodatage dans la réponse, cette reconstruction relève de la divination. La traçabilité se décrit donc dans le contrat lui-même, pas seulement dans vos journaux.
+
+Les codes de statut HTTP constituent le vocabulaire de ces décisions. Le code 200 annonce une prédiction réussie. Le code 422 signale que le corps de la requête est syntaxiquement présent mais ne respecte pas le schéma attendu, et c'est le code que l'on rencontre le plus souvent en pratique. Le code 401 ou 403 concerne l'authentification et l'autorisation. Le code 429 prévient qu'un appelant dépasse son quota, ce qui est fréquent quand un partenaire automatise vos appels. Le code 500 indique une erreur interne, toujours regrettable, et le code 503 annonce que le service est momentanément indisponible, par exemple pendant le chargement d'une nouvelle version. Choisir le bon code n'est pas de la sémantique vaine : les bibliothèques clientes réagissent différemment selon l'information, certaines réessaient automatiquement sur 429 et 503, jamais sur 422.
+
+```json
+{
+  "request_id": "8f2c1a",
+  "features": {
+    "surface": 35,
+    "pieces": 4,
+    "age": 8
+  }
+}
+```
+
+```json
+{
+  "prediction": 115900.0,
+  "unit": "EUR",
+  "model_version": "1.0.0",
+  "model_fingerprint": "c1bf756a6272",
+  "generated_at": "2026-01-15T10:00:00Z",
+  "request_id": "8f2c1a"
+}
+```
+
+Observez que la réponse echo le request_id reçu : ce simple renvoi permet de corréler, dans les journaux de l'appelant et les vôtres, une requête précise avec sa réponse, y compris quand les deux flux arrivent en rafale. Notez aussi la présence du fingerprint du modèle, cette empreinte calculée sur le contenu même de l'artefact : alors que le numéro de version peut être réutilisé par erreur, l'empreinte change nécessairement dès que le moindre octet du modèle change. Les deux se complètent, l'un pour l'humain, l'autre pour la machine.
+
+La conception d'une telle API suit quelques principes que l'on énonce mieux avant d'écrire que pendant. Le premier est la Stateless, ou absence d'état : aucune requête ne doit dépendre du contenu mémorisé de la précédente, sinon votre service devient impossible à répartir sur plusieurs instances et un redémarrage fait perdre des informations. Le second est l'idempotence des opérations de lecture : demander deux fois la même prédiction pour les mêmes entrées doit renvoyer la même réponse, ce qui suppose un modèle fixe entre les deux appels et, si vous misez en cache, une règle d'expiration explicite. Le troisième est la défense en profondeur : taille maximale du corps, nombre maximal de champs, bornes métier sur les valeurs, contrôle des types, puis seulement le modèle. Le quatrième est la sobriété des messages d'erreur : décrire ce qui ne va pas sans divulguer votre pile technique, vos chemins internes ou la nature exacte de vos paramètres.
+
+FastAPI illustre cette conception avec une élégance particulière, et il est utile de comprendre son mécanisme même sans l'installer. Vous décrivez une classe de données, un schéma pydantic, qui énumère les champs attendus avec leurs types et leurs bornes ; vous écrivez une fonction Python décorée qui reçoit ces données déjà validées et renvoie un autre objet, également typé ; le framework génère alors automatiquement la documentation, la validation, la sérialisation et le routage. Le résultat est que la spécification et le code ne peuvent plus diverger, puisqu'ils sont la même chose. Le service tourne ensuite derrière un serveur d'application comme uvicorn, éventuellement devant un équilibreur de charge, avec plusieurs workers si le calcul l'exige.
+
+Derrière cette façade élégante se posent des questions prosaïques qui décident pourtant de la qualité perçue. Combien de temps met le modèle pour répondre sur le 95e centile des requêtes, et pas seulement en moyenne, car c'est la queue de distribution que l'utilisateur retient. Que se passe-t-il si le modèle est cinq fois plus lent après une mise à jour : la file d'attente grandit, les timeouts se déclenchent, et les clients voient des 503 qui n'ont rien à voir avec la validité de leurs requêtes. Comment gérez-vous le démarrage à froid, ce moment où le service répond déjà mais où le modèle n'est pas encore chargé en mémoire, qui impose soit un état de santé explicite, soit un refus poli tant que le modèle n'est pas prêt. Ces questions n'appartiennent pas au domaine statistique, elles appartiennent au domaine du service, et c'est précisément ce que signifie le mot production.
+
+Voici comment un appel complet se déroule, de bout en bout, lorsque tout est correctement organisé. L'appelant envoie une requête POST vers un chemin explicite, par exemple la racine suivie de predict. Le serveur accepte la connexion, lit le corps avec une limite de taille, décode le JSON, valide le schéma, détecte les champs manquants ou aberrants et, en cas d'anomalie, répond par un 422 sans jamais toucher au modèle. Si tout est conforme, il convertit les valeurs dans le format exact attendu par le modèle, appelle la fonction de prédiction, récupère le résultat, y annexe la version, l'empreinte et l'horodatage, sérialise le tout et renvoie un 200. En parallèle, une ligne de journal est écrite avec les mêmes éléments. Enfin, l'appelant décode la réponse et la met en forme pour son utilisateur. Toute la sophistication tient dans les branches de contrôle, pas dans la ligne de calcul elle-même.
+
+
+## Sérialiser un modèle sans dépendance externe
+
+La sérialisation consiste à convertir un objet vivant en mémoire, avec ses méthodes et ses références, en une suite d'octets stable que l'on peut écrire sur un disque, copier, transmettre et relire plus tard à l'identique. Pour un modèle, l'enjeu est double : il faut conserver les paramètres appris, bien sûr, mais aussi tout ce qui permet de les interpréter correctement, à savoir l'ordre des variables, les unités, le pré-traitements éventuel, la date d'entraînement et l'identifiant du jeu de données. Un fichier qui ne contient que les coefficients est un fichier dangereux, car il oblige à deviner le reste, et la devinette en production est toujours une source d'incidents silencieux.
+
+joblib est la solution habituelle dans l'écosystème scikit-learn. Elle enregistre un objet Python quelconque dans un fichier binaire, souvent compressé, en traversant sa structure interne ; le recharger restitue un objet qui a l'apparence exact du modèle entraîné, méthodes de prédiction comprises. Son intérêt devient évident quand les tableaux de coefficients pèsent des centaines de mégaoctets, car l'écriture reste rapide et le chargement se fait en une seule opération. Sa contrepartie tient en un avertissement que la documentation scikit-learn répète : un fichier joblib est un fichier de confiance. Le chargement d'un tel fichier exécute du code de désérialisation, il ne doit donc provenir que d'une source authentifiée, idéalement d'un registre interne accessibles en lecture seule, et jamais d'une pièce jointe ou d'un lien reçu par message.
+
+L'alternative, que nous allons pratiquer ici parce qu'elle est entièrement pédagogique et parfaitement honnête en usage réel, consiste à représenter le modèle sous forme d'un dictionnaire Python puis à l'écrire en JSON. Un modèle linéaire, par exemple, se réduit à un intercept et à un coefficient par variable : rien de plus simple à exprimer en clair. Le format JSON présente trois avantages décisifs pour apprendre et pour auditer. Il est lisible par un humain, ce qui permet de vérifier d'un coup d'œil qu'un coefficient n'a pas pris une valeur absurde. Il est universel, donc consommable par n'importe quel langage, y compris par l'application qui appellera votre API. Il est strict, puisqu'une valeur non sérialisable, comme un nombre indéfini ou un objet maison, provoque une erreur immédiate plutôt qu'un fichier corrompu.
+
+Le passage du dictionnaire à la chaîne de caractères se fait avec la fonction json.dumps, qui accepte plusieurs paramètres utiles. Le paramètre indent déplie le résultat sur plusieurs lignes, ce qui rend le fichier lisible et diffable. Le paramètre sort_keys place les clés dans un ordre constant, si bien que deux écritures du même modèle produisent exactement la même chaîne, condition nécessaire pour comparer des versions par simple égalité de texte. Le paramètre ensure_ascii permet de conserver ou non les accents ; en le laissant actif, le fichier reste compatible avec les environnements qui supposent une sortie ASCII, et c'est le réglage prudent pour un artefact que l'on archivera longtemps. L'inverse, json.loads, reconstruit le dictionnaire à partir de la chaîne, et c'est tout le cycle de vie dont nous avons besoin.
+
+```python
+import json
+
+modele = {
+    "version": "1.0.0",
+    "features": ["surface", "pieces", "age"],
+    "intercept": 12000.0,
+    "coefficients": {"surface": 2100.0, "pieces": 8500.0, "age": -450.0},
+}
+
+payload = json.dumps(modele, indent=2, sort_keys=True, ensure_ascii=False)
+print(payload)
+
+restaure = json.loads(payload)
+print(restaure == modele)
+print(restaure["coefficients"]["surface"])
+```
+
+Exécutez ce bloc et observez deux phénomènes. Le premier est que la sortie est un texte structuré, avec des accolades, des guillemets et des points-virgules de fin de chaîne, que vous pourriez ouvrir dans n'importe quel éditeur : c'est votre modèle, rendu transparent. Le deuxième est que la comparaison d'égalité renvoie True, ce qui signifie que le cycle écriture puis lecture n'a rien perdu. Cette propriété est le socle du versionnage par empreinte : si la sérialisation est déterministe, alors deux modèles identiques ont nécessairement la même représentation textuelle, et deux modèles différents en ont forcément une distincte.
+
+Reste à transformer cette représentation en identifiant. La bibliothèque hashlib propose plusieurs fonctions de hachage, dont SHA-256, qui calcule une empreinte de 64 caractères hexadécimaux à partir d'une chaîne quelconque. Trois propriétés expliquent son usage : la fonction est déterministe, donc la même entrée donne toujours la même empreinte ; elle est sensible, donc la moindre modification, même l'ajout d'un espace, change complètement le résultat ; et l'inverse est impossible, on ne peut pas reconstituer la chaîne à partir de l'empreinte. En pratique, on tronque souvent l'empreinte à une douzaine de caractères pour l'afficher dans les journaux et les réponses, tout en conservant la valeur complète pour les comparaisons internes.
+
+```python
+import hashlib
+
+def fingerprint(payload):
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+corps_a = json.dumps({"poids": 1.5}, sort_keys=True)
+corps_b = json.dumps({"poids": 1.5000001}, sort_keys=True)
+print(fingerprint(corps_a))
+print(fingerprint(corps_b))
+print(fingerprint(corps_a) == fingerprint(corps_b))
+```
+
+Voici maintenant la fonction de prédiction, c'est-à-dire la partie qui remplace réellement le modèle entraîné. Elle est délibérément pure : elle ne lit aucun fichier, n'écrit rien, ne dépend d'aucune bibliothèque, et renvoie toujours le même résultat pour les mêmes arguments. Cette pureté a une conséquence pratique très appréciée en production, elle se teste sans préparation. Notez également la vérification en tête de fonction : refuser explicitement une entrée incomplète, en nommant la donnée manquante, vaut mieux que laisser Python lever une erreur de clé absente, beaucoup moins claire pour l'appelant qui lira la réponse.
+
+```python
+def predict(model, features):
+    for name in model["features"]:
+        if name not in features:
+            raise ValueError("caracteristique manquante : " + name)
+    total = float(model["intercept"])
+    for name in model["features"]:
+        total += float(model["coefficients"][name]) * float(features[name])
+    return round(total, 2)
+
+print(predict(modele, {"surface": 35, "pieces": 4, "age": 8}))
+print(predict(modele, {"surface": 20, "pieces": 2, "age": 25}))
+```
+
+Assemblons les pièces dans une séquence de travail complète, telle qu'on l'exécute réellement avant une mise en ligne. On sérialise, on écrit, on relit, on recalcule, on compare. La comparaison d'empreinte après réécriture est le test de non-régression le plus économique qui soit : si l'empreinte publiée ne correspond pas à l'artefact relu, c'est que le chemin d'accès, l'encodage ou la fonction de sérialisation a changé, et il faut arrêter le déploiement avant d'aller plus loin.
+
+```python
+import json
+
+def save_model(model, path="model.json"):
+    payload = json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    return fingerprint(payload)
+
+def load_model(path="model.json"):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+empreinte = save_model(modele)
+charge = load_model()
+print("empreinte :", empreinte)
+print("stable    :", empreinte == save_model(charge))
+print("prediction:", predict(charge, {"surface": 35, "pieces": 4, "age": 8}))
+```
+
+Le tableau comparatif suivant ne cherche pas à départager les formats, mais à éclairer le choix selon la situation.
+
+```table
+| Critère | joblib binaire | Modèle en JSON |
+| --- | --- | --- |
+| Lisibilité humaine | Aucune, binaire compressé | Totale, texte structuré |
+| Volumétrie | Très compact sur les gros objets | Plus verbeux, compressible ensuite |
+| Portabilité | Python et écosystème compatible | Tout langage, tout outil |
+| Audit et diff | Comparaison difficile | Comparaison ligne à ligne |
+| Confiance | Chargement exécutant du code | Lecture de données déclaratives |
+| Usage conseillé | Grands modèles scikit-learn | Petits modèles, contrats, métadonnées |
+```
+
+
+En entreprise, on combine souvent les deux : l'artefact lourd reste au format natif de la bibliothèque d'entraînement, tandis qu'un fichier JSON de métadonnées l'accompagne toujours, contenant version, empreinte, liste des variables, métriques de référence et emplacement exact de l'artefact. Ce compagnonnage donne le meilleur des deux mondes, performance de chargement et traçabilité immédiate, et il évite la situation où le seul moyen de connaître la version d'un modèle est d'ouvrir un binaire avec le bon outil.
+
+## Versionner chaque artefact
+
+Versionner un modèle, ce n'est pas ajouter un suffixe au nom du fichier. C'est garantir que chaque état du système est identifiable, reproductible et, si nécessaire, restaurable. Une pratique courante consiste à combiner deux formes d'identifiant : un numéro de version lisible par les humains, généralement de la forme majeure, mineure, patch, qui raconte la nature du changement, et une empreinte calculée sur le contenu, qui constitue la preuve objective. La première sert à la communication et à la décision ; la seconde sert à la vérification. Aucune des deux ne remplace l'autre, car un numéro peut être attribué deux fois par erreur, tandis que l'empreinte ne ment pas.
+
+Le sens des trois nombres se fixe rapidement. Un changement de version majeure correspond à une rupture de contrat : une variable disparaît, l'unité change, le type de sortie passe de nombre à étiquette, et l'application appelante doit être adaptée. Une version mineure signale une évolution compatible, par exemple l'ajout d'un champ facultatif dans la réponse ou l'amélioration du modèle sans modifier les entrées attendues. Une version patch couvre un correctif sans effet visible sur le contrat, comme une correction de calcul ou une mise à jour de dépendances de build. Cette discipline évite le débat éternel sur la signification des chiffres et permet à l'équipe de production de décider d'un effort de migration avant même d'avoir lu le détail.
+
+Pour que le versionnage soit utile, il faut lui associer des métadonnées minimales, car un identifiant isolé n'a aucune valeur analytique. Chaque enregistrement de registre contient au minimum l'identifiant et l'empreinte, la date de création, l'emplacement du fichier, le commit du code source, l'empreinte ou la référence du jeu d'entraînement, les hyperparamètres, la liste des variables dans leur ordre exact, les métriques mesurées sur l'ensemble de validation, et enfin la personne ou le processus responsable de la publication. Ce jeu de champs est court à produire, et il transforme une simple conservation de fichiers en une base d'interrogation : quel modèle tournait le 3 mars, quelles étaient ses performances, qui l'a approuvé.
+
+```python
+import json
+from datetime import datetime, timezone
+
+def build_record(model, path, validation_metrics, source_commit):
+    payload = json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False)
+    return {
+        "version": model["version"],
+        "fingerprint": fingerprint(payload),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "artifact_path": path,
+        "features": list(model["features"]),
+        "metrics": dict(validation_metrics),
+        "source_commit": source_commit,
+        "stage": "staging",
+    }
+
+registre = [build_record(
+    modele,
+    "model.json",
+    {"rmse": 4820.5, "mae": 3110.7, "r2": 0.86},
+    "9f1c2ab",
+)]
+print(json.dumps(registre[0], indent=2, sort_keys=True))
+```
+
+La notion de stage mérite une attention particulière, car elle est à l'origine de nombreuses mises en ligne accidentelles. Un modèle suit ordinairement trois états, candidat, recette, production, et seul le dernier sert de vrais utilisateurs. Le passage d'un état à l'autre n'est jamais automatique à partir du moment où le fichier est écrit : il doit être une décision, appuyée par des critères écrits, par exemple des métriques supérieures au modèle en place sur un jeu de test tenu à part, un contrôle des distributions des variables clés, et un avis humain. Une règle simple et efficace consiste à n'autoriser qu'une seule transition à la fois, de sorte que le modèle de production ne puisse être remplacé que par un modèle déjà validé en recette.
+
+Le déploiement lui-même doit prévoir le retour arrière avant l'installation, jamais après. Concrètement, on conserve toujours la version précédente intacte sur la machine ou dans l'image, avec sa configuration et son jeu de variables, de sorte qu'un basculement revient à modifier un raccourci, une variable d'environnement ou une entrée de table, plutôt qu'à reconstruire quoi que ce soit. On vérifie ensuite la nouvelle version par des appels de référence, ces quelques requêtes dont on connaît les réponses exactes, exécutées juste après la bascule. Si l'une d'elles échoue, on revient à la version précédente, on note l'incident, et seulement ensuite on analyse. Cette séquence, d'abord revenir puis comprendre, protège les utilisateurs de votre curiosité.
+
+La coordination entre versions de code et versions de modèle est le dernier point délicat. Le code applicatif qui prépare les caractéristiques peut changer indépendamment du modèle, et l'inverse est tout aussi fréquent : un nouveau modèle peut exiger une variable que l'ancien ignorait. Pour éviter l'incompatibilité silencieuse, deux habitudes suffisent. La première consiste à faire déclarer au modèle la liste exacte des variables qu'il attend, avec leur ordre, et à faire échouer bruyamment toute requête qui ne la respecte pas. La seconde consiste à publier code et modèle dans la même unité de déploiement, de sorte que l'un ne puisse pas avancer sans l'autre. On retrouve la même logique que pour les migrations de base de données : on ne modifie jamais deux côtés d'un contrat sans coordination.
+
+```python
+import json
+
+VERSIONS = {
+    "1.0.0": {"status": "production", "fingerprint": "c1bf756a6272"},
+    "1.1.0": {"status": "staging", "fingerprint": "7d0aa41e55f2"},
+    "0.9.0": {"status": "archive", "fingerprint": "2be917c40d81"},
+}
+
+def promote(registry, version, target="production"):
+    if version not in registry:
+        raise KeyError("version inconnue : " + version)
+    for other in registry:
+        if registry[other]["status"] == "production":
+            registry[other]["status"] = "archive"
+    registry[version]["status"] = target
+    return registry[version]["status"]
+
+print(promote(VERSIONS, "1.1.0"))
+print(json.dumps(VERSIONS, indent=2, sort_keys=True))
+```
+
+Le tableau ci-dessous résume le rôle de chaque métadonnée et la question à laquelle elle répond.
+
+```table
+| Métadonnée | Question à laquelle elle répond |
+| --- | --- |
+| Version sémantique | Quel changement a eu lieu pour les appelants ? |
+| Empreinte SHA-256 | Ce fichier est-il bien celui qui a été validé ? |
+| Date et heure | Quand cette version a-t-elle été publiée ? |
+| Commit source | Quel code a produit cet artefact ? |
+| Référence des données | Sur quelles observations le modèle a-t-il appris ? |
+| Métriques de validation | À quelle qualité pouvait-on s'attendre en ligne ? |
+| Étage courant | Où ce modèle se trouve-t-il dans son parcours ? |
+| Responsable | Qui décide de le promouvoir ou de le rétrograder ? |
+```
+
+
+Enfin, il faut accepter une vérité simple : le registre n'a de valeur que s'il est consultable par ceux qui en ont besoin. Une table tenue à la main dans un tableur se périme dès que la première publication exceptionnelle l'oublie. Préférez une source unique, versionnée avec le code, dont la mise à jour soit une étape explicite du processus de publication, ou un outil dédié comme MLflow qui rend l'enregistrement presque involontaire. L'objectif est que le modèle publié et son entrée de registre ne puissent pas diverger, parce que la divergence exactement ici est celle qu'on découvre un mois plus tard, quand il faut réexpliquer une décision prise par le système.
+
+## Publier : du fichier à l'application
+
+Publier un modèle revient à rendre son artefact accessible au processus qui servira les requêtes, et à le faire sans interruption perceptible. Plusieurs topologies coexistent, et le choix dépend moins de la mode que de la forme de votre système. La première consiste à embarquer le modèle dans le processus applicatif, ce qui donne la latence la plus faible puisqu'aucun appel réseau n'est nécessaire, mais impose de redémarrer l'application à chaque changement de modèle. La deuxième consiste à exposer un service dédié, souvent appelé microservice de prédiction, auquel l'application se connecte par réseau : c'est la topologie la plus modulaire, qui permet des cycles de publication indépendants, au prix d'un aller-retour supplémentaire et d'une responsabilité partagée. La troisième passe par un outil dédié à l'inférence, ou par un format d'échange comme ONNX quand plusieurs langages doivent consommer le même artefact.
+
+Quelle que soit la topologie, le chargement se fait une seule fois au démarrage, jamais pendant la première requête. Lire un fichier depuis le disque et l'interpréter coûte cher, surtout si le modèle est volumineux ; le faire à chaque appel rendrait la latence imprévisible et exposerait le service à une panne de stockage au pire moment. On adopte donc le schéma du préchargement : au démarrage, le processus charge l'artefact, vérifie son empreinte contre celle annoncée dans le registre, exécute quelques appels de référence, puis ouvre le port réseau. Tant que ces étapes ne sont pas achevées, l'endpoint de santé répond que le service n'est pas prêt, ce qui permet à l'orchestrateur de patienter au lieu d'envoyer des requêtes dans le vide.
+
+La gestion des ressources accompagne ce préchargement. Un modèle qui consomme beaucoup de mémoire limite le nombre de processus que vous pourrez lancer sur une machine ; un modèle gourmand en processeur impose une file d'attente ou un découpage par lots pour lisser la charge. Le lot, ou batching, consiste à agréger plusieurs requêtes en un seul appel au modèle, ce qui augmente le débit au prix d'une légère attente pour la première requête du lot. Dans beaucoup de cas réels, cette optimisation fait gagner un facteur entier sur le coût d'inférence, à condition de mesurer la latence du 95e centile avant et après, sinon on améliore le débit en ruinant la réactivité perçue.
+
+Le secret, l'authentification et la limitation de débit appartiennent également à la publication. Une API de prédiction expose un investissement, parfois des données sensibles à travers les caractéristiques fournies, et un modèle qui peut être interrogé sans contrôle peut être extrait par épuisement : on l'interroge massivement sur des points choisis et on reconstitue ses frontières de décision. On limite donc le nombre d'appels par période et par client, on journalise les dépassements, on sépare les clés par environnement, et on interdit toute clé de production dans un dépôt de code. Ces mesures ne demandent pas d'infrastructure exotique, elles demandent d'être décidées avant la première mise en ligne, car les corriger après coup oblige à migrer les clients existants.
+
+Enfin, la publication inclut sa propre communication. À l'instant où la nouvelle version reçoit ses premières requêtes, deux métriques doivent être surveillées avec une attention particulière : le taux d'erreur et la latence. Une hausse immédiate de l'un ou de l'autre signale un problème de compatibilité ou de performance, bien avant que quiconque ne remarque une dégradation de la qualité métier, qui elle n'apparaît qu'avec le temps et les étiquettes. Le réflexe à instaurer est un période d'observation dédiée, pendant laquelle un humain garde les tableaux de bord ouverts et reste prêt à basculer vers la version précédente. Cette discipline, un peu coûteuse en présence humaine, se mesure beaucoup moins cher qu'un incident prolongé.
+
+
+## Tester avant de publier
+
+En production, un test n'est pas un exercice scolaire, c'est un filet de sécurité. Il existe trois familles de tests qui concernent directement la mise en d'un modèle, et elles répondent à trois questions différentes. Les tests de contrat vérifient que l'API accepte bien ce qu'elle prétend accepter et refuse le reste. Les tests de non-régression vérifient que le modèle donne encore les réponses attendues sur un jeu de cas dont on conserve les sorties. Les tests de robustesse vérifient le comportement aux frontières, avec des valeurs extrêmes, absentes ou mal typées. Une équipe qui ne fait que la première famille peut déployer un modèle faux avec succès total : la réponse arrive, bien formée, et complètement fausse.
+
+Le test de contrat est le plus simple à automatiser et le plus rentable à court terme. On décrit un ensemble de requêtes, certaines valides dont on connaît le code de retour attendu, d'autres invalides dont on sait qu'elles doivent être rejetées, puis on exécute le scénario complet contre l'API déployée. Environnement de recette, donc, et non poste de développement, car c'est la configuration réelle qu'on veut valider. Le résultat doit être binaire et bloquant : un échec empêche la publication, sans exception ni contournement manuel, sinon le test devient une habitude que l'on s'autorise à ignorer sous la pression.
+
+```python
+import json
+
+def check_contract(response_status, body, expected_status=200):
+    if response_status != expected_status:
+        return False, "status " + str(response_status)
+    if expected_status == 200 and "prediction" not in body:
+        return False, "champ prediction absent"
+    if expected_status == 422 and "detail" not in body:
+        return False, "detail d'erreur absent"
+    return True, "ok"
+
+print(check_contract(200, {"prediction": 115900.0}))
+print(check_contract(422, {"detail": "champ surface manquant"}, 422))
+print(check_contract(500, {"prediction": 1.0}))
+```
+
+Le test de non-régression, lui, porte sur le modèle et non sur le transport. On constitue une petite collection de cas de référence, une dizaine suffit au départ, couvrant les situations ordinaires et les cas limites : un bien neuf, un bien très ancien, une surface minimale, une valeur manquante. Pour chacun, on enregistre l'entrée et la sortie exacte du modèle validé. Après chaque changement de modèle ou de code de préparation, on rejoue la collection et on compare à la valeur stockée avec une tolérance explicite, souvent quelques unités dans la dernière décimale, parce que deux machines peuvent arrondir différemment. Cette collection se place à côté du code, se versionne avec lui, et constitue la mémoire institutionnelle de ce que le système promet de renvoyer.
+
+Les tests de robustesse interrogent les limites. Que renvoie la fonction de prédiction si une variable vaut zéro, si elle est négative, si elle est absente du dictionnaire, si elle est fournie en texte alors qu'on attend un nombre. Chaque réponse acceptable doit être décidée à l'avance : soit une erreur explicite, soit une valeur par défaut documentée, mais jamais une exception non maîtrisée qui se propagera jusqu'à l'appelant sous la forme d'une erreur interne. Le principe est simple à énoncer : toute entrée possible doit produire une réponse prévisible, y compris les entrées absurdes, et la meilleure manière de le garantir est de les tester une par une.
+
+Le dernier niveau est le test de charge, qui mesure le comportement du service quand les requêtes se multiplient. On simule un débit représentatif, plusieurs fois le pic attendu, et on observe trois grandeurs : le taux d'erreur, la latence médiane et la latence du 95e centile. Une moyenne rassurante peut cacher une queue de distribution catastrophique, c'est pourquoi le centile supérieur est systématiquement surveillé. Le test de charge se déroule sur la configuration exacte de production, même réduite, car une machine de développement généreuse trompe l'appréciation : le goulot d'étranglement apparaît rarement là où on l'attendait.
+
+## Déployer et tenir le service
+
+Le déploiement commence par la préparation de l'environnement, et son principe directeur est la reproductibilité. On fige les versions de toutes les dépendances, y compris celles qui semblent neutres, on enregistre la version de l'interpréteur, et on écrit une commande unique capable de reconstruire l'état complet à partir d'une machine vierge. Cette exigence a un coût réel, quelques heures de travail initial, et un gain énorme, la disparition de la catégorie entière des incidents liés à la différence entre la machine de développement et celle de production. Un environnement décrit par du code, plutôt que par une documentation datée, est un environnement que l'on peut recréer à volonté.
+
+La conteneurisation est la réponse courante à ce besoin. Un conteneur regroupe l'application, ses dépendances et sa configuration dans une image immuable, identifiée elle aussi par une empreinte, qui s'exécute de manière identique sur l'ordinateur du développeur, la machine d'intégration et le serveur de production. On ajoute souvent un manifeste qui décrit les ressources nécessaires, le nombre de réplicas, les seuils de santé et la politique de redémarrage. Le point essentiel tient dans l'immuabilité : on ne modifie jamais un conteneur en production, on en construit un nouveau, on le teste, puis on le substitue. Ainsi la description de l'état en production est toujours exacte, parce qu'il n'y a qu'une source, l'image versionnée.
+
+La mise en route suit un ordre strict que l'on appelle le démarrage à froid. Le processus démarre, charge le modèle depuis le stockage, vérifie son empreinte contre celle déclarée au registre, exécute deux ou trois appels de référence dont on connaît la réponse, prépare les structures de journalisation, et seulement ensuite ouvre son port d'écoute. Tant que ces étapes ne sont pas terminées, l'endpoint de santé répond un état non prêt, ce qui évite d'envoyer des requêtes à un processus qui ne peut pas encore y répondre. Ce protocole est court à écrire et il évite la classe d'incidents la plus déconcertante pour un appelant, recevoir des réponses d'un service qui croit être prêt alors que son modèle n'est pas chargé.
+
+La supervision, ou observabilité, repose sur trois piliers qui se complètent. Les métriques agrègent des compteurs et des durées, taux d'appels, taux d'erreur, latence, taille moyenne des lots, et se visualisent sur un tableau de bord. Les journaux conservent le détail de chaque événement significatif, sous forme de lignes structurées que l'on peut filtrer. Les traces, plus fines encore, relient les étapes d'un appel à travers plusieurs processus quand le système est distribué. Pour la mise en production d'un modèle, une règle simple évite bien des débats : journalisez l'essentiel de manière structurée, une ligne JSON par événement, avec les mêmes champs d'un jour à l'autre, sans jamais varier la forme sans avertissement.
+
+```python
+import json
+from datetime import datetime, timezone
+
+def log_prediction(path, model_version, features, prediction, elapsed_ms):
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "model_version": model_version,
+        "features": features,
+        "prediction": prediction,
+        "elapsed_ms": elapsed_ms,
+    }
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    return entry
+
+print(log_prediction("predictions.jsonl", "1.0.0",
+                     {"surface": 35, "pieces": 4, "age": 8},
+                     115900.0, 3))
+```
+
+Le format journal que vous venez de produire, une ligne JSON par appel, est devenu un standard de fait parce qu'il se traite sans base de données : un simple outil de filtrage suffit pour en extraire les entrées du dernier jour, et ces entrées sont exactement la matière première du calcul de dérive que nous allons aborder. Attention toutefois à la politique de rétention et à la sobriété : conserver indéfiniment des caractéristiques individuelles peut violer une obligation légale, tandis que conserver uniquement des agrégats par heure rend parfois impossible l'analyse d'un incident précis. On tranche généralement en conservant des échantillons représentatifs, pseudonymisés quand la donnée l'exige, et des agrégations horaires pour la surveillance continue.
+
+La gestion des incidents accompagne la supervision. Un alerte utile décrit un fait mesurable et appelle une action connue : plus de dix pour cent d'erreurs sur cinq minutes, latence du 95e centile au-delà du seuil accepté, absence de requêtes là où on en attend, empreinte de modèle différente de celle déclarée. Une alerte qui décrit un symptôme vague, sans seuil ni action, produit à la longue la fatigue d'alerte, c'est-à-dire l'état où personne ne regarde plus les messages. Chaque alerte réellement déclenchée doit déclencher un retour d'expérience court, notant ce qui a été fait, ce qui a manqué et quelle modification du système évitera la récidive.
+
+Enfin, il faut écrire la procédure de retour arrière avant le premier déploiement, et la tester une fois, en conditions réalistes. Elle tient en quelques lignes : identifier la version précédente, restaurer son artefact, redémarrer, rejouer les appels de référence, vérifier les métriques, puis seulement analyser la cause. Si cette procédure n'a jamais été exécutée, elle ne fonctionnera pas le jour où elle sera nécessaire, parce qu'il manquera soit une configuration, soit un secret, soit une étape oubliée. Une restauration chronométrée et réussie en conditions réelles est la meilleure preuve que votre déploiement est maîtrisé.
+
+## Détecter la dérive des données
+
+La dérive des données désigne le décalage entre la distribution des caractéristiques observées en production et celle des données sur lesquelles le modèle a été entraîné. Elle survient pour des raisons banales et fréquentes : une campagne marketing attire une nouvelle clientèle, une réglementation change un champ de saisie, un capteur vieillit, un fournisseur de données modifie son unité, une saison se transforme. Aucun de ces événements n'est une erreur, et pourtant chacun peut rendre un modèle faux, parce que le modèle a appris des régularités propres à une population qui n'est plus la vôtre. La dérive est donc un phénomène normal dont il faut seulement mesurer l'amplitude et la date.
+
+La métrique la plus répandue pour ce mesure s'appelle l'indice de stabilité de population, ou PSI, très utilisé en analytique de risque. Le calcul se déroule en quatre temps. On découpe la distribution de référence, celle de l'entraînement, en classes, typiquement dix classes de fréquences égales appelées quantiles. On compte les mêmes proportions sur la distribution de production en utilisant exactement les mêmes bornes. On remplace les proportions nulles par une très petite valeur pour éviter une division par zéro. Puis on additionne, pour chaque classe, le produit de l'écart de proportions par le logarithme népérien de leur rapport.
+
+Les seuils d'interprétation sont globalement admis et constituent un bon point de départ, à adapter toutefois à votre métier. En dessous de 0.10, les deux distributions sont considérées comme stables et aucune action n'est requise. Entre 0.10 et 0.20, la stabilité se dégrade et l'on passe en vigilance renforcée, avec une fréquence de calcul accrue et une inspection des variables concernées. Au-delà de 0.20, la dérive est forte : il faut alerter l'équipe, rechercher la cause racine et préparer un réentraînement, car le modèle raisonne sur des données qu'il n'a jamais vues. Ces valeurs ne sont pas des lois physiques : un PSI de 0.15 peut être critique sur une variable qui gouverne une décision réglementaire, tandis qu'un PSI plus élevé peut être tolérable sur une variable sans influence sur la sortie.
+
+```python
+import math
+
+def quantile_bounds(reference, bins=10):
+    ordered = sorted(reference)
+    bounds = []
+    for i in range(1, bins):
+        position = (len(ordered) - 1) * i / bins
+        low = int(math.floor(position))
+        high = int(math.ceil(position))
+        if low == high:
+            bounds.append(ordered[low])
+        else:
+            weight = position - low
+            bounds.append(ordered[low] * (1 - weight) + ordered[high] * weight)
+    return bounds
+
+def proportions(values, bounds):
+    edges = [float("-inf")] + bounds + [float("inf")]
+    counts = [0] * (len(edges) - 1)
+    for value in values:
+        for index in range(len(bounds)):
+            if value <= edges[index + 1]:
+                counts[index] += 1
+                break
+        else:
+            counts[-1] += 1
+    total = max(len(values), 1)
+    return [max(count / total, 1e-6) for count in counts]
+
+def psi(reference, current, bins=10):
+    bounds = quantile_bounds(reference, bins)
+    expected = proportions(reference, bounds)
+    observed = proportions(current, bounds)
+    return sum((o - e) * math.log(o / e) for o, e in zip(observed, expected))
+
+reference = [22, 30, 41, 28, 35, 29, 33, 37, 31, 26, 24, 39]
+stable = [23, 31, 40, 27, 34, 30, 36, 25, 32, 28, 38, 29]
+shifted = [55, 62, 71, 58, 66, 60, 69, 54, 64, 57, 73, 61]
+print("stable :", round(psi(reference, stable), 4))
+print("shifted:", round(psi(reference, shifted), 4))
+```
+
+Exécutez le bloc et observez l'écart de comportement : la première comparaison reste très basse, la seconde explose au point de franchir sans discussion le seuil d'alerte. C'est exactement l'usage attendu, non pas un chiffre décoratif, mais une alarme calibrée. En pratique, on calcule le PSI par variable, on conserve un historique horaire ou quotidien, et on présente les résultats sous forme de tableau triable, afin que l'opérateur voie immédiatement les deux ou trois variables responsables du mouvement global plutôt qu'un indice agrégé unique.
+
+Un point métrique souvent négligé mérite d'être souligné : le PSI mesure des proportions, il ne dit rien de la direction du préjudice métier, ni de l'ampleur de l'erreur qui en résulte. Une distribution peut bouger sans que la performance chute, et l'inverse est tout aussi vrai. C'est pourquoi la dérive des données n'est jamais surveillée seule : elle est associée à la dérive des prédictions et, quand les étiquettes finissent par arriver, à la dégradation directe des métriques. Les trois signaux forment un ensemble cohérent, chacun compensant la cécité des deux autres, et c'est leur croisement qui fonde une décision solide.
+
+Le calcul doit également s'accompagner de précautions méthodologiques. Il faut une base de référence stable, sinon l'indice mesure le bruit de votre propre référence ; un volume minimal d'observations par classe, sinon les proportions sont trop instables pour être significatives ; et une distinction nette entre variables continues et catégorielles, pour lesquelles on préfère une comparaison de fréquences par modalité plutôt qu'un découpage artificiel en intervalles. Enfin, il faut exclure du calcul les variables qui portent la cible ou qui en dérivent, sous peine d'observer une dérive qui n'est que le reflet de ce que l'on cherche justement à prédire.
+
+
+## Surveiller la dérive des prédictions et la qualité métier
+
+La dérive des prédictions observe le résultat produit par le modèle plutôt que les données fournies. Elle répond à une question différente : est-ce que le modèle renvoie encore le même type de réponse qu'avant, en moyenne, par segment et dans le temps. Concrètement, on agrège les sorties sur des fenêtres glissantes, par exemple des tranches horaires ou quotidiennes, puis on compare la distribution de la fenêtre courante à celle de la période de référence. Pour un modèle de régression, on suit la moyenne, la médiane, les quantiles extrêmes et la dispersion ; pour un classifieur, on suit le taux de prédictions positives, la distribution des scores et le nombre de classes effectivement prédites.
+
+Cette surveillance apporte une information que le PSI sur les entrées ne peut pas donner. Deux phénomènes illustrent bien la complémentarité. Un changement de comportement des utilisateurs peut faire bouger les entrées sans toucher aux prédictions, par exemple quand une variable dérive mais que ses effets s'annulent entre eux ; le PSI alarme alors sans dommage réel, et l'analyse des prédictions calme l'alerte. À l'inverse, un bug dans le code de préparation des caractéristiques peut altérer les sorties alors que la distribution des entrées reçues reste parfaitement stable ; seule la surveillance des prédictions attrape l'incident. Aucun des deux signaux n'est redondant, ils couvrent des angles morts différents.
+
+```python
+import math
+from collections import Counter
+
+def prediction_profile(scores, buckets=10):
+    low, high = min(scores), max(scores)
+    width = (high - low) / buckets if high > low else 1.0
+    counts = Counter(min(int((value - low) / width), buckets - 1) for value in scores)
+    total = max(len(scores), 1)
+    return [max(counts[i] / total, 1e-6) for i in range(buckets)]
+
+def distribution_shift(reference, current):
+    a, b = prediction_profile(reference), prediction_profile(current)
+    return sum((y - x) * math.log(y / x) for x, y in zip(a, b))
+
+base = [0.62, 0.55, 0.71, 0.48, 0.59, 0.66, 0.52, 0.60, 0.57, 0.64]
+same = [0.61, 0.57, 0.69, 0.50, 0.58, 0.65, 0.53, 0.62, 0.56, 0.63]
+dernier = [0.12, 0.08, 0.15, 0.05, 0.11, 0.09, 0.14, 0.07, 0.10, 0.13]
+print("stable :", round(distribution_shift(base, same), 4))
+print("effondre:", round(distribution_shift(base, dernier), 4))
+```
+
+Le troisième signal, et le plus précieux de tous, est la dégradation de la qualité quand les étiquettes finissent par être connues. Dans de nombreux cas, le résultat réel arrive avec un délai : la facturation confirme la valeur réelle du bien, l'exam médical confirme le diagnostic, le client confirme ou non sa réservation. Dès qu'une fraction suffisante d'étiquettes retardées est disponible, on recalcule les métriques de référence sur une fenêtre glissante et on les compare aux métriques enregistrées au moment de la publication. C'est la mesure directe du préjudice, la seule qui autorise une décision arbitrairement ferme, puisqu'elle ne mesure pas un proxy mais l'erreur elle-même.
+
+Le tableau suivant rassemble les trois familles de signaux, leurs seuils de départ et l'action qu'ils appellent. Ces seuils sont volontairement conservateurs : mieux vaut une alerte examinée et classée à tort qu'une dégradation ignorée pendant un trimestre.
+
+```table
+| Signal | Mesure | Seuil d'alerte initial | Action |
+| --- | --- | --- | --- |
+| Entrées | PSI par variable | 0.10 vigilance, 0.20 fort | Inspecter, fréquence accrue |
+| Sorties | Écart de distribution des prédictions | Selon référence établie en recette | Vérifier code et segments |
+| Qualité | Métrique sous le seuil métier | Dégradation supérieure au toléré | Réentraîner, alerter le métier |
+| Service | Taux d'erreur et latence | Panier défini avec le métier | Corriger, retour arrière |
+| Intégrité | Empreinte du modèle chargé | Toute divergence | Stopper la publication |
+```
+
+
+Pour que ces mesures deviennent exploitable, il faut une base de référence honnête. On calcule les distributions de référence sur un échantillon de production représentatif, jamais sur le jeu d'entraînement brut, car les deux populations diffèrent par construction : le décalage constant que cela produirait serait du bruit permanent. On fige cette référence avec la version du modèle, on la conserve avec le registre, et on la recalcule seulement lors d'un réentraînement validé. Toute référence modifiée sans versionnement transforme la surveillance en mesure subjective, chacun pouvant alors choisir la référence qui arrange son tableau de bord.
+
+## Choisir et déclencher le réentraînement
+
+Un réentraînement peut être déclenché de trois manières, qui ne répondent pas aux mêmes situations. Le calendrier pur, par exemple mensuel ou trimestriel, offre une prévisibilité appréciée des équipes d'exploitation : les fenêtres de maintenance existent, les ressources sont réservées, la charge de travail est lisse. Sa faiblesse est l'aveuglement, car il réentraîne aussi quand rien n'a changé et ignore ce qui bouge entre deux échéances. Le déclenchement par alerte, fondé sur un PSI ou une métrique sous seuil, réagit au réel mais exige des seuils calibrés, une chaîne d'alerte fiable et une capacité à intervenir sans préavis. La troisième voie, hybride, combine une échéance planifiée avec la possibilité d'une accélération sur alerte, et c'est généralement celle qui s'impose en pratique.
+
+Quel que soit le déclenchement, le réentraînement reste un processus de validation, pas une simple exécution de script. On reprend la dernière version du code d'entraînement, on utilise des données récentes en conservant un échantillon tenu à part, on reproduit le jeu de validation utilisé pour la version en place, puis on compare les deux modèles avec les mêmes métriques et les mêmes conditions. Le nouveau modèle ne remplace l'ancien que s'il le dépasse avec une marge décidée à l'avance, et jamais parce qu'il est simplement différent. Cette discipline protège d'un phénomène bien documenté, le réentraînement qui dégrade, où l'on remplace un modèle légèrement vieilli par un modèle entraîné sur des données plus bruitées.
+
+Le réentraînement automatique intégral, sans validation humaine, n'est recommandé que lorsque trois conditions sont réunies : la mesure de qualité est directe et rapide, la procédure de validation est entièrement mécanique, et le retour arrière est instantané. Hors de ces conditions, on garde une étape d'approbation. Il faut également prévoir ce qui arrive aux dépendances du modèle lors de la remise à zéro, notamment l'ordre des variables, les valeurs par défaut et les transformations : un pipeline recréé à la main est la cause classique d'un modèle qui, parfait sur papier, renvoie des valeurs décalées dès son arrivée en ligne.
+
+Une bonne pratique consiste à rédiger, à côté du modèle, une fiche de version courte et à la mettre à jour à chaque publication. Elle indique ce qui a changé depuis la version précédente, les métriques comparées sur le même jeu de test, les variables entrées ou sorties, les seuils de surveillance retenus, et la décision d'adoption avec son auteur. Ce document de quelques lignes remplace, six mois plus tard, des heures de reconstitution et permet de répondre sans archives à la question qui revient toujours : pourquoi avons-nous choisi ce modèle plutôt que l'autre, et qu'a-t-on sacrifié en chemin.
+
+## Exemple guidé : la chaîne complète
+
+Réunissons maintenant les pièces dans un scénario unique, entièrement en bibliothèque standard, qui reproduit les grandes étapes d'une mise en production légère : enregistrer un modèle, le relire, l'invoquer, journaliser l'appel, calculer une mesure de dérive et décider d'une action. Le code ci-dessous n'est pas un serveur HTTP, il en simule la logique métier de bout en bout, ce qui vous permet d'observer chaque transition sans rien installer.
+
+```python
+import json
+import math
+from datetime import datetime, timezone
+
+MODELE = {"version": "1.0.0", "features": ["surface", "pieces", "age"],
+          "intercept": 12000.0,
+          "coefficients": {"surface": 2100.0, "pieces": 8500.0, "age": -450.0}}
+
+def predict(model, features):
+    for name in model["features"]:
+        if name not in features:
+            raise ValueError("caracteristique manquante : " + name)
+    total = float(model["intercept"])
+    for name in model["features"]:
+        total += float(model["coefficients"][name]) * float(features[name])
+    return round(total, 2)
+
+def handle(payload, log):
+    try:
+        prediction = predict(MODELE, payload["features"])
+    except (KeyError, ValueError) as error:
+        log.append({"status": 422, "detail": str(error)})
+        return 422, {"detail": str(error)}
+    entry = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             "version": MODELE["version"], "prediction": prediction}
+    log.append(entry)
+    return 200, {"prediction": prediction, "model_version": MODELE["version"]}
+
+journal = []
+print(handle({"features": {"surface": 35, "pieces": 4, "age": 8}}, journal))
+print(handle({"features": {"surface": 35}}, journal))
+print(len(journal), "appel(s) journalise(s)")
+```
+
+La partie suivante ajoute la surveillance, en comparant les caractéristiques de la journée courante à la référence figée, puis en traduisant l'indice en décision. Notez la forme du résultat : un dictionnaire contenant la mesure, son interprétation et l'action recommandée, qui peut être lu aussi bien par un humain que par un système d'alerte.
+
+```python
+def quantile_bounds(reference, bins=10):
+    ordered = sorted(reference)
+    bounds = []
+    for i in range(1, bins):
+        position = (len(ordered) - 1) * i / bins
+        low, high = int(math.floor(position)), int(math.ceil(position))
+        bounds.append(ordered[low] if low == high else
+                      ordered[low] + (ordered[high] - ordered[low]) * (position - low))
+    return bounds
+
+def proportions(values, bounds):
+    edges = [float("-inf")] + bounds + [float("inf")]
+    counts = [0] * (len(edges) - 1)
+    for value in values:
+        for index in range(len(bounds)):
+            if value <= edges[index + 1]:
+                counts[index] += 1
+                break
+        else:
+            counts[-1] += 1
+    total = max(len(values), 1)
+    return [max(count / total, 1e-6) for count in counts]
+
+def psi(reference, current, bins=10):
+    bounds = quantile_bounds(reference, bins)
+    a, b = proportions(reference, bounds), proportions(current, bounds)
+    return sum((y - x) * math.log(y / x) for x, y in zip(a, b))
+
+def decide(value):
+    if value < 0.10:
+        return "stable", "aucune action"
+    if value < 0.20:
+        return "vigilance", "frequence de calcul accrue"
+    return "derive forte", "alerter et preparer un reintrainement"
+
+reference = [22, 30, 41, 28, 35, 29, 33, 37, 31, 26, 24, 39]
+aujourdhui = [55, 62, 71, 58, 66, 60, 69, 54, 64, 57, 73, 61]
+indice = psi(reference, aujourdhui)
+print(round(indice, 4), decide(indice))
+```
+
+Cette séquence illustre la totalité du cycle en moins de cent lignes : contrat d'entrée, refus propre, journal structuré, mesure de dérive, décision graduée. En production, chaque brique se remplace par son équivalent mature, un serveur HTTP devant la logique, une base ou un entrepôt pour les journaux, un planificateur pour les mesures, un tableau de bord pour les décisions, mais la logique de contrôle reste exactement celle que vous venez d'exécuter. C'est cette permanence qui justifie l'effort de comprendre les mécanismes avant d'apprendre les outils.
+
+## À retenir
+
+- Mettre un modèle en production, c'est faire d'un artefact de recherche un service contrôlé, traçable et surveillé.
+- Une API repose sur un contrat d'entrée validé, un contrat de sortie enrichi et des codes HTTP qui décrivent précisément l'issue.
+- Le format JSON, la sérialisation déterministe et l'empreinte SHA-256 donnent au modèle un identifiant vérifiable et lisible.
+- joblib convient aux gros objets de l'écosystème scikit-learn, le JSON aux petits modèles et aux métadonnées de contrôle.
+- Chaque version combine un numéro lisible pour les humains et une empreinte de contenu pour la machine.
+- Le registre de modèles relie artefact, données, métriques, commit source et responsable de publication.
+- Le déploiement se prépare par le préchargement, les appels de référence et une procédure de retour arrière testée.
+- La surveillance suit trois familles de signaux, entrées, sorties et qualité réelle, qui se complètent mutuellement.
+- Le PSI au-delà de 0.20 sur une variable critique déclenche l'alerte et la préparation d'un réentraînement.
+- Un réentraînement est une décision validée, jamais une simple exécution automatique du script d'entraînement.
+
+## Erreurs fréquentes
+
+- Publier le modèle sans ses pré-traitements, ce qui fait diverger la prédiction de production de la métrique de validation.
+- Écraser le même fichier de modèle à chaque réentraînement, rendant impossible tout retour arrière.
+- Comparer les entrées de production au jeu d'entraînement brut, ce qui fabrique une dérive permanente artificielle.
+- Alimenter les alertes avec des seuils choisis après coup, pour les ajuster jusqu'à ce qu'elles ne se déclenchent plus.
+- Journaliser tout, ou rien : sans politique de rétention et sans champs fixes, le journal devient inexploitable.
+- Confondre stabilité des prédictions et qualité du modèle, alors qu'une distribution stable peut masquer une erreur croissante.
+- Oublier de tester le retour arrière, qui échoue précisément lorsqu'on en a besoin.
+- Accepter une réponse rapide mais muette : une prédiction sans version ni horodatage ne peut pas être expliquée plus tard.
+- Changer une référence de mesure sans versionner, ce qui casse la continuité de toute la courbe historique.
+
+## Pour aller plus loin
+
+- https://fastapi.tiangolo.com/ — documentation du framework d'API, notamment la validation déclarative et l'authentification.
+- https://scikit-learn.org/stable/model_persistence.html — persistance des modèles avec joblib et mises en garde associées.
+- https://mlflow.org/docs/latest/index.html — registre de modèles, traçage d'expériences et versionnage d'artefacts.
+- https://docs.python.org/3/library/json.html — module json de la bibliothèque standard, sérialisation et décodage.
+- https://docs.python.org/3/library/hashlib.html — fonctions de hachage, dont SHA-256, pour les empreintes de contenu.
+- https://docs.python.org/3/library/http.server.html — serveur HTTP minimal, utile pour comprendre le mécanisme d'un service.
+- https://www.evidentlyai.com/ — outils open source de détection de dérive et de rapports de suivi de modèles.
+
+La meilleure façon d'exploiter ces liens est de les ouvrir après avoir pratiqué : chaque page vous paraîtra alors concrète, parce que vous saurez déjà quel problème elle résout. Relisez en priorité la page sur la persistance, elle confirme les précautions de confiance que nous avons énoncées, puis celle sur le json standard, qui vous donnera les options de formats pour vos propres métadonnées.
+
+## Et maintenant : la mise en pratique du chapitre
+
+La vidéo qui clôt ce chapitre reprend la chaîne complète, de la sérialisation d'un modèle linéaire jusqu'au calcul d'un indice de dérive, en montrant comment chaque brique s'assemble dans un petit module unique. Regardez-la après avoir écrit votre propre version de l'exercice pratique, puis comparez : cherchez d'abord les différences de comportement sur les entrées invalides, elles vous diront plus que les différences de style. Ensuite, essayez d'ajouter une nouvelle variable au modèle et observez combien de points du système doivent bouger ensemble, le schéma, la fiche de version, les appels de référence et les seuils de surveillance. Cette expérimentation vous donnera le réflexe le plus précieux de la mise en production, penser le changement comme un événement à coordonner plutôt que comme une ligne de code à modifier.
+

@@ -1,0 +1,87 @@
+Vous voici au terme de la partie consacrée aux jointures, aux sous-requêtes et aux vues. Trois outils, une même ambition : répondre à des questions métier complexes sans dénaturer le schéma normalisé que vous avez construit avec soin. La jointure relie ce que la conception a séparé, la sous-requête pose une question à l'intérieur d'une autre, la vue donne un nom durable à une requête réutilisable. Ensemble, elles forment le quotidien du développeur back-end et de l'analyste, bien avant toute considération de performance ou d'optimisation avancée.
+
+Cette dernière page rassemble l'essentiel du chapitre, puis elle dresse la liste des pièges les plus fréquents, ceux qui coûtent des heures de diagnostic parce qu'ils ne provoquent aucune erreur de syntaxe. Vous trouverez ensuite des pistes d'approfondissement, et enfin l'orientation vers l'exercice pratique qui conclut le chapitre. Prenez le temps de relire les points de synthèse à voix haute, en les reformulant avec vos propres mots : la consolidation active vaut incomparablement mieux qu'une relecture passive de code déjà écrit.
+
+Le script ci-dessous résume le terrain sur lequel vous allez désormais travailler. Il s'agit du schéma de la bibliothèque, enrichi d'une colonne de parrainage destinée à illustrer l'auto-jointure, et suivi d'une vue consolidée qui combine jointures, agrégation et sous-requête. Recopiez-le dans votre moteur, chargez quelques lignes de test, puis rejouez les requêtes des sections précédentes. Si chacune renvoie le nombre de lignes que vous aviez prévu, les objectifs de ce chapitre sont atteints.
+
+```sql
+CREATE TABLE lecteurs (
+  identifiant      INTEGER PRIMARY KEY,
+  nom              TEXT NOT NULL,
+  prenom           TEXT NOT NULL,
+  courriel         TEXT NOT NULL UNIQUE,
+  date_inscription DATE NOT NULL,
+  marraine_id      INTEGER REFERENCES lecteurs (identifiant)
+);
+
+CREATE VIEW v_emprunts_detail AS
+SELECT e.identifiant AS emprunt_id,
+       l.nom         AS lecteur_nom,
+       o.titre       AS ouvrage_titre,
+       x.cote,
+       e.date_sortie,
+       e.date_retour
+FROM emprunts AS e
+INNER JOIN lecteurs AS l ON l.identifiant = e.lecteur_id
+INNER JOIN emprunt_exemplaires AS ee ON ee.emprunt_id = e.identifiant
+INNER JOIN exemplaires AS x ON x.identifiant = ee.exemplaire_id
+INNER JOIN ouvrages AS o ON o.identifiant = x.ouvrage_id;
+
+SELECT lecteur_nom, ouvrage_titre, date_sortie
+FROM v_emprunts_detail
+WHERE date_retour IS NULL
+ORDER BY date_sortie;
+```
+
+Avant d'entrer dans la synthèse, rappelons la ligne directrice du chapitre. On a commencé par la jointure interne, condition sine qua non de toute lecture multi-tables, en insistant sur la clause ON comme contrat d'appariement. On a enchaîné sur les jointures externes, seules capables de conserver les lignes orphelines, puis sur l'auto-jointure, qui traite une table comme deux. On a exploré les sous-requêtes dans leurs quatre emplacements, les CTE qui les rendent lisibles, et les vues qui les pérennisent. Cette progression, du plus simple au plus structuré, est celle que vous réutiliserez chaque fois qu'une question métier dépassera le cadre d'une seule table.
+
+## À retenir
+
+- INNER JOIN ne conserve que les paires de lignes dont la condition de la clause ON est vraie ; les lignes sans correspondance des deux côtés sont écartées sans avertissement.
+- La clause ON décrit le lien entre tables, la clause WHERE filtre le résultat : confondre les deux est la première source de requêtes faussement correctes.
+- Une jointure côté plusieurs multiplie les lignes : comptez toujours le résultat avant d'agréger, et choisissez COUNT DISTINCT ou GROUP BY quand la granularité le demande.
+- Une jointure sans condition, qu'elle soit implicite par virgule ou explicite sans ON, produit un produit cartésien, souvent silencieux et toujours trompeur.
+- LEFT JOIN conserve toutes les lignes de la table maîtresse et complète par NULL celles qui n'ont pas de correspondance ; IS NULL détecte alors les cas sans correspondance.
+- RIGHT JOIN n'est qu'un LEFT JOIN dont on inverse les tables ; FULL OUTER JOIN conserve les deux côtés, mais il est absent de MySQL.
+- Filtrer une colonne de la table de droite dans WHERE annule le LEFT JOIN : déplacez la condition dans ON, ou filtrez la table maîtresse.
+- L'auto-jointure utilise deux alias d'une même table pour comparer des lignes d'une table à elle-même, par exemple pour une hiérarchie ou la détection de doublons.
+- ON est la forme de jonction la plus générale ; USING impose le même nom de colonne ; NATURAL JOIN fait deviner la condition et reste à proscrire.
+- Une sous-requête dans WHERE renvoie une liste ou une valeur, celle dans FROM devient une table dérivée qui doit porter un alias, et une sous-requête scalaire doit tenir en une ligne une colonne.
+- EXISTS s'arrête dès la première ligne trouvée et résiste mieux que NOT IN aux valeurs nulles ; les deux restent interchangeables sur des données propres.
+- WITH nomme des résultats intermédiaires, s'enchaîne par virgules et se réfère plusieurs fois ; RECURSIVE permet de parcourir une hiérarchie.
+- Une vue est une requête enregistrée, sans stockage propre : elle simplifie, sécurise et stabilise l'accès aux données, mais elle ne fige aucun instantané.
+- Les vues complexes sont en lecture seule dans la plupart des moteurs : les écritures passent par les tables, et la définition des vues se versionne dans les migrations.
+
+## Erreurs fréquentes
+
+L'erreur la plus répandue reste la jointure oubliée. On écrit FROM lecteurs INNER JOIN emprunts sans clause ON, ou bien on remplit la clause WHERE d'un critère d'analyse et l'on oublie le critère d'appariement. Certains moteurs rejettent la syntaxe, d'autres produisent un produit cartésien dont le volume explose silencieusement. Le symptôme classique est un tableau qui déborde, une moyenne étrangement ronde ou un temps de réponse qui se dégrade d'un facteur cent. Le réflexe à acquérir est mécanique : dès qu'une requête comporte plus d'une table, exiger une clause ON par INNER JOIN et LEFT JOIN, puis compter les lignes avant de conclure. CROSS JOIN doit rester une décision, jamais un accident.
+
+La deuxième erreur consiste à perdre le bénéfice du LEFT JOIN en filtrant la table de droite dans WHERE. On veut lister tous les lecteurs et la date de leur dernier emprunt, puis l'on écrit WHERE e.date_retour IS NULL, ce qui supprime les lecteurs sans emprunt, précisément ceux que l'on cherchait. La requête fonctionne, elle renvoie un résultat plausible, et personne ne s'aperçoit que la moitié du public a disparu. La vérification tient en une question : la colonne que je filtre appartient-elle à la table maîtresse ? Si elle appartient à la table jointe, elle doit aller dans ON, ou la condition doit être reformulée pour tester une colonne de la gauche.
+
+La troisième erreur est le doublon d'agrégation. On joint emprunts à emprunt_exemplaires, puis l'on compte les lecteurs : chaque lecteur multiplié par le nombre d'exemplaires de ses emprunts gonfle le décompte. Aucune erreur n'est signalée, puisque le résultat reste syntactiquement valide. Repérez-la en comparant le nombre de lignes avant et après l'ajout d'une jointure, et en décidant explicitement quelle est la granularité finale. Si elle est celle des lecteurs, agrégez d'abord les exemplaires dans une CTE, puis joignez. Si elle est celle des emprunts, comptez avec DISTINCT. La granularité se décrit en une phrase avant d'écrire la requête, jamais après avoir vu le résultat.
+
+La quatrième concerne les sous-requêtes corrélées et leur coût. Une sous-requête placée dans SELECT et dépendant de la ligne externe s'exécute pour chaque ligne du résultat : sur cent mille lignes, c'est cent mille exécutions, souvent sans index exploitable. Le symptôme est une requête lente dès que la table grossit, alors qu'elle allait vite sur le jeu de test. La parade consiste à déplacer l'agrégation dans une CTE ou une table dérivée, à joindre ensuite, et à vérifier le plan d'exécution quand les volumes deviennent sérieux. Apprendre à lire un plan, même sommairement, fait partie des sujets de la section suivante.
+
+La cinquième erreur porte sur les vues. On crée une vue, on l'interroge, puis l'on modifie une table sous-jacente en oubliant que la vue repose sur une jointure, ou que son définition a changé entre-temps. On croit disposer d'un instantané alors qu'on ne dispose que d'un alias. D'autres poussent le raisonnement inversé en créant des vues imbriquées, une vue fondée sur une vue fondée sur une vue, jusqu'à ce qu'un changement de colonne casse toute la chaîne sans message clair. Limitez la profondeur, documentez chaque définition, et conservez toujours la requête d'origine à côté, dans vos migrations, pour pouvoir la rejouer indépendamment.
+
+Enfin, une erreur d'ordre méthodologique : coder la requête avant d'avoir formulé la question. « Je veux un tableau avec les emprunts » n'est pas une spécification. « Une ligne par lecteur, avec le nombre d'emprunts de l'année en cours et le titre du dernier livre sorti » en est une. La première formulation mène à une jointure fatalement ambiguë, la seconde impose d'emblée la granularité, les filtres et le niveau d'agrégation. Prenez l'habitude de rédiger la phrase métier, de la faire valider si besoin, puis de traduire chaque nom commun en table et chaque verbe en opérateur. Beaucoup de corrections en revue disparaissent dès que l'énoncé est écrit.
+
+## Pour aller plus loin
+
+Pour consolider ces acquis par la pratique, rien ne remplace l'exécution répétée dans un environnement de travail. Installez SQLite pour la simplicité, ou PostgreSQL pour la fidélité aux exemples, recopiez le schéma du chapitre et chargez au minimum trente lecteurs, une dizaine d'ouvrages, quelques exemplaires et une centaine d'emprunts, en veillant à laisser des lecteurs sans emprunt et des ouvrages sans exemplaire. Ces trous dans les données sont indispensables : sans eux, vous ne verrez jamais la différence entre INNER JOIN et LEFT JOIN. Écrivez ensuite un rapport par jour, en comptant systématiquement les lignes à chaque étape.
+
+Travaillez les requêtes sous plusieurs formes. Résolvez la même question avec une sous-requête, puis avec une CTE, puis avec une vue, et comparez la lisibilité plutôt que la performance. Refaites l'exercice en renommant les colonnes pour vérifier que USING cesse de fonctionner et que ON, lui, s'adapte. Transformez une jointure interne en jointure externe et observez ce qui apparaît. Remplacez un NOT IN par un EXISTS sur des données contenant des NULL, et constatez la différence. Ces va-et-vient, plus que les exercices linéaires, installent le réflexe de choisir délibérément un opérateur plutôt qu'un autre.
+
+Les documentations officielles des moteurs contiennent des chapitres de tutoriaux d'excellente qualité sur les jointures, les vues et les plans d'exécution, et les plateformes d'apprentissage interactif proposent des environnements SQL prêts à l'emploi. Cherchez en priorité des ressources qui vous font écrire dans le navigateur : le geste de formuler, d'échouer, de lire le message d'erreur et de corriger est le seul véritable moteur d'apprentissage. Complétez par des lectures sur la conception des entrepôts de données, où le schéma en étoile est traité en profondeur, car c'est là que la logique faits-dimensions prend tout son sens.
+
+Au-delà du SQL lui-même, deux sujets voisins méritent votre attention une fois ce chapitre digéré. Le premier est la performance : index sur les colonnes de jointure, statistiques du moteur, analyse des plans, et la question éternelle de savoir quand dénormaliser. Le second est la sécurité applicative : les vues comme mécanisme de cloisonnement, les droits de lecture et d'écriture par profil, et la protection contre les injections de requêtes, qui naissent précisément quand la frontière entre requête fixe et donnée variable est mal tracée. Ces thèmes prolongent naturellement le chapitre et font l'objet des suites du parcours.
+
+Les outils d'exploration de schéma, les générateurs de documentation à partir de vos définitions de vues et les clients SQL modernes, qui affichent l'historique et le plan d'exécution, vous serviront dès le premier projet professionnel. Prenez l'habitude de versionner les vues et les migrations à côté du code applicatif, de les faire relire, et de tester chaque modification sur un jeu de données représentatif. Enfin, lorsque vous vous sentirez à l'aise avec les jointures multiples et les CTE récurses, abordez les fonctions de fenêtre, qui résolvent une large part des problèmes d'agrégation sans sous-requête, et les procédures stockées, qui encapsulent des traitements récurrents. Ces sujets ouvrent la suite logique du parcours.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice de fin de chapitre vous demande de bâtir, sur le schéma de la bibliothèque, un petit ensemble de rapports qui combine tout ce que vous venez d'apprendre. Vous y écrirez une vue consolidée des emprunts, une requête de lecteurs inactifs fondée sur un LEFT JOIN et un test IS NULL, un indicateur d'ouvrages entièrement sortis, et une recherche de doublons potentiels de comptes. Chaque livrable devra être accompagné du nombre de lignes attendu, que vous aurez vérifié de vos propres yeux : un rapport sans comptage vérifié n'est pas un rapport validé.
+
+Traitez l'exercice comme une mission réelle. Commencez par écrire la phrase métier de chaque rapport, en précisant la granularité attendue, une ligne par quoi. Choisissez ensuite le type de jointure qui correspond à cette granularité, puis l'emplacement de chaque filtre, dans ON ou dans WHERE. Formez vos CTE dans l'ordre des questions, nommez-les sans ambiguïté, et terminez par une vue qui rassemble le tout. Enfin, testez les cas limites : un lecteur sans emprunt, un ouvrage sans exemplaire, un emprunt ouvert depuis des mois. C'est sur ces cas que vos requêtes se distingueront d'un code écrit à la hâte.
+
+Si vous bloquez, revenez aux sections de synthèse, puis reprenez les exemples guidés de la première partie du chapitre, qui construisaient les mêmes jointures pas à pas. L'important n'est pas de produire la requête la plus élégante, mais de ressentir la mécanique : appariement, conservation ou écartement des lignes, granularité, agrégation, abstraction. Une fois vos rapports validés, poursuivez avec le chapitre suivant du parcours, qui vous mènera vers les agrégations avancées, les fonctions de fenêtre et l'optimisation des requêtes. Le terrain de jeu est en place, les outils sont dans vos mains ; il ne reste plus qu'à jouer, c'est-à-dire à lire chaque message d'erreur, à corriger chaque hypothèse, et à repartir avec des réflexes que vous appliquerez sans y penser dès votre prochain projet.

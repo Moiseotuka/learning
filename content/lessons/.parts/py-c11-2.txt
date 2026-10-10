@@ -1,0 +1,123 @@
+## timeit : comparer deux écritures de façon fiable
+
+Le profilage vous dit où va le temps ; il ne vous dit pas laquelle de deux écritures du même calcul est préférable. Pour trancher, il existe un outil taillé pour cela : timeit. Il répète une instruction un très grand nombre de fois, désactive la collecte des déchets pendant la mesure, écarte le premier passage qui inclut la compilation du bytecode, puis divise le total par le nombre d'exécutions. Ce résultat, exprimé en secondes par exécution, est la seule base honnête pour dire « cette version est plus rapide que celle-là ».
+
+La première habitude à désapprendre est le chronométrage à la main. Écrire debut = time.time() avant un bloc puis afficher time.time() - debut donne un chiffre : c'est bien ça le danger. La résolution de l'horloge, la planification du système d'exploitation, une mise à jour qui démarre en arrière-plan, la collecte des déchets déclenchée au mauvais moment : tout cela s'ajoute au résultat. Sur un bloc qui dure une seconde, l'erreur peut atteindre plusieurs pourcents ; sur une boucle de vingt microsecondes, elle est simplement dominante. Le remède est de ne jamais mesurer une fois, mais de mesurer des centaines de milliers de fois et d'en tirer une moyenne stable.
+
+L'usage direct se fait en ligne de commande avec le module embarqué, ce qui évite d'écrire un script jetable. La syntaxe -n impose le nombre d'exécutions, -s fournit le code de préparation exécuté une seule fois, par exemple la construction des données de test. Le module répète ensuite l'instruction proprement dite, sans oublier que tout ce qui figure dans la première chaîne est compté, et rien de ce qui figure dans la seconde.
+
+```text
+$ python -m timeit -n 200000 -s "inscrits = list(range(4000))" "1999 in inscrits"
+200000 loops, best of 5: 41.3 usec per loop
+$ python -m timeit -n 200000 -s "inscrits = set(range(4000))" "1999 in inscrits"
+200000 loops, best of 5: 0.062 usec per loop
+```
+
+La mention « best of 5 » signifie que le module a lancé cinq séries et n'a conservé que la meilleure : cette convention réduit l'impact d'une interruption du système, mais elle favorise aussi artificiellement le chiffre le plus bas. Pour un travail sérieux, préférez timeit.repeat, gardez les cinq valeurs, observez leur dispersion, et retenez la médiane. Si vos cinq mesures varient de plus de quelques pourcents, la machine est occupée ou les deux variantes mesurées ne font pas exactement le même travail : dans les deux cas, la comparaison n'est pas recevable.
+
+Une comparaison honnête exige en effet que les deux variantes produisent exactement le même résultat, y compris les effets de bord. Remplacer un calcul par un autre qui valide moins, qui arrondit moins tôt ou qui ignore les cas limites ne produit pas une version plus rapide, mais une version différente. Avant de chronométrer, écrivez le test qui prouve l'équivalence ; après avoir chronométré, relancez ce test. C'est la raison pour laquelle la démarche raisonnable lie toujours optimisation et tests : les tests que vous avez appris à écrire au chapitre dix deviennent ici le filet de sécurité de la performance.
+
+Le cas de la concaténation de chaînes dans une boucle mérite une mesure explicite, tant il circule sous forme de conseil. On répète partout qu'il faut éviter de faire croître une chaîne avec + au profit d'une liste puis d'un join final. C'est un bon réflexe de lecture, mais le gain réel dépend de la version de Python : sur les versions récentes, l'opérateur += sur une chaîne alloue un nouveau tampon seulement quand la capacité disponible ne suffit pas, ce qui amortit fortement le coût. Mesurez avant de réécrire, puis replacez le gain dans son contexte :
+
+```python
+import timeit
+
+MOTS = ["rapport", "de", "notes"] * 166
+
+avant = timeit.repeat(
+    "s = ''; [s := s + m for m in MOTS]", globals=globals(), number=2000, repeat=5
+)
+apres = timeit.repeat(
+    "' '.join(MOTS)", globals=globals(), number=2000, repeat=5
+)
+print(f"concaténation : {min(avant) / 2000 * 1e6:7.1f} µs")
+print(f"join          : {min(apres) / 2000 * 1e6:7.1f} µs")
+```
+
+Le join l'emporte souvent d'un facteur deux à quatre sur ce gabarit, et c'est une amélioration légitime à appliquer au fil des relectures. Mais rapportée au rapport scolaire de quarante-deux secondes, elle représente quelques millisecondes : appliquée en premier, elle n'aurait rien changé pour l'utilisateur. C'est la démonstration par l'absurde de la règle d'or, et c'est aussi la raison pour laquelle ce banc d'essai appartient à la fin du travail, jamais au début.
+
+Le même banc d'essai s'écrit en Python quand on veut conserver les chiffres dans le dépôt ou comparer plusieurs variantes d'un coup. On utilise timeit.timeit avec une chaîne d'instructions et une chaîne de préparation, on répète plusieurs séries, puis on retient la médiane plutôt que le minimum, plus robuste contre une interruption du système. Le fragment ci-dessous est celui que vous devriez retrouver, sous une forme ou une autre, dans tout projet qui se prétend performant.
+
+```python
+import timeit
+
+INSCRITS_LISTE = list(range(4000))
+INSCRITS_ENSEMBLE = set(range(4000))
+
+for variante, code in (
+    ("liste", "1999 in INSCRITS_LISTE"),
+    ("ensemble", "1999 in INSCRITS_ENSEMBLE"),
+):
+    temps = timeit.repeat(code, globals=globals(), number=100000, repeat=5)
+    print(f"{variante:10s} {min(temps) / 100000 * 1e6:.3f} us par appel")
+```
+
+Les résultats, mesurés sur un ordinateur portable de milieu de gamme sous Python 3.12, donnent environ 41 microsecondes pour la liste et 0,06 microseconde pour l'ensemble, soit un facteur de près de sept cents. Le chiffre exact variera chez vous, le rapport, lui, ne variera pas. Notez cependant que cette comparaison est truquée si l'on oublie un point : construire un ensemble coûte du temps, et si la recherche n'a lieu qu'une seule fois, il faut amortir ce coût de construction. Le tableau suivant reprend la mesure pour plusieurs tailles et ajoute la ligne de la construction, afin que vous voyiez le croisement se déplacer.
+
+| Taille des données | Recherche dans la liste | Construction de l'ensemble | Recherche dans l'ensemble |
+|---|---|---|---|
+| 100 éléments | 1,1 µs | 8,5 µs | 0,06 µs |
+| 1 000 éléments | 9,8 µs | 88 µs | 0,06 µs |
+| 4 000 éléments | 41 µs | 350 µs | 0,06 µs |
+| 100 000 éléments | 1 050 µs | 9 100 µs | 0,07 µs |
+
+La règle qui se dégage est d'une simplicité brutale : si vous cherchez un même élément plus d'une fois, construisez l'ensemble une fois, avant la boucle, et le coût de construction s'efface. Si vous ne cherchez qu'une fois dans une petite collection, la liste suffit et son empreinte mémoire moindre l'emporte. Le croisement se situe souvent autour de quelques dizaines d'éléments, mais il se déplace selon le processeur et la version de Python : c'est pourquoi l'on mesure au lieu de mémoriser.
+
+Il reste à avertir contre la micro-optimisation déplacée. Remplacer un f-string par un format, choisir un opérateur au lieu d'un autre, préférer x += 1 à x = x + 1 : autant de modifications dont la mesure montrera souvent un écart inférieur au bruit, surtout dans un programme dominé par des entrées-sorties. timeit est un instrument de précision, et l'on n'utilise pas un instrument de précision pour vérifier la température d'une pièce. Si votre programme dure quarante-deux secondes et que la variante testée intervient pour dix millisecondes, le facteur d'accélération, si spectaculaire soit-il, restera invisible pour l'utilisateur. Mesurez d'abord la part réelle de cette opération avec cProfile, puis seulement ouvrez timeit. L'ordre des instruments compte autant que leur précision.
+
+## tracemalloc : la mémoire, ce coût invisible
+
+Un programme peut être rapide et pourtant impossible à faire tourner : il dévore la mémoire jusqu'à déclencher la sortie du système ou l'exception MemoryError. Ce danger est particulièrement présent dans vos projets de data, où l'on charge volontiers un fichier entier dans une liste de dictionnaires « pour ne pas se compliquer la vie ». tracemalloc est l'outil standard qui répond à une question précise : quels objets retiennent les octets, et à quel endroit du code ont-ils été créés.
+
+Son principe est simple. On démarre le traçage au début de la zone suspecte, on déclenche le travail, on relève la mémoire tracée à deux instants, puis on compare un instantané du moment le plus gourmand à un instantané de référence. L'outil restitue les différences par bloc d'allocation, avec le chemin d'appel qui a produit l'objet : c'est ce dernier point qui le rend précieux, car il vous évite de deviner où les données s'accumulent.
+
+```python
+import tracemalloc
+
+tracemalloc.start()
+avant = tracemalloc.get_traced_memory()
+
+générer_rapport("5eB", 2)
+
+pendant = tracemalloc.get_traced_memory()
+print(f"mémoire tracée : {avant[0] / 1e6:.1f} -> {pendant[1] / 1e6:.1f} Mo")
+print(f"pic : {pendant[1] / 1e6:.1f} Mo")
+
+instantané = tracemalloc.take_snapshot()
+classement = instantané.compare_to(tracemalloc.take_snapshot(), "lineno")
+for ligne in classement[:10]:
+    print(ligne)
+tracemalloc.stop()
+```
+
+Le rapport de taille réelle du collège, exécuté avec ce dispositif, indiquait un pic de 780 mégaoctets pour un rapport de quatre cents élèves, dont 640 dans un seul bloc attribué à la construction de la liste lignes. La cause n'avait rien de mystérieux : chaque ligne de sortie était fabriquée puis conservée, puis toute la liste était réunie en une seule chaîne géante pour être écrite. La correction consistait à écrire chaque ligne dès qu'elle était prête et à ne jamais les accumuler, conformément à ce que vous avez appris sur les fichiers au chapitre cinq. Le pic est passé à 41 mégaoctets, sans changer une seule formule de calcul.
+
+Deux limites de tracemalloc doivent être connues pour interpréter correctement les chiffres. D'abord, il ne mesure que les allocations passant par l'allocateur de Python : les bibliothèques qui allouent leur propre mémoire, souvent les extensions natives comme NumPy lorsqu'elles travaillent sur de grands tampons, n'apparaîtront que partiellement. Ensuite, la mémoire tracée n'est pas la mémoire résidente du processus : la première indique ce que votre code retient, la seconde inclut l'interpréteur, les bibliothèques chargées et la fragmentation. Comparez toujours des chiffres relevés dans les mêmes conditions, et retenez le pic plutôt que la valeur finale, c'est le pic qui déclenche les pannes.
+
+Le diagnostic de mémoire suit alors la même discipline que le diagnostic de temps : mesurer, formuler une hypothèse, corriger un seul point, remesurer. Une méthode commode consiste à placer des repères de mémoire autour des grandes étapes, avec get_traced_memory, et à garder la plus forte. Dans la pratique, quatre familles de causes reviennent : une liste qui accumule au lieu d'écrire, un dictionnaire de cache qui grossit sans limite, une chaîne reconcaténée dans une boucle, et un générateur consommé en entier sous prétexte qu'il fallait une liste. Les trois premières se voient en un instantané ; la quatrième se voit en lisant le code avec un œil neuf.
+
+Voici le réflexe à installer dès votre prochain projet : une fonction qui traite un fichier volumineux doit pouvoir s'exécuter avec une mémoire bornée, c'est-à-dire indépendante du nombre de lignes du fichier. Si vous pouvez doubler la taille du fichier sans voir la mémoire doubler, l'architecture est saine. Si la mémoire suit la taille des données, elle finira par tomber, et le jour où quelqu'un chargera le fichier des six cents élèves au lieu des quatre cents, la panne se produira en production, un vendredi soir. tracemalloc sert à programmer ce jour-là soi-même, avant qu'il n'arrive.
+
+## Les structures de données et leur coût réel
+
+Vous connaissez depuis le chapitre quatre les listes, les dictionnaires et les ensembles. Ce chapitre leur donne une seconde lecture : non plus ce qu'elles représentent, mais ce qu'elles coûtent. En informatique, ce coût s'exprime en complexité, une notation qui décrit comment le temps de calcul croît quand la taille des données augmente, sans se soucier de la vitesse de la machine. O(1) signifie un coût constant, quel que soit le nombre d'éléments ; O(n) signifie un coût proportionnel ; O(n²) signifie que doubler les données quadruple le temps ; O(n log n) se situe entre les deux et décrit un tri. Ces quatre notations suffisent à lire l'essentiel du code que vous écrirez.
+
+La table suivante est celle que vous devez garder ouverte quand vous choisissez une structure. Elle ne donne pas des chiffres de microsecondes, qui varient d'une machine à l'autre, mais des ordres de grandeur qui, eux, ne changent pas : c'est la différence entre une photographie et un plan.
+
+| Opération | list | set / dict | deque | heapq |
+|---|---|---|---|---|
+| Ajouter en fin | O(1) amorti | O(1) | O(1) | O(log n) |
+| Ajouter ou retirer en tête | O(n) | O(1) pour ajouter | O(1) | non fourni |
+| Chercher un élément (in) | O(n) | O(1) en moyenne | O(n) | O(n) |
+| Accéder par index ou par clé | O(1) | O(1) par clé | O(1) aux extrémités | non fourni |
+| Insérer au milieu | O(n) | non fourni | O(n) | non fourni |
+| Parcourir tous les éléments | O(n) | O(n) | O(n) | O(n) |
+| Obtenir l'élément minimum | O(n) | non fourni | O(n) | O(1) |
+
+Lire ce tableau à voix haute pour un cas concret est un exercice qui vaut mieux qu'une heure de théorie. Supposons que le rapport scolaire doit vérifier, pour quatre cents notes, si l'élève est inscrit dans une liste de quatre cents inscrits : quatre cents fois quatre cents comparaisons, soit cent soixante mille, pour un résultat qui se trouve en quatre cents opérations si l'on utilise un ensemble. Portez la même opération à six cents élèves et vous passerez de cent soixante mille à trois cent soixante mille comparaisons : le temps quadruple quand les données doublent. C'est exactement le symptôme observé au collège, où le rapport mettait trois secondes en début d'année et quarante-deux six mois plus tard.
+
+La notion d'amorti mérite qu'on s'y attarde, car elle explique pourquoi une liste reste rapide malgré ses insertions en fin. Quand la capacité interne d'une liste est atteinte, Python alloue un bloc plus grand et recopie les pointeurs : cette opération est O(n), mais elle est si rare que, rapportée à l'ensemble des insertions, le coût moyen par élément reste constant. Comprenez-en la conséquence pratique : insérer en fin de liste est bon marché, insérer en tête ne l'est pas, car chaque insertion décale tous les autres éléments. Si vous accumulez en tête, vous écrivez du O(n²) sans même prononcer le mot.
+
+Un réflexe simple permet de choisir sans hésiter. Vous avez besoin d'un ordre et d'un accès par position : c'est une liste. Vous avez besoin de savoir si quelque chose y figure, vite et souvent : c'est un ensemble. Vous avez besoin d'associer une clé à une valeur : c'est un dictionnaire. Vous retirez toujours par l'une des extrémités : c'est une file avec deque. Vous devez extraire le plus petit élément à chaque étape : c'est un tas avec heapq. Choisir une structure, ce n'est pas choisir une syntaxe, c'est écrire une partie de la complexité de votre programme à votre place.
+
+Enfin, n'oubliez pas que la meilleure structure ne sauve pas un algorithme mal pensé. Remplacer une liste par un ensemble fait passer une recherche de O(n²) à O(n), mais si votre fonction reconstruit cet ensemble à chaque itération d'une boucle extérieure, vous avez simplement déplacé le O(n²) dans une autre variable. La question à se poser avant chaque optimisation structurelle est toujours la même : qu'est-ce qui est construit une fois, et qu'est-ce qui est reconstruit mille fois ? La réponse à cette question, obtenue avec les outils des sections précédentes, décide du changement à apporter.

@@ -1,0 +1,562 @@
+Bienvenue dans ce quatrième chapitre du parcours Arduino et ESP32, celui où votre code cesse d'être une suite d'instructions exécutées les unes après les autres pour devenir un véritable objet qui décide. Jusqu'ici, vos programmes suivaient un chemin unique : ils allumaient une LED, lisaient un capteur, affichaient une mesure, puis recommençaient à l'identique à chaque tour de boucle. C'est confortable pour apprendre, mais cela devient très vite insuffisant dès que votre appareil doit réagir à plusieurs événements en même temps, respecter des durées précises et rester disponible pendant ces durées. Le feu tricolore que vous avez peut-être déjà construit avec des appels à delay() fonctionne tant qu'on ne lui demande rien d'autre ; ajoutez un bouton piéton et l'appareil ne le voit plus, parce qu'il dort littéralement pendant ses temporisations. Ce chapitre vous donne les deux outils qui résolvent définitivement cette difficulté : la machine à états, qui structure les décisions, et les interruptions matérielles, qui captent les événements sans que votre programme ait à les guetter.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, et vous les aurez déjà manipulées dans du vrai code. Premièrement, vous modéliserez un comportement complexe sous forme d'automate : un ensemble fini d'états, de transitions conditionnées et d'actions d'entrée et de sortie, décrit sur papier avant d'être écrit en C++. Deuxièmement, vous traduirez ce modèle en un sketch utilisant un enum, une variable d'état et une structure de branches claire, sans empiler les conditions imbriquées jusqu'à l'incompréhensible. Troisièmement, vous remplacerez les temporisations bloquantes par des compteurs fondés sur millis(), ce qui rendra votre boucle principale toujours réactive. Quatrièmement, vous déclencherez des actions depuis une interruption matérielle avec attachInterrupt(), en respectant les règles strictes qui s'imposent à une routine d'interruption. Ces quatre compétences sont exactement celles que l'on attend d'un développeur embarqué professionnel, et elles vous serviront dans tous les projets restants du parcours, du noeud connecté jusqu'au tableau de bord final.
+
+Le fil rouge de la leçon sera un feu piéton complet, avec ses deux flux de circulation, son bouton d'appel et son affichage du temps restant. Nous le construirons par étapes : d'abord la modélisation sur papier, puis la structure d'automate en C++, ensuite les temporisations non bloquantes, enfin l'interruption du bouton et les timers matériels de l'ESP32. Chaque étape est illustrée par un extrait de code complet, commenté ligne à ligne, avant d'être réassemblée dans un exemple guidé final. Un quiz de quatre questions clôturera le chapitre pour vérifier que les notions essentielles sont bien installées, et l'exercice pratique vous demandera de réécrire seul un automate légèrement différent, afin de prouver que vous maîtrisez la méthode plutôt que le exemple précis. Avant de commencer, un conseil de méthode : les automates se conçoivent d'abord à la main, sur papier ou dans un tableur, parce qu'un modèle faux produira toujours un code faux, aussi élégant soit-il.
+
+## Le piège du programme bloquant
+
+La fonction delay() est la première temporisation que l'on découvre en Arduino, et elle est parfaitement adaptée à un programme unique dont on veut simplement rythmer l'exécution. Elle a pourtant un défaut structurel qu'il faut comprendre en profondeur, et non simplement retenir comme une formule : pendant tout le temps où elle s'exécute, le processeur ne fait rien d'autre que compter. La boucle principale est figée, les lectures de broches sont suspendues, les messages série ne sont pas traités, et le programme devient sourd à ce qui se passe autour de lui. Ce n'est pas une mauvaise surprise ponctuelle, c'est la conséquence directe du fonctionnement de la fonction : elle occupe la boucle jusqu'à l'expiration du délai. Pour un clignotement simple, cela n'a aucune importance ; pour un objet qui doit surveiller un bouton, un capteur et un afficheur en même temps, cela rend le comportement erratique dès la première seconde.
+
+Le sketch suivant est celui que tout le monde écrit un jour ou l'autre, et il contient le défaut que nous venons de décrire. Observez la structure : on allume, on attend, on éteint, on attend. L'intention est claire et le résultat visuel est correct, mais la boucle n'est jamais disponible pendant les deux mille millisecondes d'attente. Si un utilisateur appuie sur un bouton pendant ce laps de temps, l'appui est perdu, ou pire, il sera traité de manière aléatoire selon l'instant exact où il se produira. C'est la cause numéro un des bugs que l'on rencontre sur les premiers objets interactifs, et il est fréquent de voir un débutant chercher l'erreur dans le câblage alors que le câblage est parfaitement en ordre.
+
+```cpp
+const int LED = 13;
+
+void setup() {
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(LED, HIGH);
+  delay(2000);              // pendant 2 s, le programme est sourd
+  digitalWrite(LED, LOW);
+  delay(2000);              // pendant 2 s, le programme est sourd
+}
+```
+
+La situation devient intenable dès que l'on ajoute une seconde tâche. Supposons que vous vouliez faire clignoter la LED pendant qu'un capteur est interrogé et qu'un afficheur est rafraîchi : avec des appels à delay(), ces trois activités ne peuvent pas coexister, car elles se disputent le même temps unique de la boucle. Vous pouvez essayer d'intercaler les lectures entre les attentes, mais plus vous raccourcissez les délais, plus la lecture devient irrégulière, et plus vous les allongez, moins l'objet est réactif. Le deuxième exemple ci-dessous montre l'assemblage tenté : il paraît correct au premier regard, et pourtant il rate systématiquement les appuis courts, parce que le capteur n'est interrogé qu'une fois toutes les deux secondes.
+
+```cpp
+void loop() {
+  digitalWrite(LED, HIGH);
+  delay(1000);
+  int valeur = analogRead(A0);   // lu trop tard, souvent
+  Serial.println(valeur);
+  digitalWrite(LED, LOW);
+  delay(1000);                   // tout appui pendant cette seconde est perdu
+}
+```
+
+Il existe une manière de mesurer concrètement ce phénomène avant d'essayer de le corriger. Branchez un bouton entre une broche et la masse, activez le pull-up interne, et écrivez dans le moniteur série un message à chaque appui détecté dans la boucle. Appuyez pendant que la LED est éteinte, votre message apparaît ; appuyez pendant qu'elle est allumée, rien ne se passe. Le matériel fonctionne, la broche fonctionne, le programme fonctionne, mais l'exécution n'est tout simplement pas au bon endroit au bon moment. Comprendre cette distinction est essentiel : le problème n'est pas dans ce que vous demandez, il est dans la façon dont votre temps est organisé. La suite de ce chapitre vous apprendra à réorganiser ce temps, d'abord en structurant les comportements, puis en supprimant les attentes inertes.
+
+## Comprendre l'automate : états, transitions et actions
+
+Un automate, au sens où on l'utilise en électronique et en automatisme, est un modèle mathématique simple et redoutablement efficace : il décrit un système comme un ensemble fini d'états, dont un seul est actif à un instant donné, et comme un ensemble de règles qui autorisent le passage d'un état à un autre. L'intérêt de ce modèle n'est pas théorique, il est directement pratique. Dès que vous écrivez if puis else puis des conditions enchevêtrées pour représenter un objet qui a plusieurs modes, vous êtes en train de fabriquer un automate de manière désordonnée ; le formaliser, c'est rendre visible ce que le code cache déjà, puis écrire ce code à partir d'un dessin lisible plutôt qu'à partir d'une intuition fragile. C'est exactement la méthode employée dans l'industrie, où les automates programmables commandent les stations de production, les ascenseurs et les feux de signalisation.
+
+Trois mots suffisent à décrire le modèle complet. L'état est la situation dans laquelle se trouve le système à un instant donné : le feu est au rouge, la porte est verrouillée, la machine est en attente d'un opérateur. Chaque état est stable, c'est-à-dire qu'il peut durer aussi longtemps que nécessaire sans que rien ne change tant qu'aucune condition ne se réalise. La transition est la règle de changement : elle relie un état de départ à un état d'arrivée et ne se déclenche que si sa condition devient vraie, le plus souvent une entrée physique, un écoulement de temps ou un message reçu. L'action est ce que l'automate fait en entrant ou en quittant un état, ou tant qu'il y reste : allumer une broche, écrire sur un afficheur, émettre un bip. Avec seulement ces trois idées, vous modélisez la quasi-totalité des objets du monde embarqué.
+
+```table
+| Notion | Question à laquelle elle répond | Exemple concret |
+|---|---|---|
+| État | Où suis-je maintenant ? | L'état JAUNE du feu piéton |
+| Transition | Pourquoi et quand est-ce que j'avance ? | Le compteur de trois secondes est dépassé |
+| Condition | Qu'est-ce qui doit devenir vrai ? | millis() dépasse l'instant de fin |
+| Action | Que fais-je concrètement ? | Éteindre la LED jaune, allumer la LED verte |
+| Entrée | Qu'est-ce qui m'informe du monde ? | Un front descendant sur la broche du bouton |
+| Sortie | Comment le monde me voit-il ? | Une broche PWM, un afficheur, un relais |
+```
+
+
+La discipline que cette modélisation impose est plus précieuse que le dessin lui-même. Elle vous oblige à répondre, pour chaque état, à quatre questions avant toute ligne de code : quelles sont les entrées qui m'intéressent ici, quelles sorties dois-je activer, vers quels états puis-je passer, et sous quelles conditions. Elle vous oblige aussi à lister ce qui n'est pas permis, ce qui est souvent plus utile : dans l'état OCCUPE, par exemple, un nouvel appui sur le bouton est ignoré, et cette règle, non écrite, est précisément celle qui déclenche les bugs les plus mystérieux. En formalisant les interdits, vous évitez les transitions fantômes et les réactions inattendues qui donnent à un objet l'impression d'avoir une vie propre.
+
+- Un état actif unique à chaque instant, jamais deux à la fois.
+- Des transitions explicitement listées, avec leur condition et leur action associée.
+- Des entrées lues en continu, même pendant les attentes.
+- Des sorties pilotées de façon déterministe, à l'entrée comme à la sortie d'un état.
+- Aucune dépendance à la vitesse d'exécution du processeur.
+
+Un dernier point mérite d'être souligné avant de passer à l'implémentation, parce qu'il distingue l'automate d'un simple empilement de conditions : l'automate est non déterministe dans sa forme, mais parfaitement déterministe dans son exécution. À chaque passage de boucle, vous examinez les transitions dans un ordre fixe, vous n'en retenez qu'une seule, et vous appliquez exactement les mêmes règles quel que soit l'historique. Cette prévisibilité est ce qui permet de tester un objet : si l'état de départ et la suite d'événements sont connus, l'état d'arrivée est connu lui aussi, avant même d'avoir branché la carte. C'est aussi ce qui rend le débogage simple, car il suffit d'imprimer l'état courant pour voir immédiatement où la logique déraille, au lieu de reconstituer un comportement à partir de dizaines de variables partiellement modifiées. Prenez l'habitude d'écrire sur papier, avant tout code, la liste des états et des transitions ; vous constaterez que la moitié des questions que vous vous posez trouve sa réponse dans ce tableau, et que le reste du programme se résume ensuite à une mécanique de transcription.
+
+## Modéliser avant de coder
+
+La étape de modélisation se fait sur papier, et elle prend rarement plus de dix minutes pour un objet de la taille de ceux de ce parcours. On commence par écrire tous les états possibles, en les nommant avec des mots entiers et explicites plutôt que des chiffres : ATTENTE, DETECTION, OCCUPE, LIBERATION se lisent dans un logiciel de versionning six mois plus tard, alors que ETAT_3 n'y signifie plus rien. On dessine ensuite des flèches entre les états, en écrivant sur chaque flèche la condition qui la déclenche et, entre parenthèses, l'action effectuée à ce moment-là. On vérifie enfin qu'aucun état n'est orphelin, qu'aucune transition ne part de nulle part, et que l'objet sait toujours quoi faire, y compris dans les cas limites comme un appui simultané à la fin d'une temporisation.
+
+Le schéma ci-dessous est celui du feu piéton que nous allons programmer. Il tient en quatre cases et quatre flèches, mais il contient déjà toute la logique du programme : le texte placé sur chaque flèche deviendra une condition dans votre code, et le texte placé à l'intérieur de chaque case deviendra le contenu d'une branche de la structure de décision. Ce passage direct du dessin au code est la raison pour laquelle les automates sont si populaires en embarqué : ils suppriment la phase de traduction où l'on perd la logique originale dans des conditions successives.
+
+```text
+                    bouton appui (bip)
+        +-----------+  ------------>  +-----------+
+        |  ATTENTE  |                 |  OCCUPE   |
+        +-----------+                 +-----------+
+             ^                            |
+             |  distance < 50 cm          | compteur 20 s
+             |                            v
+        +-----------+    duree 3 s    +--------------+
+        | DETECTION | <-------------- | LIBERATION   |
+        +-----------+   (bip double)  +--------------+
+```
+
+Une fois le schéma validé, il reste une question de mise en forme qui paraît anodine et qui décide de la lisibilité de tout le reste : comment représenter les états dans le langage. La réponse correcte, en C++, est un enum, c'est-à-dire une liste de noms symboliques associés à des entiers. Le compilateur remplace chaque nom par son entier, mais votre code reste lisible, l'éditeur signale les noms inconnus, et l'ajout d'un état devient une ligne au lieu d'une recherche dans tout le fichier. Nous verrons dans la section suivante comment structurer la boucle autour de ce enum, et pourquoi il faut absolument éviter les chaines de comparaisons portant sur des textes.
+
+Avant de fermer cette première étape, récapitulons le chemin parcouru. Vous savez maintenant pourquoi delay() rend un objet sourd, ce qu'est un état, ce qu'est une transition, et comment un dessin de quatre cases suffit à contenir la logique complète d'un programme. Vous savez aussi que l'ordre dans lequel vous examinez les transitions a son importance, et qu'un état sans règle de sortie est un piège dans lequel votre objet finira toujours par tomber. Toutes ces idées sont indépendantes du langage : vous les retrouveriez à l'identique en écrivant le même feu pour un automate industriel programmable, pour un microcontrôleur 8 bits ou pour un processeur de station de travail. C'est précisément ce qui fait leur valeur : elles vous accompagnent au-delà d'Arduino. La prochaine étape consiste à traduire fidèlement ce schéma en C++, en choisissant des formes de code qui rendent la structure visible d'un simple coup d'œil, puis à remplacer les attentes inertes par des compteurs de temps qui laissent la boucle libre de faire son travail.
+
+La modélisation est faite, le schéma tient sur une demi-page, et il reste à la faire tourner dans un sketch. Cette étape est presque mécanique, à condition de choisir dès le départ des formes de code qui rendent la structure visible d'un simple coup d'œil : un enum pour les états, une variable unique pour l'état courant, une fonction d'entrée par transition et une fonction de sortie par état. Ces quatre conventions forment ce que l'on appelle parfois le patron d'automate, et elles existent depuis bien plus longtemps qu'Arduino : on les retrouve dans les automates programmables industriels, dans les pilotes de périphériques des systèmes d'exploitation et dans les interfaces graphiques de tous vos logiciels préférés. Une fois ces conventions posées, l'écriture du code devient rapide et, surtout, relecture trois semaines plus tard devient immédiate.
+
+## Représenter les états en C++
+
+En C++, un enum est une liste de noms symboliques que le compilateur remplace par des entiers. Là où un débutant écrirait une variable entière et une série de commentaires du type trois égal rouge, quatre égal jaune, le enum donne un nom à chaque concept et laisse le compilateur vérifier que ce nom existe bien. Deux formes s'offrent à vous sur les cartes Arduino : l'enum classique, dont les valeurs sont disponibles sans qualification, et le enum class, plus strict, qui impose d'écrire le nom de l'enum devant chaque valeur. Pour un petit sketch, les deux conviennent ; le enum class a l'avantage de provoquer une erreur de compilation si vous comparez un état à un entier, ce qui attrape une classe entière de bugs silencieux. Quel que soit votre choix, nommez les états en majuscules ou en lettres capitales de début de mot, et employez des mots qui décrivent une situation, pas une durée.
+
+```cpp
+enum class FeuEtat {
+  ROUGE_PIETON,     // piétons passent, voitures arrêtées
+  JAUNE_PIETON,     // fin de passage, préparation
+  ROUGE_VOITURE,    // voitures circulent, piétons attendent
+  JAUNE_VOITURE     // voitures s'arrêtent
+};
+
+FeuEtat etatCourant = FeuEtat::ROUGE_VOITURE;
+unsigned long debutEtat = 0;
+```
+
+Remarquez les deux variables qui accompagnent le enum. La première, etatCourant, contient l'état actif ; c'est elle que vous lisez à chaque tour de boucle. La seconde, debutEtat, mémorise l'instant où l'automate est entré dans cet état, ce qui permet de mesurer la durée écoulée sans bloquer personne. Ces deux variables constituent, avec la liste des transitions, l'intégralité de l'état mémoire de votre objet. Tout le reste peut être recalculé à la volée. Cette économie est précieuse : moins il y a de variables partagées entre les sections du programme, moins il y a de risques qu'une modification inattendue dans un coin du code altère le comportement d'un autre.
+
+Un détail fréquent mérite d'être traité ici, parce qu'il apparaît dès le premier essai : que faire lorsqu'un état dépend lui-même d'une mesure, par exemple la distance lue par un capteur ? La réponse est de ne jamais stocker la mesure comme si elle faisait partie de l'état. La distance est une donnée d'entrée, l'état est une situation ; les deux vivent dans des catégories différentes. Vous relisez la donnée à chaque boucle, vous la lissez si nécessaire, puis vous la comparez à un seuil dans la condition de transition. Si vous commenciez à créer des états du type TROP_LOIN et TROP_PRES, votre nombre d'états exploserait avec la résolution du capteur et le programme deviendrait ingérable. Gardez un nombre d'états aussi petit que le permet le comportement à décrire : la plupart des objets du monde réel tiennent en trois à six états, et un automate de vingt états est presque toujours le signe qu'une décision a été rangée dans le mauvais endroit.
+
+## La structure de la boucle d'automate
+
+La boucle d'un automate suit toujours le même enchaînement, et cet enchaînement ne varie pas d'un projet à l'autre : lire les entrées, déterminer si une transition doit avoir lieu, l'appliquer le cas échéant, puis mettre à jour les sorties. En C++, la représentation la plus lisible est une structure de branches sur l'état courant, suivie d'une fonction dédiée aux transitions. Chaque branche ne contient que ce qui est propre à l'état : les sorties à maintenir et les conditions de sortie. Les actions d'entrée, c'est-à-dire ce qui se passe juste après un changement d'état, sont regroupées dans une fonction unique, appelez-la entrerEtat, qui s'exécute une seule fois par transition. Ce partage évite le redoublement des codes d'allumage éparpillés dans tout le fichier, qui est la première cause d'oublis lorsqu'on ajoute un état.
+
+```cpp
+void entrerEtat(FeuEtat suivant) {
+  etatCourant = suivant;
+  debutEtat = millis();
+  Serial.print("Etat -> ");
+  Serial.println(nomEtat(etatCourant));
+}
+
+void gererTransitions() {
+  unsigned long ecoule = millis() - debutEtat;
+
+  if (etatCourant == FeuEtat::ROUGE_VOITURE && ecoule > 8000) {
+    entrerEtat(FeuEtat::JAUNE_VOITURE);
+  } else if (etatCourant == FeuEtat::JAUNE_VOITURE && ecoule > 2000) {
+    entrerEtat(FeuEtat::ROUGE_PIETON);
+  } else if (etatCourant == FeuEtat::ROUGE_PIETON && ecoule > 8000) {
+    entrerEtat(FeuEtat::JAUNE_PIETON);
+  } else if (etatCourant == FeuEtat::JAUNE_PIETON && ecoule > 2000) {
+    entrerEtat(FeuEtat::ROUGE_VOITURE);
+  }
+}
+```
+
+Notez l'usage du calcul millis() - debutEtat plutôt que l'écriture millis() > debutEtat + duree. Les deux semblent équivalents, et ils le sont presque toujours, mais la première forme est robuste lorsque le compteur de millisecondes déborde, ce qui arrive après un peu plus de quarante-neuf jours de fonctionnement continu. L'arithmétique entière non signée fait que la soustraction reste correcte de part et d'autre du débordement, alors que la comparaison avec une somme peut échouer. Ce n'est pas un cas théorique pour un objet qui reste sous tension dans un tableau électrique ; c'est une ligne de code qui coûte rien et qui vous évite un mystère à réparer au pire moment. La règle d'or de la structure d'automate tient en une phrase : une branche par état, une fonction de transition, une fonction d'entrée, et aucun délai mort.
+
+Il reste à écrire l'appel de tout cela dans loop, et cet appel doit être minimal, parce que tout ce que vous ajoutez dans la boucle ralentit la réactivité de l'ensemble. Trois appels suffisent : lire les entrées, mettre à jour les transitions, rafraîchir les sorties. La fonction de mise à jour des sorties, elle, peut être appelée à chaque tour de boucle sans inconvénient, car écrire la même valeur sur une broche deux fois de suite ne change rien pour le matériel. Cette tolérance vous simplifie la vie : vous n'avez pas à mémoriser si vous avez déjà piloté une broche, vous la pilotez simplement. En revanche, tout ce qui est émission série, calcul lourd ou attente doit rester hors de ce chemin critique, ou être limité par un compteur de temps lui aussi non bloquant.
+
+```table
+| Élément du code | Rôle | Fréquence d'appel |
+|---|---|---|
+| lireEntrees() | Capteurs, boutons, messages série | Chaque tour de boucle |
+| gererTransitions() | Compare état et conditions | Chaque tour de boucle |
+| majSorties() | Écrit broches, afficheurs, PWM | Chaque tour de boucle |
+| entrerEtat() | Actions d'entrée une seule fois | Une fois par transition |
+| gérerTemporisations() | Compteurs non bloquants | Chaque tour de boucle |
+```
+
+
+## Temporisations non bloquantes avec millis()
+
+Vient maintenant la pièce maîtresse technique du chapitre : remplacer l'attente par une mesure. La fonction millis() renvoie le nombre de millisecondes écoulées depuis le démarrage de la carte, sous forme d'un entier non signé sur trente-deux bits. Elle ne s'arrête jamais et ne consomme aucun temps d'exécution notable : l'appeler revient simplement à lire un compteur matériel. L'idée est donc de noter l'instant de départ d'une action, puis de vérifier à chaque tour de boucle si l'instant présent a dépassé l'instant de départ augmenté de la durée voulue. Tant que le seuil n'est pas atteint, la boucle continue de faire tout le reste : lire les entrées, gérer les autres états, rafraîchir l'affichage. C'est exactement le contraire de delay, qui suspend tout le reste pendant l'attente.
+
+```cpp
+const int LED = 13;
+bool allume = false;
+unsigned long dernierChangement = 0;
+const unsigned long INTERVALLE = 500;
+
+void setup() {
+  pinMode(LED, OUTPUT);
+}
+
+void loop() {
+  unsigned long maintenant = millis();
+
+  if (maintenant - dernierChangement >= INTERVALLE) {
+    dernierChangement = maintenant;
+    allume = !allume;
+    digitalWrite(LED, allume ? HIGH : LOW);
+  }
+
+  // ici, le reste du programme reste entièrement disponible
+}
+```
+
+La comparaison entre les deux approches mérite d'être posée noir sur blanc, car elle résume à elle seule toute la logique de ce chapitre. Le délai bloquant est simple à écrire et parfaitement suffisant pour un script unique ; il devient inutilisable dès que deux tâches doivent coexister. La temporisation non bloquante demande une variable de plus et une condition, mais elle conserve la boucle entièrement disponible et permet d'enchaîner autant de durées indépendantes qu'il le faut. Dans la pratique professionnelle, on ne rencontre quasiment jamais la première forme hors des esquisses pédagogiques.
+
+```table
+| Critère | delay() | Compteur millis() |
+|---|---|---|
+| Réactivité de la boucle | Nulle pendant l'attente | Totale en permanence |
+| Nombre de durées simultanées | Une seule | Autant que nécessaire |
+| Lecture des entrées pendant l'attente | Impossible | Possible à chaque tour |
+| Complexité du code | Une ligne | Une variable et une condition |
+| Comportement après 49 jours | Non pertinent | Correct si l'on soustrait |
+```
+
+
+Un second avantage, rarement mentionné mais décisif dans un objet interactif, est que la temporisation non bloquante se règle pendant l'exécution sans recompiler. Si vous souhaitez prolonger l'état OCCUPE de deux secondes parce qu'un nouvel appui est arrivé, il vous suffit de décaler debutEtat ou d'ajouter une seconde variable d'échéance ; le programme s'adapte immédiatement. Avec delay, il faudrait interrompre l'attente en cours, ce qui n'a aucun sens une fois la fonction engagée. La temporisation non bloquante transforme donc le temps en une donnée que l'automate peut manipuler, et non plus en une contrainte subie.
+
+## Plusieurs compteurs en parallèle
+
+Un objet réaliste n'a jamais une seule temporisation. Le feu piéton doit clignoter pendant qu'un afficheur se rafraîchit, pendant qu'un bip sonore se déclenche, pendant qu'un compteur d'inactivité tourne. Chacune de ces durées a sa propre échéance et sa propre logique : les regrouper dans une seule variable serait les rendre inséparables. La méthode consiste donc à donner à chaque temporisation son couple de variables, un instant de départ et une durée, puis à tester chacune de ces couples indépendamment dans la boucle. Aucun n'attend les autres, aucun ne les bloque, et leur ordre d'appel n'a aucune importance tant qu'ils sont tous traités avant le retour en haut de la boucle.
+
+```cpp
+unsigned long tClignote = 0;
+unsigned long tAfficheur = 0;
+unsigned long tBip = 0;
+bool bipActif = false;
+
+void gererTemporisations() {
+  unsigned long m = millis();
+
+  if (m - tClignote >= 500) {
+    tClignote = m;
+    digitalWrite(LED, !digitalRead(LED));
+  }
+
+  if (m - tAfficheur >= 250) {
+    tAfficheur = m;
+    afficherTempsRestant();
+  }
+
+  if (bipActif && m - tBip >= 150) {
+    bipActif = false;
+    digitalWrite(BUZZER, LOW);
+  }
+}
+```
+
+L'exemple montre une variante utile : certaines temporisations ne doivent se déclencher que si une condition est vraie, comme le bip qui ne sonne que pendant une transition. Plutôt que de multiplier les états pour cela, on utilise un drapeau, bipActif, mis à vrai au moment où l'action doit commencer et remis à faux à la fin. Le compteur continue de tourner, mais son effet n'est appliqué que si le drapeau l'autorise. Ce motif, drapeau plus échéance, se retrouve partout dans l'embarqué : transmission en cours, mesure en cours, changement d'état différé. Il vous évite de créer des états transitoires qui n'apportent rien à la modélisation et multiplient les branches à tester.
+
+Un piège attend celui qui multiplie les compteurs : l'oubli d'initialisation. Si vous déclarez vos instants de départ à zéro sans les réinitialiser à l'entrée d'un état, la première échéance peut être dépassée dès le démarrage, ce qui déclenche une action immédiate et apparemment injustifiée. La parade est systématique : à chaque entrée dans un état, dans entrerEtat, vous réinitialisez tous les compteurs concernés à millis(). Cette ligne unique vous fait gagner des heures de débogage, et elle fait partie des habitudes à installer dès maintenant. De même, lorsque vous ajoutez une temporisation, écrivez d'abord sa condition, puis sa variable de départ, puis son action, dans cet ordre, et vérifiez-la immédiatement en observant le moniteur série plutôt qu'en attendant un comportement global anormal.
+
+Les temporisations non bloquantes ont résolu le problème du temps : votre boucle ne dort plus, elle reste disponible en permanence. Reste une seconde catégorie d'événements, plus insidieuse, celle des instants brefs et imprévisibles. Un appui de bouton dure quelques dizaines de millisecondes ; une impulsion d'un capteur peut durer moins d'un milliseconde ; un front détecté par un photodiode se produit sans prévenir à aucun moment particulier. Si votre boucle est occupée à traiter un afficheur au moment où l'événement survient, il est perdu. Vous pourriez raccourcir le temps de la boucle, mais vous ne ferez que déplacer le problème sans le supprimer. La réponse consacrée par tous les systèmes embarqués s'appelle l'interruption : laisser le matériel vous prévenir, plutôt que d'aller guetter le matériel sans arrêt.
+
+## Pourquoi une interruption plutôt qu'une lecture active
+
+La lecture active consiste à interroger une broche à intervalle régulier, dans la boucle, et à décider ensuite si un changement mérite une action. Cette méthode fonctionne tant que la boucle est rapide et dédiée à cette tâche, mais elle souffre de deux défauts structurels. Le premier est la dépendance au temps de la boucle : plus votre code fait de choses, plus l'espace entre deux lectures grandit, et plus la probabilité de manquer un événement bref augmente. Le second est le gaspillage : la grande majorité des lectures ne trouvent aucun changement, et pourtant elles occupent du processeur, de la mémoire et de la batterie. Sur un objet alimenté par batterie, cette différence n'est pas un détail d'optimisation, elle décide de l'autonomie. L'inverse exact se produit avec une interruption : la broche est surveillée en permanence par un circuit spécialisé du microcontrôleur, et le programme n'est sollicité que lorsque le front attendu apparaît réellement.
+
+Concrètement, la fonction attachInterrupt demande au matériel de surveiller une broche et d'exécuter une fonction de votre choix dès qu'un événement se produit sur cette broche. Cette fonction porte un nom particulier : la routine d'interruption, souvent abrégée ISR pour interrupt service routine. Le principe d'exécution est simple à décrire et contre-intuitif à vivre : la boucle principale est en train de faire n'importe quoi, une interruption survient, le processeur suspend instantanément ce qu'il faisait, saute vers la routine, l'exécute en entier, puis revient exactement là où il s'était arrêté, comme si rien ne s'était passé. Votre code de boucle n'a donc aucune logique particulière à écrire pour accepter l'interruption, aucune file d'attente à gérer, aucun drapeau à scruter manuellement : la transition entre l'avant et l'après est automatique.
+
+```cpp
+const int BOUTON = 2;
+volatile bool appuiDetecte = false;
+
+void ISR_appui() {
+  appuiDetecte = true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BOUTON, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BOUTON), ISR_appui, FALLING);
+}
+
+void loop() {
+  if (appuiDetecte) {
+    appuiDetecte = false;
+    Serial.println("Appui !");
+    // toute la logique métier se traite ici, hors interruption
+  }
+}
+```
+
+Le programme ci-dessus illustre le patron complet d'une interruption moderne. La routine elle-même ne fait qu'une chose : poser un drapeau. Toute la suite, l'affichage, le changement d'état, l'envoi d'un message, s'effectue dans la boucle, à un moment choisi par vous. Ce découpage n'est pas une simple élégance, il est imposé par la nature même de l'interruption, que la section suivante décrit précisément, et il constitue la règle la plus importante de ce chapitre après celle du non-blocage. Retenez d'ores et déjà la phrase de synthèse : une interruption signale un événement, elle ne le traite pas.
+
+## Le fonctionnement matériel d'un GPIO en interruption
+
+Pour écrire des interruptions fiables, il faut savoir ce qui se passe physiquement dans la broche. Un GPIO moderne n'est pas un simple fil : c'est un circuit capable de comparer en continu son état à celui qu'il avait au tour précédent, de filtrer les rebonds les plus évidents et de signaler tout écart à la logique centrale. Quand vous appelez attachInterrupt, vous demandez à ce comparateur de déclencher une alerte selon un critère que vous choisissez, appelé mode de déclenchement. Le choix de ce mode découle directement du câblage, et le choisir à l'aveugle est l'erreur la plus fréquente chez les débutants, qui se retrouvent alors avec un déclenchement permanent ou, au contraire, aucun déclenchement du tout.
+
+Le tableau des modes courants se lit facilement une fois le câblage compris. Le mode front montant se déclenche lorsque la broche passe du niveau bas au niveau haut ; le mode front descendant, l'inverse ; le mode changement, dans les deux sens. Les modes de niveau bas et de niveau haut sont plus dangereux, car ils maintiennent l'interruption active tant que la condition reste vraie, ce qui peut noyer le processeur sous les appels. Dans le cas le plus classique, un bouton relié entre la broche et la masse avec un pull-up interne, la broche est à l'état haut au repos et descend à zéro quand on appuie : le mode front descendant est donc exactement celui qui correspond à l'instant de l'appui.
+
+```table
+| Mode | Condition de déclenchement | Câblage typique |
+|---|---|---|
+| RISING | Passage de 0 à 1 | Bouton relié à l'alimentation, résistance de rappel vers la masse |
+| FALLING | Passage de 1 à 0 | Bouton relié à la masse, pull-up interne actif |
+| CHANGE | Tout changement d'état | Compteur d'impulsions, capteur à frequency |
+| LOW | Broche maintenue à 0 | Réveil périodique, cas particuliers |
+| HIGH | Broche maintenue à 1 | Déconseillé, risque de tempête d'interruptions |
+```
+
+
+Trois précautions matérielles accompagnent toujours ce choix. La première est le pull-up : sans lui, la broche est flottante, c'est-à-dire qu'elle capte les parasites alentour et déclenche des interruptions au hasard ; activez le pull-up interne avec INPUT_PULLUP, ou placez une résistance externe de dix kilo-ohms. La seconde est l'antirebond : un contact mécanique rebondit plusieurs millisecondes avant de se stabiliser, ce qui produit une série de fronts au lieu d'un seul. La troisième est le numéro de broche : toutes les broches d'une carte ne sont pas reliées au module d'interruption, et la fonction digitalPinToInterrupt traduit le numéro de broche en le bon numéro de canal, ce qui rend votre code portable d'une carte à l'autre.
+
+```cpp
+const int BOUTON = 4;
+volatile unsigned long derniereIsr = 0;
+
+void ISR_front() {
+  unsigned long m = millis();
+  if (m - derniereIsr > 30) {   // filtre anti-rebond minimal
+    derniereIsr = m;
+    appuiDetecte = true;
+  }
+}
+
+void setup() {
+  pinMode(BOUTON, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BOUTON), ISR_front, FALLING);
+}
+```
+
+Le filtre anti-rebond placé dans la routine mérite une explication, car il enfreint apparemment la règle de brièveté que nous allons poser dans la section suivante. Comparer une variable à millis() reste une opération très courte, de l'ordre de quelques dizaines d'instructions, et il n'existe guère d'endroit plus fiable pour éliminer les rebonds : détecter le premier front, ignorer tout ce qui arrive pendant les trente millisecondes qui suivent, puis considérer l'appui comme consommé. Une alternative consiste à ne filtrer que dans la boucle, en conservant l'instant du dernier front, mais la boucle peut être occupée au moment du rebond, et le filtre perd alors son efficacité. Choisissez la méthode selon la sensibilité de votre objet, mais ne l'oubliez jamais : un bouton non filtré produit des dizaines d'appui pour une seule pression, et c'est la cause directe des automates qui semblent sauter plusieurs états d'un coup.
+
+## Variables volatile et brièveté absolue
+
+Voici maintenant la règle qui sépare une interruption qui fonctionne de celle qui marche parfois, selon le niveau d'optimisation du compilateur. Une variable modifiée dans une routine d'interruption et lue dans la boucle doit obligatoirement être déclarée volatile. Ce mot n'ajoute aucune fonctionnalité au programme, il empêche seulement le compilateur d'optimiser les accès : sans lui, il est parfaitement en droit de charger la variable une seule fois dans un registre, de réutiliser cette valeur pendant tout le bloc de code, et d'ignorer ainsi indéfiniment les écritures survenues entre-temps. Le programme compile sans aucun avertissement, le comportement est correct pendant quelques exécutions, puis la boucle cesse de voir les appuis, sans que rien n'ait changé dans votre code. C'est l'un des bugs les plus déroutants du débutant, et il disparaît dès que le mot volatile est ajouté.
+
+```cpp
+volatile bool demande = false;
+volatile unsigned long impulsions = 0;
+
+void ISR_capteur() {
+  impulsions++;              // lecture-modification-écriture protégée
+}
+
+void setup() {
+  attachInterrupt(digitalPinToInterrupt(CAPTEUR), ISR_capteur, RISING);
+}
+
+void loop() {
+  if (demande) {
+    demande = false;
+    Serial.println(impulsions);
+  }
+}
+```
+
+La seconde règle, tout aussi impérative, est la brièveté. Une interruption suspend toutes les autres activités du système, y compris les autres interruptions de priorité plus faible, jusqu'à son retour. Si votre routine met une dizaine de millisecondes à terminer, tout le reste du système est gelé pendant ce temps : l'afficheur ralentit, les communications se dégradent, les mesures manquent leur fenêtre. La pratique professionnelle consiste à ne faire dans une interruption que trois choses : lire le registre qui a déclenché l'événement, incrémenter un compteur ou poser un drapeau, puis rendre la main. Tout le traitement lourd — calculs, affichage, décisions d'automate, écriture série — appartient à la boucle, qui s'exécute à un moment choisi et sans contrainte de latence.
+
+Un troisième point concerne les fonctions que l'on appelle depuis une interruption. Les fonctions digitalWrite et digitalRead sont parfaitement utilisables dans ce contexte sur les cartes Arduino classiques, mais les appels lourds, les transmissions série, les attentes et les bibliothèques qui font elles-mêmes des temporisations sont proscrits. Sur l'ESP32, certaines fonctions ne sont pas placées dans la mémoire rapide interne, ce qui provoque un échec silencieux si l'interruption survient au moment où le processeur exécute justement une fonction absente de cette mémoire. La macro IRAM_ATTR, que nous verrons dans la section suivante, sert précisément à garantir que le code de la routine est toujours accessible au moment critique. Au-delà de ces détails, gardez le réflexe de conception : d'abord écrire la routine la plus courte possible, puis seulement, si c'est indispensable, déplacer une partie du travail dans la boucle.
+
+- Déclarez volatile toute variable partagée entre une interruption et la boucle.
+- Limitez la routine à la pose d'un drapeau ou à l'incrémentation d'un compteur.
+- Filtrez les rebonds, dans la routine ou immédiatement après dans la boucle.
+- N'appelez jamais delay, Serial.print ni une bibliothèque lourde depuis une interruption.
+- Utilisez digitalPinToInterrupt pour rester portable d'une carte à l'autre.
+
+## Les timers matériels de l'ESP32
+
+Les interruptions déclenchées par une broche répondent à un événement imprévisible. L'ESP32 fournit une seconde famille d'interruptions, déclenchée non par une broche mais par le temps : les timers matériels. L'idée est exactement la même que celle du compteur millis(), mais le déclenchement n'est plus effectué par la boucle, il est effectué par un circuit horloge qui ne dépend d'aucun code. Votre boucle peut être occupée, en train d'envoyer des données ou de rafraîchir un écran, le timer déclenchera malgré tout sa routine à la milliseconde près. C'est l'outil de choix pour les clignotements réguliers, les échantillonnages périodiques et toutes les temporisations dont la précision doit être indépendante de la charge du programme.
+
+L'API moderne de l'ESP32 organise ces timers en quatre opérations : créer le timer avec timerBegin, attacher sa routine avec timerAttachInterrupt, programmer sa fréquence avec timerAlarmWrite, puis l'activer ou l'arrêter selon les besoins. La fréquence s'exprime en hertz, et la valeur d'alarme en nombre de cycles de ce timer : pour un clignotement de cinq cents millisecondes sur un timer cadencé à un mégahertz, on demande une alarme tous les mille cycles. La fonction de rappel reçoit automatiquement l'attribut IRAM_ATTR lorsque vous le spécifiez, ce qui garantit que son code réside en mémoire rapide et reste exécutable même pendant une opération d'accès à la flash.
+
+```cpp
+hw_timer_t *timerClignote = NULL;
+volatile bool tickTimer = false;
+
+void IRAM_ATTR ISR_timer() {
+  tickTimer = true;
+}
+
+void setup() {
+  timerClignote = timerBegin(0, 80, true);              // timer 0, diviseur 80
+  timerAttachInterrupt(timerClignote, &ISR_timer, true);
+  timerAlarmWrite(timerClignote, 500000, true);         // 500 ms à 1 MHz
+  timerAlarmEnable(timerClignote);
+}
+
+void loop() {
+  if (tickTimer) {
+    tickTimer = false;
+    digitalWrite(LED, !digitalRead(LED));
+  }
+}
+```
+
+Observez que la boucle ne fait qu'attendre le drapeau et basculer la broche : elle pourrait passer dix secondes à faire autre chose, le clignotement resterait millimétriquement régulier. C'est la différence fondamentale avec la temporisation fondée sur millis, dont la régularité dépend de la fréquence à laquelle la boucle passe tester la condition. Pour un feu de signalisation ou un afficheur, les deux méthodes sont amplement suffisantes ; pour un échantillonnage de signal ou une communication temporisée, seul le timer matériel donne une garantie réelle. L'ESP32 en embarque plusieurs, indépendants les uns des autres, ce qui permet d'en réserver un à l'acquisition, un autre au clignotement, sans qu'ils se perturbent.
+
+La question de l'accès concurrent se pose dès que deux contextes modifient la même donnée. Si la boucle lit un compteur d'impulsions pendant que la routine d'interruption l'incrémente, une lecture peut survenir au milieu de la mise à jour et renvoyer une valeur intermédiaire, fausse mais temporaire. Les compteurs de taille réduite, un booléen ou un entier de huit bits, sont écrits de manière atomique sur ce type de processeur et ne posent généralement pas de problème ; les valeurs de trente-deux bits demandent davantage de prudence, et les données de plus de quatre octets doivent être protégées en désactivant brièvement les interruptions autour de la lecture. La fonction noInterrupts et sa contrepartie interrupts entourent cette section critique, qui doit rester strictement minimale, car pendant son exécution, plus aucun événement n'est servi.
+
+Il existe enfin une troisième source de déclencheur, à connaître pour ne pas en être victime : le watchdog, ou chien de garde logiciel. L'ESP32 dispose d'un timer de surveillance qui redémarre le microcontrôleur si la boucle cesse de le rafraîchir trop longtemps, signe habituel d'une boucle bloquée ou d'une deadlock. Dans un automate correctement construit, le rafraîchissement s'effectue naturellement en début de boucle et vous n'avez rien à faire ; en revanche, si vous introduisez à nouveau un délai long, le chien de garde déclenchera un redémarrage dont la cause sera difficile à relier à votre attente. Considérez ses réinitialisations inattendues comme le symptôme d'une temporisation qui serait revenue en bloc, pas comme un défaut matériel.
+
+Toutes les pièces du puzzle sont maintenant sur la table : la modélisation par états, la structure de boucle, les temporisations fondées sur millis et les interruptions matériques. Cette section les assemble dans un programme complet, le feu piéton que nous avions dessiné au début de la leçon. Le but n'est pas de vous faire copier un listing, mais de vous montrer la méthode de construction dans l'ordre : on écrit d'abord le enum et les variables d'état, puis la fonction d'entrée, puis les transitions temporelles, ensuite les interruptions, enfin les affichages. Chaque étape est testable isolément, ce qui réduit considérablement le temps de mise au point, parce qu'une erreur est toujours localisée dans la partie que vous venez d'écrire et non quelque part dans un listing de deux cents lignes.
+
+## Exemple guidé : le feu piéton non bloquant
+
+Le système comporte deux séquences principales. Pendant la première, les voitures circulent sur fond de vert pendant huit secondes, puis le feu jaune s'allume pendant deux secondes avant le passage piéton. Pendant la seconde, les piétons traversent sur fond de rouge voiture pendant huit secondes, le jaune piéton clignote pendant deux secondes, et le cycle recommence. Le bouton d'appel n'accélère rien pendant qu'un piéton traverse — c'est un choix de conception explicite, les transitions pendant une traversée seraient dangereuses — mais il est mémorisé et traité juste après la fin du cycle en cours. Le schéma ci-dessous reprend le modèle, en y ajoutant la branche du bouton, qui constitue la seule transition déclenchée par une interruption plutôt que par le temps.
+
+```text
+   +----------------+   8 s   +--------------+   2 s   +----------------+
+   | VOIT VERT      | ------->| VOIT JAUNE   | ------->| PIETON ROUGE   |
+   +----------------+         +--------------+         +----------------+
+          ^                                                   |
+          |                                    clignotement   |
+          |                                    500 ms x 16    |
+          |                                                   v
+   +----------------+   2 s   +----------------+   8 s   +--------------+
+   | PIETON JAUNE   | <-------| FIN CROSSE    | <------| (meme etat)   |
+   +----------------+         +----------------+         +--------------+
+          ^                         ^
+          +-------------------------+  bouton memorise (interruption)
+```
+
+Le listing suivant est volontairement complet, mais il reste lisible parce que chaque responsabilité occupe sa propre fonction. La fonction entrerEtat assure les actions d'entrée, gererTransitions gère les échéances, la routine d'interruption ne pose qu'un drapeau, et loop se contente d'enchaîner les trois appels standards. Observez surtout la façon dont debutEtat est réinitialisé à chaque changement d'état : c'est cette ligne unique qui garantit que toutes les temporisations repartent de zéro, et son oubli est la panne la plus fréquente sur ce type de programme.
+
+```cpp
+const int LED_V = 4, LED_J = 5, LED_R = 6;
+const int BTN = 2;
+
+enum class Etat { VOIT_VERT, VOIT_JAUNE, PIETON, PIETON_JAUNE };
+Etat courant = Etat::VOIT_VERT;
+unsigned long debut = 0;
+volatile bool demande = false;
+
+void entrerEtat(Etat suivant) {
+  courant = suivant;
+  debut = millis();
+  digitalWrite(LED_V, suivant == Etat::VOIT_VERT);
+  digitalWrite(LED_J, suivant == Etat::VOIT_JAUNE || suivant == Etat::PIETON_JAUNE);
+  digitalWrite(LED_R, suivant == Etat::PIETON || suivant == Etat::PIETON_JAUNE);
+}
+
+void gererTransitions() {
+  unsigned long e = millis() - debut;
+  switch (courant) {
+    case Etat::VOIT_VERT:
+      if (e > 8000) entrerEtat(Etat::VOIT_JAUNE);
+      break;
+    case Etat::VOIT_JAUNE:
+      if (e > 2000) entrerEtat(Etat::PIETON);
+      break;
+    case Etat::PIETON:
+      if (e > 8000) entrerEtat(Etat::PIETON_JAUNE);
+      break;
+    case Etat::PIETON_JAUNE:
+      if (e > 2000) entrerEtat(Etat::VOIT_VERT);
+      break;
+  }
+}
+```
+
+Deux détails de ce listing méritent une attention particulière. Le premier est l'absence totale de délai : aucune ligne du programme ne suspend l'exécution, ce qui signifie que la lecture du bouton, si vous en ajoutez une, reste possible pendant les huit secondes de traversée. Le deuxième est l'emploi du switch sur le enum, qui se lit comme une table de vérité et que l'éditeur signalera si vous oubliez un cas. Là où une succession de if imbriqués devient rapidement illisible, le switch conserve une structure plate, une branche par état, exactement comme le demandait le modèle. Le drapeau demande, posé par l'interruption, serait consommé en tête de gererTransitions : s'il est vrai et si l'état le permet, on force une transition, sinon on l'ignore en le réinitialisant simplement, sans perdre l'événement pour autant.
+
+L'initialisation mérite elle aussi d'être écrite avec soin, car c'est souvent là que se cachent les démarrages bizarres. On configure les broches en sortie, on active le pull-up interne du bouton, on attache l'interruption sur le front descendant, on écrit l'état initial avec entrerEtat — et non par une affectation directe, afin que les sorties soient cohérentes dès la première milliseconde — puis on lance éventuellement une temporisation matérielle pour le clignotement. Un point fréquent sur l'ESP32 : certaines broches ont des niveaux d'appelage particuliers au démarrage et peuvent faire clignoter brièvement une LED connectée. Si cela gêne votre montage, choisissez une broche sans fonction strapping ou ajoutez une résistance de rappel : le logiciel ne peut pas toujours compenser une décision de câblage.
+
+## Mémoriser les appuis sans en perdre aucun
+
+Le bouton est l'entrée la plus simple du projet et, paradoxalement, celle qui pose le plus de questions une fois que l'automate fonctionne. La première difficulté tient à la durée : un appui humain dure entre cinquante et trois cents millisecondes, ce qui est une éternité pour le processeur et un instant pour le programmeur qui vérifie sa broche une fois par tour de boucle. Si vous lisez l'entrée à une cadence suffisante, vous ne ratez rien ; si la boucle porte une tâche longue, l'appui entier peut se produire entre deux lectures. C'est précisément le cas que la résout l'interruption : elle mémorise l'événement au moment exact où il se produit, quelle que soit l'occupation du processeur, et la boucle en prend connaissance plus tard sans que l'information ait été perdue.
+
+La difficulté suivante est sémantique et n'a rien d'automatique : que signifie un appui dans l'état courant ? Sur notre feu, un appel pendant la traversée ne doit pas provoquer de transition immédiate, mais il ne doit pas non plus être jeté, car l'usager qui appuie alors attend toujours que le passage suivant soit autorisé. On stocke donc la demande dans une variable, drapeau, et on la consomme au moment où elle devient utile, c'est-à-dire juste avant de quitter l'état où un nouvel appel a du sens. Ce décalage entre la détection et le traitement est un motif extrêmement courant : l'interruption capture l'instant, la boucle décide de l'opportunité. Il vous évite de créer des états supplémentaires purement mécaniques et conserve le modèle lisible.
+
+```cpp
+volatile bool appelMemorise = false;
+unsigned long dernierFront = 0;
+
+void ISR_bouton() {
+  unsigned long m = millis();
+  if (m - dernierFront > 30) {     // anti-rebond
+    dernierFront = m;
+    appelMemorise = true;
+  }
+}
+
+void gererTransitions() {
+  if (appelMemorise && peutAutoriserPassage()) {
+    appelMemorise = false;
+    forcerPassagePieton();
+    return;
+  }
+  appelMemorise = false;           // appel hors période utile : on l'ignore
+  // ... transitions temporelles habituelles
+}
+```
+
+Le second bloc de code montre une variante utile lorsque l'appui doit être traité même s'il arrive pendant une attente : on conserve l'instant de l'appui dans une variable de données et on le compare ensuite à une échéance, ce qui permet de prolonger ou de raccourcir un état en cours sans interrompre quoi que ce soit. C'est la même mécanique que les temporisations, appliquée à une entrée plutôt qu'à une durée, et elle se combine naturellement avec elles : un état peut à la fois avoir une échéance propre et une échéance reportée par un appui. Pour garder la maîtrise du code, préférez toujours une règle unique par état, écrite en une ligne, du type si appel pendant cet état alors prolonger de deux secondes, plutôt qu'une accumulation de cas particuliers empilés les uns derrière les autres.
+
+Enfin, testez le comportement du bouton indépendamment du reste de l'automate avant de l'intégrer. Un sketch minimal qui n'affiche sur le port série que le numéro et l'instant de chaque front filtré vous met en confiance en quelques secondes et fait apparaître les défauts de câblage, les rebonds trop longs ou le mauvais mode d'interruption, bien avant que vous n'ayiez à déboguer la logique complète. Ce réflexe de test isolé est celui des équipes qui livrent à temps : on valide chaque brique dans un banc de test dédié, puis on les assemble. Vous l'appliquerez tout naturellement au projet connecté du chapitre suivant, où le bouton deviendra peut-être une commande venue du réseau, mais où la règle restera inchangée : capturer l'événement tôt, le traiter au bon moment, ne jamais bloquer la boucle.
+
+## Débogage de l'automate
+
+Un automate correctement modélisé se débogue d'une manière très particulière, beaucoup plus efficace que la débogage classique : on observe les transitions plutôt que les variables. Tant que vous cherchez pourquoi une LED ne s'allume pas, vous inspectez des niveaux logiques ; dès que vous imprimez l'état courant et l'instant de chaque changement, vous voyez immédiatement laquelle des transitions n'a pas eu lieu, ou a eu lieu trop tôt. La trace ci-dessous est produite par deux lignes de code ajoutées dans entrerEtat, et elle suffit presque toujours à localiser l'erreur en une seule lecture.
+
+```text
+1204 ms  etat -> VOIT_VERT    entree
+9210 ms  etat -> VOIT_JAUNE   timeout 8000
+11215 ms etat -> PIETON       timeout 2000
+19220 ms etat -> PIETON_JAUNE timeout 8000
+19222 ms bouton memorise pendant la traversee
+21225 ms etat -> VOIT_VERT    timeout 2000
+```
+
+Les anomalies les plus courantes ont une signature facile à reconnaître. Si les durées observées sont systématiquement supérieures aux durées demandées, c'est que la boucle met du temps à repasser tester la condition : cherchez un appel long, une émission série abondante ou une lecture de capteur coûteuse. Si les transitions se produisent dès le démarrage, c'est que debut n'a pas été initialisé à millis() dans setup, et que le compteur part de zéro. Si l'automate semble sauter un état, comptez les fronts sur la broche du bouton : il y en a probablement plusieurs, et le filtre anti-rebond n'a pas été posé. Si rien ne se déclenche alors que les mêmes conditions fonctionnent dans un test isolé, vérifiez que vous comparez bien millis() - debut à la durée, et non millis() à debut + durée cumulée depuis le démarrage.
+
+Une méthode de débogage particulièrement rentable consiste à rendre l'automate pilotable depuis le port série, temporairement. En ajoutant dans la boucle une lecture d'un caractère et en associant chaque lettre à une transition forcée, vous pouvez déclencher à la main chaque branche du schéma sans attendre les huit secondes du cycle réel. Cette technique transforme une attente de minutes en un test de quelques secondes, et elle permet de valider toutes les transitions, y compris les rares, comme la sortie d'une erreur ou la reprise après débordement, que le comportement normal ne déclenche qu'une fois par heure. Une fois les transitions vérifiées, vous retirez le pont série et votre objet redevient autonome.
+
+Un réflexe complémentaire consiste à afficher non seulement l'état, mais aussi l'entrée qui a motivé le changement. Dire que l'automate est passé à l'état VOIT_JAUNE est utile ; dire qu'il y est passé parce que la durée de huit mille millisecondes est écoulée ou parce que le bouton a été enfoncé, c'est répondre à la question qui compte vraiment. Cette discipline paraît lourde au départ, mais elle réduit le temps total de mise au point de manière spectaculaire, et elle vous donne en outre un journal que vous pourrez joindre à la livraison de votre projet, exactement comme le demande l'exercice pratique de ce chapitre.
+
+## Bonnes pratiques de conception
+
+Les règles qui suivent sont issues de projets réels et se vérifient toutes les fois où un automate a dû être réparé en production. Elles tiennent en peu de points, mais chacune correspond à une famille de pannes que vous éviterez intégralement en les appliquant.
+
+- Écrivez le schéma d'états avant le code, et gardez-le à côté de vous pendant l'écriture.
+- Nommez les états avec des mots entiers, jamais des nombres ni des lettres isolées.
+- Centralisez les actions d'entrée dans une fonction unique, appelée à chaque transition.
+- Affectez debut à millis() dans cette fonction, sans exception.
+- Ne faites jamais appel à delay dans un objet interactif, même pour tester.
+- Posez les drapeaux dans les interruptions, tranchez-les dans la boucle.
+- Imprimez l'état et le motif de chaque transition lors de la mise au point.
+- Limitez le nombre d'états : si vous dépassez six ou sept, une décision est mal rangée.
+
+Une remarque sur l'évolution d'un projet : un automate grandit rarement tout seul, il grandit parce qu'on lui ajoute un comportement, une nouvelle entrée, un mode dégradé. Chaque ajout doit passer par la même question : quel est l'état supplémentaire, quelles transitions entrent et sortent, quelles actions sont concernées. Si la réponse tient en trois lignes sur papier, l'ajout au code tiendra en dix ; si la réponse est floue sur papier, le code sera bâclé et les régressions apparaîtront à l'usage. Cette rigueur est la différence entre un sketch qui fonctionne une fois et un firmware qui tourne pendant des années sans intervention, et c'est exactement l'état d'esprit attendu au chapitre suivant, où l'objet se connectera au réseau sans que sa logique interne change d'un iota.
+
+Avant de conclure, il reste utile de réunir dans un même endroit les formes typiques d'automates que vous rencontrerez, afin que vous puissiez repérer au premier regard celle dont votre projet est proche. Trois structures couvrent la grande majorité des cas de l'embarqué débutant, et chacune se distingue par la nature de ses conditions de transition plutôt que par son code.
+
+```table
+| Structure | Déclencheurs principaux | Exemple type |
+|---|---|---|
+| Automate temporel | Écoulement de millis, timers matériels | Feu tricolore, séquenceur de démarrage |
+| Automate à événements | Fronts sur broches, messages série, interruptions | Bouton d'appel, détection de presence |
+| Automate à données | Seuils sur capteurs, comparaisons de mesures | Thermostat, détection d'ouverture de porte |
+| Automate hybride | Combinaison des trois | Feu piéton avec bouton, robot évitement d'obstacle |
+```
+
+
+La distinction pratique est la suivante : si vos transitions dépendent surtout du temps, un seul compteur et un switch suffisent ; si elles dépendent d'événements imprévisibles, prévoyez dès le départ des drapeaux posés par des interruptions ; si elles dépendent de mesures, ajoutez une couche de filtrage et de seuils hystérésis pour éviter que l'automate ne risque entre deux états à cause du bruit électrique. Dans tous les cas, la structure du programme reste identique : une variable d'état, une fonction de transition, une fonction d'entrée, et une boucle libre de toute attente. C'est cette uniformité qui rend la méthode si polyvalente : vous changez les conditions, jamais le squelette.
+
+Un mot sur la manière de faire évoluer un automate sans casser ce qui existe déjà. L'erreur classique consiste à ajouter un état en dupliquant une branche existante, ce qui multiplie les risques de divergence entre deux parties du code qui devraient faire la même chose. Préférez extraire les actions récurrentes dans des fonctions nommées par leur intention, allumerPhasesJour, demarrerClignotement, arreterBuzzer, puis appeler ces fonctions depuis les branches concernées. Le listing reste court, l'intention reste lisible, et la correction d'un bug d'allumage est appliquée partout d'un seul coup. Cette extraction progressive est exactement la façon dont les projets industriels se maintiennent sur plusieurs années, avec des équipes successives et des demandes d'évolution imprévues.
+
+## À retenir
+
+Les idées de ce chapitre forment un ensemble cohérent : elles partent toutes du même constat, un objet réactif ne doit jamais attendre, et elles aboutissent toutes à la même architecture, un état courant, des transitions testées à chaque tour de boucle, des interruptions qui signalent sans traiter. Voici l'essentiel, formulé pour être relu juste avant de commencer un projet.
+
+- Un automate est un ensemble fini d'états, dont un seul est actif à la fois.
+- Chaque transition associe une condition à un changement d'état et à ses actions.
+- Représentez les états avec un enum, jamais avec des nombres bruts.
+- Regroupez les actions d'entrée dans une fonction unique appelée à chaque transition.
+- Replacez chaque delay par un couple debut plus duree testé avec millis().
+- Soustrayez les instants plutôt que de les comparer à une somme, pour rester correct après débordement.
+- Une interruption pose un drapeau volatile ; la boucle le consomme et applique la logique.
+- Limitez la routine d'interruption à quelques instructions, sans affichage ni calcul.
+- Utilisez attachInterrupt avec le mode qui correspond au câblage réel de votre entrée.
+- Sur l'ESP32, confiez les temporisations critiques à un timer matériel et son rappel à IRAM_ATTR.
+- Imprimez l'état et le motif de chaque transition : c'est le débogage le plus rentable.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus répandue, est de conserver un delay quelque part dans la boucle, même bref, en se disant qu'il ne gênera personne. Les conséquences sont alors incompréhensibles : des appuis manqués qui ne se produisent que parfois, des mesures irrégulières, un afficheur qui ralentit. La seconde est l'oubli du mot volatile, qui produit un comportement apparemment aléatoire, correct sous le débogueur et faux en exécution optimisée. La troisième est un debutEtat non réinitialisé à l'entrée d'un état, d'où des transitions immédiates au démarrage ou des durées qui dépendent du chemin parcouru auparavant.
+
+- Delay résiduel dans la boucle : le programme redevient sourd.
+- Variable partagée non volatile : la boucle lit une valeur périmée.
+- debut non remis à jour dans entrerEtat : les durées deviennent imprévisibles.
+- Comparaison millis() > debut + durée : échec après débordement du compteur.
+- Antirebond absent : un seul appui génère une série de transitions.
+- Mode d'interruption inadapté au câblage : déclenchement permanent ou jamais.
+- Routine d'interruption trop longue : le reste du système se fige.
+- Compteur partagé de grande taille lu sans protection : lecture d'une valeur intermédiaire.
+- États trop nombreux : la logique se disperse et devient difficile à tester.
+- Sorties oubliées à l'entrée d'un état : une LED reste allumée d'un état à l'autre.
+
+Une erreur plus subtile mérite d'être signalée, celle du faux positif dû au bruit électrique sur une broche non tirée. Le symptôme est un automate qui change d'état tout seul, sans cause apparente, surtout à proximité d'un moteur, d'un relais ou d'un câble long. La solution combine un pull-up ou un pull-down explicite, une résistance de filtrage si nécessaire, et un seuil de durée minimal exigé avant d'accepter la transition. En embarqué, la qualité du signal fait partie du programme : un code impeccable branché sur une broche flottante restera injustifiablement capricieux.
+
+## Pour aller plus loin
+
+La documentation officielle reste la meilleure source pour approfondir, car elle décrit précisément le comportement de chaque fonction sur la carte que vous utilisez. Pour les interruptions Arduino, la page de référence de attachInterrupt récapitule les modes acceptés, la signification de digitalPinToInterrupt et les cartes concernées : https://www.arduino.cc/reference/en/language/functions/external-interrupts/attachinterrupt/ . Pour la gestion du temps non bloquant, la page de millis() explique la portée du compteur et son débordement : https://www.arduino.cc/reference/en/language/functions/time/millis/ . Du côté d'ESP32, les documents Espressif détaillent les timers matériels, leurs registres et leurs rappels : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/timer.html , ainsi que la gestion des interruptions GPIO : https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/gpio.html .
+
+Au-delà de la documentation, deux lectures vous feront progresser rapidement. La première concerne les patrons de conception applicables à l'embarqué, et en particulier la séparation entre la partie qui décide et la partie qui exécute, qui est le prolongement naturel de ce chapitre lorsque votre programme dépasse quelques centaines de lignes. La deuxième concerne le temporisateur logiciel des systèmes d'exploitation, qui généralise l'idée du timer matériel en permettant à plusieurs tâches de partager le processeur selon des priorités : les notions de drapeau, de routine courte et de contexte d'exécution que vous venez d'apprendre s'y retrouvent à l'identique, avec en plus la notion de verrou. Pratiquez d'abord sur de petits objets : un feu, une porte, une alarme, un compteur d'objets. Chaque automate que vous écrirez ajoutera une transition à votre répertoire personnel et rendra le suivant plus rapide à concevoir.
+
+## Et maintenant : modélisez votre propre machine à états
+
+Les schémas de ce chapitre — feux tricolores, portes, alarmes — ne sont que des variations d'une même idée : un état courant, des transitions et des actions. Dans l'exercice pratique, modélisez un objet de votre choix (un sèche-linge, un distributeur, une barrière de parking) sous forme de machine à états, en listant d'abord les états et les transitions sur papier avant d'écrire une seule ligne de code. La qualité d'un automate se juge à la clarté de sa table de transitions, pas à sa longueur.

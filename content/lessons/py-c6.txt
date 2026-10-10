@@ -1,0 +1,466 @@
+Après le chapitre 5, votre programme sait lire un fichier de notes : il ouvre le fichier, parcourt ses lignes, transforme chaque ligne en nombre puis calcule une moyenne. Cette chaîne fonctionne parfaitement tant que tout se passe comme prévu. Or, dans la vraie vie, presque rien ne se passe comme prévu : l'utilisateur renomme le fichier, une ligne contient une virgule au lieu d'un point, le disque est plein, la connexion tombe au milieu d'un téléchargement. Programmer, ce n'est donc pas seulement écrire du code qui marche quand tout va bien, c'est surtout écrire du code qui sait réagir quand quelque chose ne se passe pas comme prévu. Les exceptions sont exactement le mécanisme que Python a conçu pour cette situation : elles signalent qu'une opération a échoué, interrompent le flux normal d'exécution et permettent de rattraper la panne au bon endroit, pour proposer une réponse compréhensible à l'utilisateur plutôt qu'un écran de traceback brut que personne n'a envie de voir apparaître.
+
+Quand une exception traverse toutes les fonctions sans jamais être attrapée, Python arrête le programme, affiche un traceback et rend la main au système. Cette réaction est saine : mieux vaut s'arrêter net que d'écrire des données corrompues dans un fichier ou d'afficher une moyenne inventée de toutes pièces. Le problème tient au moment et au destinataire de ce message : l'arrêt arrive souvent après dix minutes de traitement, et le texte affiché s'adresse au programmeur alors que c'est l'utilisateur qui est devant l'écran. Deux compétences suffisent à transformer complètement cette situation. La première consiste à lire un traceback pour localiser précisément l'erreur : la ligne fautive, la chaîne d'appels qui y mène, le type d'erreur. La seconde consiste à anticiper les pannes attendues avec try et except, au seul endroit où elles peuvent survenir, afin de transformer une panne en message utile sans jamais masquer les vrais bugs de votre logique.
+
+C'est exactement le programme de ce chapitre, sixième étape sur huit du parcours Python, et chaque objectif correspond à une compétence que le mini-projet exigera de vous. Vous apprendrez d'abord à décoder un traceback, de la dernière ligne remontée jusqu'à la ligne fautive, même lorsque plusieurs fonctions s'enchaînent les unes après les autres. Vous verrez ensuite comment encadrer un code risqué avec un bloc try assorti d'un except précis, ce qui vous permet d'attraper l'erreur attendue sans avaler toutes les autres. Enfin, vous verrez que vos propres fonctions peuvent lever des erreurs explicites avec raise, par exemple une ValueError pour une note hors bornes : c'est souvent plus honnête que de renvoyer None et de laisser l'appelant deviner ce qui s'est passé. À la fin de ce chapitre, votre calculateur de moyenne sera prêt pour le mini-projet, avec des messages clairs pour l'utilisateur, un mode debug intact pour vous, et des ressources toujours libérées, même en cas de panne.
+
+## Comprendre : ce qui se passe quand Python s'arrête net
+
+Une exception n'est pas un simple message d'erreur affiché à l'écran : c'est un véritable objet, avec un type, un message et un contexte d'exécution. Python possède toute une famille d'objets issus de BaseException, et chaque problème attendu ou inattendu possède son type : FileNotFoundError, ValueError, TypeError, KeyError, et bien d'autres. Quand une condition anormale est détectée, Python crée une instance du type correspondant et la lance, ce que le code exprime avec le mot-clé raise. L'instruction en cours est alors interrompue immédiatement, et Python entame une recherche de l'endroit du programme capable de traiter cet événement. L'essentiel à comprendre est que l'erreur n'est pas écrite dans le fichier source à l'avance : elle est produite pendant l'exécution, à une ligne précise, alors que les lignes précédentes ont toutes réussi leur mission. Une exception, c'est donc un événement dans la vie du programme, pas une faute de frappe dans votre texte.
+
+Il faut distinguer soigneusement les erreurs de syntaxe, repérées avant même l'exécution, et les exceptions survenues pendant l'exécution. Une accolade oubliée ou un deux-points manquant produit une SyntaxError : Python refuse de démarrer le fichier, aucune instruction n'est exécutée, et le correcteur indique immédiatement la ligne fautive. À l'inverse, une division par zéro, un fichier introuvable ou un mot converti en nombre plantent le programme alors qu'il tourne déjà, parfois depuis plusieurs secondes. Cette distinction a une conséquence pratique très utile : si votre script affiche un traceback alors qu'il était en pleine exécution, tout ce qui précède le dernier cadre a parfaitement fonctionné. L'erreur est donc locale à une instruction précise, et non le symptôme d'un programme entièrement cassé. Cette lecture optimiste du plantage, c'est le point de départ du débogage efficace, et elle vous évite de conclure trop vite que l'ensemble du script est à réécrire. Gardez cette distinction en tête, car elle oriente toutes les décisions qui suivent dans ce chapitre.
+
+Le traceback expose la chaîne d'appels qui mène à l'erreur, et cette chaîne n'est pas décorative : elle raconte l'histoire complète de l'accident. Chaque appel de fonction empile un nouveau cadre sur la pile d'exécution, ce cadre contenant les variables locales et la ligne en cours d'évaluation. Quand une exception surgit, Python parcourt cette pile vers le haut à la recherche d'un bloc except compatible avec le type levé. Si aucun gestionnaire n'est trouvé, Python abandonne, arrête le programme et compose le rapport que vous connaissez sous le nom de traceback. Ce rapport liste les cadres depuis l'appel le plus ancien jusqu'à l'appel le plus récent, d'où la mention anglophone most recent call last qui ouvre presque toujours l'affichage. Lire un traceback, c'est donc remonter un fil : partir du symptôme affiché en bas et remonter la pelote des fonctions appelées jusqu'à trouver l'endroit exact où la réalité a divergé de vos attentes.
+
+Pour être efficace, il faut savoir que le traceback contient trois catégories d'information, et que leur ordre de lecture n'est pas anodin. La dernière ligne donne le type de l'exception et son message : c'est le diagnostic, la cause déclarée de l'arrêt, et c'est toujours par elle qu'il faut commencer. Au-dessus, chaque cadre indique un nom de fichier, un numéro de ligne, le nom de la fonction et le code source de l'instruction incriminée : c'est la localisation. Entre le bas et le haut, la liste des cadres montre comment le programme est arrivé là : c'est le récit. Un lecteur pressé commence souvent par le haut du rapport, là où se trouve le nom d'un fichier de bibliothèque qu'il ne connaît pas, et s'y perd. Le lecteur averti lit d'abord la dernière ligne, puis le cadre le plus bas de ses propres fichiers, puis remonte la chaîne tant que la question pourquoi reste sans réponse. Ce mouvement en zigzag, du bas vers le haut et retour, fait gagner des heures.
+
+Un arrêt brutal n'est pas forcément un échec de conception, c'est parfois la réponse la plus honnête que votre programme puisse donner. Lorsque l'état interne devient incohérent, continuer revient à fabriquer des résultats douteux en silence : une moyenne calculée sur trois notes au lieu de vingt, un fichier réécrit à moitié, une sauvegarde vidée puis remplacée par du vide. Python vous pousse donc vers une philosophie d'échec rapide : si vous ne savez pas réparer la situation, arrêtez net et expliquez pourquoi, plutôt que de poursuivre avec des données fausses. Le traceback, dans ce cas, est un outil de transparence : il refuse de faire semblant que tout va bien. La difficulté commence lorsque vous savez réparer, ou du moins lorsque vous pouvez transformer la panne en un message utile : c'est là que le bloc try entre en jeu, et c'est aussi là que le risque de masquer un vrai bug devient réel.
+
+Toutes les exceptions ne méritent pas le même traitement, et leur origine guide votre décision. On distingue couramment deux grandes familles. La première regroupe les échecs liés à l'environnement ou aux données : fichier absent, format inattendu, valeur hors bornes saisie par un humain, connexion refusée. Ces pannes sont normales, prévisibles, et souvent hors de votre contrôle : elles doivent être attrapées, transformées en message clair, puis traitées. La deuxième famille regroupe les incohérences de votre propre logique : un indice calculé à tort, une variable initialisée dans une branche oubliée, un dictionnaire interrogé avec une clé que votre algorithme devait garantir. Ces erreurs révèlent un défaut de programme, pas un défaut de données : les attraper revient à cacher votre propre faute sous le tapis, souvent pour la redécouvrir beaucoup plus loin, sous une forme encore plus obscure et bien plus coûteuse à corriger. C'est l'origine de l'échec, et non sa gravité apparente, qui détermine la conduite à tenir.
+
+Cette distinction conduit à une règle de placement très concrète : on protège les points d'entrée externes, on laisse les incohérences de logique exploser. Un point d'entrée externe, c'est une frontière entre votre programme et le reste du monde : la saisie clavier, la lecture d'un fichier, un appel réseau, le parsing d'un format écrit par quelqu'un d'autre. À ces endroits, une erreur est une information précieuse qu'il faut intercepter pour décider quoi faire. À l'intérieur de vos algorithmes, en revanche, une exception signale presque toujours que votre raisonnement a un trou : en la rattrapant trop tôt, vous transformez un bug bruyant en résultat silencieusement faux. Concrètement, la logique métier d'une fonction de calcul doit rester sans protection : elle lève, elle ne décide pas de ce qu'on fera de l'échec. C'est l'appelant, au niveau de l'interface ou du script principal, qui choisira d'afficher un message, de proposer une nouvelle saisie ou d'arrêter le traitement.
+
+Cette façon de voir les exceptions change le statut du message d'erreur : il devient un contrat entre les couches de votre programme. Une fonction bas niveau signale un problème avec un type précis et un message explicite ; la couche supérieure décide s'elle sait traiter le problème ou si elle doit le relayer vers son propre appelant. Le type choisi est le vocabulaire de ce contrat : ValueError pour une valeur qui respecte le type mais pas le domaine attendu, TypeError pour un type incorrect, FileNotFoundError pour une ressource absente. Un message de qualité se lit comme une phrase adressée à quelqu'un, avec le contexte nécessaire pour agir : la valeur reçue, la plage attendue, le nom du fichier concerné. C'est d'ailleurs une des raisons pour lesquelles lever vos propres erreurs vaut mieux que renvoyer un code d'échec anonyme : un message bien écrit est de la documentation que le programme exécute lui-même, et que vous relisez inévitablement trois semaines plus tard au détour d'un traceback. Retenez enfin, avant d'entrer dans le détail des mécanismes, les règles essentielles qui gouvernent tout le reste de ce chapitre : elles forment le résumé opérationnel de la philosophie que vous venez de lire, et chaque section suivante en développera une face pratique, avec du code exécutable et des erreurs volontairement provoquées.
+
+- Une exception est un objet levé à l'exécution : son type décrit la nature du problème, son message apporte le contexte.
+- Un traceback non intercepté arrête le programme et décrit la chaîne d'appels jusqu'à la ligne fautive : c'est une information, pas une insulte.
+- On lit la dernière ligne d'abord, puis le cadre le plus bas du code que vous possédez, puis on remonte la chaîne.
+- On attrape les erreurs attendues aux frontières du programme, avec un type précis correspondant au problème.
+- On laisse les incohérences de logique remonter jusqu'à vous, surtout pendant les tests, plutôt que de les masquer.
+- Un except vide ou trop large transforme un bug visible en résultat faux silencieux : c'est le pire des scénarios.
+- Une erreur métier mérite d'être levée explicitement, avec un message que l'appelant peut afficher tel quel.
+- finally s'exécute toujours, même quand une exception remonte : c'est l'endroit réservé au nettoyage.
+
+Pour visualiser la frontière entre ce que vous protégez et ce que vous laissez parler, voici les situations typiques d'un script qui lit des fichiers, classées selon la conduite à tenir. La première catégorie correspond aux points d'entrée externes : ce sont des zones où une panne est normale, parce qu'elles dépendent de données ou d'un équipement que vous ne contrôlez pas, et où un except précis transforme l'accident en message utile pour l'utilisateur. La deuxième catégorie correspond aux incohérences de logique : ces défauts proviennent de votre propre code, ils signifient que votre raisonnement a un trou, et les attraper reviendrait à cacher ce trou au lieu de le réparer. La liste suivante réunit les deux familles, chaque ligne indiquant explicitement la catégorie à laquelle elle appartient, afin que vous puissiez l'utiliser comme une checklist lors de la relecture d'un script qui touche à des fichiers ou à des saisies.
+
+- Point d'entrée à protéger : la saisie utilisateur, qui peut fournir un texte là où un nombre était attendu.
+- Point d'entrée à protéger : l'ouverture et la lecture d'un fichier, dont le nom, le format et l'existence ne sont pas garantis.
+- Point d'entrée à protéger : les conversions de données, comme float sur une ligne mal formée.
+- Point d'entrée à protéger : les appels réseau ou les accès à des ressources partagées, sujets aux pannes temporaires.
+- Point d'entrée à protéger : le parsing de toute structure produite par un programme tiers.
+- Logique à laisser exploser : un indice ou une clé que votre algorithme promettait d'avoir préparé.
+- Logique à laisser exploser : une variable oubliée dans une des branches d'une condition.
+- Logique à laisser exploser : un type inattendu produit par votre propre code interne, pas par l'extérieur.
+- Logique à laisser exploser : une règle métier violée par vos calculs, par exemple une somme négative de notes.
+- Logique à laisser exploser : un appel de fonction avec des arguments que vous maîtrisez entièrement.
+
+## Lire un traceback : du symptôme à la ligne fautive
+
+Prenons un scénario tout simple, directement issu du chapitre 5 : un script lit un fichier de notes, additionne chaque ligne convertie en nombre et affiche le total. Le fichier a été rédigé par un utilisateur habitué aux tableurs, qui a saisi 14,5 avec une virgule, conforme à ses habitudes mais pas au format attendu par float. Ce genre d'écart est si banal qu'aucun test unitaire ne le prévoit forcément, et pourtant il suffit à interrompre un traitement qui tournait depuis plusieurs minutes. Plutôt que de spéculer sur ce qui a mal tourné, la méthode consiste à laisser parler Python : relancez le script dans un terminal, sans redirection ni enveloppe, et lisez attentivement ce qu'il affiche avant de toucher à la moindre ligne de code. C'est ce que nous allons faire ensemble, en gardant le programme le plus court possible, non par paresse, mais parce qu'un traceback se lit d'autant plus vite que la chaîne d'appels est réduite.
+
+```python
+def moyenne_lignes(chemin):
+    total = 0
+    with open(chemin, encoding="utf-8") as fichier:
+        for ligne in fichier:
+            total += float(ligne)
+    return total
+
+def rapport():
+    notes = moyenne_lignes("notes.txt")
+    return notes
+
+print(rapport())
+```
+
+L'exécution s'interrompt brutalement au moment de la conversion, aucune moyenne n'est affichée, et Python imprime sur la sortie standard un rapport détaillé. Ce rapport n'est pas un simple message : c'est une structure codée, dont la forme est strictement la même d'un système à l'autre, ce qui vous permet de le lire où que vous travailliez. Nous le reproduisons ci-dessous tel quel, légèrement tronqué en haut pour rester lisible sur la page : la seule différence avec votre écran est la première ligne remplacée par trois points, qui correspond au cadre du niveau module, c'est-à-dire à la ligne qui a déclenché l'appel initial. Prenez le temps de le détailler ligne à ligne avant de poursuivre, car toute la suite du chapitre consiste précisément à apprendre à le décoder rapidement, sans vous disperser dans les détails qui n'apportent rien. Vous constaterez qu'aucun mot n'y est décoratif : chaque ligne correspond à une information précise que vous saurez réclamer plus tard.
+
+```text
+Traceback (most recent call last):
+  ...
+  File "moyenne.py", line 10, in rapport
+    notes = moyenne_lignes("notes.txt")
+  File "moyenne.py", line 5, in moyenne_lignes
+    total += float(ligne)
+ValueError: could not convert string to float: '14,5'
+```
+
+Les trois points de la première ligne remplacent le cadre du niveau module, celui qui a lancé l'appel initial : on l'ignore presque toujours au début d'une investigation, car il se contente de répéter la ligne print du programme. Tout le reste du rapport se lit comme un récit à l'envers. Le programme a appelé rapport, qui a appelé moyenne_lignes, qui a tenté de convertir une ligne en nombre, et c'est là que tout s'est arrêté. Aucune de ces étapes n'est suspecte en soi : le suspect, c'est la donnée que la dernière instruction a reçue. Remarquez aussi que le rapport ne contient aucune interprétation de la part de Python : il se contente de décrire les faits, l'ordre des appels et la phrase prononcée au moment de l'échec, ce qui fait de lui un témoin fiable, là où un message résumé, affiché par un code de secours mal pensé, aurait nécessairement perdu une partie du contexte utile à la reconstitution.
+
+La compétence la plus rentable du débogueur débutant consiste à lire ce rapport de bas en haut. Commencez par la toute dernière ligne : elle donne le type de l'exception, ici ValueError, et son message, qui cite même la chaîne fautive, '14,5'. Vous savez déjà quelle famille de problème vous affrontez et quelle donnée l'a déclenché. Remontez ensuite d'un cran : le cadre indiqué, la ligne 5 de moyenne_lignes, est l'endroit exact où Python a constaté l'échec. C'est souvent la bonne localisation, mais pas toujours la cause profonde, comme nous le verrons plus bas. Enfin, remontez la chaîne des cadres tant que votre question pourquoi reste sans réponse : chaque cadre vous dit qui a appelé qui, avec quelles valeurs concrètes. Trois cadres, trois questions, et l'histoire de l'accident se reconstitue comme un fil que l'on tire. Ne cherchez pas à tout comprendre d'emblée : la dernière ligne et le cadre du bas suffisent dans la grande majorité des cas.
+
+Une nuance importante distingue l'endroit où l'exception a été détectée de l'endroit où la donnée défaillante a été fabriquée. Dans l'exemple précédent, la valeur '14,5' n'a pas été créée à la ligne 5, elle est arrivée là tout droit depuis le fichier. Si vous corrigez aveuglément la ligne 5, le problème suivant surgira à la ligne suivante du fichier. Le bon réflexe est donc de remonter d'un cran dans la chaîne pour comprendre d'où viennent les valeurs entrantes, puis de décider où agir : corriger la donnée, corriger la conversion, ou refuser proprement le fichier. Ce mouvement explique pourquoi la chaîne d'appels n'est pas une liste de coupables, mais une liste de témoins : elle indique le trajet de la donnée fautive, et ce trajet, une fois reconstitué, désigne presque toujours l'étape où une validation aurait dû avoir lieu. Cherchez cette étape plutôt que le coupable : c'est là que le correctif sera durable.
+
+Le premier exemple restait volontairement court, avec deux fonctions seulement. Pour mesurer toute l'utilité de la chaîne d'appels, il faut une structure plus réaliste, où le travail est découpé en plusieurs petites fonctions, comme le recommandait le chapitre 3 : chacune se charge d'une tâche précise et délègue à la suivante. Voici donc un programme en quatre fonctions, toujours très simple, mais suffisamment profond pour que l'erreur apparaisse loin de l'endroit où la donnée a été préparée : la panne se produit au troisième élément d'une liste mêlant des nombres et un texte, alors que cette liste est fournie par l'appelant du haut de la chaîne. Avant de lire le rapport, essayez de deviner le nom de l'exception que Python va prononcer, puis vérifiez votre intuition : cette petite étape de prévision transforme une lecture passive en exercice d'analyse, et c'est exactement l'habitude que vous développerez en visionnant la vidéo du chapitre.
+
+```python
+def additionner(total, valeur):
+    return total + valeur
+
+def total_notes(notes):
+    total = 0
+    for note in notes:
+        total = additionner(total, note)
+    return total
+
+def moyenne_classe(notes):
+    return total_notes(notes) / len(notes)
+
+def afficher(notes):
+    return moyenne_classe(notes)
+
+print(afficher([12, 15, "absent"]))
+```
+
+Voici le rapport produit par cette exécution. Il comporte désormais quatre étages, un pour chaque appel empilé depuis le niveau module jusqu'à l'instruction en échec, et sa lecture de bas en haut se déroule sans ambiguïté une fois que vous savez quelles lignes regarder en premier. Notez la régularité de la structure : chaque cadre répète le même triplet nom de fichier, numéro de ligne, nom de fonction, puis cite le code source de l'instruction incriminée, ce qui vous évite même d'ouvrir l'éditeur pour situer le problème. Entraînez-vous à repérer d'abord la toute dernière ligne, puis le cadre immédiatement au-dessus : cette seule habitude vous fera gagner les deux tiers du temps habituellement consacré à un débogage, car dans la très grande majorité des cas, ces deux informations suffisent à désigner la cause et la localisation exacte du dysfonctionnement. Le reste du rapport ne sert que dans les cas têtus, où l'origine du problème se cache plusieurs appels plus haut.
+
+```text
+Traceback (most recent call last):
+  ...
+  File "classe.py", line 15, in afficher
+    return moyenne_classe(notes)
+  File "classe.py", line 11, in moyenne_classe
+    return total_notes(notes) / len(notes)
+  File "classe.py", line 7, in total_notes
+    total = additionner(total, note)
+  File "classe.py", line 2, in additionner
+    return total + valeur
+TypeError: unsupported operand type(s) for +: 'int' and 'str'
+```
+
+Dernière ligne d'abord : TypeError, et le message dit explicitement que Python ne sait pas additionner un entier et une chaîne. Cadre du bas ensuite : la ligne 2 tente d'additionner total et valeur. Puis on remonte : c'est total_notes qui a envoyé la troisième valeur, et c'est donc dans sa boucle que se cache la vraie leçon, à savoir que la liste pouvait contenir autre chose que des nombres. Une fois corrigée la cause, à savoir la composition de la liste, plus aucun des quatre cadres ne se manifestera jamais. Retenez cette habitude : lisez le diagnostic, localisez la ligne, remontez jusqu'à l'origine des données, puis ne revenez en bas que pour appliquer le correctif au bon niveau. Si vous appliquez cette méthode trois ou quatre fois de suite, vous constaterez qu'elle se transforme en réflexe : en quelques secondes, vous saurez si le problème vient d'une donnée, d'un type ou d'une règle, et vous aurez déjà en tête le bout de code à corriger avant même d'avoir ouvert votre éditeur.
+
+## Les exceptions courantes de Python
+
+La bibliothèque standard définit des dizaines d'exceptions, mais un script qui lit des fichiers, transforme des nombres et calcule des moyennes n'en rencontrera qu'une poignée. Apprendre ce petit répertoire par cœur vous fait gagner un temps considérable, car le nom de l'exception correspond presque toujours au mot que vous utiliseriez pour décrire le problème à un collègue : on ne dit pas « plantage », on dit « valeur hors domaine » ou « fichier manquant ». Cette correspondance entre le vocabulaire de l'erreur et le vocabulaire du métier est ce qui rend le débogage rapide, puisque le type suffit à orienter l'investigation avant même que vous n'ayez lu le message détaillé. Les exceptions que vous rencontrerez le plus souvent dans ce parcours sont réunies ci-dessous, avec pour chacune la situation typique qui la déclenche dans un programme de traitement de notes. Relisez la liste une première fois en diagonal, puis une seconde fois en cherchant, pour chaque type, l'erreur analogue que vous avez déjà rencontrée depuis le début du parcours.
+
+- ValueError : le type est bon, mais la valeur est hors du domaine attendu, comme float("14,5") ou une note de 25 sur un barème de 20.
+- TypeError : le type lui-même est inapproprié, comme l'addition d'un nombre et d'une chaîne, ou l'appel d'une fonction avec le mauvais nombre d'arguments.
+- IndexError : une liste est consultée à un indice qui n'existe pas, par exemple notes[7] quand la liste en contient trois.
+- KeyError : un dictionnaire est interrogé avec une clé absente, par exemple eleve["prenom"] quand seule la clé nom est renseignée.
+- FileNotFoundError : on demande à ouvrir un fichier qui n'existe pas à l'emplacement indiqué, typique après un renommage ou un changement de dossier.
+- OSError : la famille des erreurs système, qui regroupe notamment les problèmes de permission, de disque plein ou de chemin invalide.
+- ZeroDivisionError : une division dont le dénominateur vaut zéro, souvent le symptôme d'une liste vide dont on calcule la moyenne.
+- AttributeError : une propriété ou une méthode demandée n'existe pas sur l'objet, par exemple une faute de frappe dans le nom d'une variable.
+- StopIteration : un itérateur est épuisé prématurément, ce que vous rencontrerez surtout en écrivant vos propres générateurs.
+- ImportError : un module ou un nom importé est introuvable, annonce du chapitre 7 sur les packages.
+
+```table
+Exception | Déclencheur | Exemple
+--- | --- | ---
+`ValueError` | le type est bon, mais la valeur est hors du domaine attendu | `float("14,5")` ou une note de 25 sur un barème de 20
+`TypeError` | le type lui-même est inapproprié | l'addition d'un nombre et d'une chaîne
+`IndexError` | une liste consultée à un indice qui n'existe pas | `notes[7]` quand la liste en contient trois
+`KeyError` | un dictionnaire interrogé avec une clé absente | `eleve["prenom"]` alors que seule la clé nom est renseignée
+`FileNotFoundError` | ouverture d'un fichier absent à l'emplacement indiqué | après un renommage ou un changement de dossier
+`ZeroDivisionError` | une division dont le dénominateur vaut zéro | une liste vide dont on calcule la moyenne
+```
+
+Ces types ne flottent pas en liberté : ils s'organisent dans une hiérarchie, et comprendre cette arborescence vous évite trois erreurs classiques. Toutes les exceptions de ce tableau descendent de Exception, qui descend lui-même de BaseException. En revanche, deux événements très particuliers, KeyboardInterrupt levé par le fameux Ctrl+C et SystemExit levé par sys.exit, descendent directement de BaseException sans passer par Exception. Résultat concret : un bloc except Exception n'interceptera jamais votre Interruption clavier, ce qui est une bonne nouvelle, car un programme qui refuse de s'arrêter avec Ctrl+C est un programme que l'on doit tuer depuis le gestionnaire de tâches. Pour cette raison, on utilise except Exception comme filet de sécurité de dernier recours, et jamais except BaseException. Pratique supplémentaire : quand vous voulez savoir quels types une exception possède, tapez `type(erreur).__mro__` dans votre interpréteur, ou consultez simplement la dernière ligne du traceback, qui donne toujours le type exact, sans ambiguïté possible.
+
+Choisir le bon type quand vous écrivez votre propre code suit la même logique que choisir le bon mot dans une phrase. Si le problème vient de la forme, c'est-à-dire du type reçu, levez un TypeError. Si la forme est correcte mais que la valeur sort du domaine autorisé, levez un ValueError. Si une recherche dans une structure associative a échoué, laissez Python lever un KeyError ou levez un FileNotFoundError pour une ressource absente. Si l'échec vient du système d'exploitation, laissez remonter l'exception OSError d'origine plutôt que d'inventer un message vague. Ce vocabulaire précis a un effet immédiat sur vos blocs except : chaque type déclenche un traitement différent, donc chaque erreur appelle la réponse appropriée, sans que vous ayez besoin d'analyser des chaînes de caractères pour comprendre ce qui s'est passé. C'est aussi ce qui rend vos messages lisibles pour l'utilisateur final : le type interne est traduit par votre gestionnaire en une phrase du domaine, tandis que le détail technique part dans le journal, à destination de celui qui corrigera le code.
+
+Un dernier point rassurant avant de coder : vous n'avez pas besoin de connaître la liste exhaustive pour écrire du code correct, pas plus qu'on n'a besoin de tout savoir en orthographe pour écrire une lettre. En pratique, on mémorise d'abord cinq ou six types, on apprend à lire le message que Python fournit, et on remonte le reste en consultant la documentation au fil des besoins. Cette montée en compétence est progressive : au début, vous chercherez le type dans un tableau, puis vous le reconnaîtriez au premier regard dans un traceback. Un exercice extrêmement utile consiste à provoquer volontairement chaque erreur une fois, dans un environnement contrôlé, pour observer le comportement exact de votre interpréteur et vérifier que votre bloc except attrape bien le type attendu. Le bloc de code suivant est conçu pour cela : il déclenche les erreurs les plus courantes, les attrape immédiatement et les affiche, de sorte que le programme se termine sans jamais planter.
+
+```python
+def demonstrer():
+    try:
+        int("12a")
+    except ValueError as erreur:
+        print("ValueError :", erreur)
+    try:
+        [12, 15, 18][7]
+    except IndexError as erreur:
+        print("IndexError :", erreur)
+    try:
+        {"nom": "Ada"}["prenom"]
+    except KeyError as erreur:
+        print("KeyError :", erreur)
+    try:
+        open("fichier_inexistant.txt", encoding="utf-8")
+    except FileNotFoundError as erreur:
+        print("FileNotFoundError :", erreur)
+    try:
+        10 / 0
+    except ZeroDivisionError as erreur:
+        print("ZeroDivisionError :", erreur)
+    try:
+        12 + "absent"
+    except TypeError as erreur:
+        print("TypeError :", erreur)
+
+demonstrer()
+```
+
+## try, except, else, finally : l'anatomie d'une protection
+
+Le bloc try délimite ce que l'on appelle une zone de risque : Python exécute ses instructions une à une, dans l'ordre, et à la première exception survenue, il abandonne immédiatement le reste du bloc pour rechercher un except correspondant. Cette mécanique a une conséquence directe sur la façon dont vous devez écrire votre code : la zone try doit être la plus petite possible. Chaque instruction supplémentaire placée sous la garde de try est une instruction dont l'erreur légitime pourra être capturée à tort par un gestionnaire conçu pour un autre problème. Si vous enserrez cinquante lignes dans un seul try destiné à attraper un fichier manquant, une simple faute de frappe survenant à la quarantième ligne sera avalée par le même except, qui renverra alors un résultat inventé au lieu de vous alerter. La bonne pratique consiste à n'encadrer que l'opération réellement risquée, à savoir l'ouverture, la lecture ou la conversion, et à laisser tout le reste du programme travailler hors protection.
+
+Le ou les clauses except constituent le cœur de la protection. Chaque clause commence par le type d'exception qu'elle accepte de traiter, éventuellement suivi de as pour capturer l'objet erreur et l'utiliser ensuite dans le message ou dans un journal. Lorsqu'une exception est levée, Python les examine dans l'ordre où vous les avez écrites et s'arrête à la première dont le type correspond. Cet ordre n'est pas anodin : placez toujours les types les plus précis avant les types généraux, car Python ne les classe pas automatiquement du plus spécifique au plus large. Si aucun except ne correspond, l'exception n'est pas perdue pour autant : elle continue de remonter la pile d'appels, à la recherche d'un gestionnaire dans l'appelant, puis dans son propre appelant, jusqu'à ce qu'un bloc la prenne en charge ou que Python affiche le traceback et arrête le programme. Votre bloc n'est donc jamais obligé de tout absorber : il peut décider, au contraire, de laisser passer ce qu'il ne comprend pas.
+
+La clause else, souvent méconnue, s'exécute uniquement quand le bloc try s'est terminé sans lever la moindre exception. Son intérêt est double. D'abord, elle matérialise visuellement la séparation entre la zone risquée et la suite normale du traitement : on lit un fichier sous protection, puis on exploite le résultat hors protection. Ensuite, elle réduit encore la taille du try, conformément au principe énoncé plus haut : tout ce qui transforme, trie ou calcule à partir de données déjà lues n'a rien à faire dans la zone de risque. Le contenu du else n'est pas protégé : si une erreur logique s'y produit, elle remonte normalement, ce qui est exactement le comportement souhaité, puisque cette erreur révèle un défaut de votre code et non un défaut de l'environnement. On retient la règle simple : ce qui dépend de l'extérieur se place sous try, ce qui dépend de votre raisonnement se place sous else ou après le bloc.
+
+La clause finally est la promesse la plus facile à vérifier : son contenu s'exécute toujours, dans tous les cas. Que le bloc try se termine normalement, qu'une exception soit attrapée par un except, qu'une exception non attrapée poursuive sa remontée, qu'un return interrompt la fonction ou qu'une boucle break : finally passe à l'exécution quand même. C'est l'emplacement réservé au nettoyage, c'est-à-dire aux opérations qui doivent avoir lieu quelle que soit l'issue : libérer un verrou, fermer une connexion qui échappe à votre gestionnaire de contexte, afficher un bilan final, remettre un drapeau à zéro. Dans l'exemple ci-dessous, la fermeture du fichier est déjà assurée par le mot-clé with, aussi finally sert-il uniquement à produire un message de fin. Notez qu'un bloc try suivi de finally, sans aucun except, est parfaitement valide : c'est la façon idiomatique d'ajouter un nettoyage tout en laissant l'exception continuer sa route vers votre appelant.
+
+```table
+Bloc | Quand il s'exécute | Rôle
+--- | --- | ---
+`try` | instruction par instruction, jusqu'à la première exception | délimite la zone de risque, à garder la plus petite possible
+`except` | quand le type levé correspond à celui d'une clause | traite le problème attendu, sinon l'exception continue de remonter
+`else` | uniquement si le `try` n'a rien levé | sépare la suite normale du traitement de la zone de risque
+`finally` | toujours, dans tous les cas, même si une exception remonte | le nettoyage : libérer une ressource ou annoncer la fin
+```
+
+La théorie est utile, mais elle ne prend tout son sens qu'appliquée à un code complet que l'on peut exécuter, modifier et casser à volonté. L'exemple suivant réunit les quatre clauses dans un ordre de lecture naturel, avec une fonction qui reçoit un chemin de fichier, le lit sous protection, signale ses échecs par des messages explicites et produit à la fin la liste des notes converties. Prenez le temps de repérer visuellement chaque bloc avant de lire l'analyse : la zone try tient en trois lignes, chaque except traite un seul type de problème, la clause else affiche le bilan de la lecture et la clause finally annonce la fin de l'opération, quel qu'en soit le résultat. Cette grille de lecture vous servira pour tous les exemples qui suivent. Après la lecture, vous verrez que chaque clause répond à une question précise que vous vous poserez naturellement en écrivant votre propre code.
+
+```python
+def lire_notes(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            lignes = [ligne.strip() for ligne in fichier]
+    except FileNotFoundError:
+        print(f"Le fichier {chemin} est introuvable.")
+        return None
+    except OSError as erreur:
+        print(f"Lecture impossible : {erreur}")
+        return None
+    else:
+        print(f"{len(lignes)} lignes lues avec succes.")
+    finally:
+        print("Bloc finally : execute dans tous les cas.")
+    return [float(ligne) for ligne in lignes if ligne]
+
+print(lire_notes("notes.txt"))
+```
+
+Suivons le parcours d'une exécution heureuse, fichier présent et bien formé : le try se termine sans encombre, la clause FileNotFoundError est ignorée, la clause else affiche le nombre de lignes lues, finally annonce la fin, puis la fonction renvoie la liste convertie. Maintenant supprimez le fichier : le open lève une FileNotFoundError, Python saute directement à la clause correspondante, affiche le message, et avant de renvoyer None, il exécute quand même finally. Troisième scénario, le fichier existe mais le disque est inaccessible : c'est une OSError, un autre except prend le relais, puis finally passe là aussi. Quatrième scénario, vous interrompez le programme avec Ctrl+C pendant la lecture : KeyboardInterrupt n'est couvert par aucun except, donc elle traverse le bloc, mais finally s'exécute sur son passage avant que l'exception ne continue sa remontée. Cette couverture complète est précisément ce qui justifie l'existence de finally. Notez enfin que le return situé après la clause finally ne s'exécute que si aucun except n'a renvoyé la fonction avant : l'ordre des clauses dicte le flux, et le dernier return n'est jamais atteint en cas d'échec.
+
+## Attraper juste ce qu'il faut
+
+Le réflexe du débutant face à un plantage consiste à écrire un bloc try entourant tout le programme et à refermer avec un except sans type. Ce code compile, il s'exécute, et il est dangereux : un except nu équivaut à attraper n'importe quelle exception, y compris KeyboardInterrupt et SystemExit. Votre programme devient alors impossible à interrompre proprement avec Ctrl+C, et surtout, toute erreur inattendue disparaît sans laisser de trace, y compris les NameError et AttributeError qui trahissent vos propres fautes de frappe. Si une instruction mal orthographiée se trouve dans la zone protégée, votre gestionnaire, conçu pour signaler un fichier manquant, affichera un message sur le fichier manquant alors que la vraie cause est une variable inexistante. Le bug n'a pas été corrigé, il a été habillé, et vous passerez une heure à chercher un problème de fichier qui n'existe pas. C'est si fréquent qu'il existe un nom pour ce travers : on parle d'erreur masquée, la plus coûteuse de toutes, puisqu'elle transforme un échec bruyant en résultat silencieusement faux.
+
+C'est pour cette raison qu'on enseigne la règle suivante : on attrape toujours un type précis. Si votre opération risquée est la lecture d'un fichier, écrivez un except pour FileNotFoundError, un pour OSError, éventuellement un pour ValueError si vous convertissez les lignes. Chaque type déclenche un message adapté au problème réellement survenu, et toute erreur qui n'entre pas dans cette liste continue sa route pour devenir visible, sous forme de traceback si personne d'autre ne la gère. Le filet large `except Exception` n'est pas interdit, mais il est réservé à un usage unique : le point d'entrée de votre script, où il sert de dernière chance pour transformer une panne inattendue en message propre et en code de retour, à condition de journaliser l'erreur complète au préalable. Partout ailleurs, il produit exactement le même effet qu'un except nu, avec une simple illusion de rigueur. Le test que vous pouvez vous poser est toujours le même : cette clause distingue-t-elle le problème attendu d'une faute de frappe dans votre propre code.
+
+Le mot-clé as transforme l'exception en une variable que vous pouvez exploiter. En écrivant `except ValueError as erreur`, vous obtenez un objet dont le contenu varie selon le type : pour une ValueError, str(erreur) donne le message que vous avez fourni au moment du raise ou celui que la bibliothèque a généré. C'est cette variable qui vous permet d'afficher une phrase complète incluant la valeur fautive, de remplir un journal avec le détail exact, ou de décider d'une récupération selon le contenu du message. Lorsque plusieurs types appellent exactement la même réaction, Python accepte un tuple : `except (ValueError, TypeError)` évite de dupliquer le corps du gestionnaire. Réservez néanmoins cette commodité aux cas où le traitement est réellement identique ; si une erreur mérite un message différent, écrivez deux clauses distinctes, dans l'ordre du plus spécifique au plus général. Dans tous les cas, gardez à l'esprit que la variable capturée n'existe que dans le corps de la clause : elle ne vous suivra pas après le bloc try.
+
+Un gestionnaire d'exception a trois devoirs : informer l'utilisateur, consigner le détail pour vous, puis décider de la suite. Informer, c'est produire une phrase qui dit ce qui s'est passé et ce que l'utilisateur peut faire, sans jargon Python. Consigner, c'est écrire l'erreur complète, traceback compris, dans un journal ou sur la console de développement, pour que l'information ne soit pas perdue au moment où vous en aurez besoin. Décider, c'est choisir explicitement entre trois issues : abandonner proprement avec un code retour ou une exception relancée, proposer une nouvelle tentative, ou proposer un repli avec des données partielles clairement signalées. Le corps `except ...: pass` ne fait rien de tout cela : l'exception est avalée, l'opération échoue silencieusement, et votre programme poursuit avec un résultat qu'il croit valide. C'est la pire des solutions, bien pire que laisser le programme planter, car un plantage au moins se voit, attire l'attention et déclenche immédiatement une investigation.
+
+La dernière décision à prendre concerne le périmètre de la protection, surtout à l'intérieur des boucles. Si vous traitez mille lignes de fichier et que la dixième est mal formée, deux réponses sont défendables selon votre contrat. Si une seule ligne invalide doit invalider tout le lot, placez le try autour de l'ensemble de la boucle : le premier échec interrompt tout, vous signalez le fichier fautif, et vous ne traitez jamais un résultat partiel présenté comme complet. Si au contraire vous voulez signaler les lignes invalides tout en traitant les autres, placez le try dans la boucle, mais comptez les échecs, affichez le détail des lignes rejetées et restituez un rapport honnête. Ce qu'il ne faut jamais faire, c'est croire avoir choisi alors qu'on a simplement déplacé un try par réflexe : le périmètre du try est une décision de conception, pas une habitude de placement. Formulez-la d'ailleurs à voix haute avant d'écrire le bloc : quelle ressource externe est en jeu ici, et quelle réaction dois-je avoir si elle échoue.
+
+Avant de passer à l'exemple comparatif de la fin de section, récapitulons les règles de placement qui résument tout ce que la pratique a confirmé. Elles tiennent en quelques lignes, mais chacune correspond à un travers réel rencontré par de nombreux débutants, souvent plusieurs fois de suite : imprimez-les ou recopiez-les près de votre écran jusqu'à ce qu'elles deviennent des automatismes de lecture et d'écriture du code. L'objectif n'est pas d'apprendre une liste par cœur, mais de vous doter d'un contrôle rapide à effectuer en relisant un bloc try : le type est-il nommé, la zone est-elle minimale, le gestionnaire agit-il concrètement, le nettoyage est-il confié à finally. Si vous répondez oui à ces quatre questions, votre protection est saine ; si une seule réponse hésite, relisez la section correspondante avant d'aller plus loin. Ces quelques secondes de relecture valent souvent mieux qu'une demi-heure de débogage ultérieur, précisément parce qu'elles déplacent la vérification au moment où le code est encore frais dans votre tête.
+
+- Toujours nommer un type précis dans le except, en plaçant les types spécifiques avant les types généraux.
+- Jamais de except nu : il attrape les interruptions clavier et masque vos propres fautes de frappe.
+- Réserver except Exception à la frontière du script, avec journalisation complète avant tout message propre.
+- Capturer l'erreur avec as pour enrichir le message affiché et la ligne de journal, plutôt que d'afficher un texte figé.
+- Ne jamais écrire pass dans un gestionnaire : au minimum afficher un message, idéalement journaliser le traceback.
+- Placer le try autour de l'opération qui dépend de l'extérieur, jamais autour de votre logique interne.
+- Entourer un try sans except avec finally lorsqu'il s'agit uniquement de libérer une ressource.
+- Signaler à l'utilisateur ce qu'il peut corriger, et consigner pour vous ce dont vous aurez besoin pour déboguer.
+
+Il n'y a pas de meilleur moyen de mesurer l'écart entre une protection mal conçue et une protection ciblée que de les observer côte à côte, appliquées exactement à la même opération : lire un fichier supposé contenir un nombre unique et le convertir en virgule flottant. Les deux fonctions ci-dessous compilent toutes deux, toutes deux renvoient une valeur, et pourtant l'une produit des résultats trompeurs là où l'autre communique honnêtement. Examinez-les ligne à ligne en vous demandant, pour chacune, ce qui se passerait si le fichier n'existait pas, s'il contenait du texte ou s'il était illisible. Puis déroulez mentalement le cas où le chemin pointe vers un dossier au lieu d'un fichier, et celui où le disque répond par une erreur de permission. Vous constaterez que la deuxième fonction possède une réponse claire pour chacune de ces situations, tandis que la première les confond toutes dans un unique comportement silencieux.
+
+```python
+def lecture_insecuree(chemin):
+    try:
+        return float(open(chemin, encoding="utf-8").read())
+    except:
+        return 0.0
+
+def lecture_protegee(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            contenu = fichier.read()
+        return float(contenu.strip())
+    except FileNotFoundError:
+        print(f"Le fichier {chemin} est introuvable.")
+        return None
+    except ValueError:
+        print("Le fichier ne contient pas un nombre unique.")
+        return None
+    except OSError as erreur:
+        print(f"Lecture impossible : {erreur}")
+        return None
+
+print(lecture_protegee("moyenne.txt"))
+```
+
+La première fonction présente trois défauts cumulés. Son except nu avale tout, donc une faute de frappe interne renverrait 0.0 en faisant croire que le fichier contenait zéro. Sa zone try englobe la conversion float comme l'ouverture, alors que seules ces deux opérations risquent réellement quelque chose, mais le gestionnaire unique ne peut pas distinguer les deux causes. Enfin, le fichier ouvert n'est jamais fermé, parce que le résultat de open n'est pas affecté à une variable gérée par with : en cas d'exception après l'ouverture, le descripteur fuit. La deuxième fonction sépare les responsabilités, nomme chaque type, restitue un message utile, renvoie None comme signal d'échec explicite et garantit la fermeture du fichier. C'est exactement le niveau d'exigence que le mini-projet du chapitre 8 attendra de vous. Vous pouvez le vérifier d'ailleurs en appelant lecture_insecuree avec un chemin inexistant : la fonction renverra 0.0 sans un mot d'explication, transformant une absence de donnée en donnée plausible, et le calcul suivant s'appuiera dessus comme si de rien n'était.
+
+## Lever ses propres erreurs avec raise
+
+Le mot-clé raise est le miroir exact de except : là où un bloc except reçoit une erreur, un raise en crée une, à l'endroit de votre choix, avec le type et le message de votre choix. Une fonction qui détecte une situation interdite n'a pas à renvoyer un code d'échec particulier, n'a pas à imprimer elle-même un message, et n'a surtout pas à continuer avec des données qu'elle sait invalides : elle lève une exception, s'arrête sur-le-champ, et laisse le soin à son appelant de décider quoi faire. Concrètement, la ligne raise ValueError("note hors bornes") fabrique une instance de ValueError et la lance dans la pile d'appels. Si aucun except ne la retient, le programme s'arrête et le traceback pointera exactement cette ligne, c'est-à-dire l'endroit où la règle métier a été enfreinte. C'est cette localisation immédiate qui fait de raise l'outil le plus honnête à votre disposition pour exprimer un refus.
+
+Un bon message d'erreur se juge au critère suivant : peut-on corriger le problème sans rouvrir le code source. Dans le cas d'une note saisie par un humain, la personne a besoin de connaître la valeur rejetée et le domaine autorisé ; dans le cas d'un fichier, elle a besoin du nom du fichier et de la ligne fautive. Écrivez donc des messages composés de trois éléments : ce qui a été refusé, la valeur réellement reçue, et la règle attendue. La différence entre raise ValueError("erreur") et raise ValueError(f"note {note} hors bornes : le barème autorise {bas} à {haut}") est la différence entre une impasse et une indication. Ces messages sont aussi votre meilleure documentation vivante : relus dans un traceback trois semaines plus tard, ils rappellent la contrainte exacte que vous aviez en tête au moment d'écrire la fonction, sans que vous ayez besoin de reconstituer le contexte. Une bonne habitude consiste à relire ses messages à voix haute en simulant la personne qui les recevra : si la phrase sonne comme un reproche technique plutôt qu'une indication actionnable, réécrivez-la.
+
+L'alternative historique consiste à renvoyer None quand quelque chose ne va pas, et cette alternative est une mauvaise idée presque toujours. Le None n'est pas un message, c'est une valeur ambiguë : elle peut être une absence légitime ou un échec, et rien dans son apparence n'invite l'appelant à vérifier quoi que ce soit. Résultat, un appelant pressé oublie le contrôle, multiplie la moyenne par un coefficient, et obtient un TypeError incompréhensible à dix lignes de la cause réelle. Pire encore, si None se trouve dans une liste ou un dictionnaire, l'erreur remontera encore plus loin, à un endroit où plus personne n'évoquera le fichier d'origine. La fonction qui lève, elle, impose sa vérification : l'appelant doit placer un try, et s'il ne le fait pas, le traceback l'indique en clair dès la première exécution. Une erreur qui ne peut pas être oubliée vaut mieux qu'un code d'échec qu'on peut ignorer.
+
+Choisir le bon type, c'est aussi respecter un contrat que vous documentez dans la docstring de la fonction. Une fonction de calcul qui promet une moyenne entre deux bornes peut annoncer, en une phrase de sa documentation, les situations qui déclenchent une ValueError pour des données hors domaine et une TypeError pour des éléments non numériques. L'appelant sait alors exactement quels except préparer, sans deviner en lisant tout le corps du code. Ce contrat a une portée large : si vous décidez un jour de changer le mécanisme interne, par exemple en lisant un fichier au lieu de recevoir une liste, les exceptions levées restent les mêmes et votre appelant n'a rien à modifier. C'est la même logique que les valeurs de retour documentées du chapitre 3, avec en plus la garantie que l'échec ne peut pas passer inaperçu. Ce contrat vit donc à deux endroits : dans la docstring, pour celui qui appelle, et dans le code de la fonction, pour celui qui la maintient.
+
+Lorsque vous attrapez une erreur existante pour la traduire en vocabulaire de votre domaine, conservez l'information d'origine grâce à la formation d'une chaîne d'exceptions. Le mécanisme est simple : rattraper une erreur, puis relancer votre propre exception à l'aide du mot-clé from. Le traceback affichera alors deux sections reliées, la cause initiale et la conséquence métier, au lieu de vous forcer à choisir l'une ou l'autre. Pour aller plus loin, vous pouvez définir vos propres classes d'exceptions : quelques lignes suffisent, et faire hériter votre classe de ValueError conserve la compatibilité avec tous les blocs except ValueError déjà écrits. Le bloc suivant illustre les deux techniques dans un convertisseur de notes qui refuse proprement les lignes illisibles tout en gardant la trace de l'erreur de conversion initiale. Notez que from conserve les deux niveaux d'information dans le traceback : Python affiche d'abord la cause d'origine, puis un lien explicite vers l'exception que vous avez levée, de sorte qu'aucune des deux ne se substitue à l'autre.
+
+```python
+class NoteHorsBornes(ValueError):
+    pass
+
+def convertir_notes(brut, bas=0, haut=20):
+    notes = []
+    for position, texte in enumerate(brut, start=1):
+        try:
+            note = float(texte)
+        except ValueError as erreur:
+            raise NoteHorsBornes(
+                f"ligne {position} illisible : {texte!r}"
+            ) from erreur
+        if note < bas or note > haut:
+            raise NoteHorsBornes(f"note {note} hors bornes")
+        notes.append(note)
+    return notes
+
+try:
+    print(convertir_notes(["12", "abc"]))
+except NoteHorsBornes as probleme:
+    print("Donnees invalides :", probleme)
+```
+
+Cette fonction illustre aussi un principe de placement : la conversion d'une ligne reste sous protection parce qu'elle dépend d'une donnée extérieure, mais la règle métier de bornes est appliquée par un raise placé hors de tout try. La fonction ne décide pas de ce qu'on fera d'une note de 25, elle le signale, et c'est l'appelant qui choisit d'afficher un message, de proposer une nouvelle saisie ou d'arrêter le traitement. En cas d'oubli du try côté appelant, le traceback s'arrêtera sur la ligne raise, avec le message complet : vous saurez en un coup d'œil que la règle violée est celle des bornes, et non celle de la conversion. Ajoutez que l'appelant peut traiter NoteHorsBornes comme un ValueError, puisque l'une est une sous-classe de l'autre : votre code existant continue donc de fonctionner. Le rôle de chaque couche reste ainsi net : la couche basse sait que la règle est enfreinte, la couche haute sait comment la présenter, et aucune des deux n'empiète sur le territoire de l'autre.
+
+## Déboguer sans se mentir
+
+Il existe deux publics pour le même événement, et votre code doit servir l'un sans trahir l'autre. En développement, vous voulez tout voir : le type, le message, la chaîne complète des appels, les valeurs locales de chaque cadre. En production, l'utilisateur final veut une phrase claire et l'absence de jargon. Plutôt que d'écrire deux programmes, on utilise un drapeau, souvent nommé DEBUG, qui décide du comportement du gestionnaire. Si le drapeau est activé, le bloc except relance simplement l'exception avec un raise nu : l'original, traceback intact, remonte jusqu'au sommet et s'affiche. Si le drapeau est désactivé, le même bloc affiche un message lisible et se termine. Le point essentiel est que le relancement se fait dans la clause except elle-même, ce qui préserve le contexte complet de l'erreur initiale plutôt que d'en créer une nouvelle dénuée d'historique. En pratique, vous basculez entre les deux modes sans jamais modifier le code métier : un simple changement de valeur dans le drapeau suffit à faire apparaître ou disparaître le traceback.
+
+La seconde règle du débogage honnête est de ne jamais perdre l'information au moment de la simplifier. Traduire une erreur en message utilisateur, c'est très bien, à condition de conserver quelque part la version détaillée. Le module logging fournit pour cela une méthode particulièrement adaptée : appelée depuis l'intérieur d'un except, elle écrit dans le journal non seulement le message, mais tout le traceback associé, sans que vous ayez à le reconstruire. Vous gagnez ainsi les deux mondes : l'utilisateur lit une phrase, et si le problème se répète, vous disposez de la pile d'appels exacte dans le journal, datée et localisée. Une variante manuelle existe avec le module traceback et sa fonction format_exc, utile quand vous voulez incorporer le rapport dans une chaîne de caractères, par exemple pour l'envoyer dans un fichier de rapport. Dans les deux cas, la discipline est la même : simplifier pour afficher, jamais simplifier pour oublier.
+
+Il faut enfin garder à l'esprit qu'attraper une erreur ne corrige rien : cela ne change que le symptôme visible. Le cycle de débogage reste le même qu'il y a vingt ans : reproduire le problème, lire le diagnostic, isoler l'instruction, comprendre la cause, corriger, puis revérifier que l'erreur a disparu. Attraper l'exception pour faire taire le message saute directement à la fin du cycle, avec un résultat faux. Pour les invariants internes de votre code, Python propose l'instruction assert, qui lève une AssertionError quand une condition n'est pas respectée, par exemple une moyenne qui sortirait de son barème après calcul. Attention toutefois à sa limite : les assertions sont entièrement retirées quand Python est lancé avec l'option -O, donc elles servent à vérifier vos propres hypothèses en développement, jamais à valider des données venues de l'extérieur, qui doivent passer par des if et des raise. Retenez cette frontière : assert pour vos invariants, raise pour les données du monde réel.
+
+Bâtir une habitude de vérification des chemins d'échec demande un petit effort d'imagination, mais épargne des heures plus tard. Avant de considérer une fonction terminée, testez-la au moins une fois dans chacune de ses pannes : fichier absent, ligne mal formée, liste vide, valeur hors bornes. Vérifiez que le message affiché est compréhensible par quelqu'un qui n'a pas lu votre code, et que le journal contient assez de détails pour retrouver la cause si le message revient en production. Ce faisant, vous découvrirez presque toujours un cas non prévu, une clause manquante ou un message trop vague : c'est le signe que le test a fait son travail. Le programme final que vous recherchez échoue bruyamment quand vous le développez et parle clairement quand on l'utilise : ces deux comportements ne s'opposent pas, ils se complètent. C'est d'ailleurs le critère que vous pourrez invoquer pour déclarer le chapitre acquis : si vous arrivez à faire planter votre script volontairement, à lire le traceback sans hésiter et à remettre ensuite le programme sur pied, vous maîtrisez l'essentiel.
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO)
+JOURNAL = logging.getLogger("notes")
+DEBUG = False
+
+def lire_notes(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            return [float(ligne) for ligne in fichier if ligne.strip()]
+    except ValueError:
+        if DEBUG:
+            raise
+        JOURNAL.exception("format invalide dans %s", chemin)
+        print("Une ligne du fichier ne contient pas un nombre.")
+        return []
+    except OSError:
+        if DEBUG:
+            raise
+        JOURNAL.exception("impossible de lire %s", chemin)
+        print("Le fichier n'a pas pu etre lu.")
+        return []
+
+print(lire_notes("notes.txt"))
+```
+
+## Exemple guidé : valider des notes de 0 à 20
+
+Réunissons maintenant tout ce que le chapitre a présenté dans un programme unique, tel qu'on pourrait le retrouver dans le mini-projet du chapitre 8. Le cahier des charges tient en trois points : accepter des notes comprises entre 0 et 20, lever une ValueError explicite dès qu'une note sort du barème, et entourer l'exécution d'un try/except qui affiche une phrase compréhensible sans jamais perdre le traceback lorsque l'on développe en mode debug. Le programme se découpe donc en deux parties nettement séparées. La première est une fonction de calcul pur, celle du chapitre 3 enrichie d'une règle métier du chapitre 6 : elle ne lit aucun fichier, n'affiche rien, et signale ses refus par des exceptions. La seconde est le script principal, seul responsable des entrées sorties, du choix du message affiché et du comportement en cas de panne. Cette séparation n'est pas décorative : elle vous permet de tester la règle métier sans fichier, et de tester la lecture sans jamais toucher au calcul.
+
+Commençons par la première partie : la fonction qui établit le contrat sur les données. Elle reste délibérément indépendante de tout ce qui est extérieur : ni fichier, ni affichage, ni drapeau de configuration, seulement une liste reçue en argument et une moyenne renvoyée en retour. C'est cette indépendance qui la rend si facile à tester, car vous pouvez l'appeler depuis un simple prompt Python avec n'importe quelle liste, y compris une liste vide ou volontairement invalide, sans préparer le moindre fichier préalable. Lisez-la en vous posant une question à chaque ligne : que se passe-t-il si l'argument est vide, si l'élément n'est pas un nombre, si la valeur sort du barème. Les trois questions trouvent leur réponse dans un raise, et ces trois raises constituent l'intégralité du contrat que la fonction impose à ses appelants, ni plus ni moins. C'est aussi cette séparation qui rendra les tests du chapitre 8 si simples à écrire.
+
+```python
+def moyenne_notes(notes, bas=0, haut=20):
+    if not notes:
+        raise ValueError("aucune note a calculer")
+    total = 0
+    for position, note in enumerate(notes, start=1):
+        if not isinstance(note, (int, float)):
+            raise TypeError(f"la note numero {position} n'est pas un nombre")
+        if note < bas or note > haut:
+            raise ValueError(
+                f"note {note} hors bornes : le barème autorise {bas} à {haut}"
+            )
+        total += note
+    return total / len(notes)
+```
+
+La deuxième partie est le script principal : il reçoit un chemin, lit le fichier, convertit les lignes et protège l'ensemble de l'exécution. Toute la théorie des sections précédentes y trouve sa place, dans un ordre que vous devriez désormais reconnaître : une zone try minimale, trois clauses except nommant chacune un seul type, une clause else réservée à l'affichage du succès et une clause finally pour le message de fin. Le drapeau DEBUG est déclaré au niveau module afin d'être modifiable en une ligne, en haut du fichier, sans toucher au reste du code. Notez que la conversion float et l'appel à la fonction de calcul se trouvent toutes deux sous try : toutes deux dépendent de données extérieures, l'une du contenu du fichier, l'autre du respect du barème par ces mêmes données extérieures. Tout le reste, affichage et configuration, se trouve relégué aux bords du bloc. Vous ne le modifieriez d'ailleurs jamais pour traiter un autre fichier.
+
+```python
+DEBUG = False
+
+def principal(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            lignes = [ligne.strip() for ligne in fichier if ligne.strip()]
+        notes = [float(ligne) for ligne in lignes]
+        moyenne = moyenne_notes(notes)
+    except FileNotFoundError:
+        print(f"Le fichier {chemin} est introuvable : verifiez son nom.")
+    except ValueError as erreur:
+        if DEBUG:
+            raise
+        print(f"Moyenne impossible a calculer : {erreur}")
+    except OSError as erreur:
+        if DEBUG:
+            raise
+        print(f"Erreur de lecture du fichier : {erreur}")
+    else:
+        print(f"Moyenne de la classe : {moyenne:.2f} / 20")
+    finally:
+        print("Traitement des notes termine.")
+
+principal("notes.txt")
+```
+
+Voici ce que le terminal affiche selon le contenu du fichier, sans aucun autre changement de code. Les trois scénarios se terminent par le message de la clause finally, preuve visible que ce bloc passe à l'exécution quelle que soit l'issue du traitement. Reproduisez-les chez vous dans cet ordre : d'abord le cas nominal où tout fonctionne, puis le cas d'un fichier absent, enfin le cas d'une note hors barème, car c'est ce dernier que l'exercice pratique du chapitre vous demandera d'implémenter et de vérifier à votre tour. Observez aussi la précision des messages : aucun ne mentionne de nom de variable interne, aucun ne réclame la lecture du code source, et chacun laisse entrevoir une action corrective concrète pour la personne qui le reçoit à l'écran. Comparez ensuite ces sorties à ce qu'afficherait un programme dépourvu de tout try : un traceback brut présenté à l'utilisateur, ou pire, aucune sortie du tout parce que le traitement se serait arrêté en chemin.
+
+```text
+Cas 1 : fichier absent
+Le fichier notes.txt est introuvable : verifiez son nom.
+Traitement des notes termine.
+Cas 2 : note hors bornes
+Moyenne impossible a calculer : note 23.0 hors bornes : le barème autorise 0 à 20
+Traitement des notes termine.
+Cas 3 : fichier valide
+Moyenne de la classe : 15.67 / 20
+Traitement des notes termine.
+```
+
+Commençons par la fonction de calcul, qui est le véritable cœur de l'exercice. Elle applique le principe de validation à l'entrée : rien n'est calculé tant que la liste n'est pas déclarée recevable. L'ordre des contrôles n'est pas arbitraire. Le test sur la liste vide arrive en premier, parce qu'il supprime d'un coup la possibilité d'une division par zéro, qui surviendrait à la toute dernière ligne. Le contrôle de type arrive ensuite, avant toute comparaison : si vous compariez directement une chaîne à l'entier 0, Python lèverait bien une TypeError, mais avec un message technique et à une ligne qui ne correspondrait pas à la règle que vous vouliez faire respecter. Enfin vient le contrôle des bornes, le vrai objet du chapitre, qui déclenche une ValueError portant à la fois la valeur rejetée et le barème attendu. Chaque refus est donc signalé au moment exact où il est constaté, avec tout le contexte nécessaire pour le corriger. Cette séquence illustre une idée forte du chapitre : une fonction ne doit pas subir des données douteuses, elle doit les examiner avant de travailler, et refuser explicitement celles qu'elle ne saurait pas interpréter.
+
+Passons au script principal, dont la zone try contient exactement ce qui dépend de l'extérieur. L'ouverture du fichier, la lecture de ses lignes et leur conversion en nombres sont trois opérations qui peuvent échouer pour des raisons qui n'appartiennent pas à votre logique : le fichier peut manquer, une ligne peut contenir du texte, le disque peut refuser l'accès. L'appel à moyenne_notes se trouve lui aussi sous try, car c'est lui qui applique la règle métier sur des données venues de la rue. Notez en revanche ce qui n'est protégé par rien : une faute de frappe produisant un NameError, une AttributeError ou n'importe quelle erreur que vous n'avez pas nommée dans un except remontera jusqu'au sommet et affichera un traceback complet. C'est volontaire : ces pannes signaleraient un défaut de votre code, pas un défaut des données, et vous avez intérêt à les voir clairement dès les premiers tests.
+
+Les trois clauses except se lisent comme un tri par nature de problème. La première, FileNotFoundError, traite le cas le plus courant et le plus facile à corriger : un chemin erroné, un fichier renommé, un dossier de travail différent. Son message cite le chemin, donc l'utilisateur peut vérifier l'orthographe sans ouvrir le code. Attention à l'ordre des clauses : FileNotFoundError fait partie de la famille OSError, donc si vous placiez un except OSError avant, il avalerait le fichier manquant et afficherait un message générique qui perdrait l'information la plus utile. Les types spécifiques passent toujours en premier. La deuxième clause, ValueError avec as erreur, couvre deux situations distinctes mais appelant la même réaction : la conversion d'une ligne invalide et la note hors barème levée par la fonction de calcul. Grâce à as, le message affiché contient la précision exacte remontée du cœur métier, sans que le script ait besoin de deviner de quoi il s'agit.
+
+Le drapeau DEBUG illustre la façon de servir deux publics sans dupliquer le code. En mode normal, le gestionnaire affiche une phrase claire et l'exécution se poursuit proprement. En mode debug, la ligne raise seule, placée au début de la clause, relance l'exception telle qu'elle a été capturée : Python conserve le type, le message et toute la chaîne d'appels qui a mené jusqu'à ce point. C'est la solution idéale pour examiner un problème de format dont vous ne connaissez pas encore l'origine exacte, puis repasser en mode normal une fois la cause identifiée. Notez que le relancement s'effectue depuis l'intérieur du gestionnaire : le rapport final affichera d'abord l'erreur d'origine, puis l'endroit où elle a été relancée, de sorte qu'aucune information intermédiaire n'est perdue au passage. C'est la même mécanique que vous utiliserez pour déboguer le mini-projet : un drapeau, deux comportements, un seul et même code métier. En cas de doute, conservez toujours la possibilité de repasser en mode trace.
+
+La clause else n'accueille qu'une seule instruction, l'affichage du résultat, et c'est exactement ce que la théorie recommande. Afficher une moyenne déjà calculée et correctement formatée n'engage aucune ressource extérieure : si cette ligne échoue, c'est que votre code est en faute, et l'erreur mérite alors de remonter sans filtre. La clause finally, elle, imprime son message dans les trois cas de figure, y compris quand une exception vient d'être relancée en mode debug, puisque le nettoyage s'exécute avant que l'exception ne quitte définitivement la fonction. Pour l'utilisateur, l'avantage est immédiat : il sait toujours que le traitement a été mené jusqu'au bout et qu'aucune étape n'a été abandonnée en route, même quand le résultat n'a pas pu être produit. C'est exactement le rôle d'un bilan de fin d'opération : annoncer la fin avant de disparaître, plutôt que de laisser l'utilisateur se demander si le programme a encore une chance de répondre.
+
+Reste une dernière vérification, celle que tout développeur responsable fait avant de rendre son travail : tester volontairement les chemins d'échec. Créez un fichier notes.txt contenant trois nombres valides, relancez, vérifiez le formatage sur deux décimales. Remplacez un nombre par 23, constatez le message hors bornes. Effacez le fichier, constatez le message d'absence. Puis passez DEBUG à True avec le cas invalide et observez le traceback complet vous désigner la ligne du raise dans la fonction de calcul. Si les trois scénarios produisent le comportement attendu, votre programme passe du statut de script fragile à celui de composant fiable, prêt à être importé par d'autres modules. C'est exactement l'étape que l'exercice pratique du chapitre vous demande de franchir ensuite, en partant du même calcul de moyenne que celui du chapitre 4. Conservez cette habitude au-delà du chapitre : chaque nouvelle fonction qui touche un fichier, une saisie ou un réseau mérite ses trois tests de panne avant même d'être branchée au reste du programme.
+
+## À retenir
+
+- Une exception est un objet levé pendant l'exécution : son type nomme le problème, son message apporte le contexte.
+- Sans gestionnaire, Python arrête le programme et affiche un traceback : l'arrêt est une information, pas un échec de votre part.
+- Le traceback se lit de bas en haut : la dernière ligne donne le type et le message, le cadre du bas donne la ligne fautive.
+- La chaîne d'appels décrit qui a appelé qui jusqu'à la ligne fautive : elle raconte le trajet de la donnée fautive.
+- Le bloc try délimite la zone de risque, que l'on garde volontairement la plus petite possible.
+- Le bloc except doit nommer un type précis : un except nu masque les erreurs inattendues et les interruptions clavier.
+- La clause as donne l'objet erreur, dont le message enrichit à la fois l'affichage utilisateur et la ligne de journal.
+- La clause else s'exécute uniquement quand le try n'a rien levé ; la clause finally s'exécute toujours, dans tous les cas.
+- finally est réservé au nettoyage : libérer une ressource ou annoncer la fin, jamais renvoyer un résultat.
+- On protège les points d'entrée externes, comme la saisie, les fichiers ou le réseau, et on laisse les incohérences de logique exploser.
+- raise ValueError("note hors bornes") crée une erreur métier explicite, préférable au renvoi d'un None que l'appelant peut oublier de tester.
+- En mode debug, un raise nu dans le except relance l'erreur d'origine avec sa chaîne d'appels intacte.
+
+## Erreurs fréquentes
+
+- Piège : écrire `except:` nu pour faire disparaître un plantage. Correction : nommer les types attendus, par exemple `except ValueError:` puis `except OSError:`.
+- Piège : attraper `except Exception` au cœur d'une boucle ou d'une fonction interne. Correction : réserver ce filet au point d'entrée du script, avec journalisation avant tout message propre.
+- Piège : terminer un gestionnaire par pass. Correction : informer l'utilisateur, consigner l'erreur complète, puis décider explicitement de la suite : abandon, nouvelle tentative ou repli signalé.
+- Piège : afficher un message sympathique sans conserver le détail, et perdre ainsi le traceback. Correction : appeler JOURNAL.exception ou traceback.format_exc avant de produire le message utilisateur.
+- Piège : écrire un return dans une clause finally. Correction : ne placer dans finally que du nettoyage, car un return là supprime l'exception en cours et écrase la valeur de retour normale.
+- Piège : entourer tout le programme d'un seul try. Correction : encadrer uniquement l'opération risquée, puis laisser la logique qui exploite le résultat travailler hors protection.
+- Piège : lever une exception générique du type Exception("problème"). Correction : choisir le type le plus précis, ValueError pour le domaine, TypeError pour la forme, FileNotFoundError pour la ressource absente.
+- Piège : renvoyer None quand une règle métier est violée. Correction : lever une erreur explicite, pour que l'appelant ne puisse pas ignorer l'échec et que le traceback désigne la règle enfreinte.
+
+## Pour aller plus loin
+
+Pour approfondir la mécanique complète des exceptions, la documentation officielle de Python consacre un chapitre entier du tutoriel au sujet, sous le titre « Errors and Exceptions ». Vous y retrouverez, dans un ordre pédagogique proche de cette leçon, la lecture des tracebacks, la hiérarchie des objets d'exception, l'usage combiné de try, except, else et finally, ainsi que la levée d'exceptions personnalisées. Les exemples y sont courts et directement exécutables : ouvrez un interpréteur à côté de votre navigateur, recopiez chacun d'eux, puis cassez-le volontairement pour observer le résultat. Le paragraphe consacré aux actions de nettoyage vous confirmera le comportement de finally que nous avons décrit, et celui sur la formation des exceptions vous donnera des précisions supplémentaires sur le mot-clé from. Une relecture attentive de ce chapitre, une deuxième fois après avoir écrit vos premiers blocs try, vous surprendra par le nombre de détails que vous aurez alors envie de vérifier. Adresse à consulter avec votre navigateur habituel : https://docs.python.org/fr/3/tutorial/errors.html
+
+Pour connaître la liste exhaustive des exceptions fournies par la bibliothèque standard, avec pour chacune la condition exacte de sa levée et sa place dans la hiérarchie des classes, la référence officielle des types intégrés fait foi. Elle est présentée sous forme d'un index alphabétique des classes, chacune décrivant en une phrase la situation qui la déclenche, les attributs utiles qu'elle porte éventuellement et les exceptions qu'elle englobe. Elle est particulièrement utile quand un traceback vous affiche un type que vous n'avez jamais rencontré : une lecture rapide du paragraphe correspondant vous indique en général la cause en une phrase. Gardez cette page en favori pendant toute la durée du parcours et prenez l'habitude de cliquer sur chaque nom de type apparaissant dans votre terminal. Vous y découvrirez aussi des exceptions que ce chapitre n'a pas citées, comme ArithmeticError ou LookupError, qui regroupent des familles entières dont les membres descendent. Adresse : https://docs.python.org/fr/3/library/exceptions.html
+
+## Et maintenant : la vidéo du chapitre
+
+La vidéo du chapitre reprend exactement le même parcours, pas à pas et à l'écran : elle ouvre un traceback volontairement cassé, le lit ligne à ligne, construit ensuite un bloc try ciblé autour d'une lecture de fichier, puis termine sur la validation des notes 0 à 20 avec raise et le passage en mode debug. Regardez-la avec cette leçon à portée de main, en vous arrêtant à chaque pause pour comparer le code affiché avec celui que vous venez de lire. Une fois la lecture terminée, passez à l'exercice pratique : vous reproduirez le calcul de moyenne protégé, vous afficherez une phrase compréhensible en cas de note hors bornes et vous vérifierez que votre traceback reste intact lorsque vous activez le debug. Prenez le temps de casser volontairement votre propre version, car c'est en lisant vos propres tracebacks que la méthode de ce chapitre deviendra un réflexe durable. Vous aborderez alors les modules avec un code capable de survivre aux pannes ordinaires.

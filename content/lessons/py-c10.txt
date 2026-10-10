@@ -1,0 +1,508 @@
+Vous voici au dixième chapitre du parcours « Python : du premier script au projet complet ». Les sept premiers chapitres vous ont appris à écrire du Python : variables, conditions, boucles, fonctions, structures de données, fichiers, exceptions, puis modules et paquets. Le huitième vous a fait livrer un vrai projet, l'analyseur de notes, découpé en chargement, calcul et rendu. Le neuvième vous a ouvert la porte de l'asynchrone, là où le programme attend plusieurs choses en même temps. Il reste une question que le code d'un seul développeur ne pose pas encore, mais que pose tout code appelé à vivre au-delà de son auteur : comment faire en sorte que ce projet continue d'être exact, lisible et installable quand vous ne serez plus là pour l'expliquer ?
+
+La réponse n'est pas une nouvelle bibliothèque à apprendre par cœur, c'est un changement de niveau d'exigence. Jusqu'ici, vous jugiez votre travail à une question : est-ce que ça marche ? Désormais, vous le jugerez à trois questions, beaucoup plus dures. Est-ce que quelqu'un d'autre peut installer mon projet avec une seule commande, sur sa machine, sans lire mon code ? Est-ce que une modification anodine, par exemple un changement dans la grille des mentions, est immédiatement signalée quand elle casse un comportement attendu ? Est-ce que le style du code se vérifie tout seul, sans que personne perde une matinée à débattre des espaces et de l'ordre des imports ? Ces trois questions définissent les objectifs de ce chapitre : structurer un package installable, écrire des tests fiables et rapides, automatiser le linter et le formateur.
+
+Le fil rouge reste celui que vous connaissez : votre analyseur de notes. Rien ne change dans les formules, ni dans le contrat d'entrée, ni dans les messages d'erreur du chapitre huit. Ce qui change, c'est son habitat. Le dossier plat où vivaient main.py, chargement.py, calcul.py et rendu.py devient une distribution propre : un dossier src contenant le paquet installable, un dossier tests contenant la suite de vérification, un fichier pyproject.toml à la racine qui décrit le tout, et des commandes uniques pour installer, tester et contrôler le style. Vous partez d'un code qui fonctionne sur votre machine et vous en faites un paquet que l'on peut installer ailleurs, tester automatiquement et relire sans friction. C'est exactement le passage que vous ferez en stage, en poste ou dans toute contribution open source.
+
+La méthode de ce chapitre est celle des précédents : une explication, un cas concret repris sur l'analyseur, un tableau quand la comparaison vaut mieux qu'un paragraphe, un bloc à copier quand la commande se retient mal. Trois tentations vont pourtant vous assaillir, et il faut les nommer d'avance. La première consiste à écrire soi-même ses règles de formatage au fil des semaines, en corrigeant à la main ce que la machine corrigerait en une seconde. La seconde consiste à tester en regardant le programme tourner, ce qui ne prouve rien de plus que l'absence de panique visible. La troisième consiste à promettre qu'on ajoutera les tests « plus tard », c'est-à-dire jamais, parce que la dette contractée ainsi ne fait que croître. La qualité d'un projet ne se proclame pas, elle se mesure et elle se verrouille : c'est la leçon de fond de ce dixième chapitre.
+
+## Du script au package : la structure src/
+
+Le premier symptôme d'un projet mal structuré n'est pas un bug, c'est un import qui échoue ailleurs que chez vous. Tant que vous lancez `python main.py` depuis la racine du dossier, le répertoire courant figure dans la recherche d'imports et `import calcul` trouve votre fichier. Dès que vous lancez la commande depuis un autre répertoire, depuis votre éditeur avec un autre dossier de travail, ou depuis un outil d'intégration continue, la même ligne lève un ModuleNotFoundError que vous ne reproduisez pas chez vous. Le problème n'est pas votre code métier : c'est l'ambiguïté entre le dossier que vous éditez et le paquet que l'on installe. La structure src/ existe pour lever cette ambiguïté une fois pour toutes.
+
+Il faut d'abord distinguer quatre mots que l'on confond trop souvent. Un module est un fichier Python unique, calcul.py par exemple. Un package est un dossier contenant un fichier __init__.py, ce qui en fait un espace de noms importable. Une distribution est l'archive que pip installe : elle contient le code, les métadonnées, les licences et éventuellement des scripts de commande. Enfin, le nom de distribution et le nom du paquet importé peuvent différer : la distribution s'appelle analyse-notes avec un tiret, elle s'installe avec `pip install analyse-notes`, et elle fournit le paquet importable analyse_notes avec un souligné. Ce détail vous semblera cosmétique jusqu'au jour où vous taperez l'un pour l'autre et where vous perdrez dix minutes à comprendre pourquoi pip accepte un nom que Python refuse.
+
+La convention dite src/ consiste à placer les paquets du projet dans un dossier src, jamais à la racine. Les tests vivent à côté, dans un dossier tests, et le fichier pyproject.toml reste à la racine pour décrire l'ensemble. L'avantage pratique est subtil mais décisif : quand pytest s'exécute, il importe le paquet depuis ce que vous avez installé, et non depuis le dossier que le hasard place dans le chemin de recherche. Un import oublié dans pyproject.toml, une dépendance manquante, un fichier non inclus dans la distribution : tout cela échoue immédiatement dans les tests au lieu de passer chez vous et de casser chez le collègue. La structure src/ transforme une classe de bugs en échec visible dès la première commande.
+
+```text
+analyse-notes/
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── analyse_notes/
+│       ├── __init__.py
+│       ├── cli.py
+│       ├── chargement.py
+│       ├── calcul.py
+│       └── rendu.py
+└── tests/
+    ├── conftest.py
+    ├── test_calcul.py
+    ├── test_chargement.py
+    └── test_cli.py
+```
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/python-logo.png
+| Le logo de Python, deux serpents bleu et jaune enlacés : votre analyseur entre désormais dans l'écosystème des paquets, avec son nom, sa version et son point d'entrée.
+```
+
+Le fichier __init__.py mérite qu'on s'y attarde, car il est trop souvent réduit à un fichier vide dont on ignore la fonction. Il fait trois choses. Il marque le dossier comme un package importable. Il sert de vitrine : on y place ce que l'utilisateur du paquet a le droit d'importer directement, souvent sous la forme `from analyse_notes import moyenne, mention`, parfois avec une liste __all__ qui fixe la frontière entre l'interface publique et les détails internes. Il reçoit enfin la responsabilité de ne rien exécuter de lourd : aucune lecture de fichier, aucun appel réseau, aucun affichage au moment de l'import, sinon importer le paquet dans un test déclencherait des effets de bord que personne n'attend.
+
+Le nommage, lui, obéit à des contraintes que l'on regrette d'apprendre tard. Le nom importable ne contient ni accent, ni espace, ni tiret, parce qu'il doit être tapé exactement tel quel, sur n'importe quel clavier, dans n'importe quel terminal. Il évite les noms de la bibliothèque standard, types, email, json ou test, qui masqueraient un module standard derrière le vôtre. Il reste en minuscules soulignées, par convention, même si Python accepte d'autres formes. Une règle simple vous évitera bien des soucis : nommez le paquet d'après ce qu'il apporte, analyse_notes plutôt que projet ou utils, et gardez le nom le plus court pour la distribution visible sur l'index.
+
+Chaque dossier du projet a ensuite une raison d'être, et cette raison dicte ce qu'on y place. src contient ce qui sera installé, tests contient ce qui vérifie, la racine contient ce qui décrit et documente. Rien ne doit aller dans le mauvais dossier par confort du moment : un fichier de test posé dans src sera embarqué dans la distribution livrée aux utilisateurs, et un module métier posé dans tests ne sera jamais installé chez personne. Cette séparation paraît stricte, elle est en réalité ce qui rend chaque commande suivante possible : installer, tester, contrôler le style et construire l'archive deviennent des opérations indépendantes qui ne se marchent pas dessus.
+
+## pyproject.toml : une seule source de vérité
+
+Avant d'ouvrir votre éditeur sur ce nouveau dossier, arrêtez-vous une minute sur l'histoire de la configuration Python, parce qu'elle explique tout ce qui va suivre. Pendant longtemps, un projet dispersait son identité dans cinq fichiers : setup.py pour installer, setup.cfg pour les options, MANIFEST.in pour les fichiers annexes, requirements.txt pour les dépendances, puis un fichier par outil de contrôle, pytest.ini, .flake8, .coveragerc. Chacun parlait un dialecte différent, deux d'entre eux finissaient par se contredire, et personne ne savait plus quelle était la liste réelle des dépendances. pyproject.toml, défini par les recommandations PEP 518 et PEP 621, met fin à cette diaspora : un seul fichier, en TOML, qui décrit comment construire le paquet et comment le configurer, lu par pip comme par les outils de qualité.
+
+La première section, build-system, répond à une question précise : quel outil fabrique l'archive quand on tape `pip install .` ? Elle déclare le backend, setuptools dans la grande majorité des projets, ainsi que les outils nécessaires à la construction. Cette section est obligatoire : sans elle, pip bascule en mode historique avec des avertissements qui gênent les utilisateurs les plus prudents. Gardez-la courte et standard, à moins d'avoir une raison spécifique d'adopter un autre outil de construction.
+
+La section project porte l'identité de la distribution. Le champ name est le nom que l'on tape dans pip, version suit la règle des trois nombres, description tient en une phrase lisible dans les listes d'installation, readme pointe vers le fichier affiché sur les index, et requires-python fixe le version minimale de l'interpréteur. Ce dernier champ n'est pas décoratif : il empêche pip d'installer votre code sur une version de Python qu'il ne supporte pas, ce qui transforme une erreur obscure en refus clair et anticipé. Les dependencies listent les paquets indispensables au fonctionnement, eux seuls, et rien d'autre.
+
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyse-notes"
+version = "1.0.0"
+description = "Analyseur de notes d'une classe : moyenne, médiane, mentions, rapport."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+
+[project.scripts]
+analyse-notes = "analyse_notes.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+```
+
+La section optional-dependencies introduit un concept que vous utiliserez dès la ligne suivante : un extra, c'est-à-dire un lot de dépendances que l'on n'installe que sur demande. Le lot dev regroupe pytest, le plugin de couverture et le linter, parce qu'un utilisateur final qui installe l'analyseur pour traiter ses fichiers n'a aucune raison de recevoir l'ensemble de votre boîte à outils de développement, alors qu'un contributeur ne peut absolument rien faire sans. La commande `pip install -e ".[dev]"` installe le paquet en mode éditable et ajoute le lot dev en une seule frappe. Une seule commande d'installation, documentée dans le README, est le premier réflexe de professionnalisation d'un projet.
+
+La section scripts mérite autant d'attention que le code qu'elle pointe. Elle déclare une commande disponible dans l'environnement, ici analyse-notes, et indique qu'il faut appeler la fonction main du module analyse_notes.cli. Après installation, l'utilisateur tape `analyse-notes --csv notes.csv` au lieu de `python main.py --csv notes.csv`, la commande fonctionne depuis n'importe quel dossier, et elle ne dépend plus de la position du fichier. C'est la frontière nette entre un script que l'on lance et un outil que l'on utilise. Notez que la fonction main n'attend aucun argument : elle lit la ligne de commande elle-même, sinon l'interpréteur lui passerait des arguments qu'elle ne saurait pas interpréter.
+
+Enfin, la fin du fichier accueille la configuration des outils, sections tool. C'est là que vivent les réglages de pytest, de ruff et de la mesure de couverture, à côté des métadonnées plutôt que dans trois fichiers séparés qui finissent toujours par diverger. La règle à retenir tient en une phrase : chaque information n'existe qu'à un seul endroit. Si vous changez la ligne de longueur du formateur, vous la changez ici, et nulle part ailleurs. Si une version de dépendance apparaît à deux endroits, l'une des deux finira par mentir.
+
+```table
+Section du pyproject | Ce qu'elle décrit | Exemple dans l'analyseur
+build-system | L'outil qui construit l'archive installable | setuptools avec le backend standard
+project | L'identité de la distribution et ses dépendances | analyse-notes, version 1.0.0, Python 3.10 ou plus
+project.optional-dependencies | Les lots de dépendances sur demande | le lot dev réunit pytest, pytest-cov et ruff
+project.scripts | Les commandes créées à l'installation | analyse-notes appelle analyse_notes.cli:main
+tool | La configuration des outils de qualité | testpaths pour pytest, line-length pour ruff
+```
+
+## Installation en mode développeur et vérifications
+
+La première commande de tout nouveau projet est la création d'un environnement virtuel, et elle n'a rien de décoratif. Un environnement isole la liste des paquets installés et la version de Python utilisées par ce projet, en dehors de tout le reste de la machine. Sans lui, vous installerez pytest pour un projet, une version incompatible pour un autre, et vous passerez une soirée à comprendre pourquoi un paquet introuvable chez votre collègue se retrouve chez vous dans une version antérieure. Sous Windows comme sous Linux, la séquence est la même : créer le dossier .venv, l'activer, vérifier que python désigne bien celui-ci, puis installer.
+
+Le mode éditable, l'option -e de pip, est la seconde pierre angulaire. Sans elle, `pip install .` copie le code dans le site-packages de l'environnement : vos modifications dans src restent invisibles du programme installé, et chaque essai exige une réinstallation que l'on finit par oublier, si bien que vos tests finissent par vérifier une version périmée de votre propre code. Avec `-e`, pip ne copie rien : il crée un lien vers votre dossier src. Vous modifiez calcul.py, vous relancez les tests, le changement est pris en compte immédiatement. Ce détail explique la moitié des « tests qui passent chez moi et échouent ailleurs » observés en équipe.
+
+Vérifiez toujours votre installation avant d'écrire le moindre test, avec les trois portes d'accès du paquet. La première importe le paquet et affiche sa version depuis le code. La seconde appelle la commande déclarée dans pyproject.toml, ce qui valide le point d'entrée console. La troisième exécute le module avec l'option -m, utile quand la commande n'est pas encore installée. Si les trois répondent, votre structure est saine : vous pouvez maintenant écrire des tests qui importent analyse_notes sans vous poser de question de chemin.
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e ".[dev]"
+python -c "import analyse_notes; print(analyse_notes.__version__)"
+analyse-notes --help
+python -m analyse_notes.cli --help
+pytest
+```
+
+L'ordre de ces commandes n'est pas arbitraire et il faut le respecter religieusement : installer avant de tester. Les tests importent le paquet installé, donc une suite lancée sur un environnement où rien n'est installé échoue sur des imports et vous laisse chercher un bug qui n'existe pas. Une fois l'installation faite, pytest découvre le dossier tests par convention, exécute tous les fichiers dont le nom commence par test_, et vous n'avez plus qu'à lire le résultat. Une seule commande pour tout installer, une seule pour tout vérifier : c'est cette réduction du nombre de commandes qui rend la qualité abordable au quotidien.
+
+Reste la documentation, dernier maillon de la chaîne et souvent le plus négligé. Votre README contient, en haut, la séquence exacte à taper pour cloner, installer et vérifier le projet, telle qu'un nouveau collègue la lancera le premier jour. Écrivez-la comme une recette : aucune étape sous-entendue, aucune commande magique que vous seuls connaissez, aucune dépendance installée manuellement en dehors du pyproject. Testez-la vous-même sur une machine neuve ou dans un environnement vierge : si la séquence échoue, ce n'est pas le lecteur qui est en faute, c'est la procédure. Un projet qui s'installe en trois commandes se fait adopter ; un projet qui exige une demi-heure de devinettes sera rendu à son auteur.
+
+## Tester comme un professionnel : de la sortie qui défile au test
+
+Un test n'est pas un programme que l'on regarde tourner, c'est une affirmation précise sur le comportement attendu, exécutée automatiquement, qui échoue bruyamment quand la réalité contredit le code. Cette définition tient en une phrase, mais elle en contient trois exigences. L'affirmation doit être vérifiable sans interprétation : moyenne de 12, 14 et 16 vaut 14, une note de 16 donne Félicitations du jury, un fichier absent provoque une erreur explicite. Elle doit s'exécuter sans intervention humaine, d'une simple commande. Et elle doit échouer de façon parlante, en montrant la valeur attendue, la valeur obtenue et l'endroit du code qui les produit. Si votre vérification ne peut pas échouer, elle ne vérifie rien : elle vous rassure, ce qui n'est pas le même service.
+
+Deuxième exigence, plus délicate : un test doit être rapide, isolé et déterministe. Rapide, parce qu'une suite qui met trois minutes à tourner ne sera plus lancée à chaque modification, et un test qu'on ne lance plus est un test mort. Isolé, parce que chaque test doit fabriquer son propre monde, avec ses propres fichiers et ses propres données, sans dépendre de ce qu'un autre test a laissé derrière lui. Déterministe, parce que le même code doit produire le même résultat à chaque exécution : ni heure courante, ni contenu d'un dossier partagé, ni ordre d'importation, ni accès réseau. Ces trois propriétés ne sont pas des raffinements d'équipe expérimentée, ce sont les conditions de la confiance : sans elles, un échec rouge vous apprend seulement que quelque chose a bougé, sans vous dire quoi exactement.
+
+pytest est le framework de test que vous allez utiliser, et il s'impose par trois caractéristiques. Il découvre les tests par convention, tous les fichiers nommés à partir de test_ et toutes les fonctions nommées à partir de test_, sans aucune déclaration à écrire. Il réécrit les assertions pour produire des messages d'erreur lisibles : en cas d'échec, vous voyez la valeur calculée et la valeur attendue, pas une simple mention de AssertionError. Et il organise la préparation du monde des tests grâce aux fixtures, que vous verrez dans la section suivante. S'y ajoutent une centaine de plugins pour la couverture, les paramètres d'entrée, les appels réseaux ou les comparaisons de fichiers, ainsi qu'un code de retour non nul en cas d'échec, ce qui permet de brancher pytest dans un script ou dans une chaîne d'intégration continue sans rien interpréter.
+
+```python
+import pytest
+from analyse_notes.calcul import moyenne, mention
+
+
+def test_moyenne_d_un_groupe():
+    assert moyenne([12, 14, 16]) == pytest.approx(14)
+
+
+def test_moyenne_vide_leve_une_erreur():
+    with pytest.raises(ValueError):
+        moyenne([])
+
+
+def test_mention_du_seuil_haut():
+    assert mention(16) == "Félicitations du jury"
+```
+
+Le premier bloc contient déjà deux leçons. La comparaison passe par pytest.approx parce que la moyenne d'une série de flottants n'est jamais rigoureusement égale à une valeur littérale : comparer des flottants avec == revient à exiger une exactitude que la machine ne garantit pas, et vos tests échoueraient parfois sans raison apparente. Le deuxième bloc montre le contraire : on ne teste pas qu'une erreur est levée, on teste laquelle. Attraper toute exception revient à valider le fait que quelque chose a cassé, ce qui est déjà le cas. Le contexte pytest.raises resserre l'attente sur le type attendu, et vous pouvez même vérifier le message avec l'argument match quand le texte fait partie du contrat.
+
+La troisième exigence concerne la structure de la suite, pas des fichiers isolés. Les tests se répartissent en plusieurs niveaux, et leur répartition n'a rien d'arbitraire : plus on monte d'un niveau, plus le test est lent, plus il mobilise de composants, et moins on en écrit. Le tableau suivant indique ce que vous devez couvrir dans l'analyseur et à quelle fréquence vous le ferez.
+
+```table
+Niveau de test | Ce qu'il vérifie | Exemple dans l'analyseur | Volume et coût
+Unitaire | Une fonction, sans fichier ni terminal | moyenne, mention, classement sur des listes fournies en dur | Nombreux, très rapides
+Intégration | Deux ou trois composants assemblés | charger_notes lit un CSV valide et renvoie la liste d'étudiants | Modérés, besoin de fichiers réels
+Bout en bout | La commande telle qu'un utilisateur la tape | analyse-notes --csv notes.csv écrit rapport.txt et renvoie un code | Peu nombreux, plus lents
+Régression | Un bug corrigé qui ne reviendra pas | une note en virgule décimale était refusée | Un par incident survenu
+```
+
+Cette hiérarchie a une conséquence pratique sur votre organisation. Le dossier tests/ se découpe en fichiers qui reprennent les modules du paquet : test_calcul.py pour les fonctions pures, test_chargement.py pour la lecture des fichiers, test_cli.py pour la ligne de commande et l'écriture du rapport. Chaque test se lit en trois temps, ce que l'on appelle les trois phases : on prépare les données, on appelle ce que l'on vérifie, on compare au résultat attendu. Une assertion par comportement, un comportement par test, et un nom de fonction qui décrit ce comportement en anglais ou en français, à condition qu'il soit lisible dans la liste des échecs. Un test nommé test_deux ne vous dira jamais ce qui a cassé.
+
+L'exécution, elle, tient en quelques commandes que vous apprendrez par cœur. `pytest` lance toute la suite. `pytest -k mention` n'exécute que les tests dont le nom contient cette chaîne, ce qui fait gagner des minutes quand vous travaillez sur un seul module. `pytest -x` s'arrête au premier échec quand vous cherchez à dégager un blocage, tandis que `pytest --lf` ne rejoue que les tests qui ont échoué la fois précédente. `pytest -q` résume en quelques lignes, `pytest -vv` liste chaque test avec son résultat. Dans tous les cas, le code de retour vaut 0 quand tout passe et un entier non nul en cas d'échec : c'est ce code que l'intégration continue lira plus loin, sans jamais ouvrir votre code source.
+
+Un réflexe à prendre dès la première exécution consiste à lire la sortie en entier, y compris quand tout est vert. La ligne de résumé vous donne le nombre de tests exécutés, la durée totale et les avertissements éventuels, et ces avertissements sont des erreurs futures : un import déprécié, une fixture obsolète, un message de Python que vous avez choisi d'ignorer aujourd'hui. Traitez-les comme des défauts, parce qu'une suite qui défile en jaune pendant des semaines finit par ne plus être regardée du tout. De même, en cas d'échec, résistez à l'envie de corriger immédiatement le test : lisez d'abord le message, déterminez si c'est le code qui a tort ou l'attente qui a vieilli, puis ne modifiez l'une des deux qu'une fois cette décision prise et énoncée clairement.
+
+## Fixtures : préparer un monde reproductible
+
+Le premier réflexe de qui écrit ses premiers tests est de copier-coller la préparation d'un fichier de test en tête de chaque fonction. Trois tests plus tard, vous maintenez quatre exemplaires du même contenu CSV, et le jour où le séparateur change, vous en modifiez trois et oubliez le quatrième. Le quatrième test continue de passer, mais il vérifie une hypothèse que votre code ne remplit plus : vous venez de fabriquer un faux positif, le pire des défauts d'une suite de tests, parce qu'un test qui échoue à tort finit par être ignoré. La fixture est l'antidote : une fonction unique, décorée par pytest.fixture, qui prépare une donnée et la met à disposition de tous les tests qui en demandent le nom en paramètre.
+
+Concrètement, une fixture est une fonction qui retourne une valeur et dont le nom devient un paramètre de vos tests. Le test ne crée rien, il reçoit. Quand vous écrivez `def test_classement(etudiants)`, pytest cherche une fixture nommée etudiants, l'exécute une fois pour ce test, lui donne le résultat, puis lance le test. La préparation est écrite une seule fois, elle est visible en haut du fichier ou dans le conftest, et surtout elle est exactement la même d'un test à l'autre. Cette mécanique vous semble peut-être anecdotique, elle supprime pourtant la cause n° 1 des suites incohérentes : la duplication de la préparation.
+
+```python
+# tests/conftest.py
+import pytest
+from analyse_notes.chargement import charger_notes
+
+
+@pytest.fixture
+def fichier_notes(tmp_path):
+    chemin = tmp_path / "notes.csv"
+    chemin.write_text(
+        "nom;note\nDupont;15.5\nMartin;12\nDurand;8.5\n",
+        encoding="utf-8",
+    )
+    return chemin
+
+
+@pytest.fixture
+def etudiants(fichier_notes):
+    return charger_notes(fichier_notes)
+```
+
+Ce conftest.py mérite une explication, car c'est le fichier le plus important du dossier de tests. Il est placé à la racine de tests/, pytest le charge automatiquement, et il n'a besoin d'aucun import de votre part pour exposer ses fixtures : tout fichier test du dossier peut les demander par simple nom de paramètre. Il sert aussi de point de mutualisation des réglages communs, des marqueurs ou des chemins. Une règle à connaître : si deux conftest.py existent, l'un à la racine et l'autre dans un sous-dossier, le plus proche du test l'emporte pour les noms qu'il redéfinit, ce qui permet d'adapter une fixture à un sous-ensemble de tests sans toucher au reste.
+
+La fixture fichier_notes illustre le second principe : chaque test travaille dans son propre territoire. La fixture tmp_path est fournie par pytest, elle désigne un dossier temporaire unique par test, déjà créé, déjà nettoyé à la fin. Vous y écrivez votre CSV, le test l'utilise, pytest le supprime. Aucun fichier ne traîne dans le dépôt, aucun test ne peut lire celui d'un autre, et vous pouvez lancer la suite cent fois de suite sans jamais observer d'écart dû à un fichier resté d'une exécution précédente. Comparez avec un fichier notes-test.csv écrit à la main dans le dossier du projet : le premier test le modifie, le second lit la version modifiée, et vos résultats dépendent désormais de l'ordre d'exécution.
+
+```table
+Fixture de pytest | Ce qu'elle fournit | Usage dans l'analyseur
+tmp_path | Un dossier temporaire propre à chaque test | Écrire un CSV éphémère, vérifier rapport.txt puis l'oublier
+monkeypatch | Modification réversible d'attributs, d'environnement ou de répertoire | Changer le répertoire courant ou remplacer une fonction
+capsys | La sortie standard capturée | Vérifier le résumé affiché dans le terminal
+recwarn | La liste des avertissements émis | Contrôler qu'aucun avertissement n'apparaît à l'import
+```
+
+Les fixtures se composent entre elles, et c'est leur force la plus sous-estimée. Ici, la fixture etudiants demande fichier_notes, qui demande tmp_path : pytest construit la chaîne, exécute chaque maillon une seule fois par test et fournit le résultat final. Vous obtenez ainsi une bibliothèque de mondes de test, un monde valide, un monde vide, un monde dont l'en-tête est cassé, un monde avec une note illisible, et chaque test déclare le monde dont il a besoin en un seul mot. Le coût de la préparation est payé une fois, la lisibilité gagnée est permanente, et l'ajout d'un cas limite devient l'ajout d'une fixture de dix lignes.
+
+Une question de portée vient compléter le tableau. Par défaut, une fixture est recalculée pour chaque test, ce qui garantit l'isolation mais coûte cher quand la préparation est lourde. L'argument scope="module" la calcule une fois par fichier de test, scope="session" une fois pour toute la suite. Réservez ces raccourcis à des préparations coûteuses et impossibles à altérer, une base de données de référence ou un jeu de données volumineux, et gardez la portée par défaut partout ailleurs, en particulier dès qu'une fixture écrit un fichier : un monde partagé est exactement ce que vous essayez d'éviter.
+
+## Paramétrer : un cas, dix déclinaisons
+
+La grille des mentions de votre analyseur comporte six seuils, et un test qui les couvre une par une produit six fonctions dont le corps ne change que par la donnée. Cette répétition a deux défauts : elle encombre le fichier, et surtout elle rend l'ajout d'un cas coûteux, si bien qu'on n'ajoute jamais le cas. La règle de bon sens est que le nombre de lignes d'un test doit refléter le nombre de cas réellement couverts, et rien d'autre. pytest résout le problème avec le marqueur parametrize, qui déclare une table de données et exécute le même corps de test une fois par ligne.
+
+```python
+import pytest
+from analyse_notes.calcul import mention, classement
+
+
+@pytest.mark.parametrize(
+    "note,attendu",
+    [
+        (16, "Félicitations du jury"),
+        (15.99, "Très bien"),
+        (14, "Très bien"),
+        (12, "Bien"),
+        (8, "Passable"),
+        (7.99, "Insuffisant"),
+    ],
+)
+def test_mention(note, attendu):
+    assert mention(note) == attendu
+
+
+@pytest.mark.parametrize(
+    "notes,rangs_attendus",
+    [
+        ([14, 14, 10], [1, 1, 3]),
+        ([17, 12, 12, 8], [1, 2, 2, 4]),
+        ([20], [1]),
+    ],
+)
+def test_classement_ex_aequo(notes, rangs_attendus):
+    etudiants = [
+        {"nom": f"E{i}", "note": note} for i, note in enumerate(notes)
+    ]
+    resultats = classement(etudiants)
+    assert [item["rang"] for item in resultats] == rangs_attendus
+```
+
+Lisez ce que produit ce code à l'exécution. Le premier test devient six tests indépendants, chacun avec son propre identifiant dans le rapport : test_mention[16-Félicitations du jury], test_mention[7.99-Insuffisant]. Quand l'un échoue, le message nomme exactement le cas fautif, sans que vous ayez écrit un mot de plus. Le second test fait de même pour les ex æquo, et le tableau affiché dans le code devient une spécification lisible : n'importe qui, sans exécuter quoi que ce soit, voit la règle métier attendue. C'est là le véritable avantage du paramétrage, bien au-delà de la ligne de gagnée : le test cesse d'être une vérification cachée pour devenir un document partagé.
+
+Les cas limites sont la matière première du paramétrage, et ils méritent d'être traités en priorité. Un seuil exact, la note 14 qui doit tomber dans Très bien et non dans Bien. Une valeur flottante juste en dessous, 13.999 qui doit encore appartenir à la catégorie inférieure. Une liste d'une seule note, qui doit rendre un classement cohérent. Une liste vide, qui doit lever ValueError plutôt que de diviser par zéro. Une note écrite avec une virgule, qui doit être acceptée par le chargement. Chacun de ces cas tient en une ligne dans le tableau, et leur présence physique dans le code empêche l'oubli le plus fréquent : celui du cas que l'on avait imaginé mais jamais écrit.
+
+Quand le cas attendu est une erreur, le paramétrage s'exprime avec pytest.raises placé dans le corps, ou avec pytest.param si vous voulez donner un identifiant lisible à chaque scénario. Méfiez-vous en revanche d'une tentation récurrente : paramétrer un test dont chaque ligne exige une préparation différente, un fichier différent, plusieurs assertions disparates. Au-delà de trois ou quatre données, la lecture du tableau devient plus coûteuse qu'une série de tests nommés, et la lisibilité passe avant la concision. Le bon critère est simple : si le corps du test tient en une ou deux assertions et ne varie que par ses données, paramétrez ; sinon écrivez des tests séparés, dont le nom raconte l'histoire.
+
+Un dernier bénéfice apparaît quand la suite grandit. Les identifiants produits par parametrize servent de filtre : `pytest -k "Felicitations"` n'exécute que les cas concernés, ce qui permet d'isoler une déclinaison précise pendant le débogage. Et parce que les données sont déclarées en tête de fonction, vous disposez d'une vue d'ensemble que n'aucun commentaire ne peut offrir : le nombre de cas couverts se lit d'un coup d'œil. Votre objectif n'est pas un pourcentage de couverture élevé, c'est une liste de cas visible et complètement explicite, celle-là même que vous relirez avant chaque livraison.
+
+## Isolez le monde : monkeypatch et mock
+
+Jusqu'ici, vos tests ne vérifiaient que des fonctions pures : on donne des valeurs, on compare un résultat. C'est le cas le plus confortable, mais il ne couvre qu'une partie du projet. Le module cli, lui, lit sys.argv, décide d'un chemin par défaut, ouvre un fichier, écrit un rapport et termine avec un code de retour. Le module chargement, lui, dépend du contenu réel d'un disque. Tester ces modules en laissant le monde tel quel obligerait vos tests à lire vos fichiers personnels, à dépendre du dossier d'où vous lancez la commande, à produire des fichiers qui traînent et, pire, à échouer sur une machine autre que la vôtre. Il faut donc pouvoir dire au test, pour sa durée très courte : dans ce monde précis, cette partie-là du réel ne fonctionnera pas comme d'habitude.
+
+Deux outils répondent à ce besoin, et ils n'ont pas le même niveau d'intervention. monkeypatch est un fixture de pytest qui remplace temporairement un objet, puis remet tout en état automatiquement à la fin du test : aucun nettoyage à la main, aucun risque de fuite vers le test suivant. mock, issu de la bibliothèque standard unittest.mock, fabrique quant à lui un objet factice qui enregistre tout ce qu'on lui demande, ce qui permet de vérifier non seulement un résultat, mais aussi le comportement : cette fonction a-t-elle été appelée, avec quels arguments, et combien de fois ? Les deux se combinent, mais chacun a son terrain.
+
+```python
+import sys
+from analyse_notes import cli
+
+
+def test_chemin_par_defaut(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["analyse-notes"])
+    (tmp_path / "notes.csv").write_text("nom;note\nDupont;15\n", encoding="utf-8")
+
+    code = cli.main()
+
+    assert code == 0
+    assert "Dupont" in capsys.readouterr().out
+```
+
+Ce test illustre la force de monkeypatch : les trois modifications sont déclarées, bornées et annulées dès que le test se termine. Changer de répertoire courant avec chdir permet de simuler l'exécution depuis un dossier vierge, où l'analyseur doit retrouver notes.csv par défaut. Remplacer sys.argv évite de passer par le terminal tout en testant exactement la branche par défaut du parseur. Et capsys capture l'affichage pour le comparer à une chaîne, sans rien écrire sur la console pendant la suite. Aucun de ces gestes ne modifie durablement votre environnement : c'est ce qui distingue un remplacement propre d'un réglage manuel qu'on oublie de défaire.
+
+La règle d'or du remplacement tient en une phrase : on ne remplace que ce qui empêche le test d'être rapide, isolé et déterministe. L'horloge du système, le générateur de nombres aléatoires, la variable d'environnement qui porte un jeton, la fonction qui contacte un service externe, le répertoire courant : voilà les frontières légitimes, parce qu'elles sont hors de votre contrôle. En revanche, remplacer moyenne() pour tester la mention revient à vérifier votre code avec votre propre code : le test passera même si la moyenne est fausse, et vous aurez fabriqué le faux positif le plus coûteux de tous. Avant de mocker, posez la question : est-ce que cette dépendance est réellement le sujet de mon test, ou seulement son décor ?
+
+```python
+from unittest.mock import patch
+
+
+def test_cli_delegue_le_chargement():
+    donnees = [{"nom": "Dupont", "note": 15.0}]
+    with patch("analyse_notes.cli.charger_notes", return_value=donnees) as faux:
+        code = cli.traiter("ailleurs.csv")
+
+    assert code == 0
+    faux.assert_called_once_with("ailleurs.csv")
+```
+
+Le mock apporte ce que monkeypatch ne donne pas : la mémoire de l'appel. On remplit le retour attendu, on exécute le code réel, puis on interroge l'objet factice pour savoir s'il a été sollicité une fois et avec le bon chemin. Cette capacité devient précieuse pour vérifier une orchestration : le cli a-t-il bien demandé le chargement du fichier indiqué, a-t-il bien transmis le chemin au module de rendu, n'a-t-il pas écrit le rapport quand les données étaient invalides ? Trois contrats de collaboration, vérifiables sans créer aucun fichier, en quelques lignes.
+
+La tentation, évidemment, est de mocker de plus en plus, jusqu'à ce que le test ne vérifie plus que la qualité de vos objets factices. Les signes sont faciles à repérer : le corps du test contient plus de lignes de configuration que de code testé, l'objet factice doit être reconfiguré à chaque modification du code réel, ou le test casse parce qu'une signature a changé alors que le comportement reste correct. Face à ce tableau, reculez d'un cran. La hiérarchie la plus saine est la suivante : rendez le code testable, c'est-à-dire déplacez la dépendance en paramètre ; si la dépendance est un fichier ou une chaîne, fabriquez-la en mémoire, par exemple avec io.StringIO ou un dossier temporaire ; utilisez monkeypatch pour une frontière simple ; recours au mock complet seulement pour une collaboration que vous ne pouvez pas simuler plus simplement. Et conservez la signature réelle avec l'option autospec de patch, sinon votre factice acceptera n'importe quel appel et cessera de vous signaler les dérives.
+
+Avant même de recourir à ces outils, examinez si la difficulté vient de votre code plutôt que du test. Une fonction qui ouvre elle-même un fichier, appelle la bibliothèque datetime et écrit sur le disque est difficile à tester parce qu'elle empile trois dépendances dans un seul corps. Séparez-les : la fonction reçoit le texte à analyser en paramètre, une autre reçoit la date du jour, une troisième reçoit la destination de l'écriture. Le test peut alors fournir une chaîne, une date figée et une cible en mémoire, sans rien remplacer du tout. C'est la forme la plus noble de testabilité, celle qui disparaît de la vue une fois en place : plus aucune configuration, plus aucun mock, seulement des valeurs. Les outils de remplacement restent alors ce qu'ils doivent être, une exception maîtrisée pour les frontières que le design ne peut pas absorber.
+
+## La couverture : une jauge, pas un objectif
+
+La couverture mesure une chose et une seule : quelles lignes de votre code ont été exécutées pendant la suite de tests. Elle s'obtient avec le plugin pytest-cov, qui s'installe avec votre lot dev et s'active par une simple option. Le rapport term-missing est celui qui vous intéresse, car il liste à la fois le pourcentage global et les fichiers, puis les numéros de lignes que aucun test n'a traversées. Cette information est utile, parfois même précieuse : elle révèle souvent une branche d'erreur écrite depuis six mois et jamais exercée, donc probablement fausse.
+
+```bash
+pytest --cov=analyse_notes --cov-report=term-missing
+```
+
+Le piège commence au moment où le pourcentage devient un objectif affiché. Une couverture de cent pour cent ne dit rien de la qualité de vos assertions : on peut couvrir toutes les lignes avec des tests qui ne comparent jamais de résultat, en se contentant d'appeler les fonctions pour voir si elles plantent. À l'inverse, une couverture modeste accompagnée d'assertions exigeantes sur les cas critiques vaut bien mieux. La couverture répond à la question « quel code n'a jamais été exécuté pendant un test ? » ; elle ne répond jamais à la question « ce code fait-il ce qu'on attend ? ». Confondre les deux conduit à poursuivre un chiffre au lieu d'un comportement, et c'est précisément le type d'erreur que vous éviterez en lisant le rapport comme un indice, pas comme un tableau de bord.
+
+```toml
+[tool.coverage.run]
+source = ["src/analyse_notes"]
+branch = true
+omit = ["*/cli.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+```
+
+Trois réglages de cette configuration méritent votre attention. L'option branch remplace la mesure des lignes par la mesure des branches : un if dont la condition est toujours vraie n'est plus compté comme couvert tant que son else n'a jamais été pris, ce qui est exactement la distinction que vous voulez voir sur un module de gestion d'erreurs. L'option source restreint la mesure à votre paquet, pour que les pourcentages ne soient pas dilués par la bibliothèque standard. Enfin, fail_under transforme le seuil en condition d'échec : en dessous, la commande retourne un code non nul et l'intégration continue s'arrête. Fixez une valeur atteignable et réelle, pas l'inverse : un seuil de 80 que vous contournez pendant des mois vaut moins qu'un seuil de 60 que vous dépassez régulièrement.
+
+```table
+Observation dans le rapport | Ce qu'elle signifie réellement | Ce qu'elle ne signifie pas
+Une ligne verte | Elle a été exécutée au moins une fois | Elle produit le bon résultat dans tous les cas
+Une ligne rouge dans un except | Ce cas d'erreur n'est jamais survenu en test | Ce chemin est mort ou faux
+Un pourcentage qui monte | Vous avez ajouté des exécutions | Vous avez gagné en confiance
+Un pourcentage stable à 100 | Rien de neuf n'a été touché | Votre code est sans défaut
+```
+
+La bonne méthode de travail consiste à utiliser la couverture comme un détecteur de zones d'ombre, jamais comme une to-do list. Vous exécutez le rapport, vous repérez un bloc rouge : la branche qui gère un fichier en lecture seule, la conversion d'une note hors bornes, le message d'erreur affiché quand l'en-tête est incomplet. Vous vous demandez alors ce qui se passerait en production sur ce chemin. Si la réponse est « personne ne le sait », écrivez le test qui lève le voile, non pas pour faire monter le chiffre, mais parce que cette inconnue est exactement ce qui vous coûtera une nuit blanche. Si la réponse est « ce code ne sert plus à rien », supprimez-le : du code non couvert parce qu'il est inutile n'a aucune raison d'exister.
+
+Un dernier conseil pratique : surveillez la couverture des fichiers de gestion d'erreur en priorité. Les chemins nominaux se testent presque tout seuls, ce sont les messages d'exception et les codes de retour qui restent rouges quand on les néglige, et ce sont pourtant eux que l'utilisateur verra le premier jour où quelque chose se passe mal.
+
+## Ruff : le linter et le formateur en une seule brique
+
+Reprenez votre analyseur et regardez ce que contiennent réellement les questions de style : l'ordre des imports, la longueur des lignes, les espaces autour des opérateurs, les espaces dans les parenthèses, le nom d'une variable non utilisée, un import mort hérité d'un refactoring, une comparaison écrite à l'envers. Aucune de ces questions n'appartient au métier de votre programme, toutes consomment du temps de revue, et plusieurs sont de véritables défauts silencieux. Un import inutilisé ne casse rien aujourd'hui, mais il ralentit l'import, il ment sur les dépendances et il masque parfois une fonctionnalité abandonnée à moitié. La réponse professionnelle est de ne jamais régler ces questions à la main : on choisit un outil, on l'écrit dans le pyproject, et on l'exécute.
+
+La distinction entre linter et formateur est essentielle pour comprendre ce que fait chaque commande. Un linter analyse le code et signale ce qui est discutable, sans le modifier : variable inutilisée, import manquant, exception trop large, complexité excessive, style qui s'écarte de la convention. Un formateur, lui, ne discute pas : il réécrit le fichier selon des règles fixes et vérifiables, en conservant strictement le comportement. Le linter émet des avis que l'humain tranche ; le formateur applique une décision déjà prise. Ruff fournit les deux, dans le même outil, avec la même configuration, ce qui supprime une classe entière de problèmes d'installation et de versions divergentes entre les outils.
+
+```bash
+ruff check .            # analyse et signale
+ruff check --fix .      # corrige ce qui est corrigeable sans risque
+ruff format .           # réécrit le style de tous les fichiers
+ruff format --check .   # vérifie sans rien écrire, idéal pour l'intégration continue
+```
+
+Les règles les plus utiles pour votre projet portent sur des défauts que l'œil humain finit toujours par laisser passer. Les règles F de pyflakes détectent les variables et imports inutilisés, les noms utilisés avant d'être définis et les exceptions attrapées sans être lues. Les règles E de pycodestyle signalent les lignes trop longues et les espaces aberrants. Les règles I imposent un ordre d'imports stable, bibliothèque standard d'abord, puis paquets tiers, puis vos modules, ce qui rend les diffs de fusion illisibles autrement. Les règles B de bugbear attrapent des pièges concrets, comme un argument mutable utilisé comme valeur par défaut. Les règles UP modernisent l'écriture vers la version de Python que vous déclarez. Ensemble, elles transforment la relecture en un exercice de fond plutôt qu'en chasse aux coquilles.
+
+```toml
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+```
+
+La configuration ci-dessus mérite d'être lue lentement. Le champ src indique à ruff où se trouvent vos modules, condition de l'analyse des imports de premier niveau. Le champ select est une liste blanche : seules les familles citées s'appliquent, ce qui vous évite le fatras historique d'options contradictoires héritées de plusieurs outils. Enfin, per-file-ignores permet de désactiver une règle précise pour un dossier précis, par exemple une règle qui aurait du sens dans src mais qui se heurte à la nature déclarative des fichiers de test. L'exception doit rester étroite et justifiée : désactiver une règle pour tout le projet parce qu'elle gêne une fois, c'est supprimer le contrôle plutôt que le cas.
+
+Le formateur, lui, ne demande aucune décision : il applique. Dès lors, un principe s'impose dans l'équipe, et vous devez le défendre en revue : le style n'est jamais un sujet de discussion, parce qu'il n'est plus une décision. Plus personne ne relit la position d'une virgule, l'ordre alphabétique des imports ou la longueur d'une ligne, et la revue de code peut consacrer son temps au seul sujet qui compte, la logique et les cas limites. Deux bonnes habitudes complètent cette automatisation. D'abord, ne lancez jamais le formateur au milieu d'une revue en cours : il mélange ses réécritures avec vos changements de fond et rend le diff illisible ; formatez juste avant de commiter. Ensuite, réservez ruff check aux défauts qui demandent un jugement, et ne combinez pas deux formateurs : ruff format et black produisent des résultats proches mais différents, et les faire cohabiter revient à annuler les bénéfices de l'un et de l'autre.
+
+La vitesse de ruff change concrètement la manière de travailler. Écrit en Rust, il analyse en une fraction de seconde des dizaines de fichiers, si bien que rien ne vous empêche de l'exécuter à chaque enregistrement, via l'intégration de votre éditeur, et à chaque commit, via le fichier de configuration que la section suivante met en place. Le bénéfice n'est pas seulement du temps gagné, c'est un effet de seuil : un contrôle qui prend une seconde est fait systématiquement, un contrôle qui prend trente secondes est reporté, et un contrôle reporté finit par être abandonné. C'est exactement la même logique qui a fait le succès des tests rapides, appliquée au style.
+
+## Pré-commit et intégration continue : verrouiller la qualité
+
+La règle qui commande tout le reste de ce chapitre tient en une phrase : ce qui n'est pas vérifié automatiquement ne sera pas vérifié. Vous pouvez écrire les conventions les plus belles du monde dans le README, tant que leur respect dépend de votre vigilance d'un vendredi soir, elles seront bafouées à la première semaine chargée. La réponse professionnelle consiste à déplacer la vérification du domaine de l'humain vers celui de la machine, à deux niveaux complémentaires : le niveau local, où le contrôle se déclenche au moment du commit, et le niveau distant, où le contrôle se rejoue sur une machine neuve à chaque demande de fusion. Les deux sont nécessaires, ils ne se remplacent pas.
+
+Le premier niveau utilise l'outil pre-commit, qui s'installe dans votre environnement de développement et y ajoute un hook, c'est-à-dire un script exécuté avant chaque commit. La configuration vit dans un fichier unique, .pre-commit-config.yaml, où l'on déclare les contrôles à exécuter : ruff pour l'analyse, ruff-format pour la réécriture du style. L'installation se fait par `pre-commit install`, une seule fois par clone. Ensuite, chaque tentative de commit déclenche les hooks ; s'ils signalent un défaut, le commit est refusé et rien n'est écrit dans l'historique : la contrainte s'interpose entre le développeur pressé et la sauvegarde de son travail.
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+```
+
+Deux détails de cette configuration méritent votre attention. L'argument --fix confie à ruff la correction automatique des défauts qu'il sait réparer sans risque, comme un import inutilisé ; les défauts qui exigent une décision restent bloquants. Le hook local exécute les tests au moment du push plutôt qu'à chaque commit, parce qu'une suite de vingt secondes rendrait chaque enregistrement pénible, tandis qu'un push est un geste volontaire qui justifie une vérification complète. La seule règle intangible est que le contrôle ne doit jamais être assez lent pour être désactivé.
+
+Le niveau distant porte un autre nom : intégration continue. Le principe est de rejouer, sur une machine vierge et à chaque branche poussée, exactement les mêmes commandes que sur votre machine, puis de n'autoriser la fusion que si toutes réussissent. Le workflow se décrit dans un fichier YAML placé dans le dépôt : récupérer le code, installer une version précise de Python, installer le paquet avec ses dépendances de développement, contrôler le style, exécuter les tests avec la couverture. Chaque étape s'arrête à la première défaillance, et le code de retour décide de tout.
+
+```yaml
+name: qualité
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest --cov=analyse_notes --cov-report=term-missing
+```
+
+L'intérêt de rejouer sur une machine neuve dépasse la simple redondance. C'est là que se révèlent les dépendances que vous avez installées à la main sans les déclarer dans pyproject.toml, les imports qui ne fonctionnent que parce que votre éditeur ajoute un chemin, les tests qui supposent un fichier présent dans votre dossier. La machine de l'intégration continue ne possède rien de tout cela : elle n'a que ce que le pyproject déclare, ce qui en fait le juge le plus honnête de l'installation que vous avez décrite. Ajoutez-y la publication du rapport de couverture et vous disposez d'une information objective, discutable sur des faits plutôt que sur des impressions.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/git-branch.png
+| Le schéma des branches Git : chaque branche de fonctionnalité est fusionnée après vérification, et un tag marque la version livrée.
+```
+
+Ces deux niveaux se placent dans un ordre précis de rapidité, et cet ordre constitue à lui seul une méthode de travail. Le formateur tourne à chaque enregistrement, en moins d'une seconde. Le linter tourne à chaque commit. Les tests locaux tournent à chaque push. L'intégration continue rejoue le tout sur une machine fraîche et exige le vert absolu avant fusion. Plus on descend dans cette cascade, moins le contrôle est fréquent et plus il est exhaustif. Une équipe qui fait confiance au contrôle distant pour rattraper les négligences locales perd dix minutes par jour en allers-retours évitables.
+
+## La revue de code : lire, commenter, décider
+
+L'automatisation traite du style et des défauts mécaniques, elle ne dit rien de la qualité d'une idée. C'est le rôle de la revue de code, et son économie est redoutable : on écrit du code beaucoup moins souvent qu'on ne le lit, et une erreur repérée avant la fusion coûte quelques minutes, tandis qu'une erreur découverte en production se chiffre en jours de diagnostic. La revue n'est pas un contrôle hiérarchique : c'est la transmission du projet entre personnes qui en sont responsables, le moment où le savoir-faire d'un développeur expérimenté se dépose sur le code de quelqu'un d'autre, sans jamais y déposer son ego.
+
+Le format détermine l'issue. Une demande de fusion doit être petite, autour de quelques centaines de lignes modifiées au maximum, avec une description qui dit trois choses : ce qui change pour l'utilisateur, comment le vérifier, et ce qui a été laissé de côté. Au-delà de cette taille, la relecture dégénère en survol : personne ne voit le détail, tout le monde approuve, et la revue devient une formalité qui rassure sans protéger. Découper volontairement un travail en demandes successives demande un effort au départ, mais c'est le seul moyen d'obtenir des relectures attentives. Une demande qui mélange un refactoring, une correction de bug et une fonctionnalité nouvelle est la pire des combinaisons : aucun des trois sujets ne reçoit l'attention qu'il mérite.
+
+L'ordre dans lequel on lit compte autant que l'attention qu'on consacre. On commence par l'intention : que fait cette demande, et le code la sert-il ? On passe ensuite aux cas limites, en cherchant ce qui arrive quand l'entrée est vide, absente ou absurde. On examine les noms, parce qu'un nom imprécis annonce une responsabilité floue, puis la duplication éventuelle, puis la présence de tests qui échoueraient sans le changement. Le style, lui, ne fait pas partie de la grille : ruff l'a déjà tranché.
+
+```table
+Question de revue | Pourquoi elle vaut la peine | Signal d'alerte
+Le comportement demandé est-il obtenu ? | C'est la seule finalité de la demande | Le diff ne contient rien de vérifiable
+Les cas d'erreur sont-ils traités ? | C'est là que naissent les incidents | Un try sans traduction en message clair
+Les noms décrivent-ils la réalité ? | Un nom faux induit en erreur plus que le code | data2, truc, helper_final
+Y a-t-il duplication ? | Elle double le coût de chaque future modification | Deux blocs quasi identiques dans un même diff
+Les tests échoueraient-ils sans le correctif ? | Sinon ils ne prouvent rien | Un test ajouté qui passe déjà avant la correction
+```
+
+La manière de commenter conditionne la qualité des échanges. Préférez la question à l'affirmation : plutôt que « ceci est faux », écrivez « que se passe-t-il si le fichier est vide ici ? ». Formulez le pourquoi, car une exigence sans raison ressemble à un caprice et sera contournée à la première occasion. Distinguez explicitement le bloquant du souhait, un préfixe tel que bloquant ou mineur épargnant à votre collègue de deviner ce qui lui est réellement demandé. Gardez enfin la revue pour les sujets qui demandent un jugement, la découpe des responsabilités, la lisibilité des messages d'erreur, les hypothèses de robustesse : tout ce qui est mécanique appartient à l'outil, pas à la conversation.
+
+Côté auteur de la demande, trois réflexes font la différence. Relisez votre propre diff avant de le proposer, en jouant le rôle du lecteur : les commentaires que vous vous adressez à vous-même sont ceux que la revue vous évitera de recevoir. Répondez à chaque point soulevé, même par un accord, car un commentaire resté sans réponse impose au relecteur de relire tout le fil au moment de la fusion. Enfin, acceptez les désaccords de fond comme un signe que le sujet mérite d'être traité, et tranchez-les en deux minutes de discussion en direct plutôt qu'en quinze messages successifs. Les signes d'une revue malade sont faciles à repérer : des demandes de mille lignes, des threads qui s'éternisent sur l'indentation, des approbations données en moins d'une minute.
+
+## Dette technique et couches : domaine et infrastructure
+
+Le mot dette technique désigne un compromis conscient ou non : vous choisissez aujourd'hui la solution rapide, et vous empruntez du temps à votre futur, avec intérêts. Il n'y a rien d'immoral dans cette opération, à condition qu'elle soit une décision et non un accident. Résumer un traitement en une fonction qui lit, calcule et écrit, faute d'avoir le temps de bien découper, est une dette acceptable si vous l'écrivez dans le fichier des retards et si vous savez quand vous la rembourserez. Produire le même code par inadvertance, parce que personne n'a réfléchi à la structure, n'est pas une dette : c'est une dégradation, et elle ne portera pas d'échéance.
+
+Les symptômes de la dette se mesurent sans outil particulier. Le temps nécessaire pour ajouter une fonctionnalité simple augmente alors que le projet grossit à peine. Chaque modification déclenche une peur diffuse d'abîmer un ailleurs, et le même bug réapparaît après avoir été corrigé, parce que la correction n'a touché qu'un des deux endroits où la logique est dupliquée. À ces signes, la réponse n'est pas un grand soir de refactoring, mais un remboursement régulier : à chaque changement, vous améliorez la zone que vous touchez, vous supprimez la duplication que vous rencontrez, vous ajoutez le test qui manquait. Appliquée pendant des mois, cette politique fait plus pour la santé d'un projet qu'une réécriture totale que personne ne termine.
+
+Le découpage en couches est l'outil principal contre cette dette, et votre analyseur l'applique déjà sans le savoir. Le domaine regroupe les règles métier, pures et stables : la moyenne, la médiane, la règle des ex æquo, la grille des mentions. Elles ne dépendent d'aucun fichier ni d'aucun terminal et changeront rarement, parce que les règles d'un établissement évoluent lentement. L'infrastructure regroupe tout ce qui parle au monde extérieur : la lecture d'un CSV, l'écriture de rapport.txt, l'affichage terminal, les arguments de la ligne de commande. Ces éléments changent souvent, eux, parce que les formats et les habitudes évoluent vite.
+
+La règle de dépendance est simple à énoncer, difficile à violer une fois en place : l'infrastructure connaît le domaine, jamais l'inverse. Le module chargement importe les types du domaine pour construire des étudiants ; le module calcul n'a jamais à savoir d'où viennent les notes. Si un jour vous remplacez le CSV par une base de données, par une interface web ou par un appel réseau, vous écrivez un nouvel adaptateur d'entrée et vous ne modifiez pas une ligne du domaine. C'est la promesse de cette architecture, et elle se vérifie concrètement : le test du domaine ne crée aucun fichier, il fournit une liste de nombres, il s'exécute en millisecondes, et il reste identique quel que soit le format d'entrée retenu.
+
+```table
+Couche | Ce qu'elle contient dans l'analyseur | Ce qu'elle ne doit jamais contenir | Tests associés
+Domaine | moyenne, mediane, classement, mention, seuils | Lecture de fichier, impression, argparse, chemins | Tests unitaires très rapides
+Infrastructure | charger_notes, écriture du rapport, sortie terminal | Règle de calcul ou seuil de mention | Tests d'intégration avec fichiers temporaires
+Application | cli, séquence charger puis calculer puis rendre | Formule métier dupliquée | Tests de bout en bout sur la commande
+```
+
+Deux signes indiquent qu'une couche a fui dans une autre, et ils se détectent à la lecture d'un import. Si le dossier des fonctions de calcul importe csv ou ouvre un fichier, une règle métier s'est chargée d'infrastructure : les tests devront alors fabriquer un fichier pour vérifier une formule, ce qui est exactement ce que vous vouliez éviter. Si le module de chargement contient un seuil de mention, une décision de politique éducative vit dans un parseur de fichiers : la prochaine révision de la grille modifiera du code de lecture. Dans les deux cas, la correction consiste à déplacer la responsabilité vers sa couche, pas à commenter le symptôme. Un projet dont les couches sont nettes se teste vite et se transforme sans panique : c'est la séparation entre chargement, calcul et rendu du chapitre huit, élevée au rang de principe d'organisation.
+
+## À retenir
+
+- Un projet devient un paquet quand il possède une structure src, un pyproject.toml unique et une installation reproductible.
+- La structure src/ garantit que les tests vérifient le paquet installé, et non le dossier que le hasard place dans le chemin de recherche.
+- pyproject.toml concentre métadonnées, dépendances, points d'entrée et configuration des outils : chaque information n'existe qu'à un seul endroit.
+- Le lot dev sépare les dépendances de l'utilisateur de celles du contributeur, et s'installe avec `pip install -e ".[dev]"`.
+- Un test est une affirmation précise, exécutée automatiquement, qui doit être rapide, isolé et déterministe.
+- pytest découvre les tests par convention, réécrit les assertions et organise la préparation avec les fixtures.
+- Le paramétrage transforme une table de cas limites en spécification lisible et en identifiants filtrables.
+- On ne remplace que les frontières hors de votre contrôle : horloge, environnement, réseau, répertoire ; jamais la fonction que l'on teste.
+- La couverture signale les lignes jamais exécutées ; elle ne dit jamais si les comportements sont les bons.
+- ruff remplace linter et formateur : le style cesse d'être une décision, donc cesse d'être discuté.
+- pre-commit verrouille le contrôle au moment du commit, l'intégration continue le rejoue sur une machine neuve avant fusion.
+- Une revue de code porte sur l'intention, les cas limites et les tests, jamais sur la position d'une virgule.
+- L'infrastructure dépend du domaine, jamais l'inverse : c'est cette règle qui rend les règles métier testables sans fichier.
+
+## Erreurs fréquentes
+
+- Tester le dossier source au lieu du paquet installé → passez à la structure src/ et installez en éditable avant de lancer pytest.
+- Une configuration éclatée entre setup.py, requirements.txt et trois fichiers d'outils → migrez vers pyproject.toml et ne gardez qu'une source de vérité.
+- Copier la préparation d'un fichier dans chaque test → une fixture unique dans conftest.py, avec tmp_path pour un territoire propre à chaque test.
+- Écrire un test par donnée similaire → paramétrez : le corps se écrit une fois, les cas s'ajoutent en une ligne.
+- Mocker la fonction que l'on teste → le test ne vérifie plus rien ; remplacez seulement horloge, environnement, fichier ou réseau.
+- Poursuivre un pourcentage de couverture → lisez les lignes rouges comme des questions, et supprimez le code mort plutôt que de le couvrir à vide.
+- Corriger le style à la main ou en discuter en revue → lancez ruff format avant de commiter et laissez ruff check les défauts qui demandent un jugement.
+- Des demandes de fusion de mille lignes, relues en une minute → découpez, décrivez l'intention, les cas limites et les tests, dans cet ordre.
+- Une règle métier écrite dans le module de lecture de fichiers → déplacez-la vers le domaine : sinon sa prochaine modification casse le chargement.
+
+## Pour aller plus loin
+
+La documentation officielle de pytest est longue, mais deux pages seulement suffisent pour ancrer l'essentiel : le guide des fixtures, https://docs.pytest.org/en/stable/how-to/fixtures.html, détaille les portées, la composition et les fixtures intégrées comme tmp_path et monkeypatch ; le guide du paramétrage, https://docs.pytest.org/en/stable/how-to/parametrize.html, montre comment déclarer des cas, leur donner des identifiants lisibles et faire échouer un scénario précis. Lisez-les en gardant à côté de vous un test de votre analyseur que vous réécririez au fur et à mesure.
+
+La référence de ruff, https://docs.astral.sh/ruff/linter/, liste les familles de règles disponibles et les défauts concrets qu'elle attrape : une lecture efficace pour comprendre ce que votre configuration surveille et ce qu'elle ignore. Le guide du formateur, https://docs.astral.sh/ruff/formatter/, précise ce que l'outil réécrit et ce qu'il refuse de changer. Quant au packaging, le tutoriel officiel, https://packaging.python.org/en/latest/tutorials/packaging-projects/, décrit pas à pas la construction d'une distribution à partir d'un pyproject.toml, exactement la structure que vous venez d'installer.
+
+## Et maintenant : passez à l'exercice pratique
+
+La leçon est terminée, la transformation ne l'est pas : votre analyseur de notes vit encore à plat dans son dossier, sans tests automatisés ni contrôle de style. L'exercice de ce chapitre consiste justement à le faire passer de l'un à l'autre, en appliquant une par une les étapes que vous venez de lire, sans rien changer aux règles métier qui fonctionnent déjà. Vous livrerez une distribution installable, une suite pytest qui couvre les cas limites, un contrôle ruff exécuté en une commande, et un pré-commit qui empêche de valider un défaut connu.
+
+Travaillez dans l'ordre, en vérifiant à chaque étape : structurez le dossier src, écrivez le pyproject, installez en éditable, lancez la commande, puis seulement ensuite ajoutez les tests. Quand la suite est verte et que ruff ne signale plus rien, relisez votre travail avec la grille de revue : un autre développeur doit pouvoir cloner votre dépôt, taper trois commandes et obtenir le même résultat que vous. C'est le critère de réussite de ce dixième chapitre.

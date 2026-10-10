@@ -1,0 +1,141 @@
+La surface d'attaque d'une organisation moderne est, dans la très grande majorité des cas, une surface web. Derrière un simple port 443 ouvert peut se cacher une application métier, un portail client, une interface d'administration oubliée, ou un service interne exposé par erreur. Le scanner de ports vous a dit où écouter ; les scripts d'énumération web et les outils dédiés vous diront quoi écouter. Dans cette partie, nous explorons les scripts HTTP de Nmap et l'outil Nikto, puis nous abordons la question capitale du tri des résultats : qu'est-ce qui est réel, qu'est-ce qui est du bruit, et dans quel ordre corriger.
+
+Le travail sur le web diffère du scan de ports par son rythme. Un scan SYN frappe des centaines de ports en quelques secondes ; une énumération web envoie des dizaines de requêtes par répertoire, par nom de fichier, par paramètre. Le rythme doit être maîtrisé dès le départ, non seulement pour rester discret, mais aussi pour ne pas dégrader les performances d'une application de production, ce qui constituerait une atteinte à son exploitation, même sans intention malveillante.
+
+## Les scripts Nmap pour le web
+
+Nmap embarque un moteur de scripts, NSE, pour Nmap Scripting Engine, qui étend considérablement ses capacités au-delà du simple scan de ports. Les scripts sont rangés par catégories : auth pour l'authentification, brute pour les essais de mots de passe, default pour le jeu par défaut, dos pour le déni de service — à éviter hors mandat explicite, discovery pour l'énumération, et vuln pour la détection de vulnérabilités connues. Pour un premier contact avec une cible web, la catégorie default est un bon point de départ :
+
+```bash
+nmap -sV --script default -p 80,443 192.168.56.101
+```
+
+Parmi les scripts les plus utiles pour un auditeur débutant, http-enum mérite une place centrale. Il tente d'énumérer les répertoires et fichiers standards en interrogeant le serveur avec une liste de chemins prédéfinie :
+
+```bash
+nmap --script http-enum -p 80 192.168.56.101
+```
+
+La sortie peut révéler, par exemple, la présence d'un répertoire /admin/, d'un fichier phpinfo.php, ou d'une installation WordPress détectée via la balise generator de la page d'accueil. Chacune de ces découvertes est une information de surface d'attaque : un répertoire d'administration exposé appelle une revue de sa protection, un fichier phpinfo.php expose la configuration complète du serveur PHP, une version de CMS connue appelle la vérification de ses mises à jour.
+
+Un script complémentaire, http-headers, vérifie les en-têtes de sécurité renvoyés par le serveur :
+
+```bash
+nmap --script http-headers -p 80,443 192.168.56.101
+```
+
+Vous y lirez la présence ou l'absence de Strict-Transport-Security, de X-Frame-Options, de X-Content-Type-Options, de Content-Security-Policy. Ces en-têtes ne sont pas des vulnérabilités en tant que telles, mais leur absence caractérise une configuration faible, souvent corrélée à des risques de clicjacking ou de sniffing de contenu. Signalez-les dans une section dédiée de votre rapport, avec une sévérité faible à moyenne selon le contexte.
+
+Voici un inventaire des scripts NSE que vous utiliserez le plus souvent dans vos premiers audits web :
+
+```table
+| Script | Question à laquelle il répond | Exemple de sortie utile |
+| http-enum | Quels répertoires et fichiers sont exposés | /admin/ existe et répond en 200 |
+| http-headers | Quels en-têtes de sécurité manquent | X-Frame-Options absent |
+| http-title | Quelle est le titre de la page d'accueil | Application de gestion des congés |
+| http-methods | Quelles méthodes HTTP sont autorisées | OPTIONS et TRACE activés |
+| ssl-cert | Quel est le certificat TLS présenté | CN=*.example.com, expire dans 12 jours |
+| ssl-enum-ciphers | Quelles suites de chiffrement sont actives | TLS 1.0 et RC4 encore autorisés |
+| http-vuln-cve2017-5638 | La cible est-elle vulnérable à une CVE donnée | Script exécuté sans résultat |
+```
+
+La ligne sur http-methods mérite une attention particulière. Un serveur qui autorise la méthode TRACE peut être vulnérable au Cross-Site Tracing, une technique qui permet, dans certaines configurations, de lire les en-têtes de session d'une victime. Un serveur qui autorise OPTIONS au-delà du strict nécessaire expose parfois sa logique applicative. Ce sont des constats simples à produire, faciles à comprendre et utiles à corriger : le rapport en devient plus lisible pour l'équipe de développement.
+
+Un mot sur l'exécution de scripts spécifiques. Plutôt que de lancer toute une catégorie, vous pouvez cibler un script précis, et lui passer des arguments. Le script ssl-cert, par exemple, accepte un numéro de port alternatif :
+
+```bash
+nmap --script ssl-cert --script-args tls.servername=www.example.com -p 443 192.168.56.101
+```
+
+Cette capacité à paramétrer les scripts vous permettra, au fil de l'expérience, de construire des séquences d'énumération sur mesure : d'abord la découverte des ports, puis l'identification des services, puis l'énumération web détaillée, et enfin la vérification ciblée des vulnérabilités suspectées. Chaque étape nourrit la suivante, et c'est cette discipline séquentielle qui fait la différence entre un scan jetable et un audit reproductible.
+
+## Nikto : l'audit automatisé d'un serveur web
+
+Si les scripts Nmap offrent une vue large mais parfois superficielle, Nikto se concentre exclusivement sur le serveur web et son contenu. C'est un scanner de configuration et de fichiers : il compare le comportement du serveur à une base de plus de sept mille tests potentiels — fichiers dangereux, anciennes versions, configurations par défaut, en-têtes manquants — et produit un rapport listant chaque anomalie détectée.
+
+Sa syntaxe de base est la suivante :
+
+```bash
+nikto -h http://192.168.56.101 -output rapport/nikto-demo.html -Format html
+```
+
+L'option -h accepte une URL, une adresse IP, ou le nom d'un fichier contenant une liste de cibles. L'option -output écrit le rapport dans un fichier, ce qui est fortement recommandé : la sortie console de Nikto est longue, et vous perdriez les résultats en fermant le terminal. Le format HTML est pratique pour la lecture humaine, le format CSV pour le traitement par un tableur.
+
+Voici un extrait de sortie console typique :
+
+```bash
++ Target IP:          192.168.56.101
++ Target Hostname:    serveur-demo
++ Target Port:        80
++ Start Time:         2026-03-10 (09:41:12)
++ Server:             Apache/2.4.57 (Debian)
++ Retrieved x-powered-by header: PHP/8.1.2
++ The anti-clickjacking X-Frame-Options header is not present.
++ OSVDB-3233: /icons/README: Apache default file found.
++ 26748 requests: 0 error(s) and 8 item(s) reported on remote host
++ End Time:           2026-03-10 (09:49:55)
+```
+
+Chaque ligne de finding porte un identifiant OSVDB, une base historique de vulnérabilités de logiciels, dont les entrées restent utiles comme références même si la base n'est plus mise à jour. L'identification du serveur Apache/2.4.57 (Debian) et de PHP/8.1.2 complète votre inventaire de versions, et la mention du fichier README d'Apache est un exemple classique de divulgation d'information : inoffensive en elle-même, mais révélatrice d'une installation laissée dans sa configuration d'origine.
+
+Un réglage important concerne le rythme des requêtes. Nikto, par défaut, peut générer un volume de trafic notable. Les options -Pause et -maxtime permettent de le modérer :
+
+```bash
+nikto -h http://192.168.56.101 -Pause 1 -maxtime 600 -output rapport/nikto-demo.txt
+```
+
+Ici, une seconde de pause entre chaque requête, et un plafond global de dix minutes. Dans un environnement de production, ces deux paramètres ne sont pas des raffinements : ce sont des garde-fous. Un administrateur qui reçoit mille requêtes en dix secondes de la part d'une adresse inconnue déclenchera, à juste titre, une alerte de son IDS et une escalade vers son équipe sécurité. Votre mandat vous donne le droit de scanner, pas celui de perturber.
+
+Un point de vigilance sur l'interprétation des résultats de Nikto. L'outil est volontairement exhaustif, et une partie de ses findings s'applique à des configurations parfaitement normales. Le fichier /icons/README d'Apache est présent sur des millions de serveurs sans que personne n'en souffre. L'absence de certains en-têtes de sécurité est fréquente sans être pour autant exploitable dans le contexte donné. Votre travail d'auditeur commence exactement là où s'arrête l'outil : dans le tri, la contextualisation et la priorisation. La section suivante est consacrée à cet art.
+
+## Faux positifs : apprendre à ne pas croire son outil
+
+Un faux positif est un résultat que l'outil présente comme une anomalie alors qu'il n'y a pas d'anomalie réelle, ou pas d'anomalie significative dans le contexte donné. Un faux négatif, à l'inverse, est une vulnérabilité réelle que l'outil n'a pas détectée. Les deux existent, mais c'est le premier qui pose le plus de problèmes aux débutants, car il gonfle les rapports, disperse l'attention de l'équipe corrective et décrédibilise le travail d'audit.
+
+Prenons un exemple concret. Vous lancez Nikto contre un serveur et obtenez un finding de niveau moyen : présence du fichier /server-status, page d'information d'Apache. Si vous inspectez la configuration, vous découvrez que cette page est restreinte aux adresses du réseau interne, qui est précisément le réseau depuis lequel vous scannez. Le finding est réel — le fichier existe bien — mais le risque est nul dans le périmètre audité, car un attaquant externe n'y a pas accès. La bonne pratique consiste à noter le finding, à documenter la restriction observée, et à l'affecter à une sévérité minimale, plutôt qu'à le retirer silencieusement du rapport. On ne cache pas un constat ; on le contextualise.
+
+Un autre piège classique concerne les CVE remontées par les scripts. Le script Nmap http-vuln-cve2017-5638, qui cible une faille critique dans Apache Struts, peut renvoyer « Script finished » sans aucun résultat, ce qui signifie que la vulnérabilité n'a pas été confirmée — et non qu'elle est absente. L'absence de preuve n'est pas la preuve de l'absence. Un serveur peut être vulnérable sans que le script le détecte, à cause d'une configuration réseau particulière, d'un proxy qui normalise les requêtes, ou d'un WAF qui les bloque. Votre rapport doit donc distinguer clairement trois états pour chaque vulnérabilité testée : confirmée, non confirmée, non testable.
+
+Voici un modèle de classification simple que vous pourrez réutiliser :
+
+```table
+| État | Définition | Action dans le rapport |
+| Confirmée | L'outil fournit une preuve directe et vérifiable | Finding à corriger, avec sévérité |
+| Probable | Indice fort mais preuve incomplète | Finding à confirmer par test manuel |
+| Non confirmée | L'outil n'a rien trouvé, test incomplet | Note méthodologique, pas un finding |
+| Contextuelle | Anomalie réelle mais sans risque dans le périmètre | Finding documenté, sévérité minimale |
+```
+
+La priorisation, ensuite, se construit à partir du croisement de plusieurs critères : le score CVSS de la vulnérabilité, l'exposition réelle du service, la criticité de la donnée traitée, et la facilité de correction. Une faille critique sur un serveur accessible depuis l'Internet et traitant des données personnelles passe en tête de liste, même si son score est légèrement inférieur à celui d'une autre faille technique. Une faille moyenne sur un serveur interne isolé descendra, sauf si elle concerne un système de production critique.
+
+Le tableau suivant illustre une matrice de priorisation que vous pourrez adapter à chaque mission :
+
+```table
+| Combinaison | Priorité | Délai conseillé |
+| Score élevé et exposition externe | P1 | 48 à 72 heures |
+| Score élevé et exposition interne | P2 | 30 jours |
+| Score moyen et exposition externe | P2 | 30 jours |
+| Score moyen et exposition interne | P3 | 90 jours |
+| Score faible, toute exposition | P4 | Cycle de maintenance |
+```
+
+Une dernière discipline, souvent négligée mais décisive : la reproductibilité. Avant de signaler un finding, essayez de le reproduire. Relancez le scan, refaites la requête à la main, vérifiez depuis un second poste. Un finding qui disparaît au second passage n'est pas un finding : c'est un incident réseau, une perte de paquet, un service qui redémarrait au moment du scan. Notez-le dans un journal de bord, avec l'horodatage et les commandes utilisées, plutôt que dans le rapport final. Cette rigueur vous distinguera des rapports d'outils bruts que les équipes correctives apprennent, hélas, à ignorer.
+
+## Synthèse méthodologique : du scan au finding qualifié
+
+Pour consolider cette partie, voici la chaîne complète que vous allez répéter à chaque mission. D'abord, vous exécutez la découverte de ports et d'hôtes avec Nmap, en sauvegardant les sorties brutes au format de votre choix. Ensuite, vous identifiez les versions avec -sV, puis vous énumérez le web avec http-enum et http-headers. Ensuite, vous lancez Nikto sur chaque serveur web identifié, avec un rythme adapté à l'environnement. Ensuite, vous recoupez les versions avec les bases CVE, et vous classez chaque anomalie selon la grille de priorisation. Enfin, vous produisez le rapport, dans lequel chaque finding porte une preuve, un contexte, une sévérité et une recommandation.
+
+Chaque étape produit des fichiers que vous conservez : les sorties XML de Nmap, les rapports Nikto, vos notes de recoupement. Ces fichiers constituent la mémoire de la mission, et vous permettront, trois mois plus tard, de relancer le scan et de comparer. La différence entre le scan du jour J et le scan du jour J plus quatre-vingt-dix jours est, en elle-même, un indicateur de l'efficacité de la correction — et la meilleure réponse à un responsable qui vous demandera ce que votre audit a réellement apporté.
+
+Voici un exemple complet d'application de cette méthodologie, tel qu'il pourrait se dérouler sur une petite infrastructure de vingt machines. Le lundi matin, vous recevez le périmètre : la plage 10.20.30.0/24, autorisée du lundi 20 h au vendredi 6 h, techniques autorisées limitées au scan passif et semi-actif. Vous lancez d'abord une découverte d'hôtes avec un ping sweep, puis un scan SYN sur les 1 000 ports courants de chaque hôte répondant, en sauvegarde les résultats dans un dossier daté. Vous constatez que quatorze hôtes sont actifs, dont trois serveurs web et une machine Linux exposant le port 6379.
+
+Le mardi, vous enrichissez : -sV sur les ports ouverts, scripts http-enum et ssl-cert sur les trois serveurs web, et vous découvrez qu'un des serveurs expose une interface d'administration sur le port 8080, protégée par un formulaire de connexion. Vous ne testez pas les mots de passe, cela n'est pas dans le mandat, mais vous notez l'exposition et la qualité des en-têtes TLS. Le mercredi, vous lancez Nikto avec un rythme modéré sur les trois serveurs, et vous recoupez les versions détectées avec la base du NVD. Vous identifiez une version de PHP associée à plusieurs CVE de sévérité moyenne, et une librairie OpenSSL antérieure à la dernière version correctrice.
+
+Le jeudi, vous qualifiez chaque finding : le port 6379 exposé sans authentification devient un finding P1, car Redis sans mot de passe permet l'exécution de commandes système ; l'interface d'administration sur 8080 devient un finding P2, avec recommandation de restriction réseau ; les en-têtes de sécurité manquants deviennent des findings P3 ; la version de PHP devient un finding P2, à confirmer par la vérification des correctifs appliqués. Chaque recoupement avec le catalogue public de vulnérabilités s'appuie sur des identifiants stables, comme l'illustre le logo officiel du programme CVE :
+
+```image
+https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Common_Vulnerabilities_and_Exposures_logo.svg/960px-Common_Vulnerabilities_and_Exposures_logo.svg.png
+| Logo officiel du programme Common Vulnerabilities and Exposures, dont les identifiants CVE servent de référence universelle pour désigner une faille publiée.
+```
+
+Le vendredi matin, vous rédigez le rapport, vous le relisez en vous demandant pour chaque phrase si un administrateur pressé peut agir à partir d'elle, et vous le transmettez avec l'ensemble des fichiers bruts à l'appui. Cinq jours, une quarantaine de fichiers générés, huit findings qualifiés : voilà ce à quoi ressemble un audit de vulnérabilités mené proprement.

@@ -1,0 +1,144 @@
+## NDP : le protocole de voisinage qui remplace ARP
+
+L'IPv6 n'a pas de protocole ARP : la diffusion de niveau 3 n'existe plus, et interroger tout un segment pour chaque résolution serait coûteux et inutile. C'est le protocole NDP, Neighbor Discovery Protocol, défini par la RFC 4861, qui prend le relais sur ICMPv6, le protocole 58, en échangeant des messages courts en multicast. Il remplit à lui seul les fonctions que l'IPv4 répartissait entre ARP, la découverte de routeurs et IGMP : résolution d'adresse, découverte de la passerelle, annonce des préfixes, détection des doublons et redirection. C'est le cœur mécanique de l'IPv6, celui que vous devez comprendre en détail, car il explique la majorité des pannes observées après un premier déploiement.
+
+Les messages NDP portent des noms qu'il faut fixer dès maintenant : Router Solicitation, numéro 133, envoyé par un hôte pour demander une annonce immédiate ; Router Advertisement, numéro 134, envoyé périodiquement par le routeur et portant les préfixes du lien ; Neighbor Solicitation, numéro 135, la question qui remplace la requête ARP ; Neighbor Advertisement, numéro 136, la réponse ; et Redirect, numéro 137, utilisé par un routeur pour signaler un meilleur chemin. Tous voyagent en ICMPv6, avec un Hop Limit obligatoirement égal à 255 pour les messages de découverte : un paquet arrivant avec une valeur inférieure vient forcément d'un émetteur local qui l'a falsifiée, et il est ignoré. Cette vérification simple élimine une partie des falsifications venues de l'extérieur.
+
+La résolution d'adresse fonctionne ainsi. Votre machine veut joindre 2001:db8:ac1:1::10 ; elle calcule le groupe de sollicitation ff02::1:ff00:10 en reprenant les vingt-huit derniers bits de l'adresse cible, y envoie un Neighbor Solicitation, et seules les interfaces susceptibles de porter cette adresse répondent par un Neighbor Advertisement. La machine met alors à jour sa table de voisinage, équivalent IPv6 de la table ARP, et encapsule la trame. À la différence d'ARP, la table de voisinage distingue plusieurs états, de incomplete à reachable en passant par stale, delay et probe, avec des délais d'expiration configurables. Un voisin marqué stale reste utilisable pendant un moment avant d'être réinterrogé, ce qui réduit les échanges sur un lien calme.
+
+```bash
+# Table de voisinage IPv6 : équivalent de la table ARP
+ip -6 neigh show
+ip -6 neigh show dev eth0
+ip -6 neigh show 2001:db8:ac1:1::10
+
+# Écouter les échanges de découverte sur le lien
+sudo tcpdump -i eth0 -n icmp6
+
+# Windows
+netsh interface ipv6 show neighbors
+```
+
+La découverte du routeur est l'autre moitié du mécanisme. À la montée d'une interface, l'hôte émet un Router Solicitation vers ff02::2 ; le routeur répond, ou anticipe, par un Router Advertisement. L'annonce contient un ou plusieurs préfixes accompagnés de leur longueur, des drapeaux de configuration, les durées de vie valides et préférées, parfois une taille de paquet maximale et des informations de route. Trois drapeaux commandent la configuration de l'hôte : le drapeau A indique que le préfixe peut être utilisé pour l'autoconfiguration SLAAC, le drapeau M indique que les adresses sont distribuées par DHCPv6, le drapeau O indique que d'autres paramètres, comme le DNS, viennent de DHCPv6. La combinaison de ces drapeaux détermine la méthode retenue, et c'est précisément le sujet de la section suivante.
+
+La troisième fonction de NDP, la détection de doublons, s'appelle DAD pour Duplicate Address Detection. Avant d'utiliser une adresse, l'hôte l'adopte à titre provisoire, envoie un Neighbor Solicitation vers son groupe de sollicitation en utilisant cette même adresse comme source, et attend une réponse. Si personne ne répond, l'adresse devient préférée ; si quelqu'un répond, l'adresse est rejetée et un message d'erreur apparaît dans le journal. Cette procédure explique deux observations classiques. D'abord, une interface met une fraction de seconde à être utilisable, ce qui peut faire échouer un service démarré au même instant. Ensuite, une image système clonée conserve la même adresse EUI-64 sur vingt machines : le premier allumage en masse provoque alors une tempête de doublons, et certaines machines se retrouvent sans adresse valide.
+
+Le cas concret de la Maison Lavigne illustre bien le risque. Lors du premier pilote, deux postes de l'atelier avaient été déployés depuis une même image disque, avec des adresses temporaires identiques générées par hasard. Le premier arrivé prenait l'adresse, le second était éconduit, et son utilisateur constatait que « le réseau ne marche qu'à moitié ». Le diagnostic tient en une commande : ip -6 neigh show révèle un état incomplete persistant, tandis que ip -6 addr signale une adresse en état tentative. La correction consiste à régénérer l'identifiant d'interface, en redémarrant la carte réseau ou en forçant la génération d'une nouvelle adresse temporaire.
+
+Enfin, NDP est aussi le talon d'Achille de l'IPv6 : aucun de ses messages n'est authentifié par défaut. Un poste malveillant peut émettre un Router Advertisement falsifié et devenir la passerelle de tout le segment, ou répondre à une sollicitation de voisinage avec sa propre adresse MAC et détourner le trafic. Ces attaques existent, se déclenchent en quelques secondes avec des outils publics, et se bloquent avec des mécanismes que nous verrons dans la section sécurité : garde de routeur sur les commutateurs, contrôle des annonces acceptées sur les hôtes, et cloisonnement des VLAN. Retenez d'ores et déjà que déployer l'IPv6 sans filtrer les annonces revient à ouvrir une porte latérale dans votre pare-feu.
+
+## SLAAC : l'autoconfiguration en quatre temps
+
+SLAAC, pour Stateless Address Autoconfiguration, est défini par la RFC 4862. Son principe est séduisant : une machine branchée sur un lien IPv6 se configure seule, sans serveur, sans base de leases et sans intervention de l'administrateur. Le mécanisme repose sur NDP, et il exige une contrainte que vous devez absolument retenir : le préfixe annoncé sur le lien doit faire exactement 64 bits. C'est la raison structurelle de la règle que j'ai énoncée plus tôt, et elle n'est pas négociable : avec un préfixe plus court, l'identifiant d'interface déborderait sur le champ de sous-réseau, et deux machines pourraient se disputer le même espace.
+
+L'autoconfiguration se déroule en quatre temps. Premièrement, l'hôte génère son adresse de lien local à partir de l'identifiant d'interface et soumet cette adresse au test de non-duplicité. Deuxièmement, il émet un Router Solicitation vers les routeurs du lien, sauf s'il vient déjà de recevoir une annonce non sollicitée. Troisièmement, il reçoit un Router Advertisement contenant un préfixe et sa longueur, en vérifie que le drapeau A autorise l'autoconfiguration, puis fabrique une adresse globale en juxtaposant le préfixe et un identifiant d'interface. Quatrièmement, il soumet cette nouvelle adresse au test de non-duplicité, l'adopte comme adresse préférée, installe la route par défaut indiquée par le routeur et commence à respecter les durées de vie annoncées. L'ensemble prend quelques dizaines de millisecondes.
+
+Les durées de vie valent une explication, car elles sont l'outil de renumérotation. L'annonce porte une durée valide, la durée totale pendant laquelle l'adresse reste utilisable, et une durée préférée, pendant laquelle elle est employée pour les nouvelles connexions. Passée la durée préférée, l'adresse passe en état dépréciée : les sessions existantes continuent, les nouvelles conversations utilisent une autre adresse. Un administrateur qui veut renuméroter son site sans coupure réduit la durée préférée à quelques minutes quelques jours avant le changement, laisse les postes basculer, puis modifie le préfixe annoncé. C'est une des rares vraies forces de l'IPv6 : la renumérotation se fait à chaud, sans redémarrer les postes.
+
+Du côté du routeur, l'annonce se configure avec le démon radvd sous Linux. Le fichier d'exemple suivant annonce deux préfixes sur l'interface de l'atelier, l'un pour les postes en SLAAC, l'autre pour les caméras en configuration fixe, en signalant explicitement l'absence de serveur DHCPv6.
+
+```bash
+# /etc/radvd.conf — annonce SLAAC pour la Maison Lavigne
+interface eth0 {
+    AdvSendAdvert on;
+    IgnoreIfMissing on;
+    MaxRtrAdvInterval 200;
+    MinRtrAdvInterval 30;
+
+    prefix 2001:db8:ac1:1::/64 {
+        AdvOnLink on;
+        AdvAutonomous on;          # drapeau A : SLAAC autorisé
+        AdvValidLifetime 604800;    # 7 jours
+        AdvPreferredLifetime 172800; # 48 heures
+    };
+
+    prefix 2001:db8:ac1:5::/64 {
+        AdvOnLink on;
+        AdvAutonomous off;         # adresses fixes, pas d'autoconfiguration
+        AdvValidLifetime infinity;
+    };
+};
+
+# Démarrage et inspection
+sudo systemctl enable --now radvd
+radvdump                 # lit les annonces reçues, en continu
+```
+
+Sur l'hôte, rien à faire dans le cas idéal : l'interface prend un préfixe, l'adresse apparaît. Certaines distributions désactivent toutefois la réception des annonces quand la machine est configurée en routeur, car un routeur qui accepte les annonces d'un routeur voisin installe une route par défaut concurrente. Le réglage correspondant est accept_ra, que l'on ouvre sur un hôte et que l'on ferme sur un routeur, sauf lorsqu'on utilise SLAAC pour son propre lien de management.
+
+```bash
+# Côté hôte : vérifier l'adresse obtenue et la route par défaut
+ip -6 addr show dev eth0 scope global
+ip -6 route show default
+ping -c 3 2001:db8:ac1:1::1
+
+# Forcer ou interdire la réception des annonces (hôte / routeur)
+sudo sysctl -w net.ipv6.conf.eth0.accept_ra=1
+sudo sysctl -w net.ipv6.conf.eth0.accept_ra=0
+
+# Windows : afficher le préfixe obtenu et la passerelle
+netsh interface ipv6 show address
+netsh interface ipv6 show route
+```
+
+Ce que SLAAC ne produit pas doit être dit aussi clairement que ce qu'il produit. Il ne distribue pas d'adresse de noms de domaine, sauf si votre routeur prend en charge l'extension RDNSS qui annonce un serveur de noms dans l'annonce. Il ne tient aucune base centrale : impossible de savoir, au seul moyen de SLAAC, quelle machine détenait telle adresse à telle heure, puisque les adresses temporaires tournent. Pour ces besoins, on ajoute DHCPv6, et c'est le choix méthodique que nous abordons maintenant.
+
+## DHCPv6 et le choix d'une méthode de configuration
+
+DHCPv6, décrit par la RFC 8415, n'est pas le DHCPv4 transposé. Il fonctionne en multicast, sans broadcast, sur les ports UDP 547 côté serveur et 546 côté client, avec un groupe de destination ff02::1:2 qui rassemble les serveurs et les relais du lien. Il gère des baux comme son homologue v4, mais il sait aussi fonctionner en mode sans état : il ne fournit alors aucune adresse, seulement des informations telles que le serveur de noms ou le serveur de temps. Les relais servent plusieurs liens depuis un serveur unique, et le DHCPv6-PD délègue un préfixe en bloc à un routeur de client, c'est ainsi que la plupart des abonnements fibre professionnels délivrent leur espace d'adresses.
+
+Quatre méthodes de configuration coexistent, et les distinguer est l'objet de cet objectif pédagogique. La première, SLAAC seul, convient aux postes et aux équipements qui n'ont pas besoin de paramètres centraux. La seconde, SLAAC complété par RDNSS, ajoute l'annonce du serveur de noms dans l'annonce du routeur, ce qui évite tout serveur DHCP. La troisième, SLAAC plus DHCPv6 sans état, fournit les adresses par SLAAC et les options par DHCPv6, drapeau O seul. La quatrième, DHCPv6 avec état, distribue adresses et options, drapeaux M et O, et permet une gestion centralisée des baux.
+
+| Méthode | Adresse fournie par | DNS fourni par | Base de baux | Cas d'usage typique |
+|---|---|---|---|---|
+| SLAAC seul | Hôte, d'après l'annonce | Non, sauf RDNSS | Aucune | Postes bureautiques, réseaux invités, objets |
+| SLAAC avec RDNSS | Hôte, d'après l'annonce | Annonce du routeur | Aucune | Petites entreprises sans serveur DHCP |
+| SLAAC plus DHCPv6 sans état | Hôte, d'après l'annonce | Serveur DHCPv6 | Options seulement | Réseaux avec paramètres à distribuer |
+| DHCPv6 avec état | Serveur DHCPv6 | Serveur DHCPv6 | Complète, avec journal | Établissements, flux réglementés, inventaire |
+| Adresse fixe manuelle | Administrateur | Configuration locale | Hors mécanisme | Serveurs, équipements réseau, imprimantes |
+
+Le choix dépend de trois contraintes réelles. La première est l'inventaire : si vous devez prouver à un auditeur quelle machine détenait telle adresse à telle heure, SLAAC seul ne suffit pas, il vous faut DHCPv6 avec état ou des adresses fixes. La seconde est la compatibilité : certains systèmes, Android en tête, n'intègrent pas de client DHCPv6 et se configurent exclusivement en SLAAC, de sorte qu'une politique DHCPv6 exclusive les laisserait sans DNS. La troisième est la simplicité d'exploitation : un réseau sans serveur n'a pas de serveur à superviser, mais perd toute visibilité centralisée. Dans la pratique, on combine : SLAAC pour les postes, DHCPv6 sans état pour le DNS, adresses fixes pour l'infrastructure, DHCPv6 avec état là où l'audit l'impose.
+
+```bash
+# /etc/dhcp/dhcpd6.conf — mode sans état : DNS et options, pas d'adresse
+default-lease-time 3600;
+max-lease-time 7200;
+
+subnet6 2001:db8:ac1:6::/64 {
+  range6 2001:db8:ac1:6::100 2001:db8:ac1:6::200;
+  option dhcp6.name-servers 2001:db8:ac1:4::53;
+  option dhcp6.domain-search "lavigne.local";
+};
+
+# Le routeur doit alors annoncer le drapeau O, voire M, dans radvd.conf :
+#   AdvOtherConfigFlag on;   et selon le cas AdvManagedFlag on;
+```
+
+Un dernier point sur les annonces : les drapeaux M et O du routeur et la configuration réelle du serveur DHCPv6 doivent raconter la même histoire. Annoncer M sans serveur laisse les clients attendre indéfiniment une adresse qu'ils ne recevront jamais, et la machine reste avec son seul lien local. C'est l'erreur la plus courante des premiers déploiements : on active l'option dans l'interface d'administration du routeur, on oublie d'installer le service, et l'on constate que les postes ont perdu l'accès IPv6. Vérifiez les deux côtés, avec radvdump d'un côté et le journal du serveur DHCPv6 de l'autre.
+
+## Routage IPv6 : ce qui change sur les routeurs
+
+La bonne nouvelle est que vos acquis de routage restent intégralement valables : la table compare des préfixes, choisit la plus longue correspondance et suit les mêmes principes de métrique et de boucle. La première différence tient à l'automatisme : dès qu'une adresse IPv6 est attribuée à une interface, le routeur crée la route connectée correspondante, sans déclaration de réseau et sans adresse de diffusion. La seconde concerne le prochain saut, fréquemment spécifié par son adresse de lien local, ce qui impose d'indiquer l'interface de sortie puisque le même prochain saut peut exister sur plusieurs liens.
+
+```bash
+# Routes statiques, Linux
+sudo ip -6 route add 2001:db8:ac1:3::/64 via fe80::1 dev eth1
+sudo ip -6 route add 2001:db8:ac1::/48 via fe80::2 dev eth0
+ip -6 route show
+ip -6 route show cache
+
+# Une route par défaut peut aussi venir du routeur, via l'annonce SLAAC
+ip -6 route show default
+
+# Windows : équivalents
+netsh interface ipv6 add route 2001:db8:ac1:3::/64 fe80::1
+netsh interface ipv6 show route
+```
+
+Pour la partie dynamique, deux familles de protocoles dominent. OSPFv3, historiquement dédié à l'IPv6, a été étendu pour porter plusieurs familles d'adresses, si bien qu'une même instance peut router l'IPv4 et l'IPv6 ensemble ; IS-IS, protocole de niveau 2 indépendant de la couche réseau, transporte également les préfixes IPv6 depuis longtemps et reste très employé chez les opérateurs. Côté externe, BGP parle l'IPv6 avec l'extension de multiprotocole, et les préfixes s'y annoncent avec l'indicateur de longueur de préfixe à la manière exacte de l'IPv4. Les concepts d'adjacence, de boucle évitée, de résumé et de redistribution que vous maîtrisez déjà s'appliquent donc sans changement : seule la syntaxe varie, et les outils de supervision que vous utilisez pour l'IPv4 ont souvent leur équivalent direct en IPv6.
+
+Un point de vigilance propre à l'IPv6 provoque des pannes incompréhensibles : la taille minimale garantie est de 1280 octets, et l'émetteur n'a plus le droit de fragmenter. Quand un chemin est plus étroit que le paquet, le routeur du goulot renvoie un message ICMPv6 de type « paquet trop grand » et l'émetteur ajuste sa taille. Si votre pare-feu bloque ce message, vous obtenez des communications partielles : les petits paquets passent, les gros échouent, le site web se charge sans image. Autorisez toujours ICMPv6 de type 2, en plus des types 1 et 128 et 129, c'est-à-dire l'indication d'atteignabilité, le dépassement de taille et les échos.
+
+Enfin, gardez une cohérence entre la route par défaut reçue par SLAAC et celle que vous configureriez à la main. Deux routes par défaut concurrentes, l'une apprise par annonce, l'autre statique, produisent des chemins imprévisibles selon la priorité choisie par le système. Sur un poste, laissez l'annonce faire son travail. Sur un routeur, désactivez la réception des annonces ou restreignez-la au lien de management, puis posez vos routes statiques explicitement. La règle vaut pour les deux mondes : une configuration lisible vaut mieux qu'une configuration maline, et c'est particulièrement vrai quand viendra le dépannage à trois heures du matin.
+
+Une dernière subtilité concerne les liens multiples. L'annonce du routeur porte une préférence, négative ou positive, qui oriente le choix de la route par défaut, et rien n'empêche d'ajouter une seconde route statique pour servir de secours : le système retient alors la meilleure. Attention toutefois aux routes dont le prochain saut est une adresse de lien local : si le lien est rétabli avec une nouvelle adresse de voisinage, l'entrée devient inutilisable tant que le voisin n'a pas été redécouvert. Surveillez donc les états de la table de voisinage autant que les routes elles-mêmes, et préférez, pour les liens critiques, un prochain saut en adresse globale stable en plus de l'adresse de lien local.

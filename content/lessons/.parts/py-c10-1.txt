@@ -1,0 +1,123 @@
+Vous voici au dixième chapitre du parcours « Python : du premier script au projet complet ». Les sept premiers chapitres vous ont appris à écrire du Python : variables, conditions, boucles, fonctions, structures de données, fichiers, exceptions, puis modules et paquets. Le huitième vous a fait livrer un vrai projet, l'analyseur de notes, découpé en chargement, calcul et rendu. Le neuvième vous a ouvert la porte de l'asynchrone, là où le programme attend plusieurs choses en même temps. Il reste une question que le code d'un seul développeur ne pose pas encore, mais que pose tout code appelé à vivre au-delà de son auteur : comment faire en sorte que ce projet continue d'être exact, lisible et installable quand vous ne serez plus là pour l'expliquer ?
+
+La réponse n'est pas une nouvelle bibliothèque à apprendre par cœur, c'est un changement de niveau d'exigence. Jusqu'ici, vous jugiez votre travail à une question : est-ce que ça marche ? Désormais, vous le jugerez à trois questions, beaucoup plus dures. Est-ce que quelqu'un d'autre peut installer mon projet avec une seule commande, sur sa machine, sans lire mon code ? Est-ce que une modification anodine, par exemple un changement dans la grille des mentions, est immédiatement signalée quand elle casse un comportement attendu ? Est-ce que le style du code se vérifie tout seul, sans que personne perde une matinée à débattre des espaces et de l'ordre des imports ? Ces trois questions définissent les objectifs de ce chapitre : structurer un package installable, écrire des tests fiables et rapides, automatiser le linter et le formateur.
+
+Le fil rouge reste celui que vous connaissez : votre analyseur de notes. Rien ne change dans les formules, ni dans le contrat d'entrée, ni dans les messages d'erreur du chapitre huit. Ce qui change, c'est son habitat. Le dossier plat où vivaient main.py, chargement.py, calcul.py et rendu.py devient une distribution propre : un dossier src contenant le paquet installable, un dossier tests contenant la suite de vérification, un fichier pyproject.toml à la racine qui décrit le tout, et des commandes uniques pour installer, tester et contrôler le style. Vous partez d'un code qui fonctionne sur votre machine et vous en faites un paquet que l'on peut installer ailleurs, tester automatiquement et relire sans friction. C'est exactement le passage que vous ferez en stage, en poste ou dans toute contribution open source.
+
+La méthode de ce chapitre est celle des précédents : une explication, un cas concret repris sur l'analyseur, un tableau quand la comparaison vaut mieux qu'un paragraphe, un bloc à copier quand la commande se retient mal. Trois tentations vont pourtant vous assaillir, et il faut les nommer d'avance. La première consiste à écrire soi-même ses règles de formatage au fil des semaines, en corrigeant à la main ce que la machine corrigerait en une seconde. La seconde consiste à tester en regardant le programme tourner, ce qui ne prouve rien de plus que l'absence de panique visible. La troisième consiste à promettre qu'on ajoutera les tests « plus tard », c'est-à-dire jamais, parce que la dette contractée ainsi ne fait que croître. La qualité d'un projet ne se proclame pas, elle se mesure et elle se verrouille : c'est la leçon de fond de ce dixième chapitre.
+
+## Du script au package : la structure src/
+
+Le premier symptôme d'un projet mal structuré n'est pas un bug, c'est un import qui échoue ailleurs que chez vous. Tant que vous lancez `python main.py` depuis la racine du dossier, le répertoire courant figure dans la recherche d'imports et `import calcul` trouve votre fichier. Dès que vous lancez la commande depuis un autre répertoire, depuis votre éditeur avec un autre dossier de travail, ou depuis un outil d'intégration continue, la même ligne lève un ModuleNotFoundError que vous ne reproduisez pas chez vous. Le problème n'est pas votre code métier : c'est l'ambiguïté entre le dossier que vous éditez et le paquet que l'on installe. La structure src/ existe pour lever cette ambiguïté une fois pour toutes.
+
+Il faut d'abord distinguer quatre mots que l'on confond trop souvent. Un module est un fichier Python unique, calcul.py par exemple. Un package est un dossier contenant un fichier __init__.py, ce qui en fait un espace de noms importable. Une distribution est l'archive que pip installe : elle contient le code, les métadonnées, les licences et éventuellement des scripts de commande. Enfin, le nom de distribution et le nom du paquet importé peuvent différer : la distribution s'appelle analyse-notes avec un tiret, elle s'installe avec `pip install analyse-notes`, et elle fournit le paquet importable analyse_notes avec un souligné. Ce détail vous semblera cosmétique jusqu'au jour où vous taperez l'un pour l'autre et where vous perdrez dix minutes à comprendre pourquoi pip accepte un nom que Python refuse.
+
+La convention dite src/ consiste à placer les paquets du projet dans un dossier src, jamais à la racine. Les tests vivent à côté, dans un dossier tests, et le fichier pyproject.toml reste à la racine pour décrire l'ensemble. L'avantage pratique est subtil mais décisif : quand pytest s'exécute, il importe le paquet depuis ce que vous avez installé, et non depuis le dossier que le hasard place dans le chemin de recherche. Un import oublié dans pyproject.toml, une dépendance manquante, un fichier non inclus dans la distribution : tout cela échoue immédiatement dans les tests au lieu de passer chez vous et de casser chez le collègue. La structure src/ transforme une classe de bugs en échec visible dès la première commande.
+
+```text
+analyse-notes/
+├── pyproject.toml
+├── README.md
+├── src/
+│   └── analyse_notes/
+│       ├── __init__.py
+│       ├── cli.py
+│       ├── chargement.py
+│       ├── calcul.py
+│       └── rendu.py
+└── tests/
+    ├── conftest.py
+    ├── test_calcul.py
+    ├── test_chargement.py
+    └── test_cli.py
+```
+
+```image
+python-logo
+| Le logo de Python, deux serpents bleu et jaune enlacés : votre analyseur entre désormais dans l'écosystème des paquets, avec son nom, sa version et son point d'entrée.
+```
+
+Le fichier __init__.py mérite qu'on s'y attarde, car il est trop souvent réduit à un fichier vide dont on ignore la fonction. Il fait trois choses. Il marque le dossier comme un package importable. Il sert de vitrine : on y place ce que l'utilisateur du paquet a le droit d'importer directement, souvent sous la forme `from analyse_notes import moyenne, mention`, parfois avec une liste __all__ qui fixe la frontière entre l'interface publique et les détails internes. Il reçoit enfin la responsabilité de ne rien exécuter de lourd : aucune lecture de fichier, aucun appel réseau, aucun affichage au moment de l'import, sinon importer le paquet dans un test déclencherait des effets de bord que personne n'attend.
+
+Le nommage, lui, obéit à des contraintes que l'on regrette d'apprendre tard. Le nom importable ne contient ni accent, ni espace, ni tiret, parce qu'il doit être tapé exactement tel quel, sur n'importe quel clavier, dans n'importe quel terminal. Il évite les noms de la bibliothèque standard, types, email, json ou test, qui masqueraient un module standard derrière le vôtre. Il reste en minuscules soulignées, par convention, même si Python accepte d'autres formes. Une règle simple vous évitera bien des soucis : nommez le paquet d'après ce qu'il apporte, analyse_notes plutôt que projet ou utils, et gardez le nom le plus court pour la distribution visible sur l'index.
+
+Chaque dossier du projet a ensuite une raison d'être, et cette raison dicte ce qu'on y place. src contient ce qui sera installé, tests contient ce qui vérifie, la racine contient ce qui décrit et documente. Rien ne doit aller dans le mauvais dossier par confort du moment : un fichier de test posé dans src sera embarqué dans la distribution livrée aux utilisateurs, et un module métier posé dans tests ne sera jamais installé chez personne. Cette séparation paraît stricte, elle est en réalité ce qui rend chaque commande suivante possible : installer, tester, contrôler le style et construire l'archive deviennent des opérations indépendantes qui ne se marchent pas dessus.
+
+## pyproject.toml : une seule source de vérité
+
+Avant d'ouvrir votre éditeur sur ce nouveau dossier, arrêtez-vous une minute sur l'histoire de la configuration Python, parce qu'elle explique tout ce qui va suivre. Pendant longtemps, un projet dispersait son identité dans cinq fichiers : setup.py pour installer, setup.cfg pour les options, MANIFEST.in pour les fichiers annexes, requirements.txt pour les dépendances, puis un fichier par outil de contrôle, pytest.ini, .flake8, .coveragerc. Chacun parlait un dialecte différent, deux d'entre eux finissaient par se contredire, et personne ne savait plus quelle était la liste réelle des dépendances. pyproject.toml, défini par les recommandations PEP 518 et PEP 621, met fin à cette diaspora : un seul fichier, en TOML, qui décrit comment construire le paquet et comment le configurer, lu par pip comme par les outils de qualité.
+
+La première section, build-system, répond à une question précise : quel outil fabrique l'archive quand on tape `pip install .` ? Elle déclare le backend, setuptools dans la grande majorité des projets, ainsi que les outils nécessaires à la construction. Cette section est obligatoire : sans elle, pip bascule en mode historique avec des avertissements qui gênent les utilisateurs les plus prudents. Gardez-la courte et standard, à moins d'avoir une raison spécifique d'adopter un autre outil de construction.
+
+La section project porte l'identité de la distribution. Le champ name est le nom que l'on tape dans pip, version suit la règle des trois nombres, description tient en une phrase lisible dans les listes d'installation, readme pointe vers le fichier affiché sur les index, et requires-python fixe le version minimale de l'interpréteur. Ce dernier champ n'est pas décoratif : il empêche pip d'installer votre code sur une version de Python qu'il ne supporte pas, ce qui transforme une erreur obscure en refus clair et anticipé. Les dependencies listent les paquets indispensables au fonctionnement, eux seuls, et rien d'autre.
+
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "analyse-notes"
+version = "1.0.0"
+description = "Analyseur de notes d'une classe : moyenne, médiane, mentions, rapport."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
+
+[project.scripts]
+analyse-notes = "analyse_notes.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+```
+
+La section optional-dependencies introduit un concept que vous utiliserez dès la ligne suivante : un extra, c'est-à-dire un lot de dépendances que l'on n'installe que sur demande. Le lot dev regroupe pytest, le plugin de couverture et le linter, parce qu'un utilisateur final qui installe l'analyseur pour traiter ses fichiers n'a aucune raison de recevoir l'ensemble de votre boîte à outils de développement, alors qu'un contributeur ne peut absolument rien faire sans. La commande `pip install -e ".[dev]"` installe le paquet en mode éditable et ajoute le lot dev en une seule frappe. Une seule commande d'installation, documentée dans le README, est le premier réflexe de professionnalisation d'un projet.
+
+La section scripts mérite autant d'attention que le code qu'elle pointe. Elle déclare une commande disponible dans l'environnement, ici analyse-notes, et indique qu'il faut appeler la fonction main du module analyse_notes.cli. Après installation, l'utilisateur tape `analyse-notes --csv notes.csv` au lieu de `python main.py --csv notes.csv`, la commande fonctionne depuis n'importe quel dossier, et elle ne dépend plus de la position du fichier. C'est la frontière nette entre un script que l'on lance et un outil que l'on utilise. Notez que la fonction main n'attend aucun argument : elle lit la ligne de commande elle-même, sinon l'interpréteur lui passerait des arguments qu'elle ne saurait pas interpréter.
+
+Enfin, la fin du fichier accueille la configuration des outils, sections tool. C'est là que vivent les réglages de pytest, de ruff et de la mesure de couverture, à côté des métadonnées plutôt que dans trois fichiers séparés qui finissent toujours par diverger. La règle à retenir tient en une phrase : chaque information n'existe qu'à un seul endroit. Si vous changez la ligne de longueur du formateur, vous la changez ici, et nulle part ailleurs. Si une version de dépendance apparaît à deux endroits, l'une des deux finira par mentir.
+
+```table
+Section du pyproject | Ce qu'elle décrit | Exemple dans l'analyseur
+build-system | L'outil qui construit l'archive installable | setuptools avec le backend standard
+project | L'identité de la distribution et ses dépendances | analyse-notes, version 1.0.0, Python 3.10 ou plus
+project.optional-dependencies | Les lots de dépendances sur demande | le lot dev réunit pytest, pytest-cov et ruff
+project.scripts | Les commandes créées à l'installation | analyse-notes appelle analyse_notes.cli:main
+tool | La configuration des outils de qualité | testpaths pour pytest, line-length pour ruff
+```
+
+## Installation en mode développeur et vérifications
+
+La première commande de tout nouveau projet est la création d'un environnement virtuel, et elle n'a rien de décoratif. Un environnement isole la liste des paquets installés et la version de Python utilisées par ce projet, en dehors de tout le reste de la machine. Sans lui, vous installerez pytest pour un projet, une version incompatible pour un autre, et vous passerez une soirée à comprendre pourquoi un paquet introuvable chez votre collègue se retrouve chez vous dans une version antérieure. Sous Windows comme sous Linux, la séquence est la même : créer le dossier .venv, l'activer, vérifier que python désigne bien celui-ci, puis installer.
+
+Le mode éditable, l'option -e de pip, est la seconde pierre angulaire. Sans elle, `pip install .` copie le code dans le site-packages de l'environnement : vos modifications dans src restent invisibles du programme installé, et chaque essai exige une réinstallation que l'on finit par oublier, si bien que vos tests finissent par vérifier une version périmée de votre propre code. Avec `-e`, pip ne copie rien : il crée un lien vers votre dossier src. Vous modifiez calcul.py, vous relancez les tests, le changement est pris en compte immédiatement. Ce détail explique la moitié des « tests qui passent chez moi et échouent ailleurs » observés en équipe.
+
+Vérifiez toujours votre installation avant d'écrire le moindre test, avec les trois portes d'accès du paquet. La première importe le paquet et affiche sa version depuis le code. La seconde appelle la commande déclarée dans pyproject.toml, ce qui valide le point d'entrée console. La troisième exécute le module avec l'option -m, utile quand la commande n'est pas encore installée. Si les trois répondent, votre structure est saine : vous pouvez maintenant écrire des tests qui importent analyse_notes sans vous poser de question de chemin.
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -e ".[dev]"
+python -c "import analyse_notes; print(analyse_notes.__version__)"
+analyse-notes --help
+python -m analyse_notes.cli --help
+pytest
+```
+
+L'ordre de ces commandes n'est pas arbitraire et il faut le respecter religieusement : installer avant de tester. Les tests importent le paquet installé, donc une suite lancée sur un environnement où rien n'est installé échoue sur des imports et vous laisse chercher un bug qui n'existe pas. Une fois l'installation faite, pytest découvre le dossier tests par convention, exécute tous les fichiers dont le nom commence par test_, et vous n'avez plus qu'à lire le résultat. Une seule commande pour tout installer, une seule pour tout vérifier : c'est cette réduction du nombre de commandes qui rend la qualité abordable au quotidien.
+
+Reste la documentation, dernier maillon de la chaîne et souvent le plus négligé. Votre README contient, en haut, la séquence exacte à taper pour cloner, installer et vérifier le projet, telle qu'un nouveau collègue la lancera le premier jour. Écrivez-la comme une recette : aucune étape sous-entendue, aucune commande magique que vous seuls connaissez, aucune dépendance installée manuellement en dehors du pyproject. Testez-la vous-même sur une machine neuve ou dans un environnement vierge : si la séquence échoue, ce n'est pas le lecteur qui est en faute, c'est la procédure. Un projet qui s'installe en trois commandes se fait adopter ; un projet qui exige une demi-heure de devinettes sera rendu à son auteur.

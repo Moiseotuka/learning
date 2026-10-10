@@ -1,0 +1,1008 @@
+Jusqu'ici, dans ce parcours, vous avez presque toujours travaillé dans les mêmes conditions : quelqu'un vous remettait un tableau dont une colonne portait la réponse attendue, et votre modèle apprenait à reproduire cette colonne à partir des autres. Ce réglage s'appelle l'apprentissage supervisé, et il reste de loin le plus courant en entreprise, parce qu'une entreprise qui possède déjà des étiquettes préfère les réutiliser plutôt que de les inventer. Mais les données réelles ressemblent rarement à un exercice scolaire aussi bien balisé. Une base de clients n'arrive pas avec une colonne indiquant quels sont les « bons » ; un catalogue de contenus n'emporte aucune étiquette décrivant ses grandes familles de programmes ; un jeu de mesures issues de capteurs ne dit pas quelles machines sont en fin de vie. Dans toutes ces situations, la vérité que vous aimeriez prédire n'existe pas encore, et la fabriquer est précisément le travail qui reste à faire.
+
+C'est là qu'intervient l'apprentissage non supervisé. Plutôt que d'apprendre une correspondance entre des entrées et une sortie connue, on demande à la machine de repérer d'elle-même des regroupements, des structures, des redondances dans les données brutes. Deux familles de questions reviennent sans cesse. La première : quels individus se ressemblent ? On parle alors de clustering, ou regroupement, et l'objectif est de partitionner les points en groupes homogènes à l'intérieur et nettement différents les uns des autres. La seconde : comment décrire chaque individu avec beaucoup moins de caractéristiques, sans perdre l'essentiel de son information ? On parle de réduction de dimension. Ces deux questions forment le cœur de ce chapitre, et vous verrez très vite qu'elles se répondent l'une l'autre : on réduit souvent les dimensions avant de regrouper, puis on relit les groupes à l'aide des nouvelles dimensions pour comprendre ce que l'algorithme a réellement découvert.
+
+## Pourquoi le non supervisé : travailler sans étiquettes
+
+La première raison d'utiliser ces méthodes est d'ordre économique : les étiquettes coûtent cher. Faire annoter des milliers d'e-mails par un humain, faire auditer des dizaines de milliers de transactions par un expert, ou faire catégoriser manuellement une base de produits suffisamment vaste demande du temps, de la compétence et donc de l'argent. Or une grande partie de ce travail peut être préparée par un algorithme : regrouper les cas qui se ressemblent, puis ne faire intervenir l'expert que sur un échantillon représentatif de chaque groupe. Le gain est double, puisque l'annotation devient plus rapide et plus cohérente, un annotateur traitant un ensemble homogène plutôt qu'une succession de cas hétérogènes. Le non supervisé ne remplace donc pas l'humain : il le met là où son jugement apporte le plus de valeur.
+
+La seconde raison est que le regroupement révèle des catégories que personne n'avait imaginées. Quand vous lancez un algorithme de clustering sur le comportement de navigation de vos visiteurs, vous ne lui demandez pas de retrouver vos quatre segments marketing historiques : vous lui demandez de montrer les segments que vos visiteurs forment réellement. Il arrive souvent que ces groupes recoupent les segments existants, ce qui les valide, mais il arrive tout aussi souvent qu'ils en révèlent un cinquième, ou qu'ils montrent qu'un segment historique est en réalité composé de deux populations très différentes. C'est cette capacité à interroger les données sans hypothèse préalable qui fait la valeur de l'apprentissage non supervisé, et c'est aussi ce qui le rend délicat à valider : sans vérité de référence, la qualité se juge à l'aide d'indices internes et, surtout, à l'usage concret qui est fait des groupes.
+
+La troisième raison est technique : plus un jeu de données comporte de caractéristiques, plus la notion de voisin proche perd son sens, car tous les points finissent par être à peu près également éloignés les uns des autres. Réduire les dimensions, c'est donc à la fois rendre les distances plus parlantes, accélérer les calculs et rendre des données enfin visualisables sur un écran, ce dernier point n'étant pas un luxe : on comprend un problème en le regardant.
+
+- Supervisé : la réponse est fournie pour chaque exemple, on apprend à la prédire.
+- Non supervisé : aucune réponse, on demande simplement ce qui se dégage des données.
+- Clustering : partitionner les individus en groupes homogènes et distincts.
+- Réduction de dimension : décrire les individus avec moins de caractéristiques.
+- Détection d'anomalies : repérer les individus qui ne rejoignent aucun groupe crédible.
+- Visualisation : projeter des données à de nombreuses colonnes sur un plan, pour les regarder.
+- Prétraitement : produire des regroupements ou des composantes qui nourriront un modèle supervisé.
+
+## La distance : ce que veut dire « se ressembler »
+
+Aucun algorithme de regroupement ne peut fonctionner sans une définition précise de la ressemblance, et cette définition se nomme une distance. Une distance est une fonction qui prend deux points et renvoie un nombre : zéro si les points sont identiques, positif sinon, d'autant plus grand que les points diffèrent. Cette définition est le contrat que l'on signe avec l'algorithme : k-means ne « comprend » rien à vos données, il ne fait qu'appliquer la distance que vous lui avez choisie, et le résultat n'a donc de sens que si cette distance correspond à votre intuition métier. Deux clients se ressemblent s'ils achètent des produits similaires, deux articles se ressemblent s'ils partagent des termes rares, deux capteurs se ressemblent si leurs courbes se superposent : chaque cas appelle souvent sa propre mesure.
+
+La plus utilisée reste la distance euclidienne, qui n'est rien d'autre que la généralisation du théorème de Pythagore à un nombre quelconque de dimensions. On soustrait les coordonnées terme à terme, on met les écarts au carré, on additionne, on prend la racine carrée. En deux dimensions, c'est exactement la longueur du segment qui relie les deux points ; en trente dimensions, c'est la longueur de la diagonale de ce qu'on appelle un parallélépipède rectangle, et le calcul reste formellement identique. Sa parenté avec la géométrie de l'école a deux conséquences pratiques : elle est intuitive à expliquer à un collègue non technique, et elle est implementee de manière optimisée dans toutes les bibliothèques numériques, ce qui la rend très rapide même sur des millions de lignes.
+
+Deux autres mesures méritent d'être connues parce qu'elles dominent dans des contextes précis. La distance de Manhattan additionne les valeurs absolues des écarts sans les élever au carré : elle correspond à un parcours qui suivrait les axes, comme les rues d'une grille, et elle est moins sensible aux valeurs extrêmes que la distance euclidienne, puisque le carré amplifie les écarts anormaux. La distance cosinus, elle, ne mesure pas l'écart en valeur mais l'angle entre les deux vecteurs : elle vaut un pour deux vecteurs de même direction, même si leurs longueurs sont très différentes. C'est la mesure reine du traitement du texte, où l'on se moque qu'un document soit long ou court et où l'on veut seulement comparer la répartition des mots. Le tableau suivant résume les arbitrages.
+
+```table
+| Distance | Ce qu'elle mesure | Points forts | Défaut principal |
+| --- | --- | --- | --- |
+| Euclidienne | Longueur du segment reliant les deux points | Intuitive, rapide, adaptée aux variables continues | Très sensible aux variables à grande échelle et aux valeurs extrêmes |
+| Manhattan | Somme des écarts suivant chaque axe | Plus robuste aux valeurs aberrantes | Moins familière à interpréter géométriquement |
+| Cosinus | Angle entre les vecteurs, indépendant de leur longeur | Idéale pour du texte et des profils de fréquence | Ignore l'amplitude : deux vecteurs très courts peuvent être identiques |
+| Hamming | Nombre de positions qui diffèrent | Chaînes de caractères, données binaires | Inutilisable sur des variables continues |
+```
+
+
+Le piège qui attend tout débutant tient dans l'échelle des variables. Reprenons un exemple simple : vous regroupez des clients avec deux caractéristiques, l'âge exprimé en années, compris entre quinze et quatre-vingts, et le montant annuel exprimé en euros, compris entre vingt et vingt mille. Avec la distance euclidienne, un écart de cent euros dans le montant vaut cent fois plus qu'un écart d'un an dans l'âge : la variable montant écrase entièrement la distance, et vos groupes finiront par ne refléter que le montant, sans que l'âge n'ait jamais pesé dans la décision. La correction standard consiste à centrer et réduire chaque variable, c'est-à-dire à lui soustraire sa moyenne puis à la diviser par son écart-type. Chaque caractéristique se retrouve alors centrée sur zéro avec un écart-type de un, et chaque unité devient comparable aux autres. La règle est suffisamment importante pour être répétée : standardiser avant toute distance, sauf si vos variables sont déjà exprimées dans les mêmes unités et ont des ordres de grandeur proches.
+
+```python
+import math
+
+def euclidienne(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def manhattan(a, b):
+    return sum(abs(x - y) for x, y in zip(a, b))
+
+def cosinus(a, b):
+    produit = sum(x * y for x, y in zip(a, b))
+    norme_a = math.sqrt(sum(x * x for x in a))
+    norme_b = math.sqrt(sum(x * x for x in b))
+    return 1.0 - produit / (norme_a * norme_b)
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    dimension = len(vecteurs[0])
+    moyennes = [sum(v[d] for v in vecteurs) / n for d in range(dimension)]
+    ecarts = [
+        math.sqrt(sum((v[d] - moyennes[d]) ** 2 for v in vecteurs) / n)
+        or 1.0
+        for d in range(dimension)
+    ]
+    return [
+        tuple((v[d] - moyennes[d]) / ecarts[d] for d in range(dimension))
+        for v in vecteurs
+    ]
+
+clients = [
+    (25, 180.0),
+    (26, 210.0),
+    (24, 165.0),
+    (47, 940.0),
+    (45, 870.0),
+]
+
+normalises = standardiser(clients)
+print("premier client ramene a l echelle :", [round(x, 2) for x in normalises[0]])
+print("euclidienne brute 25 vs 47 :", round(euclidienne(clients[0], clients[3]), 2))
+print("euclidienne normalisee :", round(euclidienne(normalises[0], normalises[3]), 2))
+
+differences = [
+    (euclidienne(normalises[0], normalises[i]), i)
+    for i in range(1, len(normalises))
+]
+differences.sort()
+print("voisins du premier client :", differences)
+```
+
+Exécutez ce bloc tel quel : vous verrez que la distance brute entre le premier et le quatrième client est dominée par les euros, tandis que la distance calculée après standardisation reflète un écart d'âge et de dépense proportionnés. Le rangement des voisins devient lui aussi plus logique : le deuxième et le troisième client, qui ont presque le même âge et la même dépense que le premier, remontent en tête. Notez la petite précaution `or 1.0` dans le calcul des écarts : elle évite une division par zéro quand une variable est constante sur tout le jeu de données, cas fréent quand une colonne ne contient qu'une seule valeur.
+
+## k-means : l'algorithme de référence, pas à pas
+
+L'algorithme k-means est probablement la procédure la plus citée de tout l'apprentissage non supervisé, et ce n'est pas un hasard : son énoncé tient en quelques phrases, son coût par itération est minime, et il converge presque toujours vers une solution exploitable. L'idée directrice est celle d'un compromis itératif entre deux opérations qui se rééquilibrent mutuellement. On choisit un nombre de groupes k. On place k points de départ, appelés centroïdes, n'importe où dans l'espace. Puis on répète deux gestes : affecter chaque individu au centroïde le plus proche, puis repositionner chaque centroïde au centre exact, c'est-à-dire au barycentre des individus qui lui ont été affectés. On s'arrête quand plus aucun individu ne change de groupe, ou quand on atteint la limite d'itérations fixée à l'avance.
+
+Il est essentiel de comprendre ce que l'algorithme optimise, car c'est la clé de lecture de tous ses défauts. À chaque itération, la quantité appelée inertie, ou somme des carrés intra-clusters, ne peut que diminuer : cette somme ajoute, pour chaque individu, le carré de la distance qui le sépare de son centroïde, et le fait de replacer les centroïdes sur les barycentres est exactement ce qui minimise cette somme pour des affectations données. L'inertie est donc une mesure de compacité : elle vaut zéro si tous les points d'un groupe sont superposés à leur centre, et elle grandit avec la dispersion. Le k-means est une procédure de descente sur cette quantité, ce qui explique à la fois sa fiabilité et sa limite : il converge vers un minimum, mais pas nécessairement le meilleur de tous les minima.
+
+Cette précision sur les minima locaux a une conséquence pratique immédiate. Deux exécutions avec des centroïdes initiaux différents peuvent aboutir à des regroupements différents, avec des inerties différentes, sans qu'aucune erreur n'ait eu lieu. En pratique, on relance la procédure un certain nombre de fois, par exemple dix ou vingt, avec des tirages aléatoires variés, et on conserve la meilleure solution au sens de l'inertie. C'est exactement ce que fait le paramètre n_init dans scikit-learn, dont vous verrez la formulation dans la dernière section. Pour vos propres implémentations, une graine fixe suffit à rendre le résultat reproductible, ce qui est indispensable pour tester et déboguer : on veut pouvoir relancer le programme et obtenir la même réponse, puis, une fois le code validé, lever la graine pour explorer d'autres partitions.
+
+Le coût d'une itération est également simple à estimer. L'affectation exige une distance entre chaque point et chaque centroïde, soit n multiplié par k distances, chacune portant sur d dimensions ; le recalcul des centroïdes parcourt une seule fois l'ensemble des points. Une itération coûte donc environ n fois k fois d opérations élémentaires, et le nombre d'itérations restantes est en pratique petit, souvent entre trois et vingt. Voici l'algorithme complet, écrit uniquement avec la bibliothèque standard, sur un jeu de douze points en deux dimensions qui forment visuellement trois nuages.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    historique = []
+
+    for tour in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+
+        historique.append(inertie(points, centres, affectations))
+
+    return affectations, centres, historique
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+affectations, centres, historique = k_moyennes(points, k=3)
+for i, centre in enumerate(centres):
+    effectif = affectations.count(i)
+    arrondi = tuple(round(c, 2) for c in centre)
+    print("groupe", i, ":", effectif, "points, centre", arrondi)
+print("inertie par tour :", [round(v, 2) for v in historique])
+print("inertie finale :", round(inertie(points, centres, affectations), 2))
+```
+
+En lançant ce programme, trois enseignements apparaissent sur l'écran. Le premier est que les trois groupes comptent quatre points chacun et que leurs centres correspondent aux trois nuages que l'on voyait écrits dans la liste : l'algorithme a retrouvé la structure sans jamais avoir été prévenu de son existence. Le deuxième est que la liste des inerties par tour décroît strictement, puis se stabilise : les dernières itérations ne changent plus rien, ce qui signale la convergence. Le troisième est que le programme s'arrête de lui-même grâce à la comparaison des affectations consécutives, bien avant d'avoir épuisé son quota de vingt-cinq tours. Ces trois observations forment le réflexe de diagnostic à appliquer dès la première exécution d'un clustering : compter les effectifs, regarder décroître l'inertie, vérifier que la boucle s'arrête.
+
+Une fois l'algorithme écrit, la première habitude à prendre consiste à le rendre bavard. Un clustering qui se contente d'afficher trois centres ne vous apprend presque rien : vous ignorez comment les groupes se sont formés, combien de tours ont été nécessaires, et si le résultat tient d'un heureux hasard d'initialisation. Le programme suivant reprend le k-means précédent et l'équipe d'un traçage complet : à chaque tour, il imprime l'affectation de chaque point sous forme de chaîne de caractères, puis l'inertie obtenue. Lire une telle trace de haut en bas est la meilleure introduction possible au mécanisme interne de l'algorithme, bien plus parlante qu'une animation : vous voyez les points sauter d'un groupe à l'autre, puis se stabiliser, puis ne plus bouger du tout.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def tracer(points, k, tours=8, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+
+    for tour in range(tours):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        changements = sum(
+            1 for a, b in zip(affectations, nouvelles) if a != b
+        )
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+        inertie = sum(
+            distance(points[j], centres[affectations[j]]) ** 2
+            for j in range(len(points))
+        )
+        resume = "".join(str(a) for a in affectations)
+        print("tour", tour, "| affects:", resume, "| moves:", changements,
+              "| inertie:", round(inertie, 2))
+        if changements == 0:
+            print("convergence : plus aucun point ne change de groupe")
+            break
+
+tracer(points, k=3)
+```
+
+La trace révèle un schéma récurrent, et son déroulé mérite d'être lu dans l'ordre. Au premier tour, le compteur affiche douze changements, ce qui n'a rien d'étonnant : l'affectation de départ est encore vide, tout point est donc compté comme un déplacement. La chaîne obtenue, 220201011111, montre en revanche que les trois centroïdes tirés au sort se trouient déjà chacun dans un nuage, à ceci près que trois points se sont trompés de voisinage. Au tour suivant, ces trois points basculent vers leur véritable groupe, le compteur tombe à trois, et l'inertie s'effondre de cinquante unités à moins de deux. Au tour d'après, plus rien ne bouge : l'algorithme annonce lui-même sa convergence et s'arrête. Plus le jeu de données est nettement séparé, plus cette décroissance est rapide, et l'inverse signale un problème de structure ou d'échelle, que nous examinerons plus bas. Un dernier point mérite l'attention : le nombre de changements par tour est une métrique de stabilité bien plus informative qu'un simple compteur d'itérations, car il indique si la partition vacille encore ou si elle est réellement installée.
+
+## Combien de groupes ? La règle du coude et la silhouette
+
+Jusqu'ici, le nombre de groupes k était une donnée du problème, décidée avant l'exécution. Dans la vraie vie, c'est rarement le cas : personne ne vous dira « il y a exactement trois segments de clients ». La question du choix de k n'a pas de solution théorique unique, mais dispose de trois méthodes complémentaires qui, lorsqu'elles concordent, donnent une réponse très raisonnable. La première est la règle du coude. On fait varier k de un à une dizaine, on calcule l'inertie associée à chaque valeur, et on trace la courbe. L'inertie diminue toujours quand k augmente, mécaniquement : avec autant de clusters que de points, elle tombe à zéro. L'astuce consiste donc à chercher le point de la courbe où la décroissance passe de brutale à résiduelle, c'est-à-dire le coude au-delà duquel ajouter un groupe n'apporte plus grand-chose.
+
+La deuxième méthode, la silhouette, évalue la qualité d'une partition donnée sans comparer plusieurs d'elles. Pour chaque individu, on calcule d'une part la distance moyenne aux autres membres de son propre groupe, et d'autre part la distance moyenne au groupe voisin le plus proche, puis on combine ces deux valeurs en un score compris entre moins un et un. Un individu très bien placé a une silhouette proche de un : il est nettement plus proche de ses camarades que de tout autre groupe. Un individu à la frontière obtient une valeur proche de zéro : il est aussi proche de l'un que de l'autre. Un individu mal affecté descend sous zéro, ce qui signale qu'il serait mieux ailleurs. La silhouette moyenne du jeu de données se compare alors entre différentes valeurs de k, et l'on retient le k qui la maximise.
+
+La troisième approche est plus statistique : elle consiste à comparer la structure obtenue à celle d'un jeu de données entièrement aléatoire, dépourvu de tout groupement réel. Si vos données produisent un indice de structure nettement supérieur à celui d'un bruit simulé avec les mêmes dimensions, c'est qu'il existe bel et bien des groupes. Le coefficient de Calinski-Harabasz, disponible dans scikit-learn, repose exactement sur ce principe de rapport entre la dispersion inter-groupes et la dispersion intra-groupes, et le score de Davies-Bouldin, lui, compare la compacité d'un groupe à sa distance avec le groupe le plus proche. Ces trois familles d'indices ne se remplacent pas : le coude raconte ce que l'on gagne, la silhouette juge la cohésion locale, et les indices de structure comparent au hasard.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+def silhouette_moyenne(points, affectations):
+    groupes = sorted(set(affectations))
+    scores = []
+    for j, point in enumerate(points):
+        meme_groupe = [
+            i for i in range(len(points))
+            if affectations[i] == affectations[j] and i != j
+        ]
+        if not meme_groupe:
+            scores.append(0.0)
+            continue
+        a = sum(distance(point, points[i]) for i in meme_groupe) / len(meme_groupe)
+        b = min(
+            sum(
+                distance(point, points[i])
+                for i in range(len(points))
+                if affectations[i] == autre
+            ) / sum(1 for i in range(len(points)) if affectations[i] == autre)
+            for autre in groupes
+            if autre != affectations[j]
+        )
+        scores.append((b - a) / max(a, b))
+    return sum(scores) / len(scores)
+
+print("k  inertie  silhouette")
+meilleur = None
+for k in range(1, 7):
+    affectations, centres = k_moyennes(points, k)
+    if k == 1:
+        print(k, round(inertie(points, centres, affectations), 2), "  n.a.")
+        continue
+    sil = silhouette_moyenne(points, affectations)
+    print(k, round(inertie(points, centres, affectations), 2), "  ", round(sil, 3))
+    if meilleur is None or sil > meilleur[1]:
+        meilleur = (k, sil)
+print("meilleur k selon la silhouette :", meilleur[0])
+```
+
+La sortie montre exactement le comportement attendu. Avec un seul groupe, l'inertie vaut cent quarante, puis elle tombe à cinquante-quatre pour k égal à deux et s'effondre à moins de deux pour k égal à trois : le coude est nettement visible à cet endroit, puisque les valeurs suivantes, un virgule cinquante-sept puis un virgule zéro-sept, ne baissent plus que de quelques centièmes. La silhouette confirme en donnant son maximum, zéro virgule huit huit quatre, exactement à k égal à trois, puis elle régresse nettement quand on force la présence d'un quatrième groupe, qui ne fait que scinder un nuage déjà homogène. Quand les deux indicateurs désignent le même k, on peut partir en confiance. Le tableau ci-dessous récapitule comment les lire, et surtout ce qu'il faut faire quand ils ne sont pas d'accord, situation plus fréquente qu'on ne le croit sur des données réelles.
+
+```table
+| Indicateur | Ce qu'il compare | Bonne nouvelle | Mauvaise nouvelle |
+| --- | --- | --- | --- |
+| Règle du coude | Inertie pour k et k+1 | Cassure nette : un ajout de groupe ne paie plus | Courbe sans coude : les données ne forment pas de groupes nets |
+| Silhouette moyenne | Compacité d'un groupe face à son voisin | Valeur proche de un, toutes tailles équilibrées | Valeur proche de zéro ou négative : frontières floues ou point mal placé |
+| Calinski-Harabasz | Variance entre groupes sur variance à l'intérieur | Score élevé et croissant | Score bas : groupes qui se chevauchent |
+| Domaine métier | Homogénéité réelle des groupes obtenus | Chaque groupe débouche sur une action distincte | Groupes indistinguables : la segmentation n'a aucun usage |
+```
+
+
+## Les défauts de k-means, et comment les contourner
+
+k-means repose sur un petit nombre d'hypothèses explicites, et chaque défaut de l'algorithme correspond à l'une d'elles non respectée. La première hypothèse est que les groupes ont une forme sphérique, c'est-à-dire que chaque cluster est un nuage rond dont la dispersion est comparable dans toutes les directions. Cela vient de la distance euclidienne, qui trace des cercles autour des centroïdes : dès que vos données forment des formes allongées, en croissant, en boucle ou imbriquées, k-means découpe ces formes en tranches arbitraires. La seconde hypothèse est que les groupes ont des tailles comparables, car l'algorithme minimise une somme pondérée par les effectifs : un cluster vaste et diffus peut attirer des points qui, visuellement, appartiennent clairement à un voisin plus petit et plus dense.
+
+La troisième hypothèse concerne le nombre de groupes, qui doit être fixé à l'avance, et la quatrième la sensibilité au choix des centroïdes initiaux. Cette dernière se démontre en trois lignes : on exécute le même k-means avec plusieurs graines différentes et on observe les inerties obtenues. Quand les données sont nettes, toutes les graines convergent vers la même inertie, à quelques unités près ; quand les données sont ambiguës, deux exécutions peuvent aboutir à des partitions nettement différentes. C'est pourquoi l'initialisation intelligente, dite k-means++, a été inventée : elle choisit le premier centroïde au hasard, puis place les suivants de manière à ce qu'ils soient chacun relativement éloignés des précédents, ce qui réduit fortement le risque de démarrer avec deux centroïdes empilés sur le même groupe.
+
+Enfin, k-means est très sensible aux valeurs extrêmes. Un point aberrant, isolé très loin de tout, tire le barycentre de son groupe vers lui à chaque recalcul, et peut faire dériver un centroïde hors de la zone dense. Une variable non standardisée agit de la même manière sur l'ensemble du jeu de données : c'est l'effet d'échelle vu précédemment, qui se manifeste ici comme un biais systématique de regroupement. Le remède tient en trois gestes, tous simples : centrer et réduire les variables, examiner et éventuellement écarter les aberrations avant de lancer l'algorithme, puis relancer la procédure plusieurs fois en conservant la meilleure inertie.
+
+```python
+import math
+import random
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=0):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+# Deux nuages nets et un point aberrant tres eloigne
+points = [
+    (1.0, 1.1), (1.4, 0.9), (0.8, 1.3), (1.2, 1.0),
+    (1.1, 4.9), (0.9, 5.2), (1.5, 5.0), (1.0, 4.7),
+    (40.0, 40.0),
+]
+
+print("graine  effectifs          inertie")
+for graine in range(6):
+    affectations, centres = k_moyennes(points, k=2, graine=graine)
+    effectifs = [affectations.count(i) for i in range(2)]
+    print(graine, effectifs, round(inertie(points, centres, affectations), 2))
+
+sans_aberrante = points[:-1]
+meilleure = None
+for graine in range(6):
+    affectations, centres = k_moyennes(sans_aberrante, k=2, graine=graine)
+    valeur = inertie(sans_aberrante, centres, affectations)
+    if meilleure is None or valeur < meilleure:
+        meilleure = valeur
+print("meilleur inertie sans aberration :", round(meilleure, 2))
+```
+
+L'exécution montre un phénomène qu'aucune ligne de code ne laissait présager. Quelle que soit la graine tirée, les six exécutions rendent exactement le même résultat : huit points réunis dans un même groupe, un seul point isolé dans l'autre, et une inertie de trente virgule six six. Autrement dit, le point aberrant, situé à quarante unités de tout le reste, a littéralement confisqué un centroïde à lui seul, et les deux vrais nuages, privés d'un centre, se sont fusionnés en un unique paquet. Le résultat est stable, parfaitement reproductible, et totalement faux : c'est toute la dangerosité de l'aberration, qui ne se signale par aucune erreur d'exécution. Dès qu'on retire ce point, l'inertie tombe à zéro virgule soixante-deux et les graines retrouvent les deux groupes réels. Retenez la leçon de méthode : avant d'interpréter un clustering qui semble incohérent, contrôlez l'échelle des variables, cherchez les aberrations, puis seulement examinez les groupes.
+
+## Les voisins de k-means : k-médianes, DBSCAN et classification hiérarchique
+
+Toutes les limitations précédentes ont provoqué l'émergence d'algorithmes alternatifs, chacun corrigeant un défaut précis. Le k-médianes remplace le barycentre par la médiane composée, c'est-à-dire la médiane calculée indépendamment sur chaque dimension : comme la médiane ignore l'amplitude exacte des valeurs extrêmes, cet algorithme résiste beaucoup mieux aux aberrations, au prix d'un calcul plus lent. Le mini-batch k-means, lui, met à jour les centroïdes sur des sous-ensembles tirés au hasard à chaque itération, ce qui permet de traiter des millions de lignes en quelques secondes plutôt qu'en plusieurs minutes, avec un résultat très voisin de celui de la version complète.
+
+DBSCAN répond à une objection d'un autre ordre : il ne demande pas le nombre de groupes, et il accepte que les formes soient quelconques. Son principe est la densité : on spécifie un rayon et un nombre minimum de points, puis on relie chaque point à ses voisins situés à l'intérieur de ce rayon, formant ainsi des grappes continues. Les points qui ne remplissent pas la condition, parce qu'ils sont isolés ou trop peu nombreux, sont marqués comme bruit. DBSCAN découpe donc sans difficulté des formes en croissant ou en anneaux, trouve lui-même le nombre de groupes, et signale explicitement les observations atypées. Sa faiblesse tient à son rayon : si les groupes ont des densités très différentes, un seul rayon ne peut pas tous les suivre correctement, et la méthode du coude revient alors sous une autre forme.
+
+La classification hiérarchique agit enfin d'une manière radicalement différente, puisqu'elle ne produit pas une partition unique mais tout un arbre de partitions. L'approche ascendante part de chaque point comme d'un groupe isolé, puis fusionne à chaque étape les deux groupes les plus proches, jusqu'à ne plus en avoir qu'un seul. Le résultat se dessine sous forme de dendrogramme, et c'est l'utilisateur qui décide où couper l'arbre pour obtenir k groupes, ce qui rend la question du nombre de groupes beaucoup plus exploratoire : on regarde la hauteur à laquelle les fusions deviennent coûteuses et on tranche en dessous. La distance entre groupes, ou critère de liaison, se choisit entre liaison simple, complète, moyenne ou méthode de Ward, chaque option privilégiant un type de structure différent.
+
+```python
+import math
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def dbscan(points, rayon=1.5, minimum=3):
+    """Clusterisation par densite, version educative en O(n au carre)."""
+    etiquettes = [None] * len(points)
+    numero = 0
+    for j in range(len(points)):
+        if etiquettes[j] is not None:
+            continue
+        voisins = [
+            i for i in range(len(points))
+            if distance(points[j], points[i]) <= rayon
+        ]
+        if len(voisins) < minimum:
+            etiquettes[j] = -1
+            continue
+        etiquettes[j] = numero
+        a_visiter = [i for i in voisins if i != j]
+        while a_visiter:
+            candidat = a_visiter.pop()
+            if etiquettes[candidat] == -1:
+                etiquettes[candidat] = numero
+            if etiquettes[candidat] is not None:
+                continue
+            etiquettes[candidat] = numero
+            nouveaux = [
+                i for i in range(len(points))
+                if distance(points[candidat], points[i]) <= rayon
+            ]
+            if len(nouveaux) >= minimum:
+                a_visiter.extend(i for i in nouveaux if etiquettes[i] is None)
+        numero += 1
+    return etiquettes
+
+def liaison_simple(groupes):
+    """Fusionne les deux groupes les plus proches selon une distance min."""
+    def ecart(a, b):
+        return min(distance(pa, pb) for pa in a for pb in b)
+    while len(groupes) > 1:
+        meilleur = None
+        for i in range(len(groupes)):
+            for j in range(i + 1, len(groupes)):
+                valeur = ecart(groupes[i], groupes[j])
+                if meilleur is None or valeur < meilleur[0]:
+                    meilleur = (valeur, i, j)
+        _, i, j = meilleur
+        fusion = groupes[i] + groupes[j]
+        groupes = [g for num, g in enumerate(groupes) if num not in (i, j)]
+        groupes.append(fusion)
+    return groupes[0]
+
+forme = [(x / 4.0, math.sin(x / 4.0)) for x in range(12)]
+forme += [(x / 4.0, math.sin(x / 4.0) + 5.0) for x in range(12)]
+bruit = [(3.0, 9.0), (11.0, -4.0)]
+donnees = forme + bruit
+
+etiquettes = dbscan(donnees, rayon=0.6, minimum=3)
+print("groupes trouves par DBSCAN :", sorted(set(etiquettes)))
+print("bruit marque -1 :", sum(1 for e in etiquettes if e == -1))
+
+arbre = liaison_simple([[(0.0, 0.0), (0.3, 0.1)], [(5.0, 5.0), (5.4, 5.2)],
+                        [(9.0, 1.0), (9.4, 1.3)], [(0.2, 0.4)]])
+print("dernier noeud de la fusion :", [(round(x, 2), round(y, 2)) for x, y in arbre])
+```
+
+Le choix se décide donc sur la structure attendue des données : k-means pour des groupes ronds et de taille comparable, DBSCAN pour les formes libres et la détection du bruit, la classification hiérarchique pour explorer plusieurs niveaux de granularité.
+
+La réduction de dimension répond à un malaise que tout praticien a rencontré : le jeu de données est trop large. Trop large pour être visualisé, puisqu'un écran n'offre que deux, parfois trois, dimensions. Trop large pour être calculé rapidement, car le coût de la plupart des algorithmes croît au moins linéairement, et souvent carrément, avec le nombre de colonnes. Trop large pour être fiable, car beaucoup de variables sont redondantes : l'âge et l'année de naissance, le chiffre d'affaires et le nombre de contrats, la taille du fichier et son nombre de lignes portent en partie la même information, et conserver les deux revient à compter deux fois le même phénomène. Enfin, trop large pour être interprété, car aucun humain ne peut suivre simultanément l'effet de trente caractéristiques. Réduire, c'est donc compresser sans détruire le sens.
+
+L'opération la plus naïve consiste à supprimer des colonnes au hasard ou par corrélation : on garde une variable sur deux quand deux sont parfaitement liées. Cette approche fonctionne dans des cas simples mais gaspille de l'information, car elle ne conserve que des variables existantes et ignore que l'essentiel peut se trouver dans une combinaison de plusieurs d'entre elles. L'analyse en composantes principales, abrégée ACP et connue en anglais sous le nom de PCA, adopte exactement l'inverse : elle ne sélectionne pas des colonnes, elle en fabrique de nouvelles. Chaque composante est une combinaison linéaire de toutes les variables d'origine, choisie pour expliquer le plus de variabilité possible. La première composante est l'axe le plus informatif du nuage de points, la seconde le suivant en étant perpendiculaire au premier, et ainsi de suite.
+
+Le schéma suivant résume ce qui se passe dans l'espace des individus quand on passe de quatre colonnes à deux composantes : le nuage, qui vivait dans un hyperespace impossible à dessiner, est projeté sur le plan défini par les deux axes qui conservent le plus de variabilité. Les distances ne sont plus tout à fait les mêmes qu'avant, mais elles restent une excellente approximation tant que la part de variance conservée est élevée.
+
+```
+  quatre colonnes                         deux composantes projetees
+
+  age ----.                                axe 2 ^
+          |                                       |   o  o
+  taille -+----> PC2                       o o    | o
+          |                             o o   +---------> axe 1
+  poids ---|                            o    o
+          |                          o
+  score ---'                          o
+
+  (le nuage vit dans R4)              (le plan PC1 x PC2 suffit a le decrire)
+```
+
+Concrètement, réduire de trente colonnes à deux composantes offre quatre gains difficiles à contester. Le premier est la visualisation : on peut enfin dessiner les individus, ce qui permet de repérer à l'œil des groupes, des valeurs aberrantes et des axes de variation. Le second est la débruitage : les dernières composantes capturent souvent du bruit de mesure plutôt que de la structure, et les écarter agit comme un filtre. Le troisième est le gain de calcul, parfois décisif pour des méthodes au coût quadratique comme certaines approches de clustering. Le quatrième est la stabilité statistique : en diminuant le nombre de variables estimées, on réduit le risque de surajustement, au sens où un modèle apprenant sur deux composantes solides se généralise souvent mieux qu'un modèle apprenant sur trente colonnes bruitées.
+
+```table
+| Situation | Ce que l'on fait | Gain obtenu | Ce que l'on accepte de perdre |
+| --- | --- | --- | --- |
+| 30 variables corrélées, modèle supervisé | ACP gardant 90 % de la variance | Bruit filtré, modèle plus stable | L'interprétation directe des colonnes d'origine |
+| 4 variables, jeu de quelques centaines de lignes | Aucune réduction | On garde toute la lisibilité | Rien, mais la visualisation reste impossible |
+| Des milliers de variables, clustering à réaliser | ACP puis k-means dans les composantes | Distances plus saines, calcul rapide | Une part de variance, celle des dernières composantes |
+| Jeu destiné à un rapport | Deux composantes, graphique scatter | Un tableau visuel compréhensible de tous les individus | Les détails propres à chaque variable |
+```
+
+
+## L'ACP en intuition : trouver les axes qui expliquent le plus
+
+Pour comprendre ce que calcule réellement l'ACP, il faut d'abord se mettre à la place des données. Chaque individu est un point, chaque variable est un axe. L'ACP cherche dans cet espace un nouvel axe, c'est-à-dire une direction, telle que si l'on écrasait le nuage le long de cette direction, on perdrait le moins d'information possible. Autrement dit, elle cherche la droite le long de laquelle les points sont le plus étalés, puisque l'étallement, la variance, est notre façon de mesurer l'information contenue dans les données. Le premier axe est donc la direction de variance maximale. Le second est la direction de variance maximale parmi celles qui restent, en étant orthogonal au premier, et ainsi de suite jusqu'à épuisement des dimensions.
+
+Cette définition a une conséquence très pratique : les composantes sont des combinaisons de toutes les variables, avec des coefficients appelés charges. Quand une composante présente des charges élevées de même signe sur plusieurs variables, elle représente un facteur commun qui les fait varier ensemble, par exemple un facteur d'engagement regroupant le nombre de connexions, le temps passé et les exercices validés. Lire ces charges, c'est donner un nom à la composante, et c'est souvent à cette étape que l'analyse devient parlante pour un métier : l'axe abstrait se transforme en « les apprenants très actifs ». Les individus, eux, reçoivent des scores, une valeur par composante, qui servent ensuite de nouvelles coordonnées.
+
+L'étape préalable indispensable est le centrage, et plus généralement la standardisation. Sans centrage, l'origine des axes n'est plus au centre du nuage et les calculs de variance perdent leur sens statistique. Sans standardisation, une variable exprimée en euros écrase une variable exprimée en milliers, exactement comme pour les distances, et la première composante reflétera alors uniquement l'échelle de la variable la plus ample. La règle à retenir est donc la même que pour le clustering : centrez et réduisez avant l'ACP, sauf si toutes les variables sont déjà exprimées dans des unités comparables. Une exception mérite d'être citée : si vos variables sont toutes des proportions ou toutes des compteurs d'ordre de grandeur proche, la standardisation change peu le résultat et peut parfois masquer des différences de dispersion qui vous intéressent.
+
+Enfin, une notion commande toute l'interprétation : la part de variance expliquée. Chaque composante emporte une fraction de la variabilité totale du jeu de données, et ces fractions s'additionnent à cent pour cent. Dans la pratique, la répartition est presque toujours très inégale : les deux ou trois premières composantes captent l'essentiel, puis la décroissance devient rapide. Le cumul de variance expliquée est le critère de décision : retenir assez de composantes pour conserver, disons, entre quatre-vingt et quatre-vingt-quinze pour cent de la variabilité, tout en gardant un nombre de dimensions maniable. En dessous de soixante-dix pour cent, on a généralement trop compressé ; au-dessus de quatre-vingt-quinze, on garde souvent du bruit.
+
+```python
+import math
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0),
+    (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5),
+    (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0),
+    (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5),
+    (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0),
+    (1.5, 9.0, 2.5, 14.0),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [
+        [(v[j] - moyennes[j]) / ecarts[j] for j in range(d)]
+        for v in vecteurs
+    ]
+
+def matrice_correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [
+        [
+            sum(v[a] * v[b] for v in vecteurs) / n
+            for b in range(d)
+        ]
+        for a in range(d)
+    ]
+
+normalises = standardiser(donnees)
+correlation = matrice_correlation(normalises)
+
+noms = ["heures", "exercices", "erreurs", "connexions"]
+for ligne, nom in zip(correlation, noms):
+    print(nom.ljust(12), [round(x, 2) for x in ligne])
+
+variances = [round(ligne[i], 2) for i, ligne in enumerate(correlation)]
+print("variances unitaires :", variances)
+print("variance totale :", round(sum(variances), 2))
+```
+
+L'exécution confirme deux choses attendues. Chaque variable, après standardisation, affiche une variance de un, et la somme de ces variances vaut le nombre de colonnes : c'est la variance totale que l'ACP devra répartir entre ses nouvelles composantes. Les corrélations élevées entre certaines variables annoncent déjà qu'une seule composante pourra représenter plusieurs colonnes à la fois : quand deux variables bougent ensemble, leurs informations se chevauchent, et l'ACP a justement pour vocation de fusionner ce qui se redouble.
+
+## Calculer l'ACP soi-même, sans librairie
+
+Le calcul formel de l'ACP revient à résoudre un problème de valeurs propres sur la matrice de corrélation, un sujet qui fait peur parce qu'il est souvent présenté sous sa forme algébrique la plus compacte. La version procédurale, celle qu'un programme peut exécuter ligne à ligne, est plus rassurante. On commence par standardiser, puis on construit la matrice de corrélation. Ensuite on trouve le vecteur propre associé à la plus grande valeur propre, ce qui donne le premier axe. On « défait » cette direction de la matrice, c'est-à-dire qu'on lui retire la part de variance déjà expliquée, et on recommence pour obtenir le second axe. Cette astuce de déflation garantit que chaque axe découvert est bien perpendiculaire au précédent.
+
+La méthode dite de la puissance itérée permet de trouver ce vecteur sans aucune algebra : on part d'un vecteur arbitraire, on le multiplie par la matrice, on le renormalise, et on recommence. À chaque tour, le vecteur s'oriente un peu plus vers la direction dominante, et il finit par se stabiliser. Le nombre d'itérations requis est en pratique modeste, quelques dizaines pour des matrices de taille raisonnable, et le critère d'arrêt se formule simplement : quand le vecteur cesse de changer sensiblement d'une itération à l'autre, on a converge. La valeur propre associée se récupère ensuite en projetant le vecteur sur son propre produit par la matrice.
+
+```python
+import math
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0),
+    (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5),
+    (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0),
+    (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5),
+    (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0),
+    (1.5, 9.0, 2.5, 14.0),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs]
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [
+        [sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)]
+        for a in range(d)
+    ]
+
+def multiplier(matrice, vecteur):
+    return [
+        sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur)))
+        for i in range(len(matrice))
+    ]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        suivant = [x / n for x in suivant]
+        ecart = norme([a - b for a, b in zip(suivant, vecteur)])
+        vecteur = suivant
+        if ecart < 1e-12:
+            break
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [
+        [matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)]
+        for i in range(d)
+    ]
+
+normalises = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+
+axes = []
+restante = matrice
+for numero in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append((vecteur, valeur))
+    print("composante", numero + 1,
+          "| charges", [round(x, 2) for x in vecteur],
+          "| variance", round(valeur, 3),
+          "| part", str(round(100 * valeur / trace, 1)) + " %")
+    restante = deflate(restante, valeur, vecteur)
+
+cumul = sum(v for _, v in axes) / trace
+print("cumul sur les deux premieres composantes :", round(100 * cumul, 1), "%")
+
+scores = [
+    [sum(v[j] * axes[i][0][j] for j in range(len(v))) for i in range(2)]
+    for v in normalises
+]
+print("individu 1 projete :", [round(x, 2) for x in scores[0]])
+print("individu 5 projete :", [round(x, 2) for x in scores[4]])
+```
+
+Le programme affiche les charges de chaque composante, leur variance propre et la part de variance expliquée, puis projette les individus sur les deux axes retenus. Deux réflexes d'interprétation se dégagent. D'abord, on lit les charges comme un vocabulaire : les composantes dont les charges sont fortes sur les mêmes variables désignent un facteur commun, et les charges de signes opposés révèlent un arbitrage entre deux caractéristiques. Ensuite, on surveille le cumul : s'il reste bas après deux composantes, le jeu de données est réellement riche en dimensions et il faudra en conserver davantage, ou accepter de perdre de l'information. Notez enfin que les signes des charges sont arbitraires : l'axe peut être retourné sans changer l'analyse, seule la direction relative des individus compte.
+
+## Enchaîner réduction et clustering
+
+La combinaison la plus classique d'un pipeline non supervisé consiste à standardiser, puis réduire, puis regrouper. Chaque étape corrige un défaut de la suivante : la standardisation égalise les variables, l'ACP supprime les redondances et le bruit, et le k-means opère alors sur des distances calculées dans un espace bien plus sain. Le bénéfice n'est pas seulement technique. En-clusterant dans l'espace des composantes, on s'affranchit des corrélations qui faussent la distance euclidienne : deux variables fortement corrélées pèsent en réalité deux fois dans la distance, alors qu'elles ne mesurent qu'un seul phénomène. Réduire revient à pondérer chaque information une seule fois.
+
+L'ordre des étapes n'est pas négociable. Standardiser avant l'ACP, car les composantes se calculent sur les écarts à la moyenne ; réduire avant le clustering, pour que la distance porte sur des dimensions indépendantes ; et toujours garder une trace de la variance expliquée, car un pipeline qui se termine en aveugle sur la part d'information conservée ne permet pas de défendre ses résultats. Une précaution supplémentaire s'impose dans les cas où l'on veut prédire ou comparer : ajuster la standardisation et l'ACP sur un ensemble d'apprentissage, puis appliquer les mêmes moyennes, écarts et charges à l'ensemble de test. Ajuster deux fois, sur des ensembles différents, reviendrait à fabriquer deux espaces non comparables.
+
+Le programme suivant assemble tout le chapitre en une seule chaîne exécutable, entièrement en bibliothèque standard : il standardise un jeu de douze individus à quatre variables, calcule deux composantes par puissance itérée, projette, applique k-means dans cet espace réduit et affiche la répartition finale.
+
+```python
+import math
+import random
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0), (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5), (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0), (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5), (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0), (1.5, 9.0, 2.5, 14.0),
+    (7.0, 6.0, 8.0, 8.0), (4.0, 5.5, 7.5, 7.5),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs], moyennes, ecarts
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [[sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)] for a in range(d)]
+
+def multiplier(matrice, vecteur):
+    return [sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur))) for i in range(len(matrice))]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        vecteur = [x / n for x in suivant]
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [[matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)] for i in range(d)]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=30, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+normalises, moyennes, ecarts = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+
+axes = []
+restante = matrice
+for _ in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append(vecteur)
+    print("part de variance expliquee :", round(100 * valeur / trace, 1), "%")
+    restante = deflate(restante, valeur, vecteur)
+
+projete = [
+    [sum(v[j] * axes[i][j] for j in range(len(v))) for i in range(2)]
+    for v in normalises
+]
+
+affectations, centres = k_moyennes(projete, k=3)
+for i in range(3):
+    membres = [j for j in range(len(projete)) if affectations[j] == i]
+    print("segment", i, "->", len(membres), "individus, indices", membres)
+print("centres dans le plan des composantes :",
+      [[round(c, 2) for c in centre] for centre in centres])
+```
+
+La sortie de ce pipeline mérite d'être lue lentement, car elle condense tout le chapitre. Les deux premières composantes expliquent à elles seules soixante-dix pour cent puis vingt-sept pour cent de la variance, soit un cumul de quatre-vingt-dix-huit pour cent : réduire quatre colonnes à deux axes n'a donc rien fait perdre d'important. Les individus projetés se répartissent ensuite en trois segments, et chacun correspond à un profil réel du jeu de données : quatre apprenants assidus qui combinent beaucoup d'heures et peu d'erreurs, un duo qui progresse très vite avec très peu d'heures de cours, et un groupe de six plus en retrait, marqué par davantage d'erreurs et peu de connexions. Le clustering dans l'espace réduit a donc produit une partition lisible sur un plan, ce qui permet de la présenter graphiquement à un non spécialiste, tout en conservant l'essentiel de l'information des quatre variables d'origine.
+
+## De la théorie aux outils : numpy et scikit-learn
+
+Tout ce que vous avez codé jusqu'ici existe déjà, sous forme optimisée, dans deux bibliothèques que vous utiliserez systématiquement à partir de maintenant. NumPy fournit le conteneur de base, le tableau multidimensionnel, qui remplace les listes de listes Python par une structure compacte où les opérations s'appliquent d'un coup à tous les éléments, ce que l'on appelle la vectorisation. Écrire un tableau moins un autre, ou multiplier un tableau par une constante, se fait sans boucle, avec une vitesse proche de celle du langage C. C'est cette structure qui rend possible le calcul de distances entre des millions de points, et c'est elle qui stocke les matrices de corrélation, les centroïdes et les composantes de l'ACP. L'essentiel à retenir pour lire le reste de ce cours est que les méthodes renvoient toujours des tableaux, et qu'indexer un tableau se fait avec les mêmes crochets que pour une liste.
+
+Scikit-learn, quant à lui, ne contient pas d'algorithme : c'est une collection de ces algorithmes derrière une interface uniforme. Tous les estimateurs suivent le même contrat en trois temps. On instancie l'objet avec ses paramètres, on l'ajuste sur les données avec la méthode fit, puis on interroge le résultat, soit avec la méthode transform quand l'objet produit de nouvelles valeurs, soit avec l'attribut predict quand il produit des étiquettes. Ce contrat unique est un énorme avantage pédagogique : une fois compris pour la régression, il est immédiatement valable pour le clustering et pour l'ACP. Les données d'entrée se présentent sous forme d'un tableau où les lignes sont les individus et les colonnes les caractéristiques, la convention que tout le monde partage désormais.
+
+Le clustering y est représenté par la classe KMeans, dont les paramètres principaux sont le nombre de groupes, le nombre de réinitialisations engagées et la graine aléatoire. Après l'ajustement, trois attributs résument le résultat : les étiquettes de chaque individu, les coordonnées des centroïdes, et l'inertie finale. Scikit-learn retient par ailleurs l'initialisation intelligente vue plus haut, qui choisit les premiers centroïdes de manière à maximiser leur distance mutuelle, et il lance plusieurs exécutions en conservant la meilleure, ce qui supprime presque entièrement le problème des minima locaux. L'ACP est représentée par la classe PCA, qui reçoit le nombre de composantes à conserver et expose les charges, les scores des individus et la part de variance expliquée composante par composante. La standardisation, elle, vit dans la classe StandardScaler, dont la méthode transform applique aux données de test les paramètres appris sur les données d'apprentissage.
+
+Le tableau suivant traduit chaque étape que vous avez écrite à la main vers son équivalent professionnel.
+
+```table
+| Étape du chapitre | Équivalent scikit-learn | Ce que l'on en extrait |
+| --- | --- | --- |
+| Centrer et réduire à la main | StandardScaler().fit_transform(X) | Tableau des variables à moyenne nulle et écart-type un |
+| k-means écrit en Python | KMeans(n_clusters=k, n_init=10, random_state=0).fit(X) | labels_ pour les groupes, cluster_centers_ pour les centroïdes, inertie_ pour la compacité |
+| Silhouette calculée à la main | silhouette_score(X, labels) | Score global entre moins un et un, à maximiser |
+| ACP par puissance itérée | PCA(n_components=2).fit_transform(X) | Tableau des scores individus sur les deux axes retenus |
+| Variance expliquée | PCA().explained_variance_ratio_ | Part apportée par chaque composante, à cumuler |
+| Choix de k par la règle du coude | Boucle Python appelant KMeans pour chaque k | Liste des inerties à afficher ensuite |
+| Classification hiérarchique | AgglomerativeClustering ou scipy.cluster.hierarchy | Partition à un niveau donné, ou dendrogramme complet |
+```
+
+
+## Lire les clusters : passer des nombres à des profils
+
+Un clustering livré sous forme de trois colonnes d'entiers n'a aucune valeur tant que personne ne sait ce que ces entiers désignent. La lecture d'un résultat de regroupement est un exercice distinct de son calcul, et c'est souvent l'étape qui décide de l'utilité d'un projet. Le premier réflexe consiste à décrire chaque groupe par ses centroïdes, non pas en tant que coordonnées brutes, mais en tant que profil : un groupe dont le centroïde affiche beaucoup d'heures de cours et peu d'erreurs se nomme « assidus », un groupe dont le centroïde combine peu d'heures et beaucoup d'erreurs se nomme « décrochés en devenir ». Nommer les groupes n'est pas de la décoration : c'est l'acte qui transforme une partition algorithmique en information exploitable par un métier.
+
+Le deuxième réflexe est de regarder les tailles. Un groupe qui ne contient que trois individus sur mille mérite une vérification : s'agit-il d'une niche réelle à traiter séparément, d'un amas de valeurs aberrantes, ou d'un artefact dû à un nombre de groupes mal choisi ? À l'inverse, un groupe qui en absorbe quatre-vingt-dix pour cent signale que le k est trop faible, ou que la structure attendue n'existe pas. Le troisième réflexe est de confronter le profil à une variable que l'algorithme n'a pas utilisée, par exemple le secteur d'activité ou la région : si les groupes se recoupent avec cette variable cachée, la partition gagne en crédibilité ; si elle ne s'y retrouve pas du tout, il faut comprendre pourquoi avant de conclure.
+
+Le tableau suivant offre une grille de lecture systématique, à dérouler chaque fois que l'on reçoit un résultat de clustering.
+
+```table
+| Question à se poser | Où regarder | Ce que cela indique |
+| --- | --- | --- |
+| Les groupes sont-ils compacts ? | Inertie et silhouette moyenne | Score élevé : séparation nette ; score proche de zéro : frontières floues |
+| Les groupes sont-ils équilibrés ? | Effectifs par étiquette | Un groupe géant signale un k trop faible ; un groupe quasi vide signale une niche ou des aberrations |
+| Le résultat est-il reproductible ? | Inerties obtenues sur dix graines | Valeurs voisines : structure stable ; écarts importants : partition fragile |
+| Chaque groupe a-t-il un sens métier ? | Centroïdes ramenés à l'unité d'origine | Profil nommable en une phrase : le regroupement est exploitable |
+| Les groupes résistent-ils à l'échelle ? | Résultat avant et après standardisation | Identique : robuste ; très différent : le résultat dépendait des unités |
+| L'ACP est-elle cohérente ? | Cumul de variance des axes retenus | Au-delà de quatre-vingt-dix pour cent : la visualisation est fidèle |
+```
+
+
+```python
+import math
+
+# Etiquettes produites par un k-means sur quatre individus types
+groupes = [0, 0, 1, 1, 2, 2, 0, 2]
+individus = [
+    ("nadia", 9.0, 8.5, 2.0, 14.0),
+    ("omar", 8.5, 9.0, 2.5, 13.5),
+    ("lea", 4.0, 3.0, 9.5, 5.0),
+    ("hugo", 5.0, 2.5, 10.0, 4.5),
+    ("sami", 1.5, 8.5, 2.0, 15.5),
+    ("ines", 2.0, 8.0, 2.5, 15.0),
+    ("tara", 7.5, 6.5, 6.0, 9.0),
+    ("yann", 1.0, 9.0, 1.5, 16.0),
+]
+variables = ["heures", "exercices", "erreurs", "connexions"]
+
+def moyennes_par_groupe(individus, groupes):
+    profils = {}
+    for groupe in sorted(set(groupes)):
+        membres = [row for row, g in zip(individus, groupes) if g == groupe]
+        moyennes = [
+            sum(row[1:][j] for row in membres) / len(membres)
+            for j in range(4)
+        ]
+        profils[groupe] = (len(membres), moyennes)
+    return profils
+
+profils = moyennes_par_groupe(individus, groupes)
+for groupe, (taille, moyennes) in profils.items():
+    lisible = {v: round(m, 1) for v, m in zip(variables, moyennes)}
+    print("groupe", groupe, "| effectif", taille, "| profil", lisible)
+```
+
+En relisant ce profil, on remarque que le groupe zéro rassemble des individus très actifs, que le groupe un correspond à des apprenants en difficulté, et que le groupe deux réunit des profils inverses : très peu d'heures de cours, mais beaucoup d'exercices validés et le moins d'erreurs du jeu. Notez le risque d'une lecture à l'aveugle : le groupe zéro contient un membre nettement moins connecté que les deux autres, qui abaisse sensiblement les moyennes, et c'est précisément pour cela qu'on examine toujours les centroïdes accompagnés des médianes et des dispersions, jamais seuls. Un profil moyen peut cacher un groupe hétérogène, et un centre de gravité n'a de sens que rapporté à l'étallement des points autour de lui.
+
+## Exemple guidé : segmenter les apprenants d'un site
+
+Réunissons maintenant tout le chapitre dans un cas d'usage unique et concret. Un site e-learning dispose, pour chacun de ses dix mille apprenants, de quatre mesures : le nombre d'heures de cours suivies, le nombre d'exercices validés, le taux d'erreur aux devoirs et le nombre de connexions mensuelles. La direction marketing souhaite identifier des profils distincts afin d'adapter ses relances, mais aucun historique de segmentation n'existe. Le pipeline complet que vous allez exécuter suit le chemin que la pratique recommande.
+
+```
+  etape 1            etape 2              etape 3            etape 4
+
+  donnees brutes  ->  standardisation  ->  ACP a 2 axes   ->  k-means k=3
+  4 colonnes          moyenne 0             98 % conserve       3 groupes
+                      ecart-type 1          du signal            + profils
+
+        ^                                                           |
+        |                controles : silhouette, inertie,           |
+        +---------  effectifs, stabilite sur dix graines  <----------+
+```
+
+L'ordre des étapes n'est pas discutable : standardiser avant l'ACP, réduire avant de regrouper, contrôler après chaque passage. Le programme ci-dessous applique cette chaîne complète en bibliothèque standard, affiche la variance expliquée, calcule la silhouette dans l'espace réduit, puis décrit les trois groupes obtenus en termes de profil.
+
+```python
+import math
+import random
+
+donnees = [
+    (9.0, 8.5, 2.0, 14.0), (8.5, 9.0, 2.5, 13.5), (9.5, 8.0, 2.2, 14.5),
+    (8.0, 8.8, 3.0, 13.0), (2.0, 8.5, 2.0, 15.5), (1.5, 8.0, 2.5, 15.0),
+    (1.0, 9.0, 1.5, 16.0), (2.5, 8.2, 3.0, 14.5),
+    (5.0, 3.0, 9.5, 5.0), (4.5, 2.5, 10.0, 4.5), (5.5, 3.5, 9.0, 5.5),
+    (4.0, 2.0, 10.5, 4.0), (7.5, 6.5, 6.0, 9.0), (7.0, 6.0, 6.5, 8.5),
+    (8.0, 7.0, 5.5, 9.5), (6.5, 7.5, 7.0, 8.0),
+]
+noms_variables = ["heures", "exercices", "erreurs", "connexions"]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs]
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [[sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)] for a in range(d)]
+
+def multiplier(matrice, vecteur):
+    return [sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur))) for i in range(len(matrice))]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        vecteur = [x / n for x in suivant]
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [[matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)] for i in range(d)]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=30, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def silhouette(points, affectations):
+    scores = []
+    groupes = sorted(set(affectations))
+    for j, point in enumerate(points):
+        memes = [i for i in range(len(points))
+                 if affectations[i] == affectations[j] and i != j]
+        if not memes:
+            scores.append(0.0)
+            continue
+        a = sum(distance(point, points[i]) for i in memes) / len(memes)
+        b = min(
+            sum(distance(point, points[i]) for i in range(len(points))
+                if affectations[i] == autre)
+            / max(1, sum(1 for i in range(len(points)) if affectations[i] == autre))
+            for autre in groupes if autre != affectations[j]
+        )
+        scores.append((b - a) / max(a, b))
+    return sum(scores) / len(scores)
+
+normalises = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+axes, restante = [], matrice
+for _ in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append((vecteur, valeur))
+    restante = deflate(restante, valeur, vecteur)
+
+cumul = sum(v for _, v in axes) / trace
+print("variance expliquee par les deux axes :", round(100 * cumul, 1), "%")
+
+projete = [[sum(v[j] * axes[i][0][j] for j in range(len(v))) for i in range(2)]
+           for v in normalises]
+
+meilleur = None
+for graine in range(10):
+    affectations, centres = k_moyennes(projete, k=3, graine=graine)
+    valeur = sum(distance(p, centres[affectations[j]]) ** 2
+                 for j, p in enumerate(projete))
+    if meilleur is None or valeur < meilleur[0]:
+        meilleur = (valeur, affectations, centres)
+inertie, affectations, centres = meilleur
+
+print("meilleure inertie sur dix graines :", round(inertie, 2))
+print("silhouette dans l espace reduit :", round(silhouette(projete, affectations), 3))
+
+for groupe in range(3):
+    membres = [row for row, etiquette in zip(donnees, affectations)
+               if etiquette == groupe]
+    profils = [round(sum(row[j] for row in membres) / len(membres), 1)
+               for j in range(4)]
+    description = {v: m for v, m in zip(noms_variables, profils)}
+    print("segment", groupe, "|", len(membres), "apprenants |", description)
+```
+
+Trois contrôles ressortent de cette exécution, et chacun correspond à une étape du tableau de lecture. Le cumul de variance confirme que deux axes suffisent à représenter le signal. La silhouette obtenue dans l'espace réduit doit être élevée, ce qui valide la séparation des trois groupes. La répétition sur dix graines avec conservation de la meilleure inertie protège contre un tirage malheureux. Un dernier contrôle, purement métier, reste à faire : relier chaque segment à l'action qu'il déclenchera, une relance pédagogique, un message d'encouragement, une proposition de tutorat. Sans cette dernière étape, le clustering reste une curiosité statistique ; avec elle, il devient un outil de décision.
+
+## À retenir
+
+- Le non supervisé regroupe ou compresse des données qui n'ont pas d'étiquette de réponse.
+- Une distance définit la ressemblance : k-means ne fait qu'appliquer celle que vous lui choisissez.
+- Euclidienne, Manhattan et cosinus répondent à des questions différentes ; la cosinus domine pour le texte.
+- Centrez et réduisez les variables avant toute distance ou toute ACP, sinon l'échelle décide à votre place.
+- k-means alterne affectation des points au centroïde le plus proche puis recentrage sur le barycentre.
+- L'inertie, somme des carrés des distances au centroïde, décroît à chaque itération jusqu'à convergence.
+- k-means suppose des groupes ronds, de tailles comparables, et il dépend de l'initialisation : relancez-le plusieurs fois.
+- Le coude donne le k où la baisse d'inertie se casse ; la silhouette juge la compacité locale et vaut au maximum un.
+- DBSCAN découpe des formes arbitraires et marque le bruit, mais demande un rayon de densité.
+- La classification hiérarchique produit un arbre de partitions que l'on coupe à la hauteur de son choix.
+- L'ACP fabrique de nouvelles colonnes, combinaisons des anciennes, ordonnées par variance expliquée cumulée.
+- Standardiser, réduire, regrouper, puis contrôler : cet ordre de pipeline est celui de la pratique.
+- Lire un clustering, c'est nommer les profils, vérifier les effectifs, tester la stabilité et relier chaque groupe à une action.
+
+## Erreurs fréquentes
+
+- Piège : lancer k-means sur des variables aux échelles très différentes → Correction : appliquez StandardScaler, ou équivalent, avant de calculer la moindre distance.
+- Piège : choisir k parce que c'est le nombre que l'on espérait trouver → Correction : croisez la règle du coude, la silhouette et le sens métier avant de trancher.
+- Piège : conclure qu'un clustering est faux parce que les groupes ne correspondent pas aux classes historiques → Correction : le non supervisé cherche des structures, pas à reproduire des étiquettes qui n'ont pas servi à l'apprentissage.
+- Piège : faire confiance à une seule exécution avec une graine donnée → Correction : relancez une dizaine de fois et gardez la meilleure inertie, ou fixez une graine pour déboguer puis relâchez-la.
+- Piège : interpréter les centroïdes bruts sans revenir aux unités d'origine → Correction : reconstruisez les profils en inversant la standardisation pour les présenter.
+- Piège : retenir deux composantes alors que le cumul de variance reste sous soixante-dix pour cent → Correction : suivez explained_variance_ratio_ et gardez assez d'axes pour conserver le signal.
+- Piège : traiter les composantes de l'ACP comme des variables à interpréter directement → Correction : lisez les charges de chaque composante pour lui donner un nom.
+- Piège : appliquer la standardisation sur l'ensemble complet avant de découper entraînement et test → Correction : ajustez sur l'entraînement et transformez le test avec les mêmes paramètres.
+- Piège : arrêter le travail à l'affichage des groupes sans jamais nommer les profils → Correction : produisez une phrase par groupe et une action associée.
+
+## Pour aller plus loin
+
+La documentation officielle de scikit-learn reste la référence la plus pratique pour consolider ce chapitre, car elle illustre chaque notion sur des exemples exécutables. La page consacrée au clustering, https://scikit-learn.org/stable/modules/clustering.html, détaille les hypothèses de chaque algorithme, les cas de dérive classiques et les métriques d'évaluation, avec des graphiques qui rendent immédiatement visibles les formes que k-means ne sait pas découper. La page consacrée à la décomposition, https://scikit-learn.org/stable/modules/decomposition.html#pca, explique le calcul des charges, le rôle de la valeur expliquée et l'effet de la standardisation sur les résultats. Prenez le temps de lire les sections sur les pièges courants : elles reprennent, en termes d'API, chacune des précautions énoncées dans cette leçon.
+
+Pour aller vers les méthodes hiérarchiques, la documentation de SciPy, https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.hierarchy.linkage.html, décrit les critères de liaison et fournit le tracé des dendrogrammes, utile quand le nombre de groupes reste à découvrir. Du côté de la bibliothèque de calcul elle-même, le guide rapide de NumPy, https://numpy.org/doc/stable/user/quickstart.html, vous apprendra la vectorisation qui remplace les boucles montrées ici, et vous gagnerez un facteur important de productivité une fois les tableaux assimilés. Aucune de ces pages ne se lit d'un seul trait : ouvrez-la le jour où une question précise se pose, reproduisez l'exemple, modifiez-le, et revenez-y aussi souvent que nécessaire.
+
+## Et maintenant : regardez la vidéo du chapitre, puis réécrivez seul le k-means de l'exercice pratique sans consulter la solution
+
+Le k-means est simple à appeler et difficile à bien utiliser : le choix de k, la sensibilité aux initialisations et l'interprétation des clusters demandent autant d'attention que la mise en œuvre. Regardez la vidéo du chapitre pour ancrer la démarche, puis réécrivez l'algorithme seul, sans consulter la solution : initialisation des centroïdes, assignation, mise à jour, critère d'arrêt. L'exercice pratique vous demandera ensuite de justifier la valeur de k retenue sur un jeu de données réel — un raisonnement que seul un modèle bien compris permet de défendre.

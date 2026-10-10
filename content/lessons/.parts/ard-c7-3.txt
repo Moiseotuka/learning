@@ -1,0 +1,138 @@
+## Protéger les ressources partagées : mutex, sémaphores, événements
+
+Une ressource partagée est tout ce que deux tâches peuvent toucher en même temps : le moniteur série, le bus SPI de l'écran, le fichier de journal sur carte, le capteur I2C, une variable globale, un périphérique matériel qui n'accepte qu'une transaction à la fois. Le partage n'est pas en soi un problème, c'est l'accès simultané qui l'est : deux tâches qui entament chacune une transaction sur le même bus produisent une trame corrompue, et le résultat n'a rien de prévisible, car il dépend de l'ordre réel des instructions, que vous ne connaissez pas. La protection consiste donc à transformer un accès concurrent en accès séquentiel : l'un entre, travaille, sort ; l'autre attend.
+
+Le mutex est l'outil de premier choix quand la ressource appartient à quelqu'un. On l'appelle avec une prise, qui tente d'obtenir la ressource, et on la libère avec un rendu ; seul celui qui a pris le verrou peut le rendre, et entre les deux, toute autre tâche qui tente la même prise reste bloquée ou échoue si son délai maximum est écoulé. Cette propriété de propriété exclusive est ce qui distingue le mutex du sémaphore : elle empêche qu'un verrou soit libéré par erreur par une tâche qui ne le détenait pas, ce qui est une faute classique quand le code se ramifie. Sur FreeRTOS, le mutex possède en plus une caractéristique précieuse, l'héritage de priorité, que nous étudierons dans la section suivante.
+
+Le sémaphore binaire, lui, ne protège rien : il signale. Il passe de l'état vide à l'état plein quand une tâche ou une interruption le donne, et le consommateur l'attend. On s'en sert pour dire une chose simple, par exemple une ligne est disponible sur la console ou une mesure est prête, sans transporter la donnée. Le sémaphore compteur généralise l'idée à un nombre fini de ressources identiques, typiquement des tampons disponibles. Le groupe d'événements permet d'attendre qu'une combinaison de drapeaux soit remplie, ce qui est commode pour un réveil conditionnel. Enfin, les notifications de tâche offrent le mécanisme le plus léger : un compteur par tâche, idéal pour un réveil unique entre deux parties.
+
+| Mécanisme | Ce qu'il exprime | Qui le libère | Usage typique |
+|---|---|---|---|
+| Mutex | Une ressource est occupée | Celui qui l'a prise | Bus SPI, port série, fichier |
+| Sémaphore binaire | Un événement s'est produit | N'importe qui | Réveil, ligne disponible |
+| Sémaphore compteur | N ressources identiques sont libres | Celui qui rend | Tampons, entrées de pool |
+| Groupe d'événements | Plusieurs conditions sont réunies | Position par position | Démarrage multi-conditions |
+| Notification de tâche | Un signal adressé à une tâche | Celui qui envoie | Producteur unique |
+
+Quatre règles rendent l'usage des verrous sûr dans la durée. D'abord, ne conservez jamais un verrou pendant une attente : la tâche qui protège une ressource doit faire le travail le plus court possible, sans lecture série, sans envoi réseau, sans délai. Ensuite, écrivez toujours le rendu du verrou sur toutes les branches de sortie, y compris les erreurs ; une branche d'erreur qui oublie de rendre est la cause la plus fréquente de blocage permanent. Troisièmement, imposez-vous un délai maximum de prise plutôt que d'attendre indéfiniment, et traitez l'échec comme un événement prévu. Quatrièmement, documentez quelle tâche protège quelle ressource : ce tableau vaut mieux que n'importe quel commentaire au fil du code.
+
+```cpp
+// Le port serie partage : un mutex par transmission complete
+SemaphoreHandle_t mutexSerial = NULL;
+
+void ecrireLog(const char *message) {
+  if (xSemaphoreTake(mutexSerial, pdMS_TO_TICKS(50)) == pdTRUE) {
+    Serial.println(message);
+    xSemaphoreGive(mutexSerial);
+  } else {
+    // la trace est perdue, mais le systeme poursuit son travail
+    compteurTracesPerdues++;
+  }
+}
+```
+
+## Bloquages mutuels : comprendre le deadlock
+
+Le blocage mutuel survient quand deux tâches attendent chacune la ressource détenue par l'autre. Concrètement, la tâche capteur détient le verrou du bus I2C et réclame ensuite le verrou de l'afficheur ; au même instant, la tâche afficheur détient le verrou de l'afficheur et réclame celui du bus I2C. Aucune des deux ne peut avancer, aucune ne se termine, et le système est figé pour toujours. Le plus déconcertant, c'est que chaque fonction prise isolément est correcte : c'est l'enchaînement des appels, dans un ordre non contrôlé, qui produit le défaut.
+
+On décrit classiquement le blocage mutuel par quatre conditions qui doivent être simultanément réunies. Il faut un partage exclusif, une détention en attendant, aucune révocation possible de ce qui est détenu, et un ordre de demande circulaire. Supprimez-en une seule et le défaut devient impossible : c'est exactement la stratégie de correction. La plus simple à appliquer en pratique consiste à imposer un ordre total des verrous, lequel est le même pour toutes les tâches, sans exception.
+
+Le tableau ci-dessous rejoue la scène au tick près. Lisez les colonnes de gauche à droite : à aucun instant aucune tâche n'est en faute, et pourtant le système est irrémédiablement arrêté.
+
+| Instant | Tâche capteur | Tâche afficheur | Verrou I2C | Verrou écran |
+|---|---|---|---|---|
+| T1 | Prend I2C | En sommeil | Capteur | Libre |
+| T2 | Réclame écran | Prend écran | Capteur | Afficheur |
+| T3 | Attend, bloquée | Réclame I2C | Capteur | Afficheur |
+| T4 | Attend, bloquée | Attend, bloquée | Capteur | Afficheur |
+
+Un détail de diagnostic mérite d'être retenu : dans un blocage mutuel, aucune tâche ne consomme de processeur. Les deux sont en état bloqué, l'ordonnanceur tourne donc la tâche d'identification, et le watchdog de tâche, qui surveille justement l'inactivité du processeur, ne déclenche rien. Votre objet ne présente donc ni panic, ni redémarrage, ni message d'erreur : il est simplement muet et ne répond plus. Face à un gel sans trace, la première hypothèse à vérifier est la suivante : combien de verrous sont en circulation, et quel ordre imposent-elles ?
+
+Les solutions sont au nombre de trois, souvent combinées. La première, l'ordre total, consiste à numéroter les verrous et à exiger que toute tâche les prenne dans l'ordre croissant, ce qui supprime toute circulaire. La deuxième, la prise à essai avec délai, consiste à tenter l'acquisition du second verrou sans attendre : en cas d'échec, rendre le premier, patienter un peu, puis reprendre depuis le début, ce qui introduit une attente bornée et jamais un blocage définitif. La troisième consiste à éliminer le second verrou en regroupant dans une seule fonction protégée tout le travail qui réclamait les deux ressources, au prix d'un verrou plus long mais d'un ordre unique.
+
+```cpp
+// Ordre impose : verrou 1 avant verrou 2, toujours, dans les deux taches
+SemaphoreHandle_t verrouI2C;
+SemaphoreHandle_t verrouEcran;
+
+void tacheCapteur(void *p) {
+  for (;;) {
+    xSemaphoreTake(verrouI2C, portMAX_DELAY);
+    Mesure m = lireBusI2C();
+
+    if (xSemaphoreTake(verrouEcran, pdMS_TO_TICKS(20)) == pdTRUE) {
+      afficherEtendu(m);
+      xSemaphoreGive(verrouEcran);      // rendu sur la branche de succes
+    }
+    xSemaphoreGive(verrouI2C);          // rendu, branche quoi qu'il arrive
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+}
+```
+
+## Inversion de priorité et famine
+
+Deux défauts d'ordre subtil viennent compléter le blocage mutuel, et ils ont la particularité de ne produire aucun message : l'inversion de priorité et la famine. Tous deux naissent de la même source, l'interaction entre les verrous et la hiérarchie des priorités, et tous deux se manifestent par des retards que rien n'explique en apparence. Un développeur qui ne les connaît pas passera des heures à chercher une erreur d'algorithme dans un code dont l'algorithme est parfait.
+
+L'inversion de priorité se produit quand une tâche de basse priorité détient un verrou réclamé par une tâche de haute priorité, pendant qu'une tâche de priorité intermédiaire, elle, tourne librement. La tâche haute attend la basse, mais la basse ne reçoit plus le processeur puisque l'intermédiaire est prioritaire par rapport à elle : la haute est donc retardée par une tâche qui n'a aucun lien avec elle. Le cas est devenu célèbre pour avoir immobilisé une sonde martienne jusqu'à ce que le verrou soit doté d'héritage de priorité. FreeRTOS applique exactement cette correction : quand une tâche haute attend un mutex détenu par une tâche basse, la priorité de cette dernière est temporairement élevée au niveau de celle qui attend, le temps de rendre le verrou.
+
+La famine, ou accaparement, est le phénomène inverse : une tâche de priorité haute qui ne se met jamais en attente empêche toute tâche inférieure de tourner. Si votre tâche réseau, prioritaire, boucle sans jamais appeler de vTaskDelay ni d'attente sur file, la mesure et l'affichage ne se réveilleront jamais, quelles que soient leurs propres priorités. Le remède est structurel : chaque tâche doit céder la main à intervalle régulier, et les tâches de même importance doivent partager une priorité commune pour bénéficier du partage round-robin.
+
+| Phénomène | Cause | Symptôme | Parade |
+|---|---|---|---|
+| Inversion de priorité | Verrou détenu en bas, réclamé en haut | Tâche haute retardée sans raison | Mutex à héritage de priorité |
+| Famine | Tâche haute qui ne dort jamais | Tâches basses figées en permanence | Attente obligatoire à chaque cycle |
+| Blocage non borné | Attente portMAX_DELAY sur ressource externe | Gel au moindre incident | Délai maximum systématique |
+| Contention excessive | Trop de tâches sur une même ressource | Performances dégradées, pas de panne | Regrouper le travail, élargir la ressource |
+
+Le bon réflexe consiste à faire coïncider deux disciplines. D'une part, réserver les priorités élevées aux tâches qui doivent répondre vite et qui attendent peu ; d'autre part, exiger que toute attente soit bornée et que tout verrou soit tenu le moins longtemps possible. Appliqué à notre station, ce principe donne une configuration verrouillable : la tâche capteur, prioritaire, prend le verrou du bus pour la durée d'une transaction de quelques dizaines de microsecondes et le rend immédiatement ; la tâche réseau, la plus lente, ne prend jamais de verrou de capteur, puisqu'elle reçoit ses données par copie dans une file.
+
+Ces deux défauts se cherchent avec des mesures, pas avec des relectures. Pour la famine, imprimez le compteur de cycles de chaque tâche pendant quelques secondes : une tâche qui absorbe cent pour cent du temps disponible pendant que ses voisines n'avancent pas est démasquée immédiatement. Pour l'inversion, relevez les durées maximales de réponse de la tâche prioritaire et comparez-les à leur moyenne : un écart d'un facteur dix, sans changement de charge, signale presque toujours un verrou disputé par une tâche de rang inférieur. Ces deux mesures coûtent quelques lignes de code et vous évitent des journées entières de conjectures sur un objet qui, lui, ne dit rien.
+
+```cpp
+// Prise bornee : un verrou jamais conserve au-dela du delai admis
+bool afficherAvecDelai(const Mesure &m) {
+  if (xSemaphoreTake(verrouEcran, pdMS_TO_TICKS(30)) != pdTRUE) {
+    compteurAffichagesSauts++;     // on saute une image, on ne bloque pas
+    return false;
+  }
+  dessinerEcran(m);
+  xSemaphoreGive(verrouEcran);
+  return true;
+}
+```
+
+## Partager des données sans les corrompre
+
+Avant même d'introduire verrou et file, il faut comprendre ce qui, dans un partage, pose réellement problème. Une écriture sur une variable de 32 bits alignée est atomique sur l'ESP32 : personne ne peut l'interrompre au milieu. Le danger commence avec une donnée composée, un structure de plusieurs champs, un compteur augmenté d'une unité, un entier de 64 bits ou une valeur écrite pendant qu'une autre tâche la lit. Dans ces cas, il est parfaitement possible d'observer un état mixte, une température du nouveau couple associée à l'horodatage de l'ancien, et ces valeurs impossibles traversent alors votre chaîne de traitement sans être jamais détectées.
+
+Le mot-clé volatile ne corrige rien de tout cela. Il empêche uniquement le compilateur de mettre en cache une variable qu'il croit inchangée, ce qui est indispensable pour un drapeau posé par une interruption, mais qui ne crée ni atomicité ni ordre d'accès. Une variable volatile partagée reste parfaitement corruptible ; elle ne fait que garantir que la lecture verra bien la dernière valeur écrite, à un instant que vous ignorez. C'est l'une des confusions les plus répandues, et elle donne un faux sentiment de sécurité au moment précis où il faudrait être le plus strict.
+
+Quand la donnée est effectivement composée et doit être lue de manière cohérente, deux solutions s'offrent à vous. La première consiste à placer la lecture et l'écriture dans une section critique, un court bloc pendant lequel les interruptions et les changements de contexte sont suspendus : l'ensemble est perçu comme indivisible. La seconde, souvent préférable, consiste à éviter le partage en envoyant une copie, exactement ce que fait la file de messages. Le choix se formule ainsi : si vous pouvez copier, copiez ; si vous devez partager, protégez le plus brièvement possible.
+
+| Type de donnée | Accès concurrent toléré | Protection nécessaire |
+|---|---|---|
+| Octet ou entier 32 bits aligné, un seul écrivain | Oui, pour la lecture seule | Aucune, si personne ne l'agrège |
+| Structure de plusieurs champs | Non | Section critique ou copie par file |
+| Compteur incrémenté par plusieurs tâches | Non | Section critique, opération atomique |
+| Drapeau posé par interruption, lu par tâche | Oui | volatile, plus une sémantique claire |
+| Chaîne ou tableau variable | Non | Verrou ou possession exclusive |
+
+Le listing suivant montre d'abord le défaut, puis sa correction. Dans la version fautive, deux tâches incrémentent le même compteur : l'une peut lire la valeur, être interrompue, et se faire devancer par l'autre, perdant une unité. La version corrigée enferme l'opération dans une section critique d'une durée microscopique, ce qui la rend indivisible sans jamais suspendre longtemps le système.
+
+```cpp
+// Faillible : increment non atomique sur deux taches
+uint32_t compteurMesures = 0;
+compteurMesures++;          // lecture, addition, ecriture : trois gestes
+
+// Correct : section courte et indivisible
+portMUX_TYPE verrouCompteur = portMUX_INITIALIZER_UNLOCKED;
+
+void incrementerCompteur() {
+  portENTER_CRITICAL(&verrouCompteur);
+  compteurMesures++;
+  portEXIT_CRITICAL(&verrouCompteur);
+}
+```
+
+Une dernière discipline complète ces mécanismes : la propriété des données. Dans un firmware bien découpé, chaque donnée a un unique propriétaire, la tâche qui la produit, et les autres ne l'obtiennent que par copie. Cette règle élimine une grande partie des verrous avant même qu'ils ne soient nécessaires, elle rend le débogage tracable, puisqu'un seul endroit écrit, et elle s'aligne sur ce que vous avez déjà appris : la file transporte des copies, l'afficheur affiche sa copie, le réseau publie la sienne.

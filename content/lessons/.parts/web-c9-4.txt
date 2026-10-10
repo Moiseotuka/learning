@@ -1,0 +1,132 @@
+## Mini-projet guidé : le panneau de l'atelier
+
+L'espace organisateur du site est l'endroit où tout se rassemble : la session doit rester visible dans le bandeau, la liste des inscrits doit se filtrer sans rechargement, et la page doit rester fluide quand plusieurs centaines de lignes sont affichées. Le projet se déroule en trois temps, dans cet ordre obligatoire : d'abord extraire le chargement dans un hook, ensuite partager la session par le contexte, enfin mesurer et ne corriger que ce que le profiler désigne. Chaque étape se vérifie avant de passer à la suivante, parce qu'une correction appliquée sur une base instable ne prouve rien.
+
+Premier temps, le chargement. Le panneau appelle useInscriptions avec l'adresse de la ressource et n'écrit aucun état local de requête. Le filtre, lui, reste strictement local : il ne sert qu'à cet écran, il change à chaque frappe et il n'a donc aucune raison de vivre dans un contexte partout lu. Cette séparation — donnée partagée dans le hook, saisie locale dans le composant — est la décision d'architecture la plus importante du projet, et elle règle à elle seule la moitié des problèmes de rendu.
+
+```jsx
+function PanneauInscrits() {
+  const session = useSession();
+  const { statut, liste, erreur, recharger } = useInscriptions("/api/inscrits");
+  const [requete, setRequete] = useState("");
+
+  const visibles = liste.filter((i) =>
+    i.nom.toLowerCase().includes(requete.trim().toLowerCase()),
+  );
+
+  if (statut === "chargement") return <p>Chargement…</p>;
+  if (statut === "erreur")
+    return <p role="alert">{erreur} <button onClick={recharger}>Réessayer</button></p>;
+
+  return (
+    <section>
+      <h2>Inscrits ({visibles.length})</h2>
+      <p>Connecté en tant que {session.nom}</p>
+      <input
+        value={requete}
+        onChange={(e) => setRequete(e.target.value)}
+        placeholder="Rechercher un inscrit"
+      />
+      <ul>
+        {visibles.map((inscrit) => (
+          <LigneInscrit key={inscrit.id} inscrit={inscrit} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+```
+
+Deuxième temps, la session. Elle est fournie au sommet de l'application par un fournisseur dont la valeur ne contient que des données stables ; le panneau la lit par le hook useSession et ignore d'où elle vient. Vérifiez immédiatement les deux comportements attendus : déconnectez-vous, l'écran doit basculer vers le message de reprise plutôt que d'afficher undefined dans la console ; reconnectez-vous, seule la ligne concernée doit changer de texte, sans que la liste se recharge pour autant. Si la liste se recharge, c'est que la session déclenche l'effet de données, donc le tableau des dépendances contient une valeur qui change à chaque rendu.
+
+Le balisage de l'écran suit la même discipline. Le champ de recherche n'a ni état global ni contexte : il écrit dans un useState local, et le filtrage s'effectue au rendu sur la liste déjà chargée, ce qui convient tant que le volume reste raisonnable. Au-delà de quelques milliers d'entrées, le filtrage déplacera côté serveur, avec la requête dans l'adresse pour que le lien reste partageable — le changement se fera alors dans l'argument du hook, et l'effet repartira tout seul. Anticipez cette évolution dans le code en gardant l'adresse de la ressource unique : c'est elle qui porte les paramètres, pas le composant.
+
+Troisième temps, la mesure. Enveloppez le panneau dans le composant de profilage, enregistrez une interaction de filtrage et relevez deux chiffres : la durée du commit et le nombre de composants rendus. Notez-les, puis appliquez la mémoïsation à la ligne de liste — React.memo sur LigneInscrit — et stabilisez la fonction de suppression avec useCallback. Relancez l'enregistrement dans des conditions identiques. Si le nombre de lignes rendues baisse et que le temps suit, la correction est justifiée et vous en disposez la preuve ; si rien ne bouge, c'est que la prop change encore d'identité, et le profiler vous montrera laquelle.
+
+```jsx
+const mesures = [];
+
+function relever(id, phase, duree) {
+  mesures.push({ id, phase, duree, horodatage: Date.now() });
+}
+
+function PanneauProfile() {
+  return (
+    <Profiler id="PanneauInscrits" onRender={relever}>
+      <Panneau />
+    </Profiler>
+  );
+}
+```
+
+Ce petit collecteur suffit à comparer deux sessions de mesure : gardez les cinq dernières valeurs, en écartez la première, qui paie le réchauffement, et retenez la médiane. Une mesure prise une seule fois ne prouve rien, parce que la première exécution charge les modules, remplit les caches et paie le travail de mise en place. Notez aussi la phase associée à chaque relevé : un rendu de mise en place et un rendu de mise à jour n'ont pas le même coût, et comparer l'un à l'autre fausserait le diagnostic.
+
+Le tableau de vérification finale reprend les critères du chapitre. Chaque ligne doit pouvoir être cochée sur une version de production, pas seulement en développement.
+
+| Vérification attendue | Geste qui la prouve |
+|---|---|
+| Quatre états de la liste affichés | Couper le service, vider la ressource, recharger, réussir |
+| Aucune requête résiduelle | Naviguer pendant le chargement, regarder la console |
+| Session lue sans prop drilling | Compter les niveaux de propriétés entre la racine et le panneau |
+| Filtre local et non global | Déplacer la souris hors du champ et compter les rendus du bandeau |
+| Mémoïsation justifiée | Comparer deux captures du profiler avant et après |
+| Hooks appelés dans le même ordre | Supprimer une donnée et chercher une erreur d'ordre dans la console |
+
+Une dernière habitude clôt le projet : la note de refactoring. En trois lignes, écrivez ce qui a été extrait, ce qui a été mesuré et ce qui a été laissé tel quel, avec la raison. Cette note est ce qui distingue une optimisation d'un changement heureux : elle permet à votre collègue, dans trois mois, de savoir pourquoi LigneInscrit est mémoïsée et pourquoi le filtre ne l'est pas. Sans elle, la prochaine personne appliquera une mémoïsation part par réflexe, et le code perdra en clarté ce qu'il a gagné en vitesse.
+
+## À retenir
+
+- Un hook personnalisé est une fonction nommée use qui regroupe état, effets et gestionnaires pour les partager entre écrans.
+- Une fonction sans hook reste une fonction classique : elle appartient dans un module d'utilitaires, pas dans le dossier des hooks.
+- Un hook s'appelle au niveau supérieur, jamais dans une condition, une boucle, un retour anticipé ou un gestionnaire d'événement.
+- React mémorise les hooks dans une liste indexée par ordre d'appel : c'est l'ordre qui compte, pas le nom.
+- Le préfixe use déclenche la vérification automatique des règles ; sans lui, plus de contrôle ni de signal d'intention.
+- Le retour anticipé reste permis après le dernier hook ; au besoin, scindez le composant plutôt que de sauter un appel.
+- Un comportement qui doit être partagé trois fois se déplace dans un hook ; un comportement propre à un écran y reste.
+- La forme de retour d'un hook est une API : un objet nommé évolue sans casser les appels existants.
+- Un hook de données expose quatre états — repos, chargement, succès, erreur — et annule toujours sa requête au démontage.
+- Un hook de formulaire reçoit la validation, jamais le contenu métier : la règle métier vit dans une fonction pure.
+- Un contexte transporte une valeur commune sans la faire transiter de composant en composant.
+- Le contexte se crée hors du composant, s'expose par un fournisseur et se lit par un hook qui vérifie sa présence.
+- Découpez le contexte par préoccupation : ce qui change ensemble se regroupe, ce qui change à des rythmes différents se sépare.
+- La valeur fournie doit garder la même référence : un objet reconstruit à chaque rendu redessine tous les lecteurs.
+- Sortez du contexte ce qui ne sert qu'à un écran ; rapprochez l'état de celui qui l'utilise avant de le partager.
+- React.memo compare les props et saute un rendu ; il ne sert que si les props sont réellement stables.
+- useMemo conserve un calcul coûteux, useCallback l'identité d'une fonction ; aucun des deux n'accélère par lui-même.
+- La mémoïsation est une réponse à une mesure, jamais une étape obligatoire d'écriture.
+- Le profiler distingue quatre raisons de rendu : prop changée, état changé, contexte changé, parent rendu.
+- Mesurez en développement pour localiser, mesurez en production pour conclure.
+
+## Erreurs fréquentes
+
+- Piège : appeler un hook dans une condition parce que la donnée n'existe pas toujours. Correction : déclarez le hook inconditionnellement et déplacez la décision dans le corps du rendu ou de l'effet.
+- Piège : écrire un return anticipé avant les hooks, puis observer un état qui saute d'un rendu à l'autre. Correction : regroupez tous les appels en tête de composant et testez ensuite.
+- Piège : renommer un hook sans le préfixe use et l'appeler depuis un gestionnaire d'événement. Correction : respectez la convention, elle porte la vérification automatique et l'intention de lecture.
+- Piège : extraire dès le premier écran, en anticipant une généralité qui ne viendra jamais. Correction : attendez la deuxième ou la troisième répétition du comportement.
+- Piège : oublier l'annulation d'une requête et laisser une réponse tardive écraser une donnée récente. Correction : annulez avec un contrôleur et ignorez explicitement l'erreur d'annulation.
+- Piège : construire un objet de contexte neuf à chaque rendu du fournisseur. Correction : mémorisez un seul objet, fonctions comprises, et vérifiez chaque route d'accès à la valeur.
+- Piège : ranger un filtre qui change à chaque frappe dans le contexte partagé. Correction : gardez-le local ou dans un contexte dédié à un seul écran.
+- Piège : ajouter React.memo sans stabiliser les props du parent. Correction : stabilisez d'abord les props, puis mesurez l'enveloppe ; sinon vous payez la comparaison pour rien.
+- Piège : mémoïser des calculs bon marché par réflexe. Correction : ouvrez le profiler, cherchez un calcul dominant, et n'optimisez que celui-là.
+- Piège : conclure à l'inutilité de la mémoïsation sans avoir comparé deux mesures identiques. Correction : enregistrez avant, corrigez, enregistrez dans les mêmes conditions.
+- Piège : lire des durées de développement comme si elles décrivaient la production. Correction : localisez en développement, chiffrez sur un build de production.
+- Piège : ignorer la raison d'un rendu parce que le rendu paraît normal. Correction : demandez-la au profiler : prop, état, contexte ou parent.
+- Piège : ne laisser aucune trace de ce qui a été mesuré et corrigé. Correction : annotez le code ou la fiche de tâche avec le chiffre avant et après.
+
+## Pour aller plus loin
+
+La documentation officielle de React reste la première adresse, et elle a l'avantage d'être écrite par les auteurs de la bibliothèque. Les pages consacrées aux règles des hooks listent les cas interdits avec des exemples de code faux et leur correction ; la page sur votre premier hook personnalisé détaille la convention de nommage et les motifs d'extraction. Les guides de rendu expliquent quand React décide de redessiner un composant et comment la mémoïsation intervient dans cette décision. On y trouve aussi la référence complète du composant de profilage, avec le sens exact de chaque champ remis au rappel de rendu. Adresse de départ : https://react.dev — suivez les guides avant de plonger dans la référence, la lecture sera plus efficace une fois le projet écrit.
+
+L'extension de développement du navigateur mérite une installation à part entière. Elle ajoute un onglet de composants pour explorer l'arborescence et ses propriétés, un onglet de profiler pour les enregistrements, et le repérage des mises à jour qui rend visibles les composants qui se redessinent. La page https://react.dev/learn/react-developer-tools décrit l'installation et les raccourcis utiles. Prenez le réflexe de l'ouvrir dès qu'un écran ralentit, avant même d'écrire un commentaire dans le code : l'observation d'une minute vous évitera souvent une heure de modification à l'aveugle.
+
+Côté vérification automatique, l'extension ESLint dédiée aux hooks impose les deux règles du chapitre dans votre éditeur et votre intégration continue ; elle est distribuée sous le nom eslint-plugin-react-hooks et s'ajoute à la configuration existante en une ligne. Elle signale également les dépendances manquantes dans les tableaux d'effets, ce qui est la seconde cause d'bugs silencieux après l'ordre des appels. Enfin, pour les notions de test, la documentation de la bibliothèque de tests React décrit le rendu de hook, l'attente d'une promesse et le nettoyage entre deux tests ; gardez ces pages sous la main au moment où vous écrirez les tests du formulaire partagé.
+
+La mesure de la performance du web, elle, se documente sur https://web.dev, dont les guides distinguent clairement ce qui relève du réseau et du fichier livré, ce qui relève du traitement JavaScript et ce qui relève du rendu — les trois domaines que ce chapitre a séparés. Quand votre panneau deviendra lent sur un poste réel et plus seulement sur le vôtre, cherchez d'abord la part qui vient du script exécuté, puis la part qui vient du nombre de composants redessinés : la première se réduit en réduisant le poids livré, la seconde en réduisant les rendus, et les remèdes n'ont rien à voir. La référence de la plateforme, https://developer.mozilla.org, reste enfin l'endroit où vérifier le comportement d'une API du navigateur — formats de date, stockage local, observateur d'éléments — avant de l'envelopper dans un hook.
+
+## Et maintenant : les prochaines étapes
+
+Vous disposez des trois leviers qui séparent un code React qui marche d'un code React que l'on peut maintenir. Le hook personnalisé regroupe un comportement et en fait un contrat testable ; le contexte distribue une valeur commune sans la faire transiter par les étages ; la mémoïsation, encadrée par la mesure, supprime le travail que personne ne demandait. Aucune de ces trois techniques n'est spectaculaire prises séparément, et c'est précisément leur combinaison qui donne à une application l'impression de ne jamais ralentir alors que ses écrans se multiplient.
+
+L'exercice qui accompagne ce chapitre vous demande d'appliquer la méthode complète sur le panneau de l'atelier : extraire le chargement, partager la session, stabiliser la valeur du contexte, mémoïsier la ligne de liste, puis produire la mesure avant et après. Le livrable attendu n'est pas seulement le code : il comprend la note de refactoring où vous décrivez ce que le profiler a montré, ce que vous avez corrigé et ce que vous avez volontairement laissé. Le quiz de quatre questions vérifie pour sa part les règles les plus souvent oubliées, celles que la console ne signale pas toujours.
+
+Une fois l'exercice rendu, deux chemins s'ouvrent. Le premier consiste à consolider : reprenez vos anciens écrans du parcours, cherchez-y une logique dupliquée, extrayez-la, mesurez avant et après, et jetez la mémoïsation qui ne change rien. Le second consiste à élargir : la même méthode s'applique à une liste virtualisée, à un cache de données partagé entre écrans ou à une préférence utilisateur persistée. Dans les deux cas, gardez le réflexe que ce chapitre a voulu installer : une affirmation sur la performance se mesure, se corrige, puis se remesure — sinon, ce n'est qu'une opinion sur le code.

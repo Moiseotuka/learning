@@ -1,0 +1,163 @@
+## Pooling : réduire sans ajouter de paramètres
+
+Après une couche convolutive, la carte de caractéristiques reste aussi large que l'image d'entrée. Si vous enchaînez dix convolutions de 3 × 3, la surface ne cesse pas de rétrécir d'elle-même, mais le volume de calcul, lui, reste énorme : multiplier trente-deux cartes de 224 × 224 coûte cher en multiplications et en mémoire vive. C'est là qu'intervient le sous-échantillonnage, généralement appelé pooling, littéralement mise en commun. Il s'agit d'une opération qui réduit la hauteur et la largeur des cartes sans introduire le moindre paramètre entraînable, donc sans rien ajouter au risque de surapprentissage.
+
+La variante la plus courante est le max pooling de facteur 2 : on découpe la carte en carrés de 2 × 2 pixels et on ne garde, dans chaque carré, que la valeur maximale. La carte de 224 × 224 devient une carte de 112 × 112, soit quatre fois moins d'éléments à traiter par la couche suivante. Aucune multiplication n'a lieu, aucun poids n'est appris : l'opération est purement directionnelle. C'est précisément ce qui la rend sûre. Là où une couche dense ajoute des dizaines de millions de paramètres, le pooling ajoute zéro, et il réduit au passage le nombre d'opérations de toutes les couches qui suivent.
+
+Deux effets se combinent donc : économie et tolérance. L'économie, on vient de la voir. La tolérance tient à la règle du maximum : si la caractéristique détectée, par exemple une arête vive, se déplace de quelques pixels, elle active presque toujours la même cellule de sortie, puisque seule la plus forte valeur compte à l'intérieur du carré. Le réseau devient ainsi insensible aux micros-décalages, ce qui équivaut à une petite invariance par translation. Rappelez-vous l'objectif du chapitre : reconnaître un défaut qu'il faut détecter où qu'il soit sur la pièce. Le pooling est un des mécanismes qui rend ce vœu réalisable sans multiplier les exemples d'entraînement.
+
+Le maximum n'est pas le seul choix. L'average pooling conserve la moyenne du carré, ce qui lisse la carte et convient mieux aux zones de réponse diffuse ; le global average pooling, lui, résume toute une carte en une seule valeur, ce qui remplace avantageusement les grandes couches denses de sortie. C'est ce dernier qui a tué les couches de 400 millions de poids des premières architectures : en calculant une moyenne par carte, on obtient directement un vecteur de taille égale au nombre de filtres, prêt pour la couche de classification, avec une dizaine de fois moins de paramètres. La règle empirique est la suivante : max pooling pour les cartes de caractéristiques intermédiaires, global average pooling pour condenser avant la sortie.
+
+Il existe un coût, et il est proportionnel à l'usage que vous faites des petits détails. Chaque pooling de facteur 2 divise par deux la résolution : après trois étapes, une image de 224 pixels est réduite à 28, et un défaut de quatre pixels de large n'existe plus nulle part dans la représentation finale. Pour des objets grossiers — un chat, une feuille malade, une silhouette —, cette perte est sans conséquence. Pour un éclat de deux pixels sur une pièce métallique, elle est fatale. Avant d'ajouter un pooling, demandez-vous toujours si la caractéristique qui décide de la classe survit à la réduction ; sinon, réduisez la profondeur, utilisez un pas de convolution plus tardif, ou conservez la résolution plus longtemps.
+
+Le tableau suivant compare les pratiques de réduction que vous rencontrerez.
+
+| Méthode | Ce qu'elle conserve | Paramètres | Effet sur la résolution | Emploi typique |
+|---|---|---|---|---|
+| Max pooling 2 × 2 | La réponse la plus forte | Aucun | Divise par deux | Blocs convolutifs intermédiaires |
+| Average pooling 2 × 2 | La moyenne du bloc | Aucun | Divise par deux | Cartes à réponse diffuse |
+| Global average pooling | Une moyenne par carte | Aucun | Réduit à 1 × 1 | Juste avant la couche de sortie |
+| Convolution à pas 2 | Une valeur calculée | Oui | Divise par deux | Remplace le pooling, gain net |
+
+Le bloc ci-dessous implémente le max pooling à la main, exactement comme pour la convolution : aucune bibliothèque, trois boucles, et la certitude de savoir ce qui se passe dans la couche que vous appelez sans y penser.
+
+```python
+def max_pooling(carte, facteur=2):
+    hauteur = len(carte)
+    largeur = len(carte[0])
+    sortie = []
+    for y in range(0, hauteur, facteur):
+        ligne = []
+        for x in range(0, largeur, facteur):
+            bloc = [
+                carte[y + i][x + j]
+                for i in range(facteur)
+                for j in range(facteur)
+                if y + i < hauteur and x + j < largeur
+            ]
+            ligne.append(max(bloc))
+        sortie.append(ligne)
+    return sortie
+
+
+carte = [
+    [0.1, 0.9, 0.3, 0.2],
+    [0.8, 0.4, 0.7, 0.1],
+    [0.5, 0.2, 0.6, 0.4],
+    [0.3, 0.1, 0.9, 0.8],
+]
+reduite = max_pooling(carte)
+for ligne in reduite:
+    print(ligne)
+print("dimension :", len(carte), "->", len(reduite))
+```
+
+La carte de 4 × 4 devient une carte de 2 × 2 en conservant, par quadrant, la réaction la plus forte. Si vous modifiez une valeur faible sans toucher au maximum du quadrant, la sortie ne change pas du tout : vous venez de constater de visu l'insensibilité aux petites variations dont parlait le paragraphe précédent.
+
+## Anatomie d'un réseau convolutif, couche par couche
+
+Un réseau convolutif moderne suit toujours le même schéma directeur : des blocs alternant convolution, fonction d'activation et réduction de résolution, suivis d'une étape de condensation, puis d'une couche de décision. Dans chaque bloc, la convolution extrait des caractéristiques, la fonction d'activation introduit la non-linéarité qui manque à une simple somme pondérée, et le pooling ou le pas supérieur compresse. Le bloc terminal, lui, transforme les cartes de caractéristiques en vecteur puis en probabilités. Si vous retenez une seule image mentale de ce chapitre, que ce soit celle-ci.
+
+L'activation mérite une phrase à elle seule. Les premiers réseaux utilisaient la sigmoïde, qui sature aux deux extrémités et ralentit l'apprentissage dès que les entrées s'éloignent de zéro. La fonction relu, définie par le maximum entre zéro et l'entrée, ne sature pas dans le sens positif, coûte une comparaison au lieu d'une exponentielle et laisse passer le gradient sans l'écraser. Ses défauts — neurones qui peuvent mourir définitivement si leur entrée reste négative — ont produit des variantes comme elu ou leaky relu, mais relu reste le défaut raisonnable. Une activation non linéaire entre deux convolutions est indispensable : sans elle, empiler dix convolutions équivaut mathématiquement à une seule, et la profondeur n'apporterait rien.
+
+Deux couches supplémentaires apparaissent presque toujours dans les blocs modernes, et il faut savoir ce qu'elles font. La normalisation par lot mesure, pour chaque canal, la moyenne et l'écart-type du lot en cours, puis replace les activations autour de zéro avec une échelle apprise ; elle stabilise l'entraînement, autorise des taux d'apprentissage plus élevés et tient lieu de léger effet régulateur. Le dropout met aléatoirement une fraction des sorties à zéro pendant l'entraînement, puis se retire entièrement à l'inférence : il force le réseau à ne pas dépendre d'un seul neurone. Retenez une conséquence pratique, utile plus loin : la normalisation par lot se comporte différemment selon qu'elle est en mode entraînement ou en mode inférence, et c'est précisément ce détail qui pose problème lorsqu'on gèle un modèle préentraîné.
+
+La profondeur, elle, construit une hiérarchie de sens. Les premières couches reconnaissent des bords, des dégradés et des textures simples, souvent quel que soit le sujet traité : elles se ressemblent d'un entraînement à l'autre. Les couches intermédiaires combinent ces éléments en motifs reconnaissables — un cercle, une grille, une fourche, le bord arrondi d'un rivet. Les couches profondes, enfin, répondent à des combinaisons abstraites qui n'ont de sens que pour la tâche : la présence d'une rayure, la texture d'une peinture écaillée, l'absence d'un composant. C'est cette composition progressive qui permet au réseau de généraliser : il ne mémorise pas des images, il apprend des briques réutilisables.
+
+L'histoire des architectures se lit comme une suite de réponses à des problèmes précis. Le tableau suivant résume les cinq modèles qu'il faut connaître de nom, parce que vous les verrez dans n'importe quelle documentation de transfert.
+
+| Modèle | Année | Couches avec poids | Paramètres | Entrée | Ce qu'il a apporté |
+|---|---|---|---|---|---|
+| LeNet-5 | 1998 | 7 | environ 60 000 | 32 × 32 | Le schéma convolutive, pooling puis dense |
+| AlexNet | 2012 | 8 | environ 61 millions | 227 × 227 | ReLU, dropout, entraînement sur GPU |
+| VGG-16 | 2014 | 16 | environ 138 millions | 224 × 224 | Empiler des filtres 3 × 3 petits et profonds |
+| ResNet-18 | 2015 | 18 | environ 11,7 millions | 224 × 224 | Connexions résiduelles, réseaux très profonds |
+| MobileNetV2 | 2018 | 53 | environ 3,4 millions | 224 × 224 | Convolution factorisée, léger, pour mobile |
+
+Deux leçons ressortent de ce tableau. La première est que les paramètres ne suivent pas la profondeur : ResNet-18 est plus profond que VGG-16 et possède douze fois moins de poids, parce qu'il a déplacé le calcul vers des convolutions peu coûteuses et supprimé les grandes couches denses. La seconde est que la taille d'entrée reste fixe à 224 × 224 depuis VGG, ce qui a standardisé les prétraitements et rendu possible le transfert d'un modèle à l'autre, sujet de la leçon suivante.
+
+Pour construire votre propre réseau, quelques heuristiques suffisent. Le nombre de filtres double généralement à chaque fois que l'on divise la résolution par deux, par exemple 16, 32, 64, 128, de sorte que le volume de calcul reste constant d'un bloc à l'autre. Le filtre de 3 × 3 est le standard, car il offre la plus bonne combinaison entre champ de vision et coût. La couche dense de sortie compte un neurone par classe, suivie d'une activation softmax. Enfin, la taille totale du modèle doit rester compatible avec vos données : un réseau de dix millions de paramètres entraîné sur six cents images surapprendra sans la moindre surprise.
+
+```python
+import tensorflow as tf
+
+modele = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(224, 224, 3)),
+    tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu"),
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(64, activation="relu"),
+    tf.keras.layers.Dropout(0.3),
+    tf.keras.layers.Dense(2, activation="softmax"),
+])
+
+modele.summary()
+```
+
+Exécutez ce bloc et lisez la colonne des paramètres : la majorité du poids du modèle se trouve dans la couche dense finale, et non dans les convolutions, précisément parce que le global average pooling a supprimé la couche aplatie qui, autrement, aurait englouti des dizaines de millions de poids. C'est l'effet que nous annoncions dans la section précédente, visible en une ligne de sortie.
+
+## Entraîner un classifieur en Keras : le pipeline complet
+
+L'entraînement d'un classifieur d'images diffère de celui d'un modèle tabulaire en un point principal : les données sont trop volumineuses pour tenir en mémoire. On ne charge donc jamais toutes les images ; on construit un flux qui lit les fichiers par lots, les décode, les redimensionne, les augmente éventuellement et les remplace dans un tenseur, juste à temps. En Keras, la fonction image_dataset_from_directory construit ce flux directement à partir de l'arborescence de dossiers, en appliquant le redimensionnement, en mélangeant le jeu d'entraînement et en préchargeant les lots dans la mémoire de l'accélérateur.
+
+La compilation fixe trois choix : l'optimiseur, la fonction de perte et les métriques suivies. Adam est l'optimiseur raisonnable par défaut, avec un taux d'apprentissage de 0,001 que vous réduirez si la perte oscille sans converger. Pour deux classes, la sortie softmax associée à l'entropie croisée binaire ou catégorielle fonctionne toutes deux ; pour des dizaines de classes, seule la version catégorielle convient, sauf si vous encodez les étiquettes en entiers, auquel cas vous utiliserez la variante sparse et dispenserez vos étiquettes d'être vectorsées. La métrique d'exactitude n'est qu'un indicateur de confort : c'est la perte de validation qui dira si le modèle apprend encore.
+
+Les rappels, ou callbacks, transforment un entraînement aveugle en expérience contrôlée. Le premier arrête l'entraînement quand la perte de validation cesse de s'améliorer, préservant ainsi les poids du meilleur passage — c'est l'arrêt anticipé du chapitre six, appliqué ici à chaque époque. Le second enregistre le meilleur modèle sur disque, de sorte qu'un entraînement trop long ne détruit pas le travail accompli. Le troisième réduit le taux d'apprentissage quand la perte se fige, ce qui permet souvent de décrocher une dernière amélioration. Ces trois rappels coûtent trois lignes et vous évitent de deviner le nombre d'époques.
+
+La déséquilibre des classes mérite une attention particulière en contrôle qualité, où il est fréquent d'avoir quatre cents pièces conformes pour cent vingt défectueuses. Un modèle qui prédit toujours conforme atteint déjà 77 % d'exactitude et n'a aucun intérêt industriel. Deux réponses existent : pondérer la perte en passant le dictionnaire class_weight à la méthode d'entraînement, ce qui rend une erreur sur la classe rare plus coûteuse qu'une erreur sur la classe commune, ou rééquilibrer le flux d'échantillonnage. La première est plus simple et se combine avec l'augmentation.
+
+Le script complet ci-dessous réunit tout ce qui précède : découpage des répertoires, flux d'images, modèle, compilation, rappels et entraînement. Adaptez les chemins et le nombre de classes, puis exécutez-le tel quel sur votre premier jeu de données.
+
+```python
+import tensorflow as tf
+
+# modele construit dans le bloc precedent de cette section
+chemin = "data/usine"
+jeu = tf.keras.utils.image_dataset_from_directory(
+    chemin,
+    validation_split=0.2,
+    subset="training",
+    seed=1337,
+    image_size=(224, 224),
+    batch_size=32,
+)
+validation = tf.keras.utils.image_dataset_from_directory(
+    chemin,
+    validation_split=0.2,
+    subset="validation",
+    seed=1337,
+    image_size=(224, 224),
+    batch_size=32,
+)
+noms = jeu.class_names
+jeu = jeu.map(lambda x, y: (x / 255.0, y))
+validation = validation.map(lambda x, y: (x / 255.0, y))
+
+poids = {0: 1.0, 1: 3.0}
+rappels = [
+    tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),
+    tf.keras.callbacks.ModelCheckpoint("meilleur.keras", save_best_only=True),
+    tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2),
+]
+
+modele.compile(
+    optimizer=tf.keras.optimizers.Adam(1e-3),
+    loss="sparse_categorical_crossentropy",
+    metrics=["accuracy"],
+)
+histoire = modele.fit(
+    jeu,
+    validation_data=validation,
+    epochs=40,
+    class_weight=poids,
+    callbacks=rappels,
+)
+```
+
+Lisez la sortie époque par époque, et non seulement la dernière ligne. Tant que la perte de validation descend avec la perte d'entraînement, le modèle apprend quelque chose de généralisable. Dès que la perte d'entraînement continue de chuter pendant que la perte de validation remonte, vous êtes face au surapprentissage, et le rappel d'arrêt anticipé vous a déjà rendu le meilleur des poids observés. Si les deux restent hautes et proches, le modèle n'apprend rien : réduisez alors sa taille ou augmentez le jeu. Ces deux diagnostics, appris au chapitre six, sont la base de toute lecture de courbes en vision.
+
+Deux disciplines complètent le script. La première est la reproductibilité : fixez la graine du générateur de mélange et, si votre environnement le permet, activez les modes de détermination, sinon deux exécutions emploieront des lots différents et vous attribuerez au hasard un gain qui n'existe pas. La seconde est la sévérité de l'évaluation : le jeu de test, découpé dès le départ dans un répertoire distinct, ne sert que dans la dernière ligne du travail, une seule fois, après le choix de l'architecture, du taux d'apprentissage et du nombre d'époques. Si vous consultez son score à chaque essai, il est devenu un jeu de validation, et votre rapport de fin de projet reposera sur une mesure faussée.
+

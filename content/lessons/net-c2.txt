@@ -1,0 +1,664 @@
+Bienvenue dans le deuxième chapitre du parcours Réseaux. Le chapitre précédent vous a appris à adresser les machines : masques, plages, sous-réseaux, passerelles. Celui-ci vous apprend à les relier. Un réseau plat, où tous les ports partagent le même domaine de broadcast, ne survit pas au contact du réel : les diffusions de découverte s'y multiplient, un seul défaut de câble peut y interrompre tout le service, le dépannage y relève de la devinette, et la sécurité y est totalement absente. Les trois mécanismes que nous allons étudier forment la réponse historique et toujours actuelle à ces problèmes. La commutation Ethernet construit des liens fiables entre adresses matérielles, les VLAN redécoupent le réseau en domaines de diffusion indépendants sans toucher à un seul câble, et ARP fait le pont invisible entre les adresses IP manipulées par les logiciels et les adresses MAC exigées par le matériel.
+
+À la fin de cette leçon, vous saurez faire des choses très concrètes. Vous décrirez la structure d'une trame Ethernet champ par champ et vous expliquerez pourquoi elle comporte une adresse de destination, une étiquette de protocole et une somme de contrôle. Vous lirez une table MAC de commutateur et vous saurez dire, pour chaque trame entrante, si elle sera transmise, filtrée ou inondée. Vous segmenterez un réseau en VLAN logiques, vous justifierez chaque frontière par un besoin réel (voix, invités, gestion, caméras) et vous configurerez un port d'accès et un trunk 802.1Q avec son VLAN natif. Vous décrirez le dialogue ARP complet, cache à l'appui, et vous reconnaîtrez un empoisonnement ARP à ses symptômes. Vous identifierez enfin les signes d'une tempête de broadcast et vous appliquerez les parades : limitation du domaine de diffusion, storm-control et arbre couvrant. Chaque compétence est illustrée par des commandes exécutables et par des schémas, puis l'ensemble s'assemble dans un exemple guidé : la configuration du commutateur d'accès du bâtiment B de la Médiathèque des Lilas.
+
+Le fil rouge reste celui du parcours : un commutateur cœur au local technique, un commutateur d'accès par bâtiment, des liaisons fibres en trunk entre eux, des postes publics, du Wi-Fi invité, des imprimantes, des caméras et de la téléphonie IP. Le plan de VLAN est déjà posé : 10 pour le public, 20 pour le Wi-Fi visiteurs, 30 pour les imprimantes, 40 pour les serveurs, 50 pour l'administration, 60 pour la gestion, 99 pour le VLAN natif des trunks, 210 pour les caméras et 220 pour la voix. Vous n'avez pas besoin de matériel coûteux pour pratiquer : Cisco Packet Tracer, GNS3, Containerlab ou une distribution logicielle comme FRRouillage suffisent. Si vous disposez d'un vieux commutateur en libre-service, branchez-y deux postes : les commandes de ce chapitre y fonctionnent presque à l'identique.
+
+Une recommandation sur la manière d'aborder ce cours. La commutation s'apprend en observant des trames, pas en récitant des définitions. À chaque bloc de commandes, ouvrez un terminal, exécutez-le, modifiez un paramètre et regardez ce qui change. Une table MAC qui se remplit, un compteur d'erreurs qui grimpe, un port qui bascule en état inactif : ces observations valent cent paragraphes. Gardez aussi un carnet de configuration : notez ce que vous avez tapé, ce que le commutateur a répondu, ce que vous avez corrigé. Ce carnet deviendra la base de votre mini-projet final. Nous commençons par la brique élémentaire, celle que vous manipulerez chaque fois que vous ouvrirez un analyseur de trames : la trame Ethernet.
+
+## La trame Ethernet : anatomie d'un message en couche 2
+
+Ethernet décrit deux choses à la fois : un ensemble de règles d'accès au support partagé et un format de paquet. Le format, c'est la trame, et c'est l'unité de transmission que vous verrez défiler dans Wireshark ou dans tcpdump. Une trame est produite par la carte réseau, transmise par le câble ou la fibre, reçue par le commutateur, puis délivrée à la carte du destinataire. Contrairement à ce que suggère l'habitude, une trame ne contient pas d'adresse IP : elle contient des adresses MAC de 48 bits, écrites en hexadécimal sous la forme 00:1a:2b:3c:4d:5e, et un champ d'étiquette qui indique au récepteur quel protocole de couche supérieure doit traiter le contenu. L'adresse IP, elle, est enfermée à l'intérieur du contenu et n'intervient que plus haut dans la pile.
+
+Le format normalisé par l'IEEE dans la famille 802.3 se lit de gauche à droite dans l'ordre suivant. Tout d'abord un préambule de sept octets de motifs alternés plus un octet de délimiteur de trame, qui servent à cadencer le récepteur. Puis l'adresse MAC de destination sur six octets, l'adresse MAC de source sur six octets, un champ EtherType de deux octets, la charge utile, enfin une somme de contrôle CRC sur quatre octets. Le schéma suivant résume la structure ; il est placé dans un bloc de code pour rester aligné quel que soit votre afficheur.
+
+```
+Préambule  Destination         Source            EtherType   Charge utile              FCS
+ 7 oct.      6 octets           6 octets          2 octets    46 à 1500 octets        4 octets
++--------+----------------+----------------+--------------+----------------------+---------+
+|101010..| 00:1a:2b:3c:4d | 00:1b:44:11:3a |    0x0800    |  datagramme IPv4     |  CRC32  |
++--------+----------------+----------------+--------------+----------------------+---------+
+                                    |               |
+                                    |               +-- protocole encapsulé
+                                    +-- adresse du destinataire sur le LAN
+```
+
+Le champ de destination est celui qui détermine le routage de la trame dans le réseau local. S'il contient FF:FF:FF:FF:FF:FF, la trame est une diffusion et chaque interface du réseau local doit la recevoir. Si le bit de poids fort du premier octet vaut 1, l'adresse est multidiffusion et seules les interfaces inscrites dans le groupe correspondant la traiteront. Dans tous les autres cas, il s'agit d'une diffusion classique, et le commutateur ne la transmettra que vers un seul port lorsqu'il connaîtra la destination. Le champ de source, lui, ne doit jamais être modifié en cours de route : c'est précisément la valeur que le commutateur mémorise pour apprendre sa table.
+
+L'adresse MAC est attribuée par le constructeur de la carte réseau. Les trois premiers octets constituent l'identificateur d'organisation, normalisé par l'IEEE, qui permet d'identifier la marque ; les trois suivants sont choisis librement par le fabricant. Ce découpage explique deux pratiques courantes. D'une part, une administration peut parfois réassigner une adresse locale en basculant le second bit du premier octet, ce qui est utile pour la confidentialité : les réseaux sans fil modernes changent d'adresse MAC à chaque connexion pour empêcher le pistage. D'autre part, rien n'empêche de forcer une adresse, à condition de respecter l'unicité sur le segment local, sous peine de conflit silencieux.
+
+Le champ EtherType annonce le protocole contenu dans la charge utile. Ce détail est capital pour l'analyse : c'est lui qui indique à l'analyseur s'il doit décoder une trame IPv4, IPv6 ou ARP. Les valeurs les plus fréquentes se retiennent vite, et le tableau suivant vous servira de référence dès vos premières captures.
+
+```table
+| Valeur | Protocole annoncé | Quand la voir |
+| --- | --- | --- |
+| 0x0800 | IPv4 | Trafic IP classique, HTTP, SSH, DNS en UDP |
+| 0x86DD | IPv6 | Trafic IPv6, voisins en flux de lien local |
+| 0x0806 | ARP | Requêtes et réponses de résolution d'adresses |
+| 0x8100 | 802.1Q | Trame étiquetée, port trunk entre deux commutateurs |
+| 0x8847 | MPLS | Liaisons opérateur, à peu jamais dans un réseau local |
+| 0x88CC | LLDP | Annonces de voisinage entre équipements actifs |
+```
+
+
+Le champ de données porte la charge utile, typiquement de 46 à 1500 octets. La borne haute correspond au MTU de 1500 octets : au-delà, la couche IP fragmente ou le protocole négocie une taille de paquet réduite. La borne basse existe pour une raison historique précise : en demi-duplex, une station doit pouvoir détecter une collision pendant l'émission, ce qui suppose une trame d'au moins 64 octets sur un segment de longueur normalisée. Si l'application produit moins d'octets, la carte ajoute automatiquement du bourrage. De là viennent les trames anormalement petites repérées par les analyseurs, ainsi que les trames géantes dites jumbo, souvent réglées à 9000 octets sur les liens de données centre de données, jamais utilisées sur un LAN d'accès sans accord explicite des deux extrémités.
+
+Les quatre derniers octets portent une somme de contrôle CRC32 calculée sur l'ensemble de la trame. Le récepteur recalcule la somme et compare : en cas d'écart, la trame est détruite silencieusement et l'erreur est comptabilisée. Un taux d'erreur non nul signale presque toujours un problème physique, câble dégradé, connecteur sale, coupleur défectueux ou longueur dépassée. Notez une conséquence importante : Ethernet ne rétransmet rien. Une trame corrompue est perdue, et c'est au protocole de transport, TCP, de déclencher une nouvelle émission. La couche 2 travaille en mode best effort, sans accusé de réception ni numérotation.
+
+Pour observer tout cela en conditions réelles, deux outils suffisent. Sur une machine Linux, la commande suivante capture les trames avec leur en-tête Ethernet et n'affiche que le trafic ARP, ce qui vous montrera immédiatement les échanges de résolution décrits plus loin.
+
+```bash
+# capture des en-têtes Ethernet avec horodatage précis
+sudo tcpdump -i eth0 -e -nn arp
+
+# même chose en limitant à 40 octets affichés par trame
+sudo tcpdump -i eth0 -e -nn -s 40 'ether proto 0x0806'
+```
+
+L'option -e fait apparaître les adresses MAC source et destination, l'option -n évite les résolutions DNS qui faussent les mesures, et l'option -s limite la taille enregistrée pour alléger la sortie. Dans Wireshark, le même filtrage s'écrit avec l'expression ether proto 0x0806, et un clic sur un champ de l'arborescence colore le motif correspondant dans la trame hexadécimale. Prenez l'habitude de repérer systématiquement quatre éléments dans chaque trame : d'où elle vient, où elle va, quel protocole elle porte, et si sa somme de contrôle est valide.
+
+Un dernier point relie cette section à la précédente du parcours. L'adresse IP est une adresse logique, attribuée par l'administrateur ou par un serveur, et elle change quand on change de réseau. L'adresse MAC est une adresse matérielle, gravée dans la carte, et elle ne change pas tant que l'on ne la forcing pas. Les deux coexistent dans une même communication, mais seul le commutateur sait lire la seconde. D'où la question centrale de ce chapitre : comment un programme qui ne connaît qu'une adresse IP parvient-il à produire une trame Ethernet correctement adressée ? La réponse s'appelle ARP, et nous y reviendrons après avoir compris ce que fait le commutateur de chaque trame qu'il reçoit.
+
+## Du hub au commutateur : l'apprentissage de la table MAC
+
+Le hub, ou répéteur multiport, est l'ancêtre du réseau local filaire. Il reçoit un signal sur un port et le régénère sur tous les autres, sans le moindre examen du contenu. Cette innocence a deux conséquences fatales. Premièrement, tous les ports forment un seul domaine de collision : si deux stations émettent en même temps, les signaux se superposent, la trame est détruite et une procédure d'attente aléatoire, le CSMA/CD, impose de recommencer plus tard. Deuxièmement, chaque trame, même destinée à une seule machine, consomme la bande passante de tous les autres ports. Le réseau partage donc une capacité unique, en demi-duplex, avec des performances qui s'effondrent dès que le trafic augmente. Cet équipement est aujourd'hui obsolète, mais il reste utile à connaître : il décrit exactement ce qui se passe quand un commutateur mal configuré, ou un pont logique, inonde ses ports.
+
+Le commutateur, lui, lit la trame. Il maintient en mémoire vive une table, dite table MAC ou table CAM pour contenu de la mémoire adressable par la recherche, qui associe une adresse MAC à un port d'entrée et à un VLAN. Cette table se remplit toute seule, sans intervention de l'administrateur. Le processus se déroule en quatre temps, et il vaut la peine de le suivre lentement. Le commutateur reçoit une trame sur le port 3, il lit l'adresse MAC de source, il constate que cette adresse n'est pas dans la table, il crée alors une entrée associant cette adresse au port 3 avec un horodatage. Ensuite seulement, il cherche l'adresse de destination : si elle est connue et située sur un autre port, il transmet la trame sur ce port seul ; si elle est absente, il inonde tous les autres ports du VLAN ; si elle se trouve sur le port 3, il filtre, c'est-à-dire il supprime la trame puisqu'elle est déjà au bon endroit.
+
+Le tableau comparatif suivant résume l'écart entre les deux générations d'équipements.
+
+```table
+| Critère | Hub | Commutateur |
+| --- | --- | --- |
+| Unité de traitement | Signal brut | Trame, avec adresses MAC |
+| Domaine de collision | Unique, tous les ports | Un domaine par port en full-duplex |
+| Domaine de broadcast | Unique | Un domaine par VLAN |
+| Transmission | Inondation systématique | Filtrage ou inondation ciblée |
+| Duplex | demi-duplex obligatoire | full-duplex négocié |
+| Table MAC | inexistante | apprentissage automatique, vieillissement paramétrable |
+| Diagnostique | quasi impossible | compteurs, journaux, table consultable |
+```
+
+
+Considérons un segment simple où deux postes, A et B, sont reliés au commutateur S1, dont la table est vide au démarrage. Lorsque A émet vers B, la trame arrive sur le port de A ; S1 apprend l'adresse de A, ne trouve pas celle de B et inonde le port de B. B répond, S1 apprend l'adresse de B, trouve A dans sa table et transmet en unicast direct. Toutes les communications suivantes entre A et B sont donc sélectives et n'occupent plus les autres ports. Le schéma ci-dessous montre ces deux phases, d'abord l'inondation puis le filtrage.
+
+```
+   Phase 1 : table vide, inondation          Phase 2 : table remplie, transmission directe
+
+      A ----+                                    A ----+
+            | [trame A->B inconnu]                   | === unicast vers B
+      +-----S1-----+                           +-----S1-----+
+            |                                    |    (aucun trafic
+      +-----+-----+                           +-----+-----+     sur les autres ports)
+      |     |     |                           |     |     |
+      B     C     D                           B     C     D
+
+   Table après échange :                     Table stable :
+   MAC A -> port 1, MAC B -> port 2          MAC A -> port 1, MAC B -> port 2
+```
+
+La table vieillit. Par défaut, une entrée reste active trois cents secondes ; passé ce délai, elle est purgée afin de libérer la mémoire et d'accommoder les déplacements de machines, notamment les portables qui changent de prise ou de réseau sans fil. Ce vieillissement a un revers : une table trop petite ou saturée force des inondations permanentes. Certaines attaques exploitent d'ailleurs ce mécanisme en émettant des milliers de trames à sources fabriquées, dans l'espoir de faire déborder la table et de transformer le commutateur en hub. La parade s'appelle port-security et fait l'objet d'une section dédiée plus loin.
+
+Quatre cas de figure résument le sort de toute trame entrante, et vous devez être capable de les énoncer avant de toucher à un équipement. Destination connue sur un autre port : transmission sélective. Destination inconnue : inondation dans le VLAN. Adresse de diffusion ou de multidiffusion : inondation dans le VLAN, sauf si l'espionnage IGMP a inscrit les ports dans le groupe. Enfin, trame dont la source est déjà associée au port d'entrée : filtrage, sans émission vers un autre port. À cela s'ajoute le rejet des trames dont la somme de contrôle est invalide et, sur un port en accès, le rejet des trames dont le VLAN déduit ne correspond pas à la configuration du port.
+
+La consultation de la table se fait avec une commande simple, et il est bon de l'exécuter avant et après un échange de trafic pour visualiser l'apprentissage.
+
+```ios
+core-sw# show mac address-table
+          Mac Address Table
+-------------------------------------------
+Vlan    Mac Address       Type        Ports
+----    -----------       --------    -----
+  10    001b.4411.3a01    DYNAMIC     Gi1/0/12
+  10    001a.2b3c.4d5e    DYNAMIC     Gi1/0/14
+  40    0025.90aa.bbcc    DYNAMIC     Gi1/0/31
+  60    0000.0c07.ac3c    DYNAMIC     Gi1/0/48
+Total Mac Addresses for this vlan: 4
+```
+
+Chaque ligne associe un VLAN, une adresse et un port. Le type DYNAMIC signale un apprentissage automatique ; le type STATIC provient d'une saisie manuelle, utilisée quand une adresse doit être impérativement restreinte à un port. Remarquez que deux adresses du VLAN 10 apparaissent sur des ports différents : c'est la preuve que le même domaine de diffusion regroupe des ports, pas des machines. Effacez la table avec clear mac address-table dynamic, faites pinguer deux postes, puis relancez la commande : les entrées réapparaîtront, preuve vivante de l'apprentissage.
+
+Le mode de transmission du commutateur mérite aussi votre attention, car il conditionne la latence et la fiabilité. En store-and-forward, le commutateur attend la réception complète de la trame, vérifie la somme de contrôle, puis la transmet : c'est le mode universel des équipements modernes, seul garanti d'une détection correcte des trames corrompues. En cut-through, il lit l'adresse de destination dès les six premiers octets et relaie immédiatement, ce qui réduit la latence mais propage les trames défectueuses. Un mode intermédiaire, fragment-free, attend les soixante-quatre premiers octets afin d'écarter les collisions. Pour un LAN d'accès, la différence de latence se compte en microsecondes, alors que la différence de fiabilité se compte en incidents évités : laissez le stockage-transmission par défaut.
+
+La négociation duplex constitue une source historique d'incidents. Si deux équipements se mettent d'accord sur le full-duplex d'un côté et restent en demi-duplex de l'autre, les collisions deviennent invisibles pour l'émetteur agressif et se traduisent par des truncations et des erreurs CRC fantômes. Le diagnostic consiste à comparer l'affichage des deux extrémités avec show interfaces et à forcer duplex et vitesse de façon identique si la négociation automatique échoue. Sur du fibre ou du cuivre gigabit, le full-duplex est de règle et la question disparaît.
+
+Enfin, retenons ce que le commutateur ne fait pas. Il ne limite pas les diffusions : une trame FF:FF:FF:FF:FF:FF part vers tous les ports du VLAN. Si tous les ports du réseau appartiennent au même VLAN, le domaine de diffusion est aussi vaste que le réseau, et chaque requête de découverte, chaque annonce de protocole de routage, chaque appel ARP est entendu par toutes les machines. Réduire ce domaine est la mission des VLAN. Avant d'arriver là, il faut cependant admettre une faiblesse structurelle d'Ethernet : aucune trame ne porte un compteur de durée de vie. Une trame diffusée dans une boucle physique ne meurt jamais, elle se multiplie. C'est le point de départ de la section sur les tempêtes de broadcast, mais commençons par la segmentation.
+
+Un VLAN, ou réseau local virtuel, découpe un commutateur en plusieurs domaines de diffusion indépendants. Concrètement, le matériel regroupe des ports logiquement : les ports d'un même VLAN se comportent comme s'ils étaient reliés à un commutateur distinct, tandis qu'aucune trame ne franchit la frontière sans l'aide d'un routeur ou d'un commutateur de couche 3. La segmentation devient donc un réglage logique, modifiable à distance, sans rien débrancher. C'est cette flexibilité qui a fait le succès du VLAN depuis les années 2000 : un service déménage, un projet se crée, un prestataire arrive, et l'on adapte le domaine de diffusion en modifiant quelques lignes de configuration au lieu de repasser les câbles au plafond.
+
+Les bénéfices sont concrets et mesurables. La sécurité gagne parce que les machines sensibles, caméras, serveurs, équipements de gestion, ne voient pas le trafic des invités. Les performances gagnent parce que les diffusions de découverte ne circulent plus sur tout le site : les annonces ARP, les appels de résolution de noms et les annonces de protocole de routage restent confinés. La gestion du trafic gagne parce que chaque VLAN correspond en général à un sous-réseau, lequel correspond à une politique de qualité de service, à une plage d'adresses et à des règles de filtrage. Enfin l'administration y gagne : les comptes rendus, les journaux et les alertes deviennent lisibles quand chaque domaine a un nom et une mission.
+
+Le plan de VLAN de notre médiathèque illustre la démarche. Chaque ligne associe un identifiant, une mission, un sous-réseau et les types de ports concernés. Gardez ce tableau sous la main : toutes les configurations de la suite s'y réfèrent.
+
+```table
+| VLAN | Mission | Sous-réseau | Ports types |
+| --- | --- | --- | --- |
+| 10 | Postes du public | 10.20.10.0/24 | Accès, un poste par port |
+| 20 | Wi-Fi visiteurs | 10.20.20.0/23 | Accès ou trunk vers point d'accès |
+| 30 | Imprimantes | 10.20.30.0/24 | Accès, filtrage strict |
+| 40 | Serveurs locaux | 10.20.40.0/26 | Accès, liaisons redondées |
+| 50 | Administration | 10.20.50.0/24 | Accès, contrôle renforcé |
+| 60 | Gestion des équipements | 10.20.60.0/26 | Accès, adresses fixes |
+| 99 | Natif des trunks | aucune | Aucun, réservé et vide |
+| 210 | Caméras IP | 10.20.210.0/24 | Accès, isolation stricte |
+| 220 | Téléphonie IP | 10.20.220.0/24 | Voice VLAN sur ports utilisateurs |
+```
+
+
+Le VLAN 1 mérite une attention particulière. Il est créé par défaut sur tous les commutateurs, il porte souvent le trafic de gestion, et il constitue la valeur par défaut du VLAN natif. C'est précisément pour cela qu'il ne doit jamais transporter de trafic utilisateur : toute erreur de configuration serait alors indétectable, et les attaques de type saut d'étiquette visent d'abord lui. La règle professionnelle consiste à migrer les usages vers un VLAN dédié, à laisser le VLAN 1 pour les besoins de protocole strictement internes, et à réserver un VLAN numéroté haut, souvent 99 ou 4094, au rôle de natif inutilisé.
+
+Créer et nommer des VLAN tient en quelques commandes. Le nom n'est pas cosmétique : il apparaît dans les tables de vérification et dans les journaux, et un nom explicite fait gagner un temps considérable lors d'un dépannage nocturne.
+
+```ios
+core-sw# configure terminal
+core-sw(config)# vlan 10
+core-sw(config-vlan)# name Publics
+core-sw(config)# vlan 20
+core-sw(config-vlan)# name WiFi-Visiteurs
+core-sw(config)# vlan 30
+core-sw(config-vlan)# name Imprimantes
+core-sw(config)# vlan 40
+core-sw(config-vlan)# name Serveurs
+core-sw(config)# vlan 60
+core-sw(config-vlan)# name Gestion
+core-sw(config)# vlan 99
+core-sw(config-vlan)# name Natif-Inutilise
+core-sw(config)# vlan 210
+core-sw(config-vlan)# name Cameras
+core-sw(config)# vlan 220
+core-sw(config-vlan)# name Telephonie
+```
+
+Une machine appartient à un VLAN de deux manières. La première, statique et majoritaire, consiste à affecter un port : la station qui se branche sur ce port rejoint le domaine, sans rien savoir de la configuration. La seconde, dynamique, repose sur des protocoles d'attribution comme le clustering de ports ou des mécanismes propriétaires, aujourd'hui rares car difficiles à auditer. L'affectation par port offre la prévisibilité dont l'administration a besoin : on sait d'avance quel équipement a le droit de se trouver dans quel domaine.
+
+```ios
+access-sw-b# configure terminal
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# description Postes publics VLAN 10
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 10
+access-sw-b(config)# interface range GigabitEthernet1/0/25 - 28
+access-sw-b(config-if-range)# description Imprimantes VLAN 30
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 30
+```
+
+Il reste à relier les VLAN entre eux et vers l'extérieur, car un poste du VLAN 10 doit pouvoir atteindre un serveur du VLAN 40. Deux architectures coexistent. Sur un routeur de couche 3, on utilise le principe dit du routeur sur une baguette : une seule interface physique, plusieurs sous-interfaces virtuelles, chacune associée à un VLAN. Sur un commutateur de couche 3, on crée une interface virtuelle par VLAN, appelée SVI, et l'équipement fait le routage en interne, à la vitesse de la mémoire. La seconde solution est aujourd'hui la norme dans un réseau de taille moyenne.
+
+```ios
+core-sw(config)# interface Vlan10
+core-sw(config-if)# ip address 10.20.10.1 255.255.255.0
+core-sw(config-if)# no shutdown
+core-sw(config)# interface Vlan40
+core-sw(config-if)# ip address 10.20.40.1 255.255.255.0
+core-sw(config-if)# no shutdown
+core-sw(config)# ip routing
+```
+
+La dernière commande, souvent oubliée, active le routage sur l'équipement. Sans elle, les SVI existent mais le commutateur se comporte comme un simple pont : les sous-réseaux communiquent avec leur propre passerelle, jamais entre eux. Le symptôme est classique : chacun ping sa gateway, personne ne voit les serveurs.
+
+## Ports d'accès, trunks et étiquetage 802.1Q
+
+Un port de commutateur adopte l'une des trois configurations suivantes. En mode accès, il appartient à un seul VLAN et n'ajoute aucune étiquette aux trames : c'est le mode des postes, imprimantes, caméras et téléphones, qui ignorent tous le concept de VLAN. En mode trunk, il transporte simultanément plusieurs VLAN et marque chaque trame d'un tag qui indique son domaine d'appartenance : c'est le mode des liaisons inter-commutateurs, des points d'accès Wi-Fi, des hyperviseurs et des routesurs. En mode dynamique, il négocie le mode avec son voisin, ce que l'on désactive systématiquement en production pour éviter qu'un équipement non autorisé n'impose un trunk.
+
+La norme IEEE 802.1Q, publiée en 1998 puis régulièrement révisée, ajoute quatre octets à la trame Ethernet. Cette insertion se produit après l'adresse source, avant l'EtherType, ce qui fait que la valeur originale de type devient la valeur encapsulée et que le nouveau champ EtherType vaut 0x8100. Le schéma localise l'étiquette dans la trame.
+
+```
+| MAC dest. | MAC src. | TPID 0x8100 |        Etiquette 802.1Q        | EtherType |   Données   |  FCS  |
+|  6 octets |  6 oct. |   2 octets  |  PCP  |DEI|      VID         |  2 octets | 46-1500 oct.| 4 oct.|
+                                                12 bits = 4094 VLANs utilisables
+```
+
+L'étiquette elle-même se décompose en deux parties. Le champ d'identifiant de VLAN occupe douze bits, ce qui explique la limite historique de 4094 VLANs utilisables par commutateur. Le champ de contrôle de trafic, trois bits, porte une priorité compatible avec la norme 802.1p, de 0 à 7, utilisée notamment pour protéger la voix contre les retards. Un bit d'élimination sert à signaler les trames à écarter en période de congestion. L'ensemble tient dans quatre octets, surcoût négligeable, mais il change la lecture d'une capture : vous verrez désormais une couche 802.1Q entre l'en-tête Ethernet et le protocole IP.
+
+Les trames d'un port en accès ne sont jamais étiquetées. L'étiquette apparaît uniquement à la traversée d'un trunk, et elle est retirée dès que la trame quitte le trunk vers un port en accès. Ce mécanisme explique la notion de VLAN natif : c'est le domaine dont les trames circulent sans étiquette sur le trunk, faute de quoi le récepteur n'aurait aucun moyen de savoir à quel VLAN les rattacher. Par défaut, ce rôle revient au VLAN 1, ce qui est dangereux. En cas de divergence de configuration entre les deux extrémités, les trames non étiquetées sont attribuées au mauvais domaine, et l'on assiste alors à des communications fantômes entre des services censés être isolés.
+
+La parade combine trois réglages : un VLAN natif dédié, vide et inutilisé ; la suppression explicite du VLAN 1 de la liste des VLAN autorisés ; et l'interdiction du trafic non étiqueté sur tout port qui n'est pas en mode accès. La configuration suivante illustre le trunk attendu entre le commutateur d'accès du bâtiment B et le cœur.
+
+```ios
+access-sw-b(config)# interface TenGigabitEthernet1/0/1
+access-sw-b(config-if)# description Lien montant vers coeur
+access-sw-b(config-if)# switchport mode trunk
+access-sw-b(config-if)# switchport nonegotiate
+access-sw-b(config-if)# switchport trunk native vlan 99
+access-sw-b(config-if)# switchport trunk allowed vlan 10,20,30,60,99
+access-sw-b(config-if)# switchport trunk allowed vlan remove 1
+access-sw-b(config-if)# spanning-tree link-type point-to-point
+access-sw-b(config-if)# no shutdown
+```
+
+La commande switchport nonegotiate empêche l'échange de protocoles de négociation dynamique : le mode est imposé, donc prévisible. La liste des VLAN autorisés agit comme un filtre d'entrée : un VLAN absent de cette liste ne franchit pas le lien, même si les deux commutateurs le connaissent. Cette mécanique est précieuse pour la sécurité, mais elle est aussi une cause fréquente d'incident : ajouter un VLAN côté cœur sans l'ajouter côté accès isole silencieusement tout un bâtiment.
+
+Vérifiez systématiquement avec les commandes suivantes. La première confirme l'affectation des ports, la seconde détaille l'état réel des trunks, la troisième rappelle le mode négocié de chaque interface.
+
+```ios
+access-sw-b# show vlan brief
+access-sw-b# show interfaces trunk
+access-sw-b# show interfaces GigabitEthernet1/0/1 switchport
+```
+
+Sortie caractéristique d'un trunk sain, où la colonne de droite indique les VLANs réellement transitant sur le lien.
+
+```ios
+access-sw-b# show interfaces trunk
+Port        Mode         Encapsulation  Status        Native vlan
+Te1/0/1     on           802.1q         trunking      99
+
+Port        Vlans allowed on trunk
+Te1/0/1     10,20,30,60,99
+
+Port        Vlans allowed and active in management domain
+Te1/0/1     10,20,30,60,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Te1/0/1     10,20,30,60,99
+```
+
+Deux attaques historiques tirent parti du trunking, et connaître leur mécanisme vous rendra immunisé contre les mauvaises surprises. La première, le saut d'étiquette simple, exploite le VLAN natif : l'attaquant émet une trame déjà étiquetée avec le VLAN cible, et le commutateur, croyant traiter un VLAN natif, retire la première étiquette et transmet la seconde dans le domaine visé. La seconde, le saut d'étiquette double, insère deux étiquettes : le premier trunk en retire une, le second livre la trame au VLAN choisi. À cela s'ajoute l'exploitation du protocole de négociation dynamique, qui peut faire basculer un port simple en trunk sans authentification. Les contre-mesures sont simples et peu coûteuses : VLAN natif sur un domaine vide, mode trunk imposé, négociation dynamique désactivée, et liste des VLAN autorisés restrictive. Aucune de ces mesures ne demande de matériel supplémentaire.
+
+Le Wi-Fi mérite une note particulière. Un point d'accès moderne transporte plusieurs réseaux : le réseau invité, le réseau interne et parfois celui des caméras. Plutôt que de dédier un câble à chaque réseau, on relie le point d'accès en trunk et l'on laisse l'appareil répartir les trames. Chaque SSID est alors associé à un VLAN côté commutateur. La consigne reste la même : liste des VLAN autorisés étroite, VLAN natif vide, et vérification après chaque changement de configuration.
+
+Pour finir, une distinction couramment confondue : le domaine de diffusion et le domaine de routage ne coïncident pas. Un VLAN définit un domaine de diffusion et, en général, un sous-réseau. La communication entre deux VLAN exige une décision de couche 3, donc une adresse IP de passerelle et une table de routage. Inversement, deux VLAN distincts peuvent partager le même domaine de routage si une politique le décide, mais ils ne partageront jamais un domaine de diffusion. Gardez cette phrase : la couche 2 relie des ports, la couche 3 relie des réseaux. ARP fait le lien entre les deux mondes, et c'est à lui que nous passons maintenant.
+
+Une communication réseau commence toujours par une question que le logiciel ne sait pas résoudre seul. Votre navigateur a l'adresse IP du serveur, mais la carte réseau ne sait émettre qu'une trame Ethernet, laquelle exige une adresse MAC de destination. Il faut donc traduire l'une dans l'autre, à chaque passage de frontière de réseau local, et cette traduction est le rôle d'ARP, le protocole de résolution d'adresses défini par la RFC 826 en 1982. ARP est l'un de ces protocoles discrets qui fonctionnent si bien que personne n'y pense, jusqu'au jour où il cesse de fonctionner et où plus rien ne joint.
+
+## ARP : le pont entre adresses IP et adresses MAC
+
+Le principe tient en une phrase : avant d'émettre n'importe quel paquet IP vers un hôte du même réseau local, la station doit connaître l'adresse MAC correspondante. Pour l'obtenir, elle diffuse une requête portant la question « qui possède l'adresse IP 10.20.10.25 ? Faites-le savoir à 10.20.10.14 ». Cette requête est une trame Ethernet de destination FF:FF:FF:FF:FF:FF, donc reçue par toutes les interfaces du VLAN. La station qui reconnaît son adresse IP dans le champ cible répond, en unicast cette fois, avec son adresse MAC. L'émetteur mémorise le couple obtenu et émet enfin son paquet. Le dialogue complet tient en deux trames, comme le montre le schéma suivant.
+
+```
+   Poste A (10.20.10.14 / 001a.2b3c.4d5e)              Serveur (10.20.10.25 / 0025.90aa.bbcc)
+            |                                                        |
+            |  1. ARP Request  dst=FF:FF:FF:FF:FF:FF                 |
+            |     "Qui a 10.20.10.25 ? Réponds à 10.20.10.14"        |
+            |  ----------------------------------------------------> |
+            |                                                        |
+            |  2. ARP Reply  dst=001a.2b3c.4d5e (unicast)            |
+            |     "10.20.10.25 est chez 0025.90aa.bbcc"              |
+            |  <---------------------------------------------------- |
+            |                                                        |
+            |  3. Trame IP classique, destination 0025.90aa.bbcc     |
+            |  ----------------------------------------------------> |
+```
+
+Remarquez trois détails qui échappent souvent au débutant. La requête contient déjà l'adresse MAC et l'adresse IP de l'émetteur, sans quoi le destinataire ne pourrait pas répondre. La réponse est envoyée en unicast, elle ne redivise donc pas le réseau. Et le protocole ne vérifie rien : n'importe qui peut répondre à n'importe quelle question, ce qui est la faille structurelle d'ARP et la raison d'être des mécanismes de contrôle décrits plus loin.
+
+Les réponses sont rangées dans une table, le cache ARP, qui porte une durée de vie limitée. Sur Windows, la commande arp -a affiche le contenu de cette table ; sur Linux, la commande ip neigh show remplace avantageusement l'ancien arp -a ; sur un commutateur ou un routeur Cisco, c'est show ip arp.
+
+```bash
+# Windows
+arp -a
+
+# Linux
+ip neigh show
+ip neigh show to 10.20.10.25
+
+# affichage filtré par interface
+ip neigh show dev eth0 nud reachable
+```
+
+Le cache évolue en permanence. Une entrée dynamique est purgée au bout de quelques minutes d'inactivité, ce qui évite qu'une table ne grossisse indéfiniment et permet de suivre les machines qui changent d'adresse. Une entrée statique, saisie à la main, ne expire jamais : elle est utile pour un équipement critique dont on veut interdire tout changement, mais elle devient un piège si l'adresse réelle bouge. Sur un poste de travail, on crée une entrée statique avec arp -s 10.20.10.25 00:25:90:aa:bb:cc, et on la supprime avec arp -d. Sur un commutateur, la syntaxe est ip arp 10.20.10.25 0025.90aa.bbcc arpa Vlan10.
+
+Il existe un cas particulier remarquable : l'ARP gratuitor, ou ARP non sollicité. Une station y annonce spontanément son couple adresse IP et adresse MAC, sans que personne n'ait posé la question. Ce message sert à trois usages. D'abord la détection de conflit d'adresse : avant de prendre un bail, un client envoie un ARP gratuit et écoute s'il obtient une réponse, preuve qu'un autre héberge déjà cette adresse. Ensuite la bascule de redondance : quand un routeur de secours prend la place du routeur principal, il annonce gratuitement l'adresse MAC de la passerelle virtuelle pour que tous les postes mettent leur cache à jour instantanément. Enfin l'apprentissage : les commutateurs et les pare-feux se servent de ces annonces pour mettre à jour leurs tables sans échange préalable.
+
+On observe facilement ces échanges. La capture suivante isole ARP dans un VLAN donné et affiche les adresses matérielles, ce qui suffit souvent à révéler un conflit ou une machine qui répond à la place d'une autre.
+
+```bash
+sudo tcpdump -i eth0 -e -nn arp and host 10.20.10.25
+```
+
+Deux variantes d'ARP complètent le tableau. Le proxy ARP permet à un routeur de répondre à la place d'une machine distante : il reçoit la question, constate qu'il connaît la route, et renvoie sa propre adresse MAC. Pratique sur un réseau non segmenté, il devient pénible au dépannage, car il masque les erreurs de masque de sous-réseau. L'ARP inverse, lui, associe une adresse MAC à une adresse IP plutôt que l'inverse, et sert surtout dans des protocoles de couche 2. Notez enfin que l'IPv6 ne fonctionne pas ainsi : il remplace ARP par le protocole de voisinage, exécuté par-dessus ICMPv6, qui interroge les adresses cibles par multidiffusion de voisinage plutôt que par diffusion, un gain d'efficience notable sur les réseaux de grande taille.
+
+La contrepartie de la simplicité d'ARP, c'est sa vulnérabilité. Une machine malveillante peut émettre en continu des ARP gratuitors affirmant que l'adresse de la passerelle, par exemple 10.20.10.1, se trouve chez elle. Les postes du VLAN mettent leur cache à jour, leurs trames partent vers l'attaquant, qui les relaie vers l'extérieur en les inspectant : c'est l'empoisonnement d'ARP, cause la plus fréquente d'interception dans un réseau local non contrôlé. Les symptômes sont discrets : perte de connectivité intermittent, changement d'adresse MAC de la passerelle vu par arp -a, certificat HTTPS invalide quand l'attaquant casse la chaîne TLS.
+
+La parade s'appelle inspection ARP dynamique. Le commutateur croise chaque trame ARP avec la table d'espionnage DHCP, qui associe adresse IP, adresse MAC et port, alimentée par les réponses des serveurs DHCP fiables. Toute annonce discordante est jetée et journalisée. Comme beaucoup de protections, elle se retourne contre vous si elle est activée sans préparation : les équipements à adresse fixe, imprimantes, serveurs, caméras, doivent être déclarés en entrées statiques dans la table d'espionnage.
+
+```ios
+access-sw-b(config)# ip dhcp snooping
+access-sw-b(config)# ip dhcp snooping vlan 10,20,30,40,50,60
+access-sw-b(config)# ip arp inspection vlan 10,20,30,40,50,60
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# ip dhcp snooping limit rate 15
+access-sw-b(config)# ip arp inspection vlan 50 static 10.20.50.10 0025.90aa.bbcc
+```
+
+## Tempêtes de broadcast : comprendre, mesurer et parer
+
+Le domaine de diffusion est l'ensemble des équipements qui entendent les trames de diffusion et de multidiffusion. Dans un réseau non segmenté, il coïncide avec le réseau tout entier. Le problème, c'est que la diffusion est la mécanique par défaut d'une foule de protocoles : ARP pour résoudre une adresse, les annonces de découverte de serveurs, les appels de résolution de noms, les messages de certains protocoles de redondance, les requêtes de surveillance. Chacune de ces trames est reçue, parsémée et traitée par chaque interface du domaine, qui doit l'examiner avant de décider de l'ignorer. Multipliez par le nombre de machines et vous obtenez une consommation de processeur et de bande passante sans rapport avec le trafic utile.
+
+C'est le scénario bien pire qui nous intéresse ici : la tempête de broadcast. Elle se produit quand des trames diffusées se retrouvent amplifiées indéfiniment. Ethernet ne comporte aucun champ de durée de vie, aucune trame ne devient obsolète par elle-même. Si deux ports d'un même commutateur sont reliés par un câble, ou si deux liens parallèles créent une boucle non maîtrisée par l'arbre couvrant, une diffusion y circule en boucle et se multiplie à chaque tour. En quelques secondes, la bande passante est saturée, les tampons débordent, les trames légitimes sont jetées et le processeur du commutateur passe son temps à traiter du trafic sans destination.
+
+```
+              Boucle physique : deux liaisons entre les mêmes commutateurs
+   poste A ---- S1 ==================== S2 ---- poste B
+                  \                    /
+                   +------------------+
+                        lien en double
+
+   Diffusion émise par A :
+   tour 1 : 1 copie traverse chaque liaison        -> 2 trames
+   tour 2 : chacune repart dans l'autre sens       -> 4 trames
+   tour 3 : explosion exponentielle                -> 8, 16, 32 ...
+   Résultat : ports saturés, CPU à 100 %, pings en timeout, trames légitimes perdues
+```
+
+Les symptômes ont une signature reconnaissable. La latence devient aléatoire, les déconnexions se succèdent, la console d'un commutateur répond au ralenti ou plus du tout, les compteurs d'erreurs et les drops augmentent sur tous les ports simultanément, et les journaux mentionnent des changements d'état de port provoqués par l'arbre couvrant. Le premier réflexe de diagnostic consiste à relever la charge processeur et les compteurs de diffusions, puis à comparer avant et après.
+
+```ios
+core-sw# show processes cpu | exclude 0.0
+core-sw# show interfaces status | include err-disabled
+core-sw# show spanning-tree detail | include topology change
+core-sw# show storm-control broadcast
+core-sw# show interfaces counters | include Bcast
+```
+
+L'arbre couvrant, défini par la norme IEEE 802.1D et ses déclinaisons rapid-pvst et mstp, est le mécanisme qui empêche ces boucles d'exister. Les commutateurs échangent des BPDU, des trames de signalisation propres, pour élire un pont racine et mettre en blocking tous les liens redondants qui créeraient une boucle. Le lien de secours reste inactif jusqu'à la panne du lien principal, puis se réactive en quelques centaines de millisecondes avec le mode rapide. Comprenez bien le compromis : l'arbre couvrant achète la redondance au prix d'une complexité, et une erreur de priorité peut faire converger le racine vers un équipement inadapté, par exemple un commutateur d'accès mal positionné.
+
+Trois réglages durcissent le dispositif. Le PortFast place immédiatement un port d'accès en état de transmission, sans attendre la négociation, ce qui évite les coupures de service au démarrage d'un poste ; il n'est toléré que sur des branches finales. Le BPDU guard met le port en erreur dès qu'une BPDU y apparaît, ce qui isole instantanément un appareil qui tenterait de s'intercaler dans la topologie. Le root guard interdit à un port de devenir racine, protégeant ainsi l'élection contre un équipement non maîtrisé.
+
+```ios
+access-sw-b(config)# spanning-tree mode rapid-pvst
+access-sw-b(config)# spanning-tree portfast bpduguard default
+access-sw-b(config)# spanning-tree root guard  (par interface)
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# spanning-tree portfast
+access-sw-b(config-if-range)# spanning-tree bpduguard enable
+```
+
+La seconde parade est le storm-control, un filtre de débit appliqué port par port. Il mesure la proportion de trames de diffusion, de multidiffusion et parfois d'unicast inconnu, et au-delà du seuil il jette les trames excédentaires, voire met le port en état d'erreur. Le choix du seuil demande du discernement : trop bas, il sacrifie du trafic légitime pendant un pic d'activité ; trop haut, il laisse la tempête monter. Un pourcentage faible, de l'ordre d'un pour cent pour la diffusion et de deux pour cent pour la multidiffusion, convient à la plupart des ports d'accès, car le trafic de diffusion normal y reste très faible.
+
+```ios
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# storm-control broadcast level 1.00
+access-sw-b(config-if-range)# storm-control multicast level 2.00
+access-sw-b(config-if-range)# storm-control action shutdown
+```
+
+Trois causes reviennent dans la majorité des incidents. Une boucle physique, souvent créée par un double câble posé par précaution ou par un pont logique dans une machine qui dispose de deux cartes réseau. Une négociation dynamique laissée active, qui transforme un port en trunk et relie alors plusieurs domaines de diffusion entre eux. Enfin un équipement défaillant, carte réseau saturée ou logiciel mal configuré, qui émet des diffusions en rafale. La méthode de dépannage consiste à remonter le flux : relever les ports les plus émetteurs en diffusions, mettre un port hors service, observer si l'incident cesse, puis isoler physiquement la source.
+
+La multidiffusion mérite une note, car elle échappe en apparence au problème. Un flux vidéo envoyé en multidiffusion ne devrait être dupliqué que vers les ports intéressés, et c'est exactement le rôle de l'espionnage IGMP, activé par défaut sur les commutateurs modernes. Il construit une table reliant les groupes multidiffusion aux ports de membres. Désactiver ce mécanisme, ou le voir mal fonctionner, revient à transformer chaque flux en diffusion massive, avec les mêmes conséquences qu'une tempête.
+
+La segmentation reste enfin le remède structurel. Un domaine de diffusion par service, des seuils de tempête sur chaque port, un arbre couvrant stable et vérifié, l'espionnage IGMP actif : ces quatre mesures, appliquées ensemble, transforment une panne globale en incident localisé. Un site ainsi segmenté perd un VLAN, jamais le réseau entier. Reste à protéger les ports eux-mêmes contre les appareils non autorisés, ce que la section suivante met en pratique.
+
+Les VLAN isolent les trafics et l'inspection ARP protège les résolutions, mais il reste une porte ouverte : le port physique lui-même. N'importe quel câble branché dans une prise libre rejoint immédiatement le domaine configuré sur cette prise, hérite de sa bande passante et accède aux ressources du VLAN. La sécurisation de port consiste donc à transformer chaque prise en point de contrôle : combien d'adresses MAC y sont tolérées, quels baux DHCP y sont acceptés, quel trafic y circule, et que faire dès qu'une règle est enfreinte.
+
+## Sécuriser les ports : sécurité de port, espionnage DHCP, contrôle de tempête
+
+La sécurité de port repose sur une idée simple : chaque port d'accès n'autorise qu'un nombre limité d'adresses MAC, au-delà duquel il réagit. La configuration courante réserve cinq adresses à un serveur ou à un point d'accès, deux à un poste équipé d'un téléphone IP en cascade, une seule à une imprimante. Le mode d'apprentissage automatique, dit sticky, mémorise les premières adresses vues et les range en configuration, ce qui évite de saisir à la main des adresses MAC parfois illisibles.
+
+Trois réactions sont disponibles en cas de dépassement. Le mode protect jette silencieusement le trafic des adresses non reconnues sans rien journaliser. Le mode restrict jette et comptabilise les violations, ce qui laisse des traces utiles. Le mode shutdown place le port en état d'erreur, visible avec show interfaces status comme err-disabled, et l'incident devient immédiatement visible sur la console. Le choix dépend de la criticité : restrict pour un réseau administré, shutdown pour une zone sensible, protect pour un accès public où le silence vaut mieux qu'un encombrement de journaux.
+
+```ios
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 10
+access-sw-b(config-if-range)# switchport port-security
+access-sw-b(config-if-range)# switchport port-security maximum 2
+access-sw-b(config-if-range)# switchport port-security violation restrict
+access-sw-b(config-if-range)# switchport port-security mac-address sticky
+access-sw-b(config-if-range)# switchport port-security aging time 60
+access-sw-b(config-if-range)# switchport port-security aging type inactivity
+```
+
+L'espionnage DHCP complète la protection en contrôléant les messages de bail. Une attaque par starvation consiste à réclamer tous les baux disponibles avec des adresses MAC fabriquées, privant ainsi les postes légitimes d'adressage. Le commutateur distingue alors les ports fiables, ceux qui reçoivent les réponses du serveur, des ports non fiables, qui ne doivent émettre que des demandes. La table d'espionnage qui en résulte, associant adresse IP, adresse MAC, port et durée du bail, devient la source de vérité utilisée par l'inspection ARP dynamique et par la garde de source IP.
+
+```ios
+access-sw-b(config)# ip dhcp snooping
+access-sw-b(config)# ip dhcp snooping vlan 10,20,30,40,50,60
+access-sw-b(config)# ip dhcp snooping trust
+access-sw-b(config)# interface TenGigabitEthernet1/0/1
+access-sw-b(config-if)# ip dhcp snooping trust
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# ip source binding 10.20.10.14 001a.2b3c.4d5e vlan 10 interface Gi1/0/12
+```
+
+Le contrôle de tempête vu au chapitre précédent appartient au même répertoire de protections : il borne le trafic de diffusion, la sécurité de port borne le nombre de machines, l'espionnage DHCP borne les baux, l'inspection ARP borne les annonces. Aucune de ces mesures n'est magique, et toutes peuvent paralyser un réseau si elles sont activées d'un coup sans inventaire préalable. La règle professionnelle est d'inventorier d'abord, de configurer en observation, puis de basculer en stricte.
+
+## Exemple guidé : configurer le commutateur d'accès du bâtiment B
+
+Réunissons maintenant tout ce que ce chapitre a enseigné. Le commutateur d'accès du bâtiment B dessert vingt-quatre postes du public, quatre imprimantes, deux points d'accès Wi-Fi, deux serveurs locaux, une caméra et un poste d'agent équipé d'un téléphone IP. Le lien montant part vers le cœur en trunk. Le plan de VLAN du début de leçon s'applique à la lettre.
+
+```ios
+! ===== Commutateur d'accès Batiment B =====
+hostname access-sw-b
+vtp mode transparent
+spanning-tree mode rapid-pvst
+spanning-tree portfast bpduguard default
+
+vlan 10
+ name Publics
+vlan 20
+ name WiFi-Visiteurs
+vlan 30
+ name Imprimantes
+vlan 40
+ name Serveurs
+vlan 60
+ name Gestion
+vlan 99
+ name Natif-Inutilise
+vlan 210
+ name Cameras
+vlan 220
+ name Telephonie
+
+! ----- Lien montant -----
+interface TenGigabitEthernet1/0/1
+ description Uplink vers coeur Lilas
+ switchport mode trunk
+ switchport nonegotiate
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,60,99
+ switchport trunk allowed vlan remove 1
+ storm-control broadcast level 1.00
+ storm-control multicast level 2.00
+ spanning-tree link-type point-to-point
+ no shutdown
+
+! ----- Postes du public -----
+interface range GigabitEthernet1/0/1 - 24
+ description Postes publics VLAN 10
+ switchport mode access
+ switchport access vlan 10
+ switchport port-security
+ switchport port-security maximum 2
+ switchport port-security violation restrict
+ switchport port-security mac-address sticky
+ spanning-tree portfast
+ storm-control broadcast level 1.00
+ ip dhcp snooping limit rate 15
+
+! ----- Imprimantes -----
+interface range GigabitEthernet1/0/25 - 28
+ description Imprimantes VLAN 30
+ switchport mode access
+ switchport access vlan 30
+ switchport port-security maximum 1
+ spanning-tree portfast
+
+! ----- Points d'acces Wi-Fi -----
+interface range GigabitEthernet1/0/29 - 30
+ description Points d'acces, trunk vers coeur
+ switchport mode trunk
+ switchport nonegotiate
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 20,210
+ storm-control broadcast level 1.00
+
+! ----- Serveurs locaux -----
+interface range GigabitEthernet1/0/31 - 32
+ description Serveurs VLAN 40
+ switchport mode access
+ switchport access vlan 40
+ switchport port-security maximum 5
+ switchport port-security violation restrict
+ spanning-tree portfast
+
+! ----- Camera -----
+interface GigabitEthernet1/0/33
+ description Camera VLAN 210
+ switchport mode access
+ switchport access vlan 210
+ switchport port-security maximum 1
+ spanning-tree portfast
+
+! ----- Telephone IP et poste agent -----
+interface GigabitEthernet1/0/34
+ description Agent + telephone IP
+ switchport mode access
+ switchport access vlan 50
+ switchport voice vlan 220
+ switchport port-security maximum 3
+ spanning-tree portfast
+
+! ----- Gestion -----
+interface Vlan60
+ description Gestion locale
+ ip address 10.20.60.2 255.255.255.192
+ no shutdown
+
+ip dhcp snooping
+ip dhcp snooping vlan 10,20,30,40,50,60
+ip arp inspection vlan 10,20,30,40,50,60
+ntp server 10.20.60.1
+logging host 10.20.60.1
+end
+write memory
+```
+
+L'ordre des commandes n'est pas neutre. On déclare d'abord les VLAN, puis les liens montants, puis les ports d'accès, enfin la gestion : chaque bloc se lit indépendamment et peut être relu isolément. Notez le port 34, où le téléphone IP consomme une adresse MAC supplémentaire, d'où le plafond à trois. Notez aussi la suppression explicite du VLAN 1 sur le trunk, mesure qui vous sauvera peut-être un jour.
+
+Le déploiement se valide toujours avec les commandes suivantes, idéalement enregistrées dans un fichier de recette.
+
+```ios
+access-sw-b# show vlan brief
+access-sw-b# show interfaces trunk
+access-sw-b# show mac address-table
+access-sw-b# show port-security
+access-sw-b# show ip arp inspection statistics
+access-sw-b# show dhcp snooping binding
+access-sw-b# show spanning-tree summary
+access-sw-b# show interfaces status
+```
+
+Chaque commande répond à une question précise : les VLAN existent-ils et portent-ils les bons noms ? Le trunk transporte-t-il la liste attendue avec le bon VLAN natif ? La table MAC apprend-elle sur les bons ports ? Combien de violations de sécurité ont été enregistrées ? L'inspection ARP jette-t-elle des trames, signe d'une configuration à revoir ? L'arbre couvrant est-il en état d'emploi normal ? Enfin, tous les ports sont-ils dans le bon état, sans err-disabled ?
+
+## Diagnostiquer une panne de couche 2 : sept contrôles dans l'ordre
+
+La méthode vaut plus que la mémoire. Face à un utilisateur qui ne parvient plus à joindre un service, procédez du plus matériel au plus logique, et ne sautez jamais une étape sous peine de passer une heure à chercher une erreur de VLAN dans un câble débranché.
+
+```text
+Panne signalée
+     |
+     +--> 1. Lien physique : voyants, show interfaces status, erreurs CRC
+     |         |
+     |         +-- lien down --> câble, transceiver, port en erreur
+     |
+     +--> 2. Appartenance : show interfaces switchport, show vlan brief
+     |         |
+     |         +-- mauvais VLAN --> switchport access vlan
+     |
+     +--> 3. Trunk : show interfaces trunk, VLAN natif et allowed
+     |         |
+     |         +-- VLAN absent --> switchport trunk allowed vlan
+     |
+     +--> 4. Table MAC : show mac address-table, apprentissage
+     |         |
+     |         +-- entrée absente --> port non transmis, port security
+     |
+     +--> 5. ARP et passerelle : arp -a, ip neigh, ping passerelle
+     |         |
+     |         +-- MAC fausse --> empoisonnement, inspection ARP
+     |
+     +--> 6. Arbre couvrant et tempête : show spanning-tree, CPU
+     |         |
+     |         +-- boucle --> câble en double, port sans PortFast
+     |
+     +--> 7. Compteurs : show interfaces counters errors, drops
+               |
+               +-- erreurs physiques --> câble, connecteur, longueur
+```
+
+Les commandes du cinquième contrôle méritent d'être détaillées, car c'est là que la couche 2 rencontre la couche 3. Depuis le poste défaillant, pinguez la passerelle du VLAN ; si cela fonctionne, vérifiez avec arp -a que l'adresse MAC annoncée pour la passerelle est bien celle configurée sur l'équipement. Si elle change en plein fonctionnement, vous êtes en présence d'un empoisonnement ARP. Si le ping échoue mais que l'adresse MAC est correcte, cherchez du côté de l'appartenance au VLAN et du trunk.
+
+```bash
+# poste : passerelle joignable ?
+ping -c 4 10.20.10.1
+
+# poste : adresse MAC réellement apprise pour la passerelle
+ip neigh show to 10.20.10.1
+
+# poste : vérification d'une entrée statique éventuelle
+arp -a | grep 10.20.10.1
+```
+
+Les erreurs de couche 2 ont une signature dans les compteurs. Les erreurs CRC et les truncations signalent un problème de support ; les collisions en régime full-duplex signalent une négociation incomplète ; les pics de diffusions signalent une tempête naissante ; les ports en état d'erreur signalent une règle de sécurité déclenchée. Un dépanneur commence toujours par ces chiffres, parce qu'ils transforment une intuition en preuve.
+
+## Trois cas concrets : téléphonie, points d'accès, documentation
+
+Le voice VLAN illustre parfaitement la cohabitation de plusieurs flux sur un même port. Un téléphone IP moderne se comporte comme un petit commutateur à trois interfaces : une prise réseau vers le commutateur, une prise vers le poste de l'agent, et une logique interne qui étiquette lui-même le trafic audio. Lorsqu'on lui associe un voice VLAN, le téléphone découvre ce VLAN par les protocoles de voisinage, étiquette ses propres paquets audio avec la priorité correspondante et laisse passer le trafic de l'agent sans étiquette, celui-ci restant dans le VLAN de données. Le commutateur reçoit donc deux flux distincts sur un seul câble et applique à chacun sa politique : file prioritaire et latence maîtrisée pour la voix, bande passante standard pour les applications.
+
+```ios
+access-sw-b(config)# interface GigabitEthernet1/0/34
+access-sw-b(config-if)# switchport mode access
+access-sw-b(config-if)# switchport access vlan 50
+access-sw-b(config-if)# switchport voice vlan 220
+access-sw-b(config-if)# mls qos trust cos
+access-sw-b(config-if)# auto qos voip cisco-phone
+access-sw-b(config-if)# spanning-tree portfast
+```
+
+Le point de confiance de qualité de service se situe au plus près de l'utilisateur : on ne fait confiance aux marquages que sur les ports où un téléphone authentifiable est branché. Sur les autres ports, les paquets sont reclassés afin qu'un poste ne puisse pas s'octroyer indûment la priorité la plus élevée. Ce détail a son importance pendant un incident : si la voix devient saccadée alors que le débit global reste faible, vérifiez d'abord les files de sortie et les marquages, pas la bande passante.
+
+Les points d'accès Wi-Fi relèvent du même répertoire, avec une particularité : un seul câble porte plusieurs réseaux. Chaque réseau sans fil est associé côté commutateur à un VLAN, l'invité, le personnel, les caméras, et le point d'accès se charge d'insérer l'étiquette adéquate. Le port qui le dessert est donc un trunk étroit, limité aux seuls VLAN utiles, avec un domaine natif vide et un plafond de tempête. L'isolement des invités se traite ensuite dans la logique du point d'accès : filtrage entre clients, sortie directe vers l'Internet, interdiction d'atteindre les VLAN internes. Un oubli dans la liste des VLAN autorisés se manifeste par un réseau invité qui fonctionne mais dont les postes interviennent dans le VLAN des serveurs, ou l'inverse.
+
+La documentation constitue enfin la dernière protection du réseau, et elle est gratuite. Trois artefacts suffisent : un plan de VLAN tenu à jour, une liste des ports avec leur affectation réelle, et un voisinage enregistré à partir des annonces LLDP. Tant que ces documents restent exacts, un dépannage dure quelques minutes ; dès qu'ils dérivent, chaque incident devient une enquête. Complétez-les à chaque modification, archivez la configuration de référence et conservez la configuration en service : la comparaison entre les deux révèle souvent la modification accidentelle qui a coupé un bâtiment entier.
+
+```ios
+core-sw# show lldp neighbors detail
+core-sw# show running-config | include description
+core-sw# show interfaces status
+access-sw-b# show interfaces switchport | begin Name
+```
+
+Une habitude complémentaire vaut tous les outils : enregistrer la configuration après chaque intervention et conserver la précédente. L'écart entre deux versions raconte l'histoire de l'incident, ligne par ligne. Un VLAN retiré d'une liste autorisée, un port replacé en accès, une règle de sécurité activée sur un lien montant : ces trois erreurs représentent à elles seules la majorité des coupures observées sur des réseaux de taille moyenne, et toutes trois se retrouvent en une seconde dans un diff. Prenez enfin l'usage de noter, avant de toucher à un équipement, la commande exacte que vous allez exécuter et le résultat attendu. Cette discipline transforme une modification risquée en expérience reproductible, et elle distingue l'administrateur expérimenté du bricoleur chanceux.
+
+## À retenir
+
+- Une trame Ethernet porte des adresses MAC, une étiquette de protocole et une somme de contrôle ; l'adresse IP reste à l'intérieur de la charge utile.
+- Le commutateur apprend les adresses MAC sources, remplit sa table CAM et transmet, filtre ou inonde selon la destination.
+- Une entrée de table MAC vieillit en général après trois cents secondes ; une table saturée provoque des inondations permanentes.
+- Un port en accès appartient à un seul VLAN et n'étiquette pas ses trames ; un trunk en transporte plusieurs et les étiquette en 802.1Q.
+- L'étiquette 802.1Q ajoute quatre octets et permet 4094 VLANs ; trois bits portent la priorité de trafic.
+- Le VLAN natif traverse le trunk sans étiquette : réservez-lui un domaine vide et videz le VLAN 1 de la liste des VLAN autorisés.
+- Chaque VLAN correspond en général à un sous-réseau et à une passerelle ; sans ip routing, les SVI ne communiquent pas entre elles.
+- ARP diffuse une question et reçoit une réponse unicast ; le couple obtenu est conservé dans un cache à durée limitée.
+- L'ARP gratuitor sert à détecter les conflits et à basculer les passerelles redondantes.
+- L'inspection ARP dynamique jette les annonces incohérentes avec la table d'espionnage DHCP.
+- Une tempête de broadcast naît d'une boucle, Ethernet n'ayant aucun champ de durée de vie.
+- Rapid-PVST+ supprime les boucles, PortFast accélère les branches finales et BPDU guard isole les intrus.
+- Le storm-control borne la part de diffusions et de multidiffusions tolérée sur chaque port.
+- La sécurité de port limite le nombre d'adresses MAC et impose une réaction en cas de dépassement.
+
+## Erreurs fréquentes
+
+- Piège : configurer un trunk côté cœur mais oublier le VLAN côté accès → Correction : vérifiez avec show interfaces trunk des deux côtés après chaque changement.
+- Piège : laisser le VLAN natif par défaut en VLAN 1 → Correction : affectez un domaine vide, par exemple vlan 99, aux deux extrémités du trunk.
+- Piège : créer les SVI mais oublier la commande ip routing → Correction : activez le routage, sinon chaque VLAN reste isolé malgré des adresses correctes.
+- Piège : activer PortFast sur un lien inter-commutateurs → Correction : PortFast ne convient qu'aux branches finales, sans équipement derrière.
+- Piège : désactiver l'arbre couvrant pour gagner en performance → Correction : laissez-le actif et supprimez la boucle physique à la source.
+- Piège : voir un port en err-disabled et le réactiver immédiatement → Correction : identifiez d'abord la règle déclenchée, puis employez errdisable recovery.
+- Piège : confondre domaine de diffusion et domaine de routage → Correction : un VLAN sépare les diffusions, un routeur sépare les réseaux.
+- Piège : enregistrer une entrée ARP statique puis changer l'adresse de la machine → Correction : purgez l'entrée avec arp -d avant de reconfigurer.
+- Piège : activer l'inspection ARP dynamique alors que les serveurs ont des adresses fixes → Correction : déclarez ces adresses en entrées statiques dans la table.
+- Piège : conclure à une panne applicative sans regarder les compteurs → Correction : commencez par show interfaces status et les compteurs d'erreurs.
+
+## Pour aller plus loin
+
+La norme qui décrit l'étiquetage des trames reste la référence absolue pour approfondir le trunking : elle détaille la structure du tag, les règles de traitement du VLAN natif et les mécanismes de priorisation. Consultez-la sur https://www.ieee802.org/1/pages/802.1Q.html, et complétez avec la page de l'arbre couvrant sur https://www.ieee802.org/1/pages/802.1D.html, qui explique l'élection du pont racine, les états de port et les conditions de reprise après panne. Ces deux documents sont denses, mais même leur lecture partielle vous donnera une longueur d'avance sur la plupart des configurations que vous rencontrerez.
+
+Côté résolution d'adresses, la RFC 826 reste un texte court et remarquablement lisible, écrit à une époque où les protocoles tiennent en quelques pages : https://datatracker.ietf.org/doc/html/rfc826. Pour comprendre comment une station prend une adresse sans serveur et détecte les conflits, lisez ensuite la RFC 5227 sur les sondes et annonces ARP : https://datatracker.ietf.org/doc/html/rfc5227. Enfin, les documentations constructeurs détaillent les commandes employées dans ce chapitre ; recherchez les guides de configuration des plateformes que vous utilisez, par exemple les chapitres consacrés à la sécurité de port, à l'espionnage DHCP et à l'inspection ARP dynamique. Ouvrez ces pages le jour où une question précise se pose plutôt que de tenter de les apprendre par cœur.
+
+## Et maintenant : la vidéo du chapitre puis l'exercice pratique
+
+La vidéo du chapitre reprend les mêmes étapes à l'écran, en partant d'une capture Wireshark pour remonter jusqu'à la configuration d'un trunk : lecture de l'étiquette 802.1Q, observation d'un échange ARP complet, puis configuration pas à pas du commutateur d'accès. Regardez-la avec un terminal ouvert à côté de vous et rejouez chaque commande, en pause si nécessaire. Une fois le visionnage terminé, passez à l'exercice pratique : configurez seul le commutateur du bâtiment B selon le cahier des charges, validez chaque point de la recette, puis coupez volontairement un VLAN du trunk et constatez l'effet avant de le rétablir.

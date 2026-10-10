@@ -1,0 +1,127 @@
+## Évaluer en multiclasse : la matrice de confusion et ses voisines
+
+L'exactitude, seule, cesse d'être un indicateur honnête dès que l'on quitte la classification binaire équilibrée. Si votre usine aligne 900 pièces conformes pour 100 défectueuses, un modèle qui répond toujours conforme affiche 90 % de réussite et ne sert à rien. En multiclasse, le phénomène se dédouble : le déséquilibre fausse le pourcentage global, et la proximité entre classes masque des confusions systématiques qu'un même chiffre global ne distingue pas. Une exactitude de 82 % peut cacher un modèle parfait sur huit classes et aveugle sur les deux qui comptent réellement. Le rapport d'évaluation d'un classifieur d'images commence donc par la structure des erreurs, pas par leur total.
+
+La matrice de confusion est cet outil de départ. Chaque ligne correspond à la classe réelle, chaque colonne à la classe prédite, et chaque case contient le nombre d'observations concernées. La diagonale porte les réussites ; tout ce qui s'en écarte est une erreur, et sa position dit immédiatement laquelle. Deux classes se confondent-elles ? Vous verrez deux blocs symétriques hors diagonale. Une classe est-elle systématiquement absorbée par une autre ? Vous verrez une ligne presque vide et une colonne gonflée. Aucun pourcentage ne remplace cette lecture : en contrôle qualité, savoir que les éraflures sont prises pour des reflets, et non l'inverse, change la consigne donnée à l'opérateur.
+
+Les métriques par classe découlent de cette matrice et se répondent trois questions. La précision demande : parmi ce que j'ai prédit comme défectueux, combien l'étaient vraiment ? Le rappel demande : parmi les vrais défectueux, combien ai-je trouvés ? Le score F1 combine les deux en moyenne harmonique. Pour une pièce dangereuse, le rappel est la métrique retenue : rater un défaut est plus grave que de faire vérifier une pièce saine. Pour une ligne qui s'arrête à chaque fausse alerte, la précision devient tout aussi critique. La moyenne macro calcule la moyenne arithmétique des scores de chaque classe et traite donc toutes les classes à égalité ; la moyenne pondérée, elle, laisse les classes nombreuses peser davantage. En situation de déséquilibre, la première dit la vérité sur les classes rares, la seconde amplifie les classes dominantes.
+
+Une matrice se lit aussi en version normalisée, où chaque ligne est divisée par son total : les proportions deviennent comparables d'une classe à l'autre, même si l'une compte cinq cents images et l'autre trente. Cette variante est la seule à afficher quand les classes sont déséquilibrées, car la version en nombres bruts laissera toujours dominer la classe majoritaire. Dans notre cas d'usine, une ligne de la classe défectueuse qui montrerait 80 % de réussite et 20 % de pièces jugées conformes signifierait qu'un défaut sur cinq part sans être vu : c'est un chiffre qui déclenche une décision, alors que l'exactitude globale, elle, n'en déclenche aucune.
+
+Le tableau suivant range les quatre lectures que vous utiliserez dans un rapport.
+
+| Mesure | Ce qu'elle quantifie | Quand la retenir | Piège associé |
+|---|---|---|---|
+| Exactitude | Part des prédictions justes | Classes équilibrées, vue d'ensemble | Masque une classe ignorée |
+| Rappel par classe | Part des vrais positifs retrouvés | Coût élevé d'un manqué | Tombe si la classe est rare |
+| Précision par classe | Fiabilité d'une alerte | Coût élevé d'une fausse alerte | Chute dès que la classe est rare |
+| Entropie croisée | Qualité de la probabilité prédite | Comparaison de modèles, calibration | N'est pas interprétable seule |
+
+Deux compléments font gagner en finesse. L'exactitude en top-k autorise la prédiction correcte dans les k réponses les plus probables : utile quand les classes se ressemblent beaucoup, trompeur quand k approche le nombre de classes. L'entropie croisée de validation, elle, pénalise une prédiction juste mais trop assurée, ce qui intéresse dès que l'on veut seuiller une probabilité pour déclencher une inspection. Notez au passage que ces métriques se calculent sur des prédictions du jeu de test, en une seule passe, une fois le modèle figé.
+
+```python
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+
+reels = [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1]
+predits = [0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 0]
+
+matrice = confusion_matrix(reels, predits, labels=[0, 1])
+print("lignes = reels, colonnes = predits")
+print(matrice)
+
+vrais_positifs = matrice[1, 1]
+faux_negatifs = matrice[1, 0]
+rappel = vrais_positifs / (vrais_positifs + faux_negatifs)
+print("rappel de la classe defectueuse :", round(rappel, 2))
+
+print(classification_report(reels, predits, target_names=["conforme", "defectueuse"]))
+```
+
+Exécutez ce bloc avec vos propres étiquettes : la matrice affichée, ligne par ligne, vous dira toujours plus que le pourcentage global. Complétez-la par un examen visuel des erreurs — afficher treize images mal classées en vaut plus que trois métriques — car la cause d'une confusion se trouve dans l'image, pas dans le chiffre.
+
+## Surapprentissage en vision : le diagnostic en trois signes
+
+Le surapprentissage en vision est la même maladie qu'au chapitre six, avec un terrain plus favorable : un modèle convolutif compte des dizaines de milliers de paramètres et dispose, dans un petit jeu d'images, de quelques centaines d'exemples seulement. Le rapport entre capacité et données y est bien plus défavorable qu'en tabulaire, et il faut peu d'époques pour qu'un réseau apprenne à reconnaître par cœur les photographies qu'on lui présente. Le premier signe est donc un entraînement qui atteint la perfection suspecte très vite, souvent en trois ou quatre époques, pendant que la validation plafonne loin derrière.
+
+Le deuxième signe est l'écart entre les deux courbes de perte, plus parlant que l'écart entre les deux exactitudes. Tant que la perte de validation descend en suivant la perte d'entraînement, le modèle affine une règle valable. Quand la perte d'entraînement continue de chuter tandis que celle de validation remonte, le modèle se met à exploiter des détails qui n'existent que dans son jeu d'entraînement : l'éclairage d'une prise de vue, la texture du fond, la position de l'objet sur le tapis. Le troisième signe est négatif et plus inquiétant : un modèle entraîné sur des étiquettes prises au hasard doit afficher exactement le niveau du hasard. S'il obtient mieux, quelque part de l'information de la cible fuit dans les entrées, par exemple une image dupliquée entre ensembles ou un nom de fichier porteur de l'étiquette.
+
+Le bloc suivant fabrique les deux courbes à partir de l'historique renvoyé par la méthode d'entraînement, puis les dessine : c'est le graphique que vous présenterez dans un rapport, avec les deux axes annotés et la métrique indiquée.
+
+```python
+import matplotlib.pyplot as plt
+
+perte_entrainement = histoire.history["loss"]
+perte_validation = histoire.history["val_loss"]
+
+epoques = range(1, len(perte_entrainement) + 1)
+plt.plot(epoques, perte_entrainement, label="entrainement")
+plt.plot(epoques, perte_validation, label="validation")
+plt.xlabel("epoque")
+plt.ylabel("perte")
+plt.legend()
+plt.title("Diagnostic : les deux courbes se separant apres l'epoque 6")
+plt.show()
+
+ecart = perte_validation[-1] - perte_entrainement[-1]
+print("ecart final perte validation - entrainement :", round(ecart, 3))
+```
+
+Avant d'enchaîner sur les remèdes, notez ce que vous devez consigner à chaque expérience, sous peine de ne pouvoir comparer deux entraînements. Trois lignes suffisent : l'exactitude et la perte de validation de la meilleure époque, l'écart final entre les deux pertes, et le nombre d'époques exécutées avant l'arrêt. À ces chiffres, ajoutez la taille du jeu de validation et sa graine de découpage. Un jeu de validation de vingt images produit des sauts de plusieurs points d'une époque à l'autre, purement statistiques : ne lisez jamais un écart de ce genre comme une régression du modèle sans avoir répété l'expérience sur un autre découpage.
+
+Les remèdes s'appliquent dans un ordre strict, du moins coûteux au plus lourd. Premier : l'arrêt anticipé, qui récupère les meilleurs poids sans rien changer au modèle. Deuxième : le dropout et le poids de décroissance, qui limitent la dépendance aux neurones individuels. Troisième : la réduction de la capacité, moins de filtres et moins de couches, à essayer dès que le jeu compte moins de mille images. Quatrième : l'augmentation de données, qui augmente la matière première sans rien modifier au réseau, et à laquelle la section suivante est entièrement consacrée. Cinquième : le transfert d'apprentissage, qui part d'un modèle déjà riche en expérience, traité dans le dernier bloc du chapitre.
+
+Soyez précis sur les ordres de grandeur, afin de savoir quand vous demandez l'impossible. Quelques dizaines d'images par classe ne suffisent pas à entraîner un réseau from scratch : vous obtiendrez un modèle qui reconnaît vos clichés, pas vos objets. Quelques centaines commencent à rendre possible un entraînement court, fortement régularisé et augmenté. Quelques milliers permettent d'espérer une généralisation honnête. Au-delà de dix mille, les écarts d'architecture priment sur la quantité. Ces chiffres ne sont pas des lois, mais ils vous éviteront de passer trois jours à régler un entraînement qui n'avait aucune chance.
+
+Appliqué à notre ligne d'usine, le diagnostic tient en peu de mots. Six cents photographies, dont quatre cent quatre-vingts pour l'entraînement et cent vingt pour la validation, donnent un jeu de contrôle suffisant pour voir une tendance mais trop petit pour la mesurer au point près. Si la courbe d'entraînement atteint 100 % d'exactitude en quatre époques tandis que la validation reste bloquée à 78 %, il ne s'agit pas d'un mauvais réglage d'optimiseur : le réseau a mémorisé les conditions de prise de vue. On agit alors sur la donnée et la régularisation, jamais en ajoutant des époques, qui ne feraient qu'accentuer l'écart.
+
+## Augmenter les données : fabriquer la variété qui manque
+
+L'augmentation de données consiste à produire, à partir de chaque image du jeu d'entraînement, des variantes qui changent l'image sans changer son étiquette. Une pièce photographiée vue de gauche reste la même pièce légèrement pivotée ; un chat retourné horizontalement reste un chat. En appliquant ces transformations de façon aléatoire à chaque époque, vous ne créez pas un jeu de données figé plus grand, vous créez un flux infini de versions différentes : le réseau revoit la même photographie sous un angle nouveau à chaque passage, et ne peut donc pas la mémoriser sous une forme unique. L'augmentation est la réponse la plus économique au surapprentissage, parce qu'elle agit sur les données et non sur le modèle.
+
+Le principe directeur est l'invariance : n'ajoutez que des transformations qui, dans votre domaine, laissent la classe inchangée. C'est une décision métier, pas un réglage par défaut. Le retournement horizontal est neutre pour un défaut de surface, une bille ou une feuille ; il l'est beaucoup moins pour une lettre ou un panneau routier, où il fabrique une classe fausse. La rotation de quelques degrés imite les variations de positionnement sur un tapis roulant ; une rotation de 90 degrés, elle, peut changer la nature de l'objet observé. L'éclairage, lui, doit être varié avec prudence : si votre classe se définit justement par une couleur, un assombrissement excessif fabrique du bruit d'étiquette.
+
+Le tableau suivant sert de point de départ réglable plutôt que de recette figée.
+
+| Transformation | Plage raisonnable | Invariance visée | Avertissement |
+|---|---|---|---|
+| Retournement horizontal | Probabilité 0,5 | Position gauche-droite | Interdit si la classe a un sens directionnel |
+| Retournement vertical | Rare | Position haut-bas | Souvent interdit, inverse le sujet |
+| Rotation | ± 10 à 15 degrés | Positionnement de l'objet | Au-delà, l'étiquette devient fausse |
+| Translation | Jusqu'à 10 % de la largeur | Défaut hors centre | Recadrage possible, perte de contexte |
+| Zoom | 0,9 à 1,1 | Distance de la caméra | Trop de zoom détruit les petits défauts |
+| Luminosité et contraste | ± 20 % | Variations d'éclairage | Peut effacer un défaut sombre |
+
+En Keras, la meilleure pratique actuelle consiste à placer l'augmentation dans le modèle lui-même, sous forme de couches. Elle est alors appliquée uniquement pendant l'entraînement, elle est incluse dans le graphique sauvegardé, et surtout elle ne peut pas contaminer la validation par accident. Le bloc suivant construit ce préprocesseur augmenté puis l'intègre au modèle.
+
+```python
+import tensorflow as tf
+
+augmentation = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomRotation(0.04),
+    tf.keras.layers.RandomZoom(0.1),
+    tf.keras.layers.RandomContrast(0.2),
+], name="augmentation")
+
+model_augmente = tf.keras.Sequential([
+    tf.keras.layers.Input(shape=(224, 224, 3)),
+    augmentation,
+    tf.keras.layers.Conv2D(16, 3, padding="same", activation="relu"),
+    tf.keras.layers.MaxPooling2D(),
+    tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu"),
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(2, activation="softmax"),
+])
+
+model_augmente.summary()
+```
+
+Les couches d'augmentation présentent trois avantages qu'il ne faut pas négliger : elles consomment très peu de temps puisqu'elles travaillent sur un lot déjà chargé, elles sont sauvegardées avec le modèle, donc la cohérence entre entraînement et inférence est garantie par construction, et elles ne peuvent pas écrire une variante dans le jeu de validation par simple erreur de copier-coller. La solution alternative, qui consiste à générer à l'avance des milliers de fichiers dérivés sur disque, reste utilisable quand la mémoire est insuffisante ou quand l'on doit partager un jeu de données figé avec une autre équipe ; elle expose en revanche les deux écueils classiques : un disque enflé et une frontière entre ensembles beaucoup plus facile à franchir par inadvertance.
+
+Dans notre cas d'usine, les choix se justifient par la géométrie de la ligne. Les pièces arrivent dans une orientation libre, donc le retournement horizontal est admis ; elles ne sont jamais présentées à l'envers, donc aucun retournement vertical. Les défauts apparaissent à n'importe quelle position angulaire, ce qui autorise une rotation de dix degrés sans changer l'étiquette. L'éclairage varie entre le matin et l'après-midi, d'où une variation de luminosité et de contraste de l'ordre de 15 %. En revanche, aucune translation excessive : le défaut doit rester entier dans le cadre, sinon vous apprenez au modèle à deviner ce qu'on lui a coupé.
+
+La règle d'or qui accompagne toute augmentation est un ordre d'opérations, et il est impitoyable. On découpe d'abord les fichiers en ensembles d'entraînement, de validation et de test, sur la base des objets ou des sessions de prise de vue, puis on n'augmente que le jeu d'entraînement. Si vous fabriquez des variantes avant le découpage, une photographie et sa voisine retournée se retrouvent de part et d'autre de la coupe : votre validation mesure alors la capacité à reconnaître une copie, pas à généraliser, et votre score est aussi fiable qu'un examen dont on aurait distribué les sujets la veille. Le test, lui, ne subit jamais aucune transformation, sinon vous ne mesurez plus vos performances réelles.
+
+L'ajustement de la force d'augmentation se fait en validation, comme un hyperparamètre de plus. Une transformation trop faible laisse le modèle mémoriser ; une transformation trop forte crée des images que l'humain ne reconnaîtrait plus comme appartenant à la classe et dégrade l'apprentissage. Commencez doucement, observez la fenêtre d'écart entre les deux courbes, puis durcissez seulement si l'écart se creuse encore. Une technique complémentaire, l'augmentation à l'inférence, applique plusieurs variantes d'une même image de validation et moyenne les prédictions : elle améliore légèrement le score sans toucher à l'entraînement, à condition de rester rigoureusement hors du calcul des métriques d'entraînement.
+

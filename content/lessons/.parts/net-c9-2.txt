@@ -1,0 +1,111 @@
+## Lire, écrire et comprimer une adresse
+
+Écrire une adresse IPv6 en toutes lettres est pénible et propice à l'erreur. La RFC 5952 définit une forme canonique, celle que vous devez adopter par défaut, celle que les outils produisent et que les examens sanctionnent. Elle tient en quatre règles. Première règle : les zéros de tête de chaque groupe sont supprimés, donc 0db8 devient db8 et 00ac devient ac. Deuxième règle : une seule suite consécutive de groupes entièrement nuls peut être remplacée par deux points, et rien d'autre. Troisième règle : cette abréviation par deux points doit être appliquée à la suite la plus longue ; si deux suites de même longueur se présentent, la première, la plus à gauche, l'emporte. Quatrième règle : la lettre minuscule est préférée à la majuscule, et aucun séparateur autre que les deux-points n'est admis.
+
+Appliquons les règles à quelques adresses typées à la main. L'adresse de bouclage 0000:0000:0000:0000:0000:0000:0000:0001 se réduit à ::1, car il ne reste qu'un groupe non nul. L'adresse non attribuée 0000:0000:0000:0000:0000:0000:0000:0000 se réduit à ::, et cette forme vide est une valeur réelle utilisée comme source lorsque la machine n'a pas encore d'adresse. Un préfixe de documentation long comme 2001:0db8:0000:0000:0000:0000:0000:0000 devient 2001:db8::, et si vous avez deux suites nulles de longueur identique, seule la première se contracte. La forme contractée n'est donc pas décorative : elle est unique, et un logiciel qui accepte deux écritures différentes d'une même adresse ferait fuir la cohérence des tables. Les routeurs comme les pare-feux comparent des valeurs binaires, pas des chaînes de caractères, mais l'humain, lui, doit savoir lire vite.
+
+```text
+Écriture complète                Écriture canonique (RFC 5952)
+0000:0000:0000:0000:0000:0000:0000:0001   ::1
+0000:0000:0000:0000:0000:0000:0000:0000   ::
+2001:0db8:00ac:0001:0000:0000:0000:0001   2001:db8:ac1::1
+fe80:0000:0000:0000:0202:b3ff:fe1e:8329   fe80::202:b3ff:fe1e:8329
+ff02:0000:0000:0000:0000:0000:0000:0001   ff02::1
+2001:0db8:0000:0001:0000:0000:0000:0000   2001:db8:0:1::
+                                               ^ seule la première suite longue se contracte
+
+À ne jamais écrire
+2001:db8::1::2     deux abréviations dans la même adresse, ambiguë donc refusée
+2001:DB8::0001     majuscules et zéros résiduels : valide mais non canonique
+2001:db8:1:2:3:4:5    sept groupes : compte incorrect, l'adresse est invalide
+```
+
+Un piège fréquent concerne le lien local. Une adresse fe80::1 n'est pas globale : elle n'existe que sur le lien auquel l'interface est rattachée, et deux machines de réseaux différents peuvent parfaitement porter fe80::1. Pour cette raison, toute commande qui vise une adresse de lien local doit préciser l'interface concernée, sous forme d'indice de zone. Sous Linux et macOS, on écrit fe80::1%eth0 ou fe80::1%en0 ; sous Windows, on écrit fe80::1%12 ou fe80::1%Ethernet. Sans cette précision, la commande échoue avec un message vous disant qu'il manque un domaine ou une interface, et beaucoup de débutants concluent alors, à tort, que leur réseau est cassé. Le pourcentage fait partie de l'adresse telle que vous la tapez, il ne se sauvegarde pas dans les tables de routage, et il ne sert qu'à guider l'émission locale.
+
+Manipuler une adresse suppose aussi de savoir où l'administrateur la rencontre. Dans un navigateur, une adresse IPv6 de destination s'encadre de crochets, par exemple http://[2001:db8::1]/, afin que la limite de l'adresse reste non ambiguë ; dans les journaux, elle apparaît souvent sous sa forme intégrale, tandis que la sortie d'une commande la renvoie contractée ; dans un script, elle doit être protégée par des guillemets, sans quoi un espace ou un caractère d'interprétation la casse. Aucune de ces formes ne change la valeur binaire : c'est toujours le même nombre de 128 bits que vous avez appris à décomposer.
+
+Un réflexe à acquérir dès maintenant : savoir quelle adresse source une machine choisit pour atteindre une destination donnée. Une interface peut en effet porter plusieurs adresses globales, la principale et les adresses temporaires, et c'est la table de routage qui décide de la source employée, comme le montre la commande ip -6 route get. Pour un serveur, la question n'est pas anodine : si les adresses temporaires tournent, les journaux du service distant et vos règles fondées sur la source deviennent illisibles, et l'on configure alors une adresse stable en désactivant l'usage temporaire sur cette interface.
+
+## Les familles d'adresses IPv6
+
+L'IPv6 ne connaît ni les classes A, B et C, ni les adresses de diffusion de niveau 3. Il définit en revanche un petit nombre de familles nettement distinctes, et toute la difficulté de terrain tient à ceci : une adresse IPv6 n'a de sens que l'on connaît sa portée, c'est-à-dire le périmètre auquel elle est utilisable. Une erreur de portée est la première cause de dépannage après une migration, bien avant les erreurs de saisie. Trois familles couvrent l'essentiel des besoins : le unicast pour les conversations entre deux interfaces, le multicast pour les conversations entre un émetteur et un groupe de receveurs, et l'anycast pour joindre le membre le plus proche d'un ensemble de serveurs portant la même adresse. À ces familles s'ajoutent quelques adresses spéciales, en nombre limité, qu'il faut connaître par cœur car elles apparaissent dans chaque sortie de commande.
+
+Le unicast global est la famille que vous utiliserez pour joindre un service sur l'Internet. Tout bloc commençant par les bits 001 appartient à l'espace 2000::/3, soit de 2000:: à 3fff::, ce qui représente la grande majorité des adresses publiques déployées. À l'intérieur de cet espace, le bloc 2001:db8::/32 est réservé à la documentation : les exemples de ce cours, les schémas de vos documents internes et les tests de laboratoire doivent impérativement l'utiliser, jamais un préfixe réel que vous risqueriez de voir apparaître dans un journal public. La répartition des blocs 2000::/3 suit un découpage que vous rencontrerez dans les tables de routage : 2001::/32 pour Teredo, 2002::/16 pour l'ancien 6to4, 2001:db8::/32 pour la documentation, et des plages opérateurs ou régionaux pour le reste.
+
+Le unicast de lien local, noté fe80::/10, mérite une attention particulière. La plage couvre de fe80:: à febf::, mais en pratique tout le monde n'utilise que les adresses commençant par fe80. Cette adresse est obligatoire sur chaque interface IPv6 capable, elle est générée automatiquement à partir de l'identifiant d'interface, et elle n'est joignable que sur le lien directement rattaché, sans être routée. Deux conséquences pratiques. D'abord, c'est par l'adresse de lien local du routeur que votre machine découvre sa passerelle : lors de l'échange d'annonces que nous étudierons, l'adresse source du routeur est une adresse fe80, et votre route par défaut l'indiquera souvent ainsi. Ensuite, toute commande visant une adresse fe80 doit préciser l'interface avec l'indice de zone, sous peine d'erreur, précisément parce que la même valeur peut exister sur plusieurs liens en même temps.
+
+L'unicast de zone unique, ou ULA pour Unique Local Address, occupe la plage fc00::/7, ce qui signifie fc00:: à fdff::. Seule la moitié haute, fd00::/8, est réellement utilisée : on choisit un identifiant global de quarante bits au hasard pour éviter les collisions entre réseaux autonomes, puis on découppe comme on veut. C'est l'équivalent des adresses privées RFC 1918 que vous connaissez, à cette différence près qu'aucun routeur public ne devrait jamais en annoncer, et que l'on peut s'en servir sans NAT pour relier des sites entre eux par VPN. Beaucoup d'entreprises utilisent les ULA pour leur plan de gestion : adresses des routeurs, des commutateurs, des serveurs de supervision, afin de garder une cohérence d'adressage même lorsque le préfixe global change de fournisseur.
+
+Quatre adresses spéciales doivent être reconnues d'un coup d'œil. L'adresse ::1 est la bouclage, équivalent de 127.0.0.1, toujours présente sur l'interface de bouclage et utilisable pour vérifier que la pile IPv6 fonctionne. L'adresse ::, dite non attribuée, sert de source lorsque la machine ne possède encore aucune adresse, et elle apparaît aussi dans certaines entrées de route. Les adresses de forme ::ffff:0:0/96 encapsulent une adresse IPv4 et servent aux piles doubles pour traiter un paquet venu de l'autre monde. Enfin le préfixe 64:ff9b::/96 est le préfixe bien connu de la translation NAT64 : une adresse IPv4 s'y accole directement, ce qui permet à un réseau IPv6-only d'atteindre un serveur IPv4 sans configuration particulière côté client.
+
+Le multicast occupe l'espace ff00::/8 et se lit en deux parties. Le premier octet porte les drapeaux dans sa moitié haute et la portée dans sa moitié basse : la portée 2 signifie le lien local, 5 le site, 8 l'organisation, e l'univers. Le reste de l'adresse identifie le groupe. Quatre groupes suffisent à 90 % du quotidien : ff02::1 pour tous les nœuds du lien, ff02::2 pour tous les routeurs, ff02::1:2 pour les serveurs et relais DHCPv6, et le groupe dit de sollicitation, de la forme ff02::1:ffXX:XXXX, où XX:XXXX reprend les vingt-huit derniers bits de l'adresse sollicitée. Ce dernier groupe est au cœur de la découverte de voisinage : au lieu de réveiller tout le segment comme le faisait le broadcast ARP, la machine n'interroge que les interfaces susceptibles de porter l'adresse recherchée. C'est une différence mesurable, que vous constaterez sur un lien chargé.
+
+```bash
+# Les groupes multicast auxquels une interface appartient
+ip -6 maddr show dev eth0
+
+# Interroger tous les nœuds du lien, sans ARP broadcast
+ping -c 2 ff02::1
+ping -c 2 ff02::1%eth0
+
+# Identifier le routeur du lien par son groupe tous-routeurs
+ping -c 2 ff02::2%eth0
+```
+
+L'anycast, enfin, n'a pas d'espace réservé : c'est une même adresse attribuée à plusieurs interfaces, et la table de routage conduit le trafic vers la plus proche d'entre elles. Les adresses anycast servent aujourd'hui aux relais de transition, aux serveurs de noms racines et aux services de découverte. Pour l'administrateur, le piège est subtil : une adresse anycast ne se pingue pas forcément toujours vers la même machine, ce qui rend les journaux déroutants lorsqu'on cherche à identifier l'émetteur d'une anomalie.
+
+Le tableau suivant rassemble les familles, leurs plages, leur portée et la manière dont elles sont obtenues. Apprenez-le par cœur : il vous sert à chaque diagnostic, et surtout à écrire vos règles de filtrage, car une ACL IPv6 mal ciblée sur la portée laisse passer exactement ce que vous vouliez bloquer.
+
+| Famille | Exemple | Portée réelle | Obtenue par | Usage principal |
+|---|---|---|---|---|
+| Unicast global | 2001:db8:ac1:1::25 | Internet et réseaux routés | SLAAC, DHCPv6 ou manuel | Services publiques, postes, serveurs |
+| Unicast de lien local | fe80::202:b3ff:fe1e:8329 | Un seul lien, non routé | Générée automatiquement | Découverte du routeur, voisinage |
+| Unicast de zone unique | fd00:ac1::10 | Vos réseaux internes, non routé public | Plan d'adressage interne | Gestion, VPN, objets |
+| Bouclage | ::1 | La machine elle-même | Système d'exploitation | Tests locaux, services d'écoute |
+| Non attribuée | :: | Nulle part | Système d'exploitation | Source temporaire, route vide |
+| Multicast | ff02::1 | Portée portée par le dernier octet | Groupe rejoint automatiquement | Découverte, annonce, DHCPv6 |
+| Anycast | Adresse servie par plusieurs nœuds | Plus proche du routage | Configuration identique sur plusieurs hôtes | Services redondés |
+| IPv4 encapsulée | ::ffff:192.0.2.10 | Interne à la pile | Conversion de la pile double | Passage entre les deux mondes |
+
+Retenez la règle qui commande tout le reste : le type d'une adresse se lit à ses premiers bits, et sa portée se lit à son préfixe. Une ACL qui autorise fe80::/10 ouvre le lien local, pas Internet ; une ACL qui autorise ff02::/16 ouvre le multicast du lien, pas les postes globaux. Une fois cette lecture acquise, le plan d'adressage devient un exercice d'organisation et non de calcul : c'est ce que nous allons faire à présent, en taillant le préfixe reçu par la Maison Lavigne en sous-réseaux de taille homogène.
+
+## Préfixes, sous-réseaux et plan d'adressage
+
+Le sens des préfixes se lit autrement qu'en IPv4 : il n'y a pas de masque à calculer en binaire, seulement un nombre de bits. Un préfixe /64 signifie que les soixante-quatre premiers bits identifient le réseau, les soixante-quatre derniers l'hôte : c'est la taille canonique d'un lien, celle que SLAAC exige, car l'identifiant d'interface doit être librement choisi par la machine. Un /127 sur un lien point à point, admis par la RFC 6164, économise les adresses quand le nombre de routeurs est compté. Un /128 désigne une adresse précise, sur une boucle d'interface ou une entrée de pare-feu. La règle empirique est simple : /64 pour un lien d'hôtes, /127 pour un lien entre routeurs, /48 ou /56 pour un site, /32 pour un préfixe opérateur, et toute autre valeur doit être justifiée par une raison mesurable.
+
+Le tableau ci-dessous sert de référence pour le plan d'adressage que nous construirons : il associe chaque préfixe à son usage normal, au nombre de sous-réseaux obtenus et à la décision attendue de l'administrateur.
+
+| Préfixe | Bits restants pour les hôtes | Adresses par bloc | Usage normal | Décision |
+|---|---|---|---|---|
+| /32 | 96 | 2 puissance 96 | Préfixe global d'organisation ou d'opérateur | À publier auprès du registre régional |
+| /48 | 80 | 2 puissance 80 | Site d'entreprise, découpage en sous-réseaux | 65 536 sous-réseaux de 64 bits |
+| /56 | 72 | 2 puissance 72 | Petit site ou client résidentiel chez un opérateur | 256 sous-réseaux, souvent la limite déléguée |
+| /64 | 64 | 18 milliards de milliards | Lien unique : postes, Wi-Fi, VLAN | Taille obligatoire pour SLAAC |
+| /112 | 16 | 65 536 | Réseau d'objets ou sous-réseau hérité | À éviter si SLAAC est visé |
+| /127 | 1 | 2 | Lien point à point entre routeurs | RFC 6164, sans diffusion inutile |
+| /128 | 0 | 1 | Adresse unique : boucle, serveur, pare-feu | Écriture complète d'une cible |
+
+La comparaison avec votre plan IPv4 de départ n'est pas anodine, et c'est précisément le point de départ de la migration : le découpage VLSM que vous avez appris à tailler en IPv4 reste indispensable, car l'IPv6 hérite du même besoin d'organisation, simplement avec beaucoup plus de matière première et une contrainte unique, le /64 des liens d'hôtes.
+
+```image
+adresse-ip
+| Le plan d'adressage IPv4 en sous-réseaux, obtenu par VLSM, sert de point de départ concret de la migration : chaque segment taillé hier redevient une question IPv6, avec cette différence qu'un lien d'hôtes réclame désormais un /64 complet.
+```
+
+Reprenons le cas de la Maison Lavigne pour incarner ces tailles. Le site occupe un bâtiment, dispose d'un préfixe global /48 attribué par son opérateur, par exemple 2001:db8:ac1::/48. Ce bloc se décompose en deux champs : les quarante-huit premiers bits sont le préfixe de routage, les seize suivants, l'identifiant de sous-réseau que nous choisissons, et les soixante-quatre derniers, libres pour les machines. Nous attribuons alors le sous-réseau 0001 à l'atelier, 0002 au magasin, 0003 à l'entrepôt, 0004 à l'infrastructure réseau, 0005 à la caméra et aux objets, 0006 au réseau invité. Chacun de ces liens recevra un /64 complet, soit plus d'adresses qu'aucune entreprise n'en utilisera jamais, mais c'est précisément le luxe qui rend l'IPv6 si simple : on ne compte plus, on alloue.
+
+Le premier réflexe d'administration, avant toute configuration, consiste à inventoriair ce que la machine a déjà. Exécutez les commandes suivantes et observez la sortie : vous y verrez l'adresse de lien local, l'adresse globale, le préfixe annoncé par le routeur et la route par défaut éventuellement reçue.
+
+```bash
+# Inventaire des adresses IPv6 et des routes sur Linux
+ip -6 addr show
+ip -6 route show
+ip -6 route show default
+ip -6 neigh show
+
+# Équivalents Windows
+netsh interface ipv6 show route
+netsh interface ipv6 show neighbours
+```
+
+Si l'interface affiche une adresse fe80 mais aucune adresse globale, deux causes sont probables : le routeur du lien n'émet pas d'annonce, ou ses annonces ne portent pas le drapeau d'adresse autoconfigurable. Nous verrons précisément comment diagnostiquer ce cas dans les sections sur SLAAC et NDP. D'ici là, retenez l'essentiel : lire une adresse IPv6, c'est lire un préfixe que quelqu'un vous a donné, un identifiant de sous-réseau que vous avez choisi, et un identifiant d'interface que la machine a produit. Savoir distinguer ces trois responsabilités, c'est déjà savoir planifier une migration.

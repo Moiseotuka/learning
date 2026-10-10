@@ -1,0 +1,86 @@
+Bienvenue dans le chapitre IPv6, ouverture du niveau avancé du parcours Réseaux. Les sept chapitres précédents vous ont appris à lire le modèle OSI couche par couche, à fabriquer un plan d'adressage IPv4 avec la méthode VLSM, à segmenter un réseau en VLAN, à comprendre le dialogue TCP et UDP, à installer des routes statiques et des adjacences, à filtrer avec des ACL et à traduire avec du NAT, puis à superviser les liens et à durcir les équipements. Tout ce travail reposait sur une hypothèse devenue encombrante : que l'IPv4 suffirait encore longtemps à tout le monde. Cette hypothèse est morte. Les derniers blocs d'adresses IPv4 ont été distribués aux régistres régionaux il y a plusieurs années, et toute nouvelle connexion mobile, tout objet connecté, tout site distant réclame aujourd'hui des adresses que l'on ne peut plus fabriquer. L'IPv6 n'est donc pas une curiosité académique que l'on étudie pour l'examen : c'est la suite logique de tout ce que vous savez déjà, avec les mêmes concepts de couche 3 mais des règles d'écriture, de découverte et de cohabitation qui diffèrent suffisamment pour piéger un technicien pressé.
+
+À la fin de ce chapitre, vous saurez faire trois choses très concrètes. Premièrement, vous lirez, vous écrirez et vous comprimerez une adresse IPv6 sans erreur, en distinguant le préfixe de routage, l'identifiant de sous-réseau et l'identifiant d'interface, et vous saurez reconnaître d'un coup d'œil les adresses de lien local, de bouclage, de multicast et globales. Deuxièmement, vous configurerez l'autoconfiguration SLAAC sur un hôte et sur un routeur, en produisant et en lecture les annonces du routeur voisin, puis vous choisirez avec lucidité entre SLAAC seul, SLAAC complété par DHCPv6 et DHCPv6 complet selon la population à servir. Troisièmement, vous choisirez et justifierez une stratégie de transition entre l'IPv4 et l'IPv6 — pile double, tunnel ou translation NAT64 avec DNS64 — en fonction du contexte réel plutôt que d'une mode. Ces trois compétences sont celles qu'on vous demandera lors d'une migration, pas la connaissance d'un détail de la RFC.
+
+Le fil rouge de la leçon est une entreprise familiale, la Maison Lavigne, qui exploite un atelier, un magasin de vente et un petit entrepôt sur un même site, soit une quarantaine de postes fixes, une douzaine d'objets connectés, deux caméras, une imprimante réseau et une liaison vers le comptable externe. Le réseau actuel est en 192.168.10.0/24, planifié il y a douze ans avec un masque unique, du NAT sur la box opérateur et un serveur de fichiers en adresse fixe bricolée. Le gérant vient de souscrire une liaison fibre professionnelle qui lui attribue un préfixe IPv6 global, et il veut que « tout marche, sans casser ce qui marche déjà ». Nous allons migrer ce réseau étape par étape, en gardant l'IPv4 en service, en découvrant l'espace d'adresses IPv6, en installant l'autoconfiguration, puis en choisissant la stratégie de cohabitation. Chaque notion abordée dans ce chapitre servira immédiatement ce cas, et l'exercice final vous demandera de produire le plan d'adressage et les configurations correspondants.
+
+Un conseil de méthode avant de commencer : ouvrez un terminal à côté de cette page et exécutez les blocs de commandes au fur et à mesure. Que vous soyez sous Linux, sous macOS ou sous Windows avec le sous-système Linux, les sorties varieront légèrement, mais la structure est la même partout : une liste d'adresses par interface, une table de routes, une table de voisins. Si une commande échoue, lisez le message au lieu de le subir : il vous dira si l'interface n'existe pas, si le préfixe est absent, si le voisin n'a pas répondu ou si le pare-feu bloque le message de découverte. Nous avancerons en quatre temps : d'abord l'anatomie de l'adresse, puis les familles d'adresses et le plan de sous-réseautage, ensuite la découverte du voisinage et l'autoconfiguration, enfin la cohabitation avec l'IPv4, la sécurité, la supervision et la migration de la Maison Lavigne.
+
+## Pourquoi l'IPv6 s'impose aujourd'hui
+
+L'argument le plus simple est arithmétique. Une adresse IPv4 contient 32 bits, ce qui donne un peu plus de 4,3 milliards de combinaisons. Sur le papier, cela semble beaucoup ; en pratique, un tiers de cet espace est réservé aux usages privés, une fraction non négligeable est gâchée par les découpages rigides des classes historiques et par les masques mal taillés, et la croissance des réseaux mobiles a absorbé le reste en quelques années. L'IANA a épuisé son dernier bloc global en 2011, l'ARIN en Amérique du Nord en 2015, RIPE NCC en Europe en septembre 2019. Un opérateur ou une entreprise qui souhaite aujourd'hui publier de nouvelles adresses doit les acheter sur le marché secondaire, à un prix qui décourage tout déploiement de masse. Une adresse IPv6 contient 128 bits, soit environ 3,4 sextillions de combinaisons, un chiffre si grand qu'on le retient mal : on dit simplement qu'il y en a pour des milliards d'adresses par habitant de la planète, et l'on cesse de compter.
+
+Le deuxième argument est structurel : l'IPv4, tel qu'il a été déployé, a été réparé par-dessus, et ces réparations sont devenues des couches de complexité. Le NAT, que vous avez étudié dans le chapitre sur l'accès et la traduction, est une de ces réparations. Il a sauvé l'adressage pendant vingt ans, mais il a introduit une asymétrie que tout administrateur a subie : une machine derrière un NAT n'est plus joignable directement, il faut ouvrir des plages de ports, configurer des redirections, maintenir des mappings, et les protocoles pair à pair — visioconférence, partage de fichiers, jeux, certaines Voix sur IP — doivent recourir à des serveurs relais parce que la connexion directe est devenue l'exception. EnIPv6, l'architecture d'origine rétablit la communication de bout en bout : chaque interface reçoit un préfixe global, chaque machine est joignable, et c'est le pare-feu qui décide ce qui est ouvert plutôt que la nécessité de masquer. Cela ne signifie pas qu'on laisse tout au monde entrer, mais que la politique de sécurité redevient explicite et centralisée.
+
+Le troisième argument est le déploiement lui-même. Les réseaux sans fil d'entreprise, les réseaux d'objets connectés, les accès 4G et 5G consomment des adresses à un rythme que l'IPv4 ne peut plus suivre. Un fabricant d'objets connectés qui doit adresser dix millions de capteurs ne peut pas demander dix millions d'adresses IPv4 : il déploie de l'IPv6, souvent du IPv6-only, et son cloud est en pile double. C'est déjà la norme pour les réseaux mobiles, où l'IPv6 est majoritaire dans de nombreux pays. Pour un réseau d'entreprise, la conséquence pratique est que votre réseau devra un jour dialoguer avec cet Internet IPv6 majoritaire, et qu'il vaut mieux apprendre à le faire en maîtrise que dans l'urgence d'une migration subie.
+
+L'IPv6 n'est pas seulement « plus d'adresses ». Il a été conçu en tirant les leçons des défauts d'IPv4. L'en-tête, fixes quarante octets, ne porte plus de somme de contrôle : l'intégrité est vérifiée par la couche liaison et par les couches supérieures, ce qui fait gagner du temps à chaque saut. Il n'y a plus de diffusion de niveau 3, le fameux broadcast qui réveillait toutes les machines d'un segment : le multicast et l'anycast prennent le relais, et les messages de découverte vont aux seuls intéressés. Il n'y a plus de fragmentation par l'émetteur : si un paquet est trop gros, c'est le chemin de bout en bout qui doit s'adapter, avec une taille minimale garantie de 1280 octets. Le champ Hop Limit remplace le TTL, le champ Flow Label de vingt bits permet d'identifier un flux sans ouvrir le transport, et l'extension IPsec, facultative en pratique mais prévue par l'architecture, s'inscrit naturellement dans l'en-tête. Tout cela donne des paquets plus simples à traiter et des réseaux plus prévisibles.
+
+Voici le logo officiel qui accompagne le protocole depuis sa normalisation : vous le verrez sur les boîtiers, dans les fiches techniques et dans les interfaces d'administration qui annoncent la prise en charge IPv6.
+
+```image
+ipv6-logo
+| Le logo IPv6 : un disque bleu frappé de la mention IPv6, symbole des équipements et des services capables d'adressage 128 bits.
+```
+
+Ce changement se situe au même niveau que tout ce que vous avez étudié jusqu'ici : l'adresse IPv6, ses en-têtes et ses protocoles de découverte vivent en couche 3 du modèle OSI, tandis que les trames Ethernet qui les transportent restent en couche 2 et ne changent pas de nature.
+
+```image
+modele-osi
+| Le modèle OSI en sept couches : l'IPv6 intervient en couche 3 réseau, exactement là où travaillait déjà l'IPv4, tandis que la couche 2 Ethernet reste inchangée.
+```
+
+Le tableau suivant résume, côté à côté, ce qui change réellement pour l'administrateur qui passe de l'un à l'autre. Lisez-le comme une carte de traduction : la colonne de droite est celle que vous appliquerez dans les sections suivantes.
+
+| Sujet | IPv4 | IPv6 |
+|---|---|---|
+| Taille de l'adresse | 32 bits, notation décimale pointée | 128 bits, notation hexadécimale entre deux-points |
+| Découpage en sous-réseau | Masque de longueur variable, classes historiques | Préfixe de longueur fixe ou variable, /64 par défaut pour un lien |
+| Découverte de l'adresse liaison | ARP, en diffusion broadcast | NDP sur ICMPv6, en multicast ciblé |
+| Diffusion de niveau 3 | Broadcast | Aucune, remplacé par le multicast |
+| Configuration | Manuellement ou par DHCP | SLAAC automatique, DHCPv6, ou les deux |
+| En-tête | Variable, 20 à 60 octets, avec somme de contrôle | Fixe à 40 octets, sans somme de contrôle |
+| Fragmentation | Par l'émetteur ou par le routeur | Uniquement par l'émetteur, via un en-tête d'extension |
+| Traduction d'adresses | NAT courant, couteau suisse | NAT64 réservé à la transition, à éviter sur le long terme |
+| Joignabilité de bout en bout | Souvent masquée par le NAT | Naturelle, pilotée par le pare-feu |
+
+La dernière ligne mérite insistance, car elle décrit le changement le plus important pour votre métier. EnIPv4, le NAT est à la fois une solution d'adressage et, souvent, un effet collatéral de sécurité : ce qui n'est pas publié n'est pas atteignable. EnIPv6, il n'y a plus de masquage automatique : si vous donnez un préfixe global à vos postes et que vous ne filtrez rien, vos postes sont atteignables depuis l'Internet mondial en quelques minutes, le temps qu'un scanner diffuse des annonces. La migration IPv6 est donc un projet de sécurité autant qu'un projet d'adressage, et c'est pourquoi la moitié de ce chapitre est consacrée au filtrage, à la surveillance et au dépannage.
+
+## Anatomie d'une adresse IPv6
+
+Une adresse IPv6 est un nombre de 128 bits. On la découpe conventionnellement en huit blocs de seize bits, appelés groupes ou hextets, séparés par des deux-points, et on exprime chaque groupe en hexadécimal, c'est-à-dire en base seize. Chaque chiffre hexadécimal représente quatre bits, chaque groupe en contient seize, donc quatre chiffres suffisent à l'écrire en entier. L'adresse complète 2001:0db8:00ac:0001:0000:0000:0000:0001 contient donc bien huit groupes de quatre chiffres, soit 32 chiffres hexadécimaux, soit 128 bits. Contrairement à l'IPv4, il n'y a ni classe A, B ou C, ni masque caché derrière une notation : tout se dit avec un préfixe en longueur de bits, à la manière du /24 que vous utilisez déjà.
+
+Les 128 bits se lisent toujours du plus significatif au moins significatif, et leur répartition suit un découpage en trois champs pour les adresses globales. Les bits de poids fort constituent le préfixe de routage global : c'est le bloc que votre opérateur ou votre registre régional vous alloue, souvent /32, /48 ou /56. Vient ensuite l'identifiant de sous-réseau, en général seize bits, que vous, administrateur, choisissez pour distinguer vos segments : atelier, magasin, entrepôt, Wi-Fi, caméras. Enfin les soixante-quatre bits de poids faible forment l'identifiant d'interface, qui désigne la machine ou l'objet sur le lien. Ce dernier champ est le plus important à comprendre, car c'est lui qui détermine l'adresse complète d'une machine, c'est lui que SLAAC génère automatiquement, et c'est lui qui, mal généré, provoque les conflits les plus fréquents.
+
+La mécanique de génération de l'identifiant d'interface connaît trois méthodes. La première, historique, est EUI-64 : on prend l'adresse MAC de la carte, quarante-huit bits, on y insère les valeurs ff fe en son milieu pour retrouver soixante-quatre bits, puis on inverse le bit d'unicité locales pour produire un identifiant unique au monde. La deuxième méthode, aujourd'hui préférée, est l'adresse temporaire : le système génère un identifiant aléatoire et le renouvelle périodiquement, afin que la trace laissée par l'identifiant d'interface ne permette pas de suivre un appareil d'un réseau à l'autre. La troisième est l'assignation manuelle, que vous utiliserez pour les serveurs, les imprimantes et les équipements réseau, parce qu'une adresse fixe et mémorisable reste indispensable pour l'administration. Rien ne vous interdit d'ailleurs de choisir soi-même un identifiant simple, du moment qu'il est unique sur le lien.
+
+Voici une adresse complète, décomposée en binaire puis en hexadécimal, pour que le lien entre les deux représentations soit évident. Prenez le temps de compter : huit groupes, seize bits chacun.
+
+```text
+Adresse    : 2001:0db8:00ac:0001:0250:c7ff:fe12:3456
+Binaire    : 0010 0000 0000 0001 | 0000 1101 1011 1000 | 0000 1100 1010 0000 | 0000 0000 0000 0001
+             0000 0010 0101 0000 | 1100 0111 1111 1110 | 0001 0010 0011 0100 | 0101 0110
+
+Lecture champ par champ
+  2001:0db8:00ac:0001   préfixe de routage global + identifiant de sous-réseau
+  0250:c7ff:fe12:3456   identifiant d'interface (ici dérivé de la MAC 00:50:c7:12:34:56)
+  Préfixe annoncé       2001:db8:ac1::/64 sur le lien de l'atelier
+```
+
+Remarquez deux détails qui deviendront des réflexes. D'abord, le bit d'unicité locales de l'adresse EUI-64 est passé de 00 à 02, ce qui explique le 0 initial du dernier groupe d'octets. Ensuite, l'identifiant d'interface conserve une structure reconnaissable, avec la séquence ff fe au milieu : un technicien expérimenté devine l'origine EUI-64 d'un coup d'œil, et sait qu'il pourra retrouver l'adresse MAC de la machine si besoin, ce qui est utile pour l'inventaire mais gênant pour l'anonymat.
+
+Pour voir tout cela en pratique, affichez les adresses de vos interfaces. Sous Linux et sous macOS, la commande est la même ; sous Windows, l'équivalent est netsh interface ipv6 show address, ou mieux ipconfig /all, qui affiche les adresses IPv6 avec leur type.
+
+```bash
+# Linux / macOS : liste des adresses IPv6 par interface
+ip -6 addr show
+# ou, plus lisible, uniquement les adresses globales et de lien local
+ip -6 addr show scope global
+ip -6 addr show dev eth0
+
+# Windows : équivalent natif
+netsh interface ipv6 show address
+ipconfig /all
+```
+
+Dans une sortie moderne, vous verrez presque toujours au moins trois adresses sur une interface : une adresse de lien local commençant par fe80, une adresse globale commençant par 2001 ou tout autre préfixe public, et peut-être une adresse temporaire distincte de la principale. La présence de plusieurs adresses globales sur une même interface n'est pas une anomalie : c'est le mécanisme de confidentialité à l'œuvre, qui alterne les adresses pour rendre le suivi plus difficile. Gardez cette idée en tête, elle explique des différences de comportement entre le ping d'un serveur et l'accès à un site web depuis le même poste.

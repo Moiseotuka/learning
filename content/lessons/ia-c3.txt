@@ -1,0 +1,603 @@
+Bienvenue dans ce troisième chapitre du parcours data science, entièrement consacré à la régression, l'une des tâches les plus utilisées de toute la discipline. Jusqu'ici, vous avez peut-être appris à décrire des données, à les résumer, à les visualiser ou à les répartir en catégories ; avec ce chapitre, vous allez faire quelque chose de différent et de remarquable : prédire une valeur numérique que personne ne vous a encore donnée. Combien coûtera cet appartement ? Quelle note obtiendra un élève qui révise quatre heures ? Quel sera le délai de livraison demain ? À chaque fois, la réponse attendue n'est pas une étiquette parmi plusieurs, ni un classement, ni un oui ou un non : c'est un nombre, avec ses décimales, ses unités et son ordre de grandeur. C'est exactement ce que modélise une régression, et ce chapitre vous apprendra à en construire une, à en comprendre les rouages et à en juger la qualité sans vous laisser impressionner par un chiffre unique sorti d'un logiciel.
+
+La régression est aussi la porte d'entrée naturelle de la modélisation statistique, parce qu'elle repose sur des idées que l'on peut toutes démontrer à la main. À la fin de cette leçon, vous saurez faire cinq choses concrètes. Premièrement, vous écrirez une droite de régression vous-même : calcul de moyennes, de covariance, de variance, puis déduction de la pente et de l'ordonnée à l'origine, uniquement avec le module standard Python. Deuxièmement, vous saurez lire une équation ajustée et la traduire en phrases compréhensibles par un non-spécialiste, en indiquant le sens, le signe et l'ordre de grandeur de chaque coefficient. Troisièmement, vous calculerez et interprèterez les trois métriques de référence : le coefficient de détermination R², l'erreur quadratique moyenne RMSE et l'erreur absolue moyenne MAE. Quatrièmement, vous comprendrez ce que font réellement des fonctions telles que LinearRegression, fit et predict dans scikit-learn, illustrées ici en prose et en exemples commentés. Cinquièmement, vous dépisterez les travers classiques d'un modèle : surajustement, fuite de données, multicolinéarité, résidus qui ne se comportent pas comme prévu.
+
+Un mot sur la manière d'aborder ce chapitre, parce qu'il tranche légèrement sur ce que vous avez vu jusqu'ici. Les démonstrations numériques de cette leçon n'utilisent que la bibliothèque standard de Python, à savoir les modules math et statistics : aucune installation n'est nécessaire, aucun téléchargement n'est requis, et chaque bloc de code est suffisamment court pour être lu d'un seul regard. Les calculs sont volontairement effectués à la main plutôt que délégués à une bibliothèque, car comprendre une formule consiste précisément à l'avoir une fois écrite, exécutée et vérifiée. La bibliothèque NumPy et le framework scikit-learn apparaissent néanmoins au fil du chapitre, mais en guise d'illustration : vous y verrez l'appel exact que vous utiliserez plus tard dans un vrai projet, tandis que la logique sous-jacente restera celle que vous venez de calculer vous-même. Le fil rouge sera un petit jeu de données de douze lignes, heures de révision et notes obtenues, que nous emporterons d'une section à l'autre.
+
+## Pourquoi prédire une valeur continue
+
+Distinguer d'abord la régression de ses cousines est la meilleure façon de savoir quand l'utiliser. Une tâche de classification répond à une question de nature : à qui ce message appartient-il, ce client résiliera-t-il, cette image contient-elle un chat. Une tâche de régression répond à une question de quantité : combien, à quel point, combien de temps. La frontière tient en un détail décisif, lequel commande toute la suite du chapitre : dans une régression, la sortie est ordonnée. Deux prédictions de 10 et de 12 sont proches, tandis que deux prédictions de classes rouge et bleue n'ont aucune proximité intrinsèque. Cet ordre permet de parler d'erreur en continu, de mesurer de combien on se trompe, de savoir si une prédiction est acceptable ou scandaleuse. Il explique aussi pourquoi les métriques d'évaluation ne seront pas la précision ou le rappel, mais des distances numériques entre valeurs.
+
+Les applications sont partout, et il est utile de les avoir en tête avant de plonger dans les formules. En immobilier, la variable cible est le prix de vente, et les variables explicatives sont la surface, le nombre de pièces, l'adresse ou l'année de construction. En santé, on peut régresser la durée de séjour à l'hôpital sur l'âge et la sévérité des symptômes. Dans l'industrie, on prédit la température de sortie d'un four en fonction des réglages de consigne. En logistique, on estime le délai d'acheminement selon la distance et la charge du réseau. Dans tous ces cas, la quantité prédite possède une unité, une borne basse parfois naturelle, un ordre de grandeur que le métier connaît bien. Le modèle n'est donc jamais une boîte noire abstraite : il produit un nombre que l'on peut confronter à l'expérience, contester, corriger, ce qui rend la régression particulièrement pédagogique.
+
+La question de la qualité se pose immédiatement après celle de la construction. Une droite, on en fait toujours passer une par un nuage de points : le calcul est toujours possible, le résultat est toujours un couple de coefficients. La vraie interrogation est donc de savoir si cette droite mérite qu'on s'y fie. Trois familles de réponses structurent le chapitre. La première est interne : le R² mesure la part de variabilité des observations que le modèle parvient à reproduire. La seconde est anglophone et pratique : RMSE et MAE expriment l'erreur dans l'unité même de la variable cible, ce qui se discute avec un responsable métier beaucoup plus aisément qu'un ratio sans dimension. La troisième est externe et comparative : un modèle n'a d'intérêt que rapporté à un autre, à un modèle naïf qui prédirait toujours la moyenne, ou à une version de lui-même évaluée sur des données qu'il n'a pas vues.
+
+Il faut enfin accepter une idée qui déroute souvent au début : prédire, ce n'est pas expliquer. Une régression peut produire d'excellentes prédictions tout en attribuant un rôle causal discutable à l'une de ses variables, et l'inverse est possible. Corréler le nombre de boucheries d'une ville à son taux de mortalité fournit souvent une droite splendide qui ne dit rien de la causalité. Le chapitre suivra donc une règle méthodologique constante : on construit, on mesure, on diagnostique, on interprète avec prudence, et l'on ne conclut jamais qu'une variable fait augmenter une autre sur la seule foi d'un coefficient. Cette distinction, présente dans chacune des sections qui suivent, est ce qui sépare une analyse rigoureuse d'un tableur enthousiaste.
+
+## Le modèle linéaire simple
+
+Le modèle linéaire simple s'écrit avec deux paramètres seulement, et toute la théorie du chapitre tient dans cette phrase : on cherche une droite telle que la valeur prédite soit égale à un coefficient multiplicateur appliqué à la variable explicative, plus un décalage constant. En notation, la valeur prédite vaut a fois x plus b, où a est la pente, b l'ordonnée à l'origine, et où l'on ajoute toujours un terme d'erreur pour reconnaître que la droite ne passera jamais exactement par tous les points. La pente se lit comme une variation : lorsque x augmente d'une unité, la prédiction augmente de a unités. L'ordonnée à l'origine se lit comme un niveau de base : c'est la valeur prédue lorsque x vaut zéro, ce qui n'a parfois aucun sens physique et doit alors être interprété avec précaution.
+
+Le schéma suivant résume ce que le modèle cherche à faire dans le plan. Les points représentent les observations, la ligne continue représente la prédiction du modèle, et les déviations verticales entre un point et la ligne sont les résidus, c'est-à-dire les erreurs que la méthode des moindres carrés cherchera à rendre collectivement aussi petites que possible.
+
+```
+  note
+   ^
+   |                       .   .
+   |                  .  .   .
+   |              .  .   .                droite : y = a x + b
+   |          .  .   .
+   |      .  .   .   .
+   |   .  .   .
+   | .  .  .
+   +---------------------------------> heures
+        ^                    ^
+     residus (ecart vertical entre un point et la droite)
+```
+
+Avant même de chercher les meilleurs coefficients, il est bon de sentir ce que fait une droite donnée. L'exemple ci-dessous prend un couple de paramètres fixé d'avance, calcule la prédiction pour chaque observation, puis affiche l'écart observé. Le but n'est pas d'être juste, mais de voir apparaître les objets du chapitre : prédiction, résidu, somme des écarts.
+
+```python
+donnees = [(1.0, 52.0), (3.0, 60.0), (5.0, 66.0), (8.0, 76.0)]
+
+a, b = 4.0, 48.0
+
+for x, y in donnees:
+    predite = a * x + b
+    residu = y - predite
+    print("x =", x, "observe =", y, "predite =", predite, "residu =", residu)
+
+total = sum(y - (a * x + b) for x, y in donnees)
+print("somme des residus =", total)
+```
+
+On constate deux choses. D'abord, chaque ligne de sortie associe une observation à sa prédition et à l'écart qui les sépare : cet écart, signé, est le résidu, et il portera une part essentielle de notre évaluation. Ensuite, la somme des résidus n'est manifestement pas nulle pour ce couple de paramètres choisi au hasard, ce qui indique que la droite passe trop haut ou trop bas en moyenne. C'est précisément ce défaut que la méthode des moindres carrés corrigera : elle fixera d'abord l'intercept pour annuler ce biais systématique, puis la pente pour réduire au maximum la somme des carrés des écarts restants.
+
+Un point de vocabulaire s'impose avant d'aller plus loin, car les termes techniques reviendront dans chaque section. Le tableau suivant rassemble les objets que vous manipulerez du premier au dernier paragraphe du chapitre, avec la manière de les reconnaître dans un code ou dans un rapport d'outil.
+
+```table
+| Terme | Rôle | Signe ou unité |
+| --- | --- | --- |
+| Variable explicative | Ce qui sert à prédire, souvent noté x | Son unité d'origine |
+| Variable cible | Ce qu'on cherche à prédire, noté y | Son unité d'origine |
+| Pente | Variation de y quand x avance d'une unité | Signe libre, même unité que y par unité de x |
+| Intercept | Niveau de base prédit pour x égal à zéro | Même unité que y |
+| Résidu | Observation moins prédiction | Même unité que y |
+| R² | Part de variance expliquée | Sans dimension, entre 0 et 1 |
+```
+
+
+## Premiers calculs : moyennes, covariance, variance
+
+Toute l'architecture de l'ajustement repose sur trois quantités très simples que l'on calcule en une ligne chacune. La première est la moyenne : on additionne toutes les valeurs et l'on divise par leur nombre. La moyenne des x, notée ici mx, donne le centre de gravité horizontal du nuage de points ; la moyenne des y, notée my, donne son centre vertical. Ces deux nombres sont essentiels parce que la droite de régression passe obligatoirement par le point constitué de ces deux moyennes : c'est une propriété gratuite mais précieuse, qui fournit toujours un contrôle de cohérence après coup.
+
+La deuxième quantité est la variance, qui mesure l'étalement d'une variable autour de sa moyenne. On prend chaque écart à la moyenne, on l'élève au carré pour supprimer les signes et pénaliser davantage les écarts importants, puis on moyenne ces carrés. Une variance faible signale des valeurs serrées autour du centre, une variance forte des valeurs très dispersées. Dans le calcul de la pente, la variance de x jouera le rôle de dénominateur : plus les valeurs de x sont étalées, plus la pente est déterminée avec précision, ce qui intuitivement explique pourquoi il est difficile d'estimer une tendance quand toutes vos mesures sont prises dans un intervalle minuscule.
+
+La troisième quantité est la covariance, la plus instructive des trois. Pour chaque couple, on multiplie l'écart de x à sa moyenne par l'écart de y à la sienne, puis on moyenne ces produits. Si les deux variables grandissent ensemble, les deux écarts ont le même signe, leur produit est positif et la covariance l'est aussi. Si elles varient en sens inverse, la covariance est négative. Si aucun lien n'existe, les signes s'annulent et la covariance s'approche de zéro. La covariance n'a malheureusement pas d'unité interprétable, ce qui est pourquoi on la divisera par la variance de x pour en faire une pente, qui elle se lit immédiatement.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+mx = statistics.mean(x)
+my = statistics.mean(y)
+
+var_x = sum((v - mx) ** 2 for v in x) / len(x)
+cov_xy = sum((a - mx) * (b - my) for a, b in zip(x, y)) / len(x)
+
+print("moyenne x =", round(mx, 3), "moyenne y =", round(my, 3))
+print("variance x =", round(var_x, 3), "covariance xy =", round(cov_xy, 3))
+```
+
+L'exécution donne un centre de gravité situé aux alentours de six heures et demie pour x et de soixante-douze points pour y, une variance de x d'environ treize, et une covariance fortement positive. Déjà, deux conclusions se dessinent sans aucune bibliothèque spécialisée : la covariance positive annonce une relation croissante, plus on révise et plus la note augmente, et la magnitude de la covariance, comparée à celle de la variance de x, suggère une pente de l'ordre de trois à quatre notes par heure. Le prochain bloc de leçon va transformer cette intuition en formule exacte, puis en procédure d'optimisation.
+
+## La méthode des moindres carrés
+
+La question est maintenant parfaitement posée : parmi toutes les droites possibles, laquelle choisir ? L'approche des moindres carrés répond d'une phrase, que l'on peut comprendre avant toute démonstration. On retient la droite qui minimise la somme des carrés des résidus, c'est-à-dire la somme des écarts verticaux entre les observations et les prédictions, une fois chaque écart élevé au carré. Trois mots de cette définition méritent d'être justifiés, car ils ne sont pas décoratifs et que l'on les remplace pas par d'autres sans changer de méthode.
+
+Le mot somme indique qu'on juge le modèle collectivement et non observation par observation : aucune ligne ne peut être parfaite, mais l'ensemble doit être aussi fidèle que possible. Le mot carré a deux vertus. La première est de supprimer les signes : sans carré, un point au-dessus de la droite compenserait exactement un point en dessous, et une droite horizontale passant par la moyenne obtiendrait un score de zéro, ce qui serait ridicule. La seconde vertu est de pénaliser fortement les grands écarts : un écart de dix contribue pour cent, là où un écart de un ne contribue que pour un. On accepte ainsi que quelques erreurs importantes comptent davantage que beaucoup d'erreurs minimes, ce qui produit des modèles vigilants sur les cas extrêmes. Le mot résidu, enfin, désigne l'écart signé observé moins prédit, que nous avons déjà calculé à la main dans la section précédente.
+
+La démonstration complète utilise un peu de calcul différentiel, mais son résultat tient en deux formules que l'on peut retenir comme des objets mécaniques. Pour obtenir la pente, on dérive la somme des carrés par rapport à cette pente, on égale la dérivée à zéro, et l'on reconnaît que le numérateur n'est autre que la covariance tandis que le dénominateur n'est autre que la variance de x. Pour l'ordonnée à l'origine, on utilise ensuite le fait que la droite passe par le point des moyennes, ce qui donne immédiatement le décalage nécessaire. Autrement dit, la pente vaut la covariance divisée par la variance de x, et l'ordonnée à l'origine vaut la moyenne de y moins la pente multipliée par la moyenne de x. Aucun itératif, aucun réglage, aucune boucle : la solution est fermée, calculable en une passe sur les données.
+
+Cette solution possède deux propriétés de contrôle que votre code devrait toujours vérifier. La première est que la somme des résidus obtenue est rigoureusement nulle, à l'arrondi près : si elle ne l'est pas, c'est que l'intercept a été mal calculé. La deuxième est que la droite traverse le point des moyennes, ce qui fournit un second contrôle indépendant. Le bloc suivant réalise l'ajustement complet à la main, affiche les coefficients, puis exécute ces deux contrôles. Il ne contient aucune dépendance externe : tout provient de la liste de données et de quelques opérations arithmétiques.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+mx = statistics.mean(x)
+my = statistics.mean(y)
+
+cov = sum((a - mx) * (b - my) for a, b in zip(x, y)) / len(x)
+var_x = sum((a - mx) ** 2 for a in x) / len(x)
+
+pente = cov / var_x
+intercept = my - pente * mx
+
+print("pente =", round(pente, 4))
+print("intercept =", round(intercept, 4))
+print("droite : y =", round(pente, 3), "* x +", round(intercept, 3))
+
+residus = [obs - (pente * xi + intercept) for xi, obs in zip(x, y)]
+print("somme des residus =", round(sum(residus), 12))
+print("droite passe par les moyennes :",
+      round(pente * mx + intercept, 12), "==", round(my, 12))
+```
+
+Les deux commandes de contrôle renvoient bien zéro et la moyenne de y, ce qui confirme l'ajustement. Une remarque de méthode s'impose ici, utile bien au-delà de ce chapitre : un calcul important se vérifie toujours par une propriété indépendante plutôt que par la seule inspection du résultat. Le logiciel qui affiche une équation n'est d'aucun secours si vous ne savez pas quel invariant attendre ; le savoir, en revanche, vous permet de détecter une inversion de listes, un zip mal aligné ou une division par zéro en une seconde.
+
+## Interpréter la pente et l'ordonnée à l'origine
+
+Les coefficients calculés ne prennent leur sens qu'une fois traduits en langage naturel, avec leurs unités. La pente se lit ainsi : lorsque le nombre d'heures de révision augmente d'une heure, la note prédite augmente de l'ordre de trois à quatre points, selon la valeur affichée par votre programme. Cette phrase contient trois éléments non négociables, le sens de la variation, son unité et son ordre de grandeur. La pente ne dit pas que réviser provoque une note plus élevée, elle dit que dans cet échantillon, les heures et les notes varient ensemble selon un rythme estimé. Présenter un coefficient sans son unité est la faute de restitution la plus fréquente en analyse, et elle rend le résultat incompréhensible dès que l'on change de contexte.
+
+Le signe de la pente constitue le premier diagnostic, presque gratuit. Une pente positive signifie que la variable cible tend à croître avec la variable explicative, une pente négative qu'elle tend à décroître, et une pente proche de zéro que la relation linéaire n'apporte presque rien. Attention toutefois à ne pas confondre importance statistique et importance pratique : une pente de 0,01 peut être parfaitement significative sur des dizaines de milliers d'observations tout en étant négligeable pour la décision métier. Inversement, une pente de 50 sur un échantillon de dix points peut n'être qu'un accident. Toujours rapporter la pente à la variation naturelle de la variable cible, par exemple en la comparant à l'écart-type de y, donne immédiatement une idée de son poids réel.
+
+L'ordonnée à l'origine, elle, se heurte souvent à un problème de bon sens. C'est la valeur prédue lorsque la variable explicative vaut zéro, mais zéro n'est pas toujours accessible : dans notre exemple, prédire la note d'un élève qui n'a révisé aucune minute reste cohérent avec le modèle, alors que régresser la durée de vie d'un composant sur sa température de fonctionnement donne une intercept qui décrirait le composant à zéro degré, situation peut-être hors domaine. L'intercept joue surtout le rôle de calage : il place la droite à la bonne hauteur pour que la moyenne des prédictions coïncide avec la moyenne des observations. On le conserve toujours dans le modèle, mais on le cite rarement comme finding, sauf à ce qu'il ait une signification métier claire.
+
+Le tableau suivant récapitule comment lire chaque résultat typique d'une régression simple, en indiquant la phrase à prononcer et le piège à éviter. Reprenez-le après le quiz comme une fiche de restitution : en pratique, l'analyse se juge à la qualité de ces phrases bien plus qu'à la sophistication du calcul.
+
+```table
+| Résultat | Phrase correcte à dire | Piège à éviter |
+| --- | --- | --- |
+| Pente positive et nette | La cible augmente en moyenne quand x augmente | Affirmer une causalité |
+| Pente proche de zéro | Pas de relation linéaire détectée | Conclure qu'aucune relation n'existe |
+| Intercept hors domaine | Valeur de calage, sans lecture directe | L'interpréter comme une prédiction réelle |
+| R² élevé | Le modèle reproduit bien les variations observées | En déduire que le modèle est juste ailleurs |
+| RMSE faible | Erreur typique faible dans l'unité de la cible | Le comparer à une autre unité |
+```
+
+
+Il reste un réflexe d'interprétation à acquérir avant d'évaluer la qualité : toujours comparer la prédiction à un repère naïf. Le modèle le plus simple qui existe ne régressera rien du tout : il prédira la moyenne de y pour chaque observation. Ce modèle naïf possède un R² de zéro par construction, puisque ses résidus sont exactement les écarts à la moyenne. Toute valeur de R² supérieure à zéro signifie donc que la droite fait mieux que d'ignorer x, et c'est la seule comparaison qui donne un sens absolu à ce coefficient. Le bloc ci-dessous produit l'équation, quelques prédictions et ce repère naïf, afin que vous ayez toujours les deux sous les yeux.
+
+```python
+pente = 3.6903
+intercept = 47.6269
+
+for h in (2.0, 5.5, 12.0):
+    print("heures =", h, "note predite =", round(pente * h + intercept, 2))
+
+moyenne_cible = 72.5
+print("modele naif : toujours predire", moyenne_cible)
+
+erreur_naive = sum((v - moyenne_cible) ** 2 for v in
+                   [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0,
+                    76.0, 81.0, 85.0, 88.0, 93.0])
+print("somme des ecarts du modele naif =", round(erreur_naive, 3))
+```
+
+## R² : la part de variance expliquée
+
+Le coefficient de détermination répond à une question précise : quelle proportion de la variabilité observée dans la variable cible est reproduite par le modèle ? Pour y répondre, on décompose la variabilité totale en deux morceaux. La somme totale des carrés, notée SCT, additionne les écarts entre chaque observation et la moyenne de y : c'est la dispersion brute des données, celle qu'il faudrait expliquer si l'on ne savait rien du tout. La somme des carrés des résidus, notée SCE, additionne les écarts entre chaque observation et sa prédiction : c'est ce qu'il reste d'expliqué après le modèle. Le R² mesure alors la fraction de la première que le second parvient à éliminer.
+
+La formule tient en une ligne : R² vaut un moins le rapport de SCE sur SCT. Trois cas à retenir pour caler l'intuition. Si le modèle prédit chaque point exactement, SCE vaut zéro et le R² vaut un, score parfait. Si le modèle n'est pas meilleur que la moyenne, SCE vaut à peu près SCT et le R² vaut zéro. Entre les deux, chaque point de R² signifie qu'on a réduit d'autant la dispersion des erreurs par rapport à l'ignorance totale. Un R² négatif est théoriquement possible hors échantillon, lorsqu'un modèle s'avère pire que la moyenne sur des données nouvelles : c'est un signal d'alarme, jamais un résultat normal en ajustement sur les données utilisées pour l'apprentissage.
+
+Interpréter un R² de 0,83 revient à dire que 83 pour cent de la variabilité des notes s'explique par la relation linéaire avec les heures de révision, et que 17 pour cent provient d'autres facteurs et du bruit : fatigue, qualité du sommeil, difficulté intrinsèque du sujet. Cette lecture est remarquablement honnête, car elle admet d'emblée ce que le modèle ignore. Le mot expliqué doit cependant être manié avec soin : il signifie ici rendu prévisible, pas causé. Deux variables qui bougent pour une troisième raison produisent un R² élevé sans que l'une agisse sur l'autre. En régression simple, le R² est d'ailleurs exactement le carré du coefficient de corrélation linéaire, ce qui montre qu'il ne mesure qu'une association de type droite.
+
+```python
+import statistics
+
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+pentes = 3.6903
+intercepts = 47.6269
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+
+my = statistics.mean(y)
+sct = sum((v - my) ** 2 for v in y)
+sce = sum((obs - (pentes * xi + intercepts)) ** 2 for xi, obs in zip(x, y))
+r2 = 1.0 - sce / sct
+
+print("SCT =", round(sct, 3))
+print("SCE =", round(sce, 3))
+print("R2 =", round(r2, 4))
+```
+
+Le résultat affiché donne un R² supérieur à 0,99 : l'ajustement est excellent sur cet échantillon. Trois avertissements accompagnent invariablement un tel chiffre, et les trois seront illustrés dans les sections suivantes. D'abord, un R² élevé sur les données d'apprentissage ne préjuge en rien de sa valeur sur des données inconnues, ce qui impose une évaluation hors échantillon. Ensuite, le R² augmente ou au pire reste stable quand on ajoute des variables, même inutiles : il faut donc un critère de pénalisation pour comparer des modèles de taille différente. Enfin, le R² ne dit rien sur la forme de l'erreur : deux modèles peuvent expliquer la même part de variance tout en se trompant de façon très différente sur les cas concrets. C'est exactement le rôle que jouent les métriques suivantes.
+
+## RMSE et MAE : deux lectures de l'erreur
+
+Le R² mesure une proportion, sans unité, ce qui le rend commode pour un rapport et désastreux pour une décision opérationnelle. On ne présente jamais à un responsable la phrase « notre modèle explique 92 pour cent de la variance » sans y ajouter l'erreur commise dans l'unité du problème. C'est le rôle des deux métriques d'erreur : l'erreur absolue moyenne, ou MAE, additionne les valeurs absolues des résidus puis les divise par le nombre d'observations ; l'erreur quadratique moyenne, ou RMSE, additionne les carrés des résidus, les divise par le nombre d'observations puis prend la racine carrée. Toutes deux se lisent dans l'unité de la variable cible : si la note va de zéro à cent, l'erreur s'exprime en points de note.
+
+La différence entre elles tient à la façon dont elles traitent les écarts. Le MAE traite tous les écarts à proportion égale : se tromper de dix points coûte exactement dix fois plus que se tromper d'un point. Le RMSE pénalise disproportionnément les grosses erreurs, car le carré amplifie l'écart avant moyennage. Concrètement, un modèle qui se trompe de un point partout et un modèle qui se trompe de zéro parfois et de quatre souvent peuvent présenter un MAE semblable mais un RMSE très différent. La règle d'usage est donc double : le MAE décrit l'erreur typique que l'utilisateur rencontrera, le RMSE décrit le risque de catastrophe ponctuelle. Écart important entre les deux signale la présence de quelques prédictions très mauvaises.
+
+Le tableau suivant compare les deux métriques sur leurs propriétés usuelles, avec la question à laquelle chacune répond le mieux. Notez qu'aucune des deux ne se substitue à l'autre : un rapport sérieux les affiche toujours ensemble, avec le R² en troisième position.
+
+```table
+| Métrique | Unité | Sensibilité aux valeurs extrêmes | Question à laquelle elle répond |
+| --- | --- | --- | --- |
+| MAE | Unité de la cible | Faible, tous les écarts pèsent pareil | De combien se trompe-t-on en général |
+| RMSE | Unité de la cible | Forte, un gros écart domine la moyenne | Quel est le pire scénario d'erreur |
+| R² | Sans dimension | Forte, lié à la dispersion totale | Quelle part des variations est reproduite |
+```
+
+
+Le calcul de ces métriques tient en quelques lignes, et l'exemple ci-dessous les produit à la fois pour le modèle de droite et pour le modèle naïf qui prédit toujours la moyenne. Comparer les deux colonnes est instructif : l'objectif n'est pas d'obtenir un RMSE petit dans l'absolu, mais de l'obtenir nettement plus petit que celui du repère naïf.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b = 3.6903, 47.6269
+predites = [a * xi + b for xi in x]
+
+residus = [obs - p for obs, p in zip(y, predites)]
+mae = sum(abs(r) for r in residus) / len(residus)
+rmse = math.sqrt(sum(r ** 2 for r in residus) / len(residus))
+
+moy = statistics.mean(y)
+naifs = [moy] * len(y)
+mae_naif = sum(abs(obs - p) for obs, p in zip(y, naifs)) / len(y)
+rmse_naif = math.sqrt(sum((obs - p) ** 2 for obs, p in zip(y, naifs)) / len(y))
+
+print("modele :  MAE =", round(mae, 3), "| RMSE =", round(rmse, 3))
+print("naif :    MAE =", round(mae_naif, 3), "| RMSE =", round(rmse_naif, 3))
+```
+
+Un troisième réflexe complète l'évaluation, celui de la répartition des erreurs. Une moyenne masque toujours sa propre hétérogénéité : afficher le résidu le plus grand, le résidu médian et la proportion d'observations dont l'erreur dépasse un seuil métier donne une image nettement plus honnête qu'un unique chiffre. Dans un vrai projet, on joint à chaque métrique un histogramme des résidus et un tableau des pires cas, car c'est en inspectant les pires cas que l'on découvre la variable manquante, la donnée saisie à l'envers ou la sous-population que le modèle ignore.
+
+## Deux variables et plus : la régression multiple
+
+Passer d'une seule variable à plusieurs ne change ni le principe ni l'objectif : on cherche toujours une droite, ou plutôt un hyperplan, qui minimise la somme des carrés des résidus. La différence est dimensionnelle. Au lieu d'une pente unique, chaque variable explicative reçoit la sienne, et l'équation devient une combinaison linéaire de toutes ces variables, augmentée d'un intercept. Chaque coefficient se lit alors de façon conditionnelle : c'est la variation de la cible liée à une augmentation d'une unité de cette variable, toutes les autres étant maintenues constantes. Cette clause toutes les autres restant constantes est ce qui rend l'interprétation plus délicate, mais aussi ce qui rend le modèle utile pour isoler l'effet propre de chaque facteur.
+
+La résolution s'obtient en généralisant les formules de la section précédente, et la forme la plus compacte fait intervenir des matrices : la solution s'écrit comme l'inverse d'une matrice de croisements multipliée par un vecteur. L'écriture est élégante mais ne doit pas masquer ce qui se passe réellement : derrière se cache un système d'équations linéaires que l'on peut résoudre à la main par élimination, exactement comme au collège avec deux inconnues. Le bloc ci-dessous implémente ce petit solveur avec la seule bibliothèque standard, ajuste un modèle à deux explicatives, heures de révision et heures de sommeil, puis affiche les trois coefficients obtenus.
+
+```python
+def resoudre(matrice, vecteur):
+    n = len(matrice)
+    aug = [list(matrice[i]) + [vecteur[i]] for i in range(n)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        aug[col], aug[pivot] = aug[pivot], aug[col]
+        for r in range(col + 1, n):
+            facteur = aug[r][col] / aug[col][col]
+            for c in range(col, n + 1):
+                aug[r][c] -= facteur * aug[col][c]
+    sol = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        sol[r] = (aug[r][n] - sum(aug[r][c] * sol[c] for c in range(r + 1, n))) / aug[r][r]
+    return sol
+
+
+def ajuster_multiple(x1, x2, y):
+    n = len(y)
+    un = [1.0] * n
+    colonnes = [un, x1, x2]
+    matrice = [[sum(a * b for a, b in zip(ci, cj)) for cj in colonnes] for ci in colonnes]
+    vecteur = [sum(a * b for a, b in zip(ci, y)) for ci in colonnes]
+    return resoudre(matrice, vecteur)
+
+
+heures_rev = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+heures_sommeil = [8.5, 8.0, 7.5, 7.0, 7.5, 6.5, 7.0, 6.5, 6.0, 6.5, 6.0, 5.5]
+notes = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+intercept, pente_rev, pente_sommeil = ajuster_multiple(heures_rev, heures_sommeil, notes)
+print("intercept =", round(intercept, 3))
+print("pente heures de revision =", round(pente_rev, 3))
+print("pente heures de sommeil =", round(pente_sommeil, 3))
+```
+
+L'exécution montre un phénomène classique et riche d'enseignements : quand deux variables explicatives sont corrélées entre elles, leurs coefficients individuels deviennent sensibles, tandis que les prédictions restent stables. On appelle multicolinéarité cette situation, et ses symptômes sont connus : coefficients de signe inattendu, valeurs très grandes compensées par des valeurs très petites, résultats qui changent du tout au tout à l'ajout d'une observation. Le modèle continue de bien prédire, mais l'attribution d'un effet à l'une ou l'autre variable devient peu fiable. Le remède consiste soit à retirer une variable redondante, soit à accepter de ne raisonner qu'au niveau du bloc de variables corrélées.
+
+Une question se pose toujours en présence de plusieurs candidats : combien en garder ? Ajouter une variable ne peut jamais diminuer le R² sur les données d'apprentissage, puisqu'un nouveau degré de liberté offre toujours davantage de flexibilité. Ce mécanisme conduit inévitablement au surajustement si l'on pousse la logique jusqu'au bout : un modèle à dix paramètres pour douze observations reproduit le bruit. Deux familles de réponses existent. La première pondère le R² par le nombre de variables, ce qui produit le R² ajusté, qui chute dès qu'une variable apporte moins que le bruit qu'elle introduit. La seconde restreint l'amplitude des coefficients par une pénalité, ce qui donne les régularisations Ridge et Lasso, que vous retrouverez dans le parcours.
+
+## Ce que fait scikit-learn pour vous
+
+Tout ce que vous venez de calculer à la main existe sous forme de fonctions éprouvées, et savoir exactement ce qu'elles font est un avantage rare : la plupart des praticiens appellent ces fonctions sans pouvoir dire ce qu'elles calculent. Dans scikit-learn, l'apprentissage suit une procédure constante : on crée un estimateur en précisant ses éventuels paramètres, on l'entraîne avec la méthode fit sur une matrice de variables explicatives et un vecteur cible, puis on interroge le modèle avec predict. La matrice, notée en général X, contient une ligne par observation et une colonne par variable ; le vecteur y contient une seule valeur par observation. Ce format tabulaire, inchangé d'un algorithme à l'autre, est la Convention qui rend le framework si simple à parcourir.
+
+L'appel minimal de régression linéaire tient en quatre lignes, et chacune correspond à une étape que vous maîtrisez désormais. La première ligne importe l'estimateur, la deuxième le construit, la troisième l'entraîne sur les données, la quatrième interroge le modèle sur des valeurs nouvelles. Les attributs appris sont accessibles après l'entraînement : l'un contient les coefficients de chaque variable, l'autre l'intercept. Si vous affichez ces attributs après un entraînement sur notre petit jeu de données, vous retrouverez exactement les nombres produits par le bloc de la section précédente, à l'arrondi près.
+
+```python
+from sklearn.linear_model import LinearRegression
+
+x = [[1.0], [2.0], [3.0], [4.5], [5.0], [6.5],
+     [7.0], [8.0], [9.0], [10.0], [11.0], [12.0]]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+modele = LinearRegression()
+modele.fit(x, y)
+
+print("coefficient =", round(float(modele.coef_[0]), 4))
+print("intercept =", round(float(modele.intercept_), 4))
+print("prediction pour 6 heures =", round(float(modele.predict([[6.0]])[0]), 2))
+```
+
+Trois pratiques professionnelles accompagnent systématiquement ces trois lignes. La première est la séparation des données : on entraîne sur une partie et on évalue sur une partie que le modèle n'a jamais vue, opération réalisée par la fonction train_test_split. Sans cette précaution, toutes les métriques deviennent optimistes, parfois très fortement, et l'écart entre performance affichée et performance réelle se mesure en dizaines de points de pourcentage. La deuxième est le prétraitement : les variables de nature différente, surface en mètres carrés et nombre de pièces, doivent être mises à la même échelle pour que les régularisations et les algorithmes sensibles à la distance se comportent correctement, ce que fait le StandardScaler au sein d'un Pipeline. La troisième est la reproductibilité : fixer la graine aléatoire et conserver le pipeline complet permet de régénérer exactement les mêmes prédictions plus tard.
+
+Les métriques également existent en bibliothèque, et leur signature reflète ce que vous avez calculé à la main : on fournit les valeurs observées et les valeurs prédites, on reçoit un nombre. La fonction mean_squared_error accepte un paramètre racine qui retourne directement le RMSE, mean_absolute_error retourne le MAE, et r2_score fournit le R². Rien dans ces appels n'est magique : derrière se trouvent exactement les boucles de sommation que vous avez écrites. L'intérêt de la bibliothèque n'est donc pas la formule, largement à votre portée, mais la solidité de l'implémentation, ses performances en mémoire et son intégration avec tout l'écosystème d'évaluation, validation croisée comprise.
+
+## Les résidus et les diagnostics
+
+Un modèle se juge à ses résidus bien plus qu'à ses coefficients. Le résidu étant l'écart signé entre l'observation et la prédiction, la collection de tous les résidus contient l'intégralité de ce que le modèle n'a pas compris, et cette collection a des propriétés attendues dont l'écart révèle précisément le défaut du modèle. La première propriété, nous l'avons vue, est que leur somme vaut zéro par construction. La deuxième est que leur dispersion est homogène : l'amplitude des erreurs ne doit pas changer de niveau selon la valeur prédite. La troisième, plus subtile, est qu'ils doivent être décorrélés entre eux, c'est-à-dire que l'erreur commise sur une observation ne doit pas aider à prédire celle de la suivante.
+
+Le premier examen consiste à tracer les résidus en fonction des prédictions, et cet histogramme mental remplace avantageusement des pages de calculs. Trois figures se présentent. Une nuage en éventail, étroit à gauche et large à droite, signale une hétéroscédasticité : les petites valeurs sont bien estimées, les grandes très mal. Une structure en U ou en arc révèle une non-linéarité : la droite capte une tendance mais manque la courbure, et le correctif évident est d'ajouter une transformation de la variable ou un terme polynomial. Enfin, une série de résidus alternant par blocs indique une autocorrélation, fréquente dans les données chronologiques, où la régression a hérité d'une tendance temporelle non modélisée.
+
+Le second examen porte sur la normalité des résidus, qui n'est pas requise pour que l'ajustement soit valable mais qui l'est pour toute inférence : intervalles de confiance, tests de significativité, prévisions. L'intuition est celle de la moyenne de plusieurs causes indépendantes : si les écarts proviennent de nombreux petits facteurs qui s'additionnent, la théorie centrale limite conduit à une cloche. On vérifie cela avec un histogramme ou un quantile-quantile, et l'on complète éventuellement par un test formel. Une forte asymétrie, en revanche, doit faire réfléchir : elle suggère une variable manquante ou une cible que l'on gagnerait à transformer, par exemple en logarithme pour les prix qui suivent souvent une loi multiplicative.
+
+Le troisième examen repère les observations influentes, ces quelques points qui tirent la droite presque à eux seuls. On compare chaque observation à la même sans elle, et l'on mesure l'écart entre les deux droites ; l'outil classique est la distance de Cook. Un point éloigné sur l'axe des variables explicatives, ce que l'on appelle un levier, a mécaniquement plus d'influence qu'un point situé au centre du nuage. Rien n'oblige à supprimer ces points : dans la grande majorité des cas, ils signalent une sous-population légitime qu'il faut modéliser, mais ils doivent être cités dans le rapport, car le modèle en dépend.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b = 3.6903, 47.6269
+residus = [obs - (a * xi + b) for xi, obs in zip(x, y)]
+
+moy_r = statistics.mean(residus)
+ecart = statistics.pstdev(residus)
+print("moyenne des residus =", round(moy_r, 12))
+print("ecart-type des residus =", round(ecart, 4))
+print("residu min =", round(min(residus), 3), "| max =", round(max(residus), 3))
+
+bornes = [-2.0, -1.0, 0.0, 1.0, 2.0]
+comptes = [sum(1 for r in residus if debut <= r < fin)
+           for debut, fin in zip(bornes, bornes[1:] + [99.0])]
+print("histogramme des residus :", comptes)
+```
+
+Ces trois diagnostics ne sont pas un luxe réservé aux analyses soignées : ils conditionnent la validité des phrases que vous prononcerez ensuite. Un R² élevé dont les résidus forment un éventail est un modèle qui rassure sur l'ensemble et se trompe sur les extrêmes, exactement les cas que l'on veut souvent prédire. Un modèle dont les résidus sont normalisés et homogènes permet d'annoncer un intervalle de prédiction, par exemple la note vraie aura 95 pour cent de chances de se trouver entre tant et tant, ce qui est infiniment plus utile en pratique qu'un point estimé seul.
+
+## Pièges classiques : surajustement, fuite et multicolinéarité
+
+Le premier piège, et de loin le plus fréquent, est le surajustement. Il se produit lorsque le modèle apprend le bruit en même temps que le signal : avec assez de paramètres, n'importe quel nuage de points se laisse décrire par une courbe parfaite, mais cette courbe s'effondre dès qu'on la confronte à de nouvelles observations. Les symptômes sont discrets et redoutables : un R² d'entraînement exceptionnel, des métriques nettement moins bonmes hors échantillon, des coefficients qui oscillent d'un entraînement à l'autre. La parade est structurelle : disposer de données de test que l'on ne consulte qu'une seule fois, préférer un modèle simple à un modèle complexe dont l'avantage n'est pas démontré, et recourir à la régularisation lorsque le nombre de variables devient important.
+
+Le deuxième piège porte un nom peu intuitif, la fuite de données, et désigne une situation où l'information sur la cible s'infiltre dans l'entraînement. Le cas le plus courant consiste à calculer une statistique, moyenne ou écart-type, sur l'intégralité du jeu de données avant de le scinder : le modèle a alors vu, même indirectement, la distribution future. D'autres fuites sont plus insidieuses : une variable qui n'existe qu'après l'événement prédit, un identifiant qui code la cible, un prétraitement ajusté à la main sur l'ensemble des données. La règle absolue est d'entraîner toute transformation sur la partie d'entraînement uniquement, puis de l'appliquer à la partie de test, à l'intérieur d'un Pipeline qui mécanise cette discipline.
+
+Le troisième piège est la multicolinéarité, déjà rencontrée en régression multiple. Elle ne dégrade pas les prédictions mais ruine l'interprétation, car les coefficients cessent de mesurer des effets individuels. Le diagnostic standard repose sur le facteur d'inflation de variance, qui mesure combien la variance d'un coefficient est gonflée par sa corrélation avec les autres : au-delà d'un seuil de l'ordre de cinq à dix, l'attribution devient douteuse. Les remèdes sont directs : retirer l'une des variables redondantes, les combiner, agréger, ou accepter d'interpréter uniquement l'effet global d'un groupe de variables fortement liées.
+
+```python
+def entraigner_tester(x, y, proportion=0.75):
+    coupe = int(len(y) * proportion)
+    xa, ya = x[:coupe], y[:coupe]
+    xb, yb = x[coupe:], y[coupe:]
+    mx = sum(xa) / len(xa)
+    my = sum(ya) / len(ya)
+    cov = sum((a - mx) * (b - my) for a, b in zip(xa, ya)) / len(xa)
+    var_x = sum((a - mx) ** 2 for a in xa) / len(xa)
+    a = cov / var_x
+    b = my - a * mx
+    err_test = (sum((obs - (a * xi + b)) ** 2 for xi, obs in zip(xb, yb))
+                / len(yb))
+    return a, b, err_test
+
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b, err = entraigner_tester(x, y)
+print("pente =", round(a, 3), "intercept =", round(b, 3))
+print("erreur quadratique moyenne sur le test =", round(err, 3))
+```
+
+Une dernière famille de risques relève de la démarche plutôt que du calcul, et elle coûte plus cher que tous les autres réunis. Comparer cinq modèles sur la même donnée de test et reprendre le meilleur revient à ce que la donnée de test serve d'entraînement à la sélection : son score n'est plus honnête. Tester plusieurs transformations, plusieurs sous-ensembles de variables et plusieurs grilles d'hyperparamètres exige une validation croisée, si possible imbriquée. Et toute décision prise après observation des résultats de test doit être signalée dans le rapport, car elle modifie la portée du score annoncé.
+
+## Exemple guidé : du fichier brut au rapport
+
+Nous voici en mesure de traiter un petit problème de bout en bout. L'exemple suivant simule un petit jeu de données, scinde les données en entraînement et test,
+ ajuste la droite sur la première partie uniquement, puis produit l'ensemble des métriques et des diagnostics que la leçon a passés en revue. Chaque ligne correspond à une idée que vous avez lue : vous pouvez la commenter une à une et vérifier qu'aucune étape ne vous surprend.
+
+```python
+import math
+import statistics
+
+donnees = [
+    (1.0, 52.0), (2.0, 55.0), (3.0, 60.0), (4.5, 63.0),
+    (5.0, 66.0), (6.5, 70.0), (7.0, 74.0), (8.0, 76.0),
+    (9.0, 81.0), (10.0, 85.0), (11.0, 88.0), (12.0, 93.0),
+]
+
+apprentissage = donnees[:9]
+test = donnees[9:]
+
+
+def ajuster(paires):
+    xs = [p[0] for p in paires]
+    ys = [p[1] for p in paires]
+    mx = statistics.mean(xs)
+    my = statistics.mean(ys)
+    cov = sum((a - mx) * (b - my) for a, b in paires) / len(paires)
+    var_x = sum((a - mx) ** 2 for a in xs) / len(xs)
+    a = cov / var_x
+    return a, my - a * mx
+
+
+a, b = ajuster(apprentissage)
+print("equation : y =", round(a, 3), "* x +", round(b, 3))
+
+ys_test = [p[1] for p in test]
+pred_test = [a * p[0] + b for p in test]
+residus = [o - p for o, p in zip(ys_test, pred_test)]
+
+mae = sum(abs(r) for r in residus) / len(residus)
+rmse = math.sqrt(sum(r ** 2 for r in residus) / len(residus))
+my = statistics.mean(ys_test)
+sct = sum((o - my) ** 2 for o in ys_test)
+r2 = 1.0 - sum(r ** 2 for r in residus) / sct
+
+print("MAE =", round(mae, 3), "RMSE =", round(rmse, 3), "R2 =", round(r2, 4))
+print("moyenne des residus =", round(statistics.mean(residus), 4))
+for p, r in zip(test, residus):
+    print("x =", p[0], "observe =", p[1], "predite =",
+          round(a * p[0] + b, 2), "residu =", round(r, 2))
+```
+
+Le rapport se rédige alors en trois mouvements, que vous retrouverez à l'identique dans l'exercice pratique de ce chapitre. D'abord annoncer le résultat principal avec son unité : l'erreur typique est de l'ordre de quelques points de note, ce qui est acceptable pour un ordre de grandeur mais insuffisant pour décerner une mention. Ensuite documenter les hypothèses et les limites : l'échantillon est minuscule, une observation a été écartée, la relation supposée est purement linéaire. Enfin proposer la suite : ajouter une variable explicative, élargir l'échantillon, ou renoncer si l'incertitude restante dépasse ce que la décision autorise.
+
+Un dernier principe clôt cette démonstration et mérite d'être gravé : un modèle n'a de valeur que comparé à un repère. Le repère minimal est le modèle naïf qui prédit toujours la moyenne ; le repère suivant est une règle métier simple, par exemple annoncer la note médiane de la promotion ; le repère sérieux est le modèle précédent déjà en production. Battre le premier est facile, battre le troisième est l'objectif réel. Toute évaluation qui omet ces comparaisons produit un chiffre exact mais sans signification pratique, et c'est précisément la différence entre un notebook d'entraînement et une analyse qui décide de quelque chose.
+
+## Validation croisée et comparaison honnête
+
+La validation croisée est la réponse standard au problème posé à la fin de la section précédente : comment estimer la capacité d'un modèle sans gaspiller nos rares données de test. Le principe est simple et élégant. On découpe l'échantillon en plusieurs morceaux égaux, puis on répète l'entraînement autant de fois qu'il y a de morceaux, en utilisant à chaque tour un morceau différent comme ensemble de validation et tous les autres comme entraînement. On obtient ainsi une distribution de scores plutôt qu'un score unique, et c'est cette distribution qui renseigne : sa moyenne donne l'espérance de performance, son écart-type donne la stabilité, c'est-à-dire la sensibilité du résultat au hasard du découpage.
+
+Cette information d'instabilité est souvent plus précieuse que la moyenne elle-même. Un modèle qui obtient 0,87 puis 0,71 selon le découpage ne mérite pas qu'on l'annonce à 0,87 : son intervalle réel est large, et une décision forte prise sur ce chiffre serait téméraire. À l'inverse, deux modèles dont les moyennes diffèrent de peu mais dont les intervalles se chevauchent massivement ne sont pas démontrablement différents, et l'on préférera alors le plus simple ou le plus interprétable. La validation croisée enseigne donc une discipline intellectuelle : chaque performance affichée s'accompagne de sa variabilité, sans exception.
+
+Le bloc ci-dessous illustre cette idée en pur standard Python, avec un découpage en trois plis sur notre jeu de douze observations. Il réutilise la fonction d'ajustement que vous avez déjà écrite, ce qui montre qu'aucune de ces techniques n'exige de bibliothèque : elles demandent de la rigueur, pas des dépendances. En sortie, vous obtenez un RMSE par plis ainsi que la moyenne et l'écart-type agrégés.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+
+def ajuster(paires):
+    mx = statistics.mean([p[0] for p in paires])
+    my = statistics.mean([p[1] for p in paires])
+    cov = sum((a - mx) * (b - my) for a, b in paires) / len(paires)
+    var_x = sum((a - mx) ** 2 for a, _ in paires) / len(paires)
+    a = cov / var_x
+    return a, my - a * mx
+
+
+donnees = list(zip(x, y))
+taille = len(donnees) // 3
+scores = []
+
+for debut in range(0, len(donnees), taille):
+    valider = donnees[debut:debut + taille]
+    apprendre = donnees[:debut] + donnees[debut + taille:]
+    a, b = ajuster(apprendre)
+    erreurs = [obs - (a * xi + b) for xi, obs in valider]
+    scores.append(math.sqrt(sum(e ** 2 for e in erreurs) / len(erreurs)))
+
+print("RMSE par plis :", [round(s, 3) for s in scores])
+print("moyenne =", round(statistics.mean(scores), 3))
+print("ecart-type =", round(statistics.pstdev(scores), 3))
+```
+
+En pratique, le nombre de plis se choisit en fonction de la taille de l'échantillon : cinq plis constituent l'usage courant, dix quand les données sont rares et que l'on accepte un coût de calcul plus élevé. Une variante utile mélange aléatoirement les observations avant le découpage, ce qui évite qu'un ordre naturel dans le fichier, une tri par date par exemple, ne mette toute une période dans un seul plis. Quel que soit le schéma, une seule règle ne se négocie pas : toute transformation apprise, mise à l'échelle, sélection de variables, imputation, doit être réentraînée à l'intérieur de chaque pli, sinon l'information fuit à nouveau.
+
+## Présenter un modèle de régression
+
+La restitution est une compétence à part entière, et un modèle rarement déployé est un modèle mal présenté. Un rapport de régression efficace suit une structure stable que vous pourrez réutiliser telle quelle. On commence par la phrase métier, le problème traité, la cible visée, l'unité de réussite. On enchaîne sur le dispositif : taille de l'échantillon, période couverte, découpage entraînement et test, métriques retenues. On expose les résultats avec les trois nombres principaux, R², RMSE et MAE, en les comparant au repère naïf. On termine par les limites et les précautions d'usage, ce que le modèle ne sait pas faire et les conditions dans lesquelles il cesse d'être fiable.
+
+L'interprétation des coefficients mérite une sous-section à elle seule dans ce rapport. Pour chaque variable, on produit la phrase complète, coefficient, unité, intervalle de confiance éventuel, et l'on ordonne les variables par importance pratique plutôt que par ordre alphabétique. L'importance se mesure notamment par l'ampleur de la variation induite sur la plage réelle d'utilisation de la variable, ce qui évite de classer en tête une variable dont le coefficient est gros mais qui ne bouge jamais. Le signe doit être confronté au sens commun et à la littérature : un signe inattendu est soit une découverte, soit un artefact de multicolinéarité, et dans les deux cas il exige une vérification avant publication.
+
+Le tableau suivant propose une trame de restitution prête à l'emploi, avec la colonne des indicateurs et celle des phrases types. Vous remarquerez qu'aucune case ne demande un jargon : la qualité d'un rapport se mesure à sa lisibilité par une personne qui n'a jamais ouvert un notebook.
+
+```table
+| Étape du rapport | Ce qu'on affiche | Ce qu'on évite |
+| --- | --- | --- |
+| Contexte | Cible, unité, période, échantillon | L'historique du projet en trois pages |
+| Méthode | Découpage, modèle, prétraitement | La dérivée de la formule des moindres carrés |
+| Résultats | R², RMSE, MAE et repère naïf | Un seul chiffre isolé |
+| Interprétation | Coefficients en phrases avec unités | Les mots prouve et cause |
+| Limites | Incertitudes, cas hors domaine | La promesse de généralisation automatique |
+```
+
+
+Un dernier point concerne le déploiement, souvent négligé dans les formations et décisif sur le terrain. Un modèle de régression se surveille : on compare en continu la distribution des variables explicatives à celle de l'entraînement, parce qu'une variable qui dérive impose au modèle des extrapolations dangereuses. On recalcule périodiquement les métriques sur les observations réalisées, et l'on déclenche un réentraînement lorsque l'erreur dépasse un seuil convenu avec le métier. On conserve enfin la version du modèle, les données et le code qui l'ont produit, car la reproductibilité d'une prédiction est une exigence légale dans de nombreux domaines. Une régression n'est pas un livrable ponctuel, c'est un actif à maintenir.
+
+## Variables catégorielles et variables indicatrices
+
+Toutes les variables explicatives ne sont pas numériques, et pourtant une régression ne sait manipuler que des nombres. La traduction la plus courante consiste à transformer chaque catégorie en une variable indicatrice, c'est-à-dire un nombre qui vaut un quand l'observation appartient à la catégorie et zéro sinon. Pour des données de relevé hebdomadaire, on peut ainsi créer une colonne valant un le week-end et zéro les autres jours, puis la régression se déroule exactement comme avant. Le coefficient associé à l'indicateur se lit alors sans ambiguïté : il mesure le décalage moyen entre la catégorie de référence et la catégorie représentée, toutes les autres variables étant maintenues constantes.
+
+Deux précautions rendent cette technique fiable. La première consiste à choisir explicitement une catégorie de référence, celle dont l'effet est absorbé par l'intercept : dès que l'on dispose de k catégories, on ne crée que k moins un indicateurs, car la dernière se déduit des autres. Omettre cette règle revient à reproduire exactement la multicolinéarité parfaite que nous redoutions plus haut, et selon les logiciels cela se traduit soit par la suppression silencieuse d'une colonne, soit par l'envoi de coefficients colossaux qui ne signifient plus rien. La deuxième précaution est de disposer d'assez d'observations dans chaque catégorie : un indicateur estimé sur deux points n'a aucune stabilité et son coefficient reflétera surtout le bruit de l'échantillon.
+
+Le lien avec ce que vous savez déjà faire est direct. L'exemple ci-dessous compare deux groupes avec les seules fonctions du module statistics, afin de montrer que l'écart entre les moyennes de groupe correspond exactement au coefficient de l'indicateur. Ce même nombre apparaîtrait si vous faisiez tourner sur cette table le solveur par élimination de la section précédente, la colonne supplémentaire ne changeant rien à la logique de la résolution.
+
+```python
+import statistics
+
+groupes = [
+    ("jour", 61.0), ("jour", 64.0), ("jour", 68.0), ("jour", 71.0),
+    ("week-end", 58.0), ("week-end", 63.0), ("week-end", 66.0),
+    ("week-end", 70.0),
+]
+
+reference = [v for g, v in groupes if g == "jour"]
+comparaison = [v for g, v in groupes if g == "week-end"]
+
+moy_ref = statistics.mean(reference)
+moy_cmp = statistics.mean(comparaison)
+
+print("categorie de reference : moyenne =", round(moy_ref, 3))
+print("categorie comparee : moyenne =", round(moy_cmp, 3))
+print("coefficient de l indicateur =", round(moy_cmp - moy_ref, 3))
+print("intercept =", round(moy_ref, 3))
+```
+
+La lecture de ce résultat mérite une phrase complète dans un rapport : à nombre d'heures égal, le week-end se situe en moyenne à tel écart de la semaine, intervalle de confiance à l'appui si l'échantillon le permet. Le même mécanisme s'applique à n'importe quel nombre de catégories, ville d'origine, type de contrat, segment client, à condition de garder à l'esprit que chaque indicateur consomme un degré de liberté et alourdit d'autant la demande en données.
+
+## Quand la droite ne suffit pas : transformations
+
+Avant de renoncer à une relation parce qu'elle n'est pas droite, il est presque toujours utile de la regarder sous un autre angle. Une transformation appliquée à la variable cible ou à la variable explicative suffit souvent à redresser le nuage de points, tout en conservant l'ensemble de l'appareil mathématique que nous maîtrisons. Le cas le plus fréquent est celui des phénomènes multiplicatifs : les prix, les volumes, les effectifs croissent rarement d'un montant fixe, ils croissent d'un pourcentage. Passer au logarithme transforme cette progression proportionnelle en variation additive, et la droite ajustée sur les logarithmes redevient parfaitement légitime.
+
+Une propriété essentielle justifie cette aisance : la régression des moindres carrés exige d'être linéaire en ses paramètres, pas linéaire en ses variables. Tant que l'on cherche une combinaison de coefficients inconnus multipliant des colonnes connues, la solution reste fermée. On peut donc ajouter une colonne qui contient le carré de x, une colonne qui contient son logarithme, ou l'une et l'autre, et continuer à résoudre le même système. C'est la définition même des modèles polynomiaux : l'équation peut serpenter dans le plan, mais elle reste linéaire du point de vue des inconnues que l'on estime.
+
+L'exemple ci-dessous illustre la transformation logarithmique sur des données de croissance, avec la particularité qu'une fois le modèle estimé sur les logarithmes, il faut revenir à l'échelle d'origine pour communiquer un résultat. Cette arrière-pensée, la correction d'échelle, est souvent oubliée et produit des prédictions systématiquement basses lorsqu'on raisonne en médianes plutôt qu'en moyennes.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+volume = [120.0, 195.0, 310.0, 505.0, 820.0, 1330.0, 2160.0, 3510.0]
+log_y = [math.log(v) for v in volume]
+
+mx = statistics.mean(x)
+my = statistics.mean(log_y)
+cov = sum((a - mx) * (b - my) for a, b in zip(x, log_y)) / len(x)
+var_x = sum((a - mx) ** 2 for a in x) / len(x)
+a = cov / var_x
+b = my - a * mx
+
+print("pente en logarithme =", round(a, 4))
+print("croissance par unite de x =", round(math.exp(a), 3))
+print("prediction a x = 9 :", round(math.exp(a * 9.0 + b), 1))
+```
+
+La pente obtenue ne se lit plus en unités de la variable cible mais comme un taux : l'exponentielle de la pente donne le facteur de multiplication par unité de x. Communiquer ce taux, par exemple une augmentation d'un quart du volume pour chaque palier, est bien plus parlant pour un décideur que la valeur brute d'un coefficient en logarithme. Le même raisonnement vaut pour les racines carrées sur des comptages et pour l'inverse des variables, si bien qu'un nuage de points récalcitrant motive toujours une tentative de transformation avant l'abandon.
+
+Il existe enfin une frontière au-delà de laquelle aucune astuce ne suffit : la relation réelle change de sens, plafonne, présente des ruptures ou dépend d'interactions entre variables. Dans ces cas, la régression linéaire reste utile comme référence et comme instrument de diagnostic, mais elle doit céder la place à des modèles plus flexibles, arbres de décision, forêts aléatoires ou réseaux de neurones, qui seront étudiés dans les chapitres suivants du parcours. Savoir quand arrêter la régression fait partie de sa maîtrise : un modèle simple que l'on comprend, que l'on surveille et que l'on explique vaut souvent mieux qu'un modèle opaque dont personne ne saura dire pourquoi il a soudain cessé de fonctionner.
+
+## À retenir
+
+- Une régression prédit une valeur continue ordonnée, là où une classification prédit une étiquette.
+- Le modèle linéaire simple s'écrit prédiction égale à pente fois variable explicative plus intercept.
+- La droite de régression passe toujours par le point des moyennes des x et des y.
+- La pente vaut la covariance divisée par la variance de x, l'intercept vaut moyenne de y moins pente fois moyenne de x.
+- La somme des résidus vaut zéro : c'est votre premier contrôle après tout ajustement.
+- Le R² mesure la part de variance reproduite par le modèle, entre zéro et un en ajustement sur les données d'apprentissage.
+- Le RMSE et le MAE se lisent dans l'unité de la cible, le RMSE pénalisant bien davantage les grosses erreurs.
+- Un R² élevé ne garantit ni une bonne généralisation, ni une relation causale, ni une erreur faible.
+- Les résidus doivent être centrés, homogènes et décorrélés : leur structure révèle les défauts du modèle.
+- L'évaluation honnête exige un découpage entraînement et test, une validation croisée et un repère naïf.
+- La multicolinéarité ruine l'interprétation des coefficients sans dégrader les prédictions.
+- Une variable catégoriale se code en indicateurs, en conservant une catégorie de référence.
+- Une transformation du logarithme ou du carré conserve la linéarité en paramètres et redresse le modèle.
+- scikit-learn automatise le calcul, jamais la démarche : fit entraîne, predict interroge, le reste reste votre responsabilité.
+
+## Erreurs fréquentes
+
+- Annoncer un R² sans RMSE ni MAE, ce qui prive le résultat de toute unité compréhensible.
+- Évaluer le modèle sur les mêmes données que celles de l'entraînement, et conclure à une performance excellente.
+- Ajuster le prétraitement sur l'ensemble du jeu de données avant de le scinder, ce qui provoque une fuite d'information.
+- Interpréter le signe d'un coefficient comme une preuve de causalité.
+- Utiliser l'ordonnée à l'origine comme prédiction alors que zéro est hors domaine.
+- Comparer des RMSE calculés sur des échelles ou des unités différentes.
+- Ajouter des variables parce que le R² augmente, sans regarder le R² ajusté ni le score hors échantillon.
+- Créer autant d'indicateurs que de catégories, ce qui rend le système parfaitement multicolinéaire.
+- Oublier de revenir à l'échelle d'origine après une estimation menée sur des logarithmes.
+- Déployer un modèle sans suivi de dérive ni seuil de réentraînement.
+
+## Pour aller plus loin
+
+- https://scikit-learn.org/stable/modules/linear_model.html — la documentation officielle des modèles linéaires de scikit-learn, Ridge et Lasso compris.
+- https://docs.python.org/3/library/statistics.html — le module statistics de Python, qui contient tout ce dont les démonstrations de ce chapitre ont besoin.
+- https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.linregress.html — scipy.stats.linregress, la référence courte pour une régression simple.
+- https://www.statlearning.com — l'ouvrage Introduction to Statistical Learning, chapitres 2, 3 et 6, accessible gratuitement et écrit pour les praticiens.
+- https://scikit-learn.org/stable/modules/cross_validation.html — la documentation sur la validation croisée, indispensable avant tout comparatif de modèles.
+
+## Et maintenant : implémentez la régression vous-même, de la formule au rapport
+
+La régression linéaire est le premier modèle que l'on peut expliquer entièrement en une page : une pente, une intercept, un R² et une erreur moyenne. Dans l'exercice pratique, réimplémentez-la sans pandas ni scikit-learn : centrez et réduisez les variables, appliquez la formule des moindres carrés, puis comparez votre modèle à celui entraîné par la bibliothèque — les chiffres devraient coïncider à quelques décimales près. Cette comparaison vous donnera une intuition solide de ce que font réellement les bibliothèques que vous appellerez ensuite.

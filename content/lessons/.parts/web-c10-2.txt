@@ -1,0 +1,133 @@
+## Écrire un test orienté comportement : le parcours de l'inscription
+
+Reprenons la fonctionnalité centrale du fil rouge : le formulaire par lequel une habitante s'inscrit à un atelier de la Médiathèque des Lilas. Il possède trois champs — nom, adresse électronique, créneau — un bouton de validation, une zone de message et il dialogue avec un service qui peut répondre, traîner ou échouer. Avant toute ligne de code, écrivez la liste des phrases que vous voulez garantir. Cette liste est votre plan de test : elle se lit avec la responsable des inscriptions, elle ne mentionne aucun composant, aucune prop, aucun état interne. C'est précisément ce détachement qui rendra le test lisible dans six mois, quand le composant aura changé trois fois.
+
+Chaque test suit ensuite la même structure, en trois temps. On prépare : le composant est rendu dans l'environnement qui l'entoure réellement, c'est-à-dire avec le contexte des ateliers hérité du chapitre précédent, et on installe l'utilisateur simulé avec la méthode setup qui fige les réglages d'interaction. On agit : l'utilisateur tape, clique, efface, défile, exactement comme il le ferait dans le navigateur. On observe : une seule affirmation principale porte sur ce qui est affiché à l'écran, éventuellement complétée par une affirmation secondaire sur l'accessibilité de l'élément visé. Si vous vous surprenez à écrire une condition, une boucle ou un calcul dans un test, arrêtez-vous : la logique déplace le test du côté du code testé.
+
+Le premier test attaque la validation à la saisie. Il vérifie trois choses liées par une seule phrase : l'envoi avec un courriel incomplet ne part pas, un message nomme le champ fautif, et le champ est marqué comme erroné pour les technologies d'assistance. Notez que l'assertion porte sur le rôle d'alerte et sur l'attribut d'état d'erreur, deux détails que l'utilisateur perçoit directement et que le lecteur d'écran annonce.
+
+```tsx
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it } from "vitest";
+import { InscriptionForm } from "./InscriptionForm";
+
+describe("Formulaire d'inscription à un atelier", () => {
+  it("explique le champ de courriel quand la saisie est invalide", async () => {
+    const user = userEvent.setup();
+    render(<InscriptionForm atelierId="a-14" onInscription={() => {}} />);
+
+    await user.type(screen.getByLabelText("Adresse électronique"), "camille.leroy");
+    await user.click(screen.getByRole("button", { name: "Envoyer mon inscription" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Adresse électronique invalide");
+    const champ = screen.getByLabelText("Adresse électronique");
+    expect(champ).toHaveAttribute("aria-invalid", "true");
+  });
+});
+```
+
+Le second test attaque le chemin heureux, avec un service simulé qui répond. L'affirmation principale reste visible : la confirmation s'affiche. L'affirmation secondaire vérifie que le service a bien été sollicité une seule fois, ce qui protège contre un envoi en double — un défaut réel, fréquent sur les formulaires qui ne désactivent pas leur bouton pendant l'envoi. Gardez toujours cet ordre : ce que l'utilisateur voit d'abord, ce que le code a fait ensuite.
+
+```tsx
+it("confirme l'inscription quand le service répond", async () => {
+  const user = userEvent.setup();
+  const service = { inscrire: vi.fn().mockResolvedValue({ statut: "confirme" }) };
+  render(<InscriptionForm atelierId="a-14" service={service} onInscription={() => {}} />);
+
+  await user.type(screen.getByLabelText("Nom et prénom"), "Camille Leroy");
+  await user.type(screen.getByLabelText("Adresse électronique"), "camille.leroy@example.org");
+  await user.click(screen.getByRole("button", { name: "Envoyer mon inscription" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("Votre place est réservée");
+  expect(service.inscrire).toHaveBeenCalledTimes(1);
+});
+```
+
+La lisibilité d'une suite se juge à sa capacité à passer pour une spécification. Trois règles y contribuent. Premièrement, un titre de test énoncé en français complet, qui se comprend sans ouvrir le fichier : explique le champ de courriel quand la saisie est invalide dit tout, alors que test 2 ne dit rien. Deuxièmement, une intention par test : si vous voulez couvrir deux affirmations indépendantes, écrivez deux tests, quitte à voir une ligne de préparation en plus. Troisièmement, l'isolation de la recherche avec la fonction within, qui borne les interrogations à une région du composant : dans une page qui contient plusieurs listes, chercher le texte dans la liste des inscrits et non dans toute la page évite les rencontres multiples et les faux positifs.
+
+Le tableau ci-dessous transforme la fonctionnalité en plan de couverture. Chaque ligne correspond à un état que le produit peut réellement traverser, à l'action qui le déclenche et à l'observation qui le confirme. Complétez-le avant d'écrire les tests : il vous dira immédiatement s'il manque un scénario, et il servira de contrat à la responsable des inscriptions.
+
+| État du parcours | Action simulée | Observation attendue |
+|---|---|---|
+| Saisie incomplète | Valider un courriel sans arobase | Alerte nommant le champ et attribut d'erreur |
+| Envoi en cours | Cliquer sur le bouton | Bouton inactif et mention d'attente |
+| Réponse favorable | Service simulé répondant | Message de confirmation en zone de statut |
+| Refus du service | Service simulé refusant la demande | Message expliquant le refus, saisie conservée |
+| Réseau indisponible | Rejet de la promesse réseau | Message de secours et bouton réactivé |
+| Déjà inscrit | Soumettre une demande existante | Mention d'inscription déjà enregistrée |
+
+Un dernier réflexe, souvent négligé, consiste à lire le message d'échec d'un test au lieu de le corriger au premier coup d'essai. Un test de Testing Library qui échoue affiche l'arbre des rôles trouvés, les libellés disponibles et la différence de texte attendue : cette sortie contient presque toujours la cause — un libellé modifié, un élément rendu deux fois, une mise à jour non attendue. Prenez deux minutes à la lire ; vous corrigerez en général le test ou le composant du bon côté, sans tâtonnement.
+
+## États asynchrones, mocks de fetch et tests stables
+
+Un test qui échoue une fois sur cinquante est plus nuisible qu'un test absent : il enseigne à l'équipe que le rouge ne veut plus rien dire, et la réaction habituelle devient le relancement plutôt que l'investigation. Toute la difficulté des tests de composant moderne vient de ce que les interfaces attendent : un réseau, une horloge, des identifiants, des listes qui grossissent. Ces quatre sources d'instabilité se maîtrisent, à condition de les nommer et de les neutraliser méthodiquement plutôt que de prier.
+
+La première source est le réseau. Vos tests ne doivent jamais toucher le réseau réel : ni votre connexion, ni celle d'un serveur distant ne font partie du contrat. Remplacez la fonction fetch par une fonction simulée que vous configurez pour chaque test, avec une réponse favorable, une réponse vide, une erreur serveur ou un rejet réseau. En nommant ces préparations dans un fichier commun, vous obtenez un vocabulaire partagé : le test lit fetchSimule(200, liste) et le rejet reseauHorsService(), sans se soucier de la mécanique de simulation.
+
+```ts
+// src/tests/reseau-simule.ts
+import { vi } from "vitest";
+
+export function fetchSimule(statut: number, corps: unknown) {
+  return vi.fn().mockResolvedValue({
+    ok: statut >= 200 && statut < 300,
+    status: statut,
+    json: async () => corps,
+  });
+}
+
+export function reseauHorsService() {
+  return vi.fn().mockRejectedValue(new TypeError("Network request failed"));
+}
+```
+
+La deuxième source est l'attente. Après un clic qui déclenche une requête, le rendu de la confirmation n'est pas immédiat : la promesse doit se résoudre, React doit repeindre. Les méthodes qui commencent par find attendent, avec un délai explicite, que l'élément apparaisse ; la fonction waitFor entoure n'importe quelle assertion qui dépend du temps. Le réflexe à installer est mécanique : toute assertion située après une interaction asynchrone passe par find ou waitFor, jamais par get. L'inverse est vrai aussi : n'attendez jamais inutilement, parce qu'une attente superflue rallonge la suite et masque un rendu réellement immédiat.
+
+```tsx
+await user.click(screen.getByRole("button", { name: "Actualiser la liste" }));
+
+expect(await screen.findByText("Aucune inscription pour le moment")).toBeInTheDocument();
+```
+
+La troisième source est l'horloge. Un champ filtré qui n'envoie sa recherche qu'après une seconde d'inactivité, une durée restante, une date d'affichage : autant de dépendances à l'heure système. Vitest sait figer et avancer le temps, mais la combinaison avec l'utilisateur simulé demande des réglages fins, et un test d'horloge mal maîtrisé devient le plus instable de la suite. Deux pratiques réduisent le besoin : préférez un délai nul dans les tests plutôt qu'une horloge fabriquée quand la fonctionnalité le permet, et figez la date au début du test quand le composant affiche le jour courant.
+
+La quatrième source est l'ordre et l'état partagé. Chaque test part d'un document neuf : le nettoyage installé dans le fichier de configuration supprime les composants rendus, et chaque test crée ses propres données. Le piège classique consiste à muter un objet de données déclaré hors des tests : le premier test le modifie, le second hérite de la modification et échoue sans raison apparente. Déclarez les données à l'intérieur du test, ou reconstruisez-les dans un bloc de préparation exécuté avant chacun. Un test ne doit savoir rien de ce qui s'est passé avant lui.
+
+La liste des inscrits du site de l'atelier illustre bien l'intérêt de piloter le réseau : quatre états distincts deviennent quatre tests courts, obtenus en changeant uniquement la réponse simulée. Le tableau ci-dessous les récapitule, avec la préparation correspondante et l'observation qui prouve que l'état est bien celui attendu.
+
+| État de la liste | Préparation du réseau | Observation dans le test |
+|---|---|---|
+| Chargement | Réponse qui se résout après une action | Mention d'attente affichée |
+| Vide | Réponse favorable sans élément | Phrase d'état vide compréhensible |
+| Rempli | Réponse favorable avec trois inscrits | Trois entrées nommées affichées |
+| Erreur serveur | Réponse simulée avec un statut d'échec | Message d'erreur et proposition de reprise |
+| Hors réseau | Promesse rejetée | Message de secours, aucune trace de détail technique |
+
+Pour déboguer un test opaque, la bibliothèque fournit une fonction d'affichage de l'arbre courant : appelez-la au milieu du test et lisez ce qui est réellement rendu — souvent l'élément attendu est absent parce qu'un état de chargement n'a jamais été levé, ou présent deux fois parce que le nettoyage n'a pas eu lieu. Préférez toujours cette inspection à une attente arbitrairement rallongie : rallonger le délai ne corrige pas le défaut, il le cache pour la prochaine fois.
+
+Enfin, traitez l'instabilité comme un défaut bloquant. Un test qui échoue de façon intermittente doit être réparé le jour même, ou mis à l'écart ouvertement le temps de le réparer, jamais relancé jusqu'à ce qu'il repasse. La règle tient en une phrase : une suite n'est crédible que si son résultat ne dépend pas de la chance. C'est cette crédibilité qui vous permettra d'exiger, dans la section suivante, que la couverture soit utile plutôt que décorative.
+
+## Ce qu'il ne faut pas tester (et comment équilibrer la suite)
+
+Tester tout est une erreur aussi coûteuse que ne tester rien : la suite devient lente, bruyante et difficile à relire, et personne ne lui fait plus confiance. Le discernement se construit autour de trois questions. Le test vérifie-t-il une promesse faite à l'utilisateur ? Cette promesse risque-t-elle de casser sans que personne ne s'en aperçoive ? Le résultat tient-il en une affirmation lisible ? Si la réponse est non à l'une des trois, le test rapporte peu et coûte beaucoup.
+
+Plusieurs catégories d'écritures sont à écarter d'emblée. Les tests qui vérifient le fonctionnement du framework — React rend, la bibliothèque d'événements déclenche — ne prouvent rien sur votre produit. Les tests qui comparent la feuille de style ou des classes CSS sont fragiles et inutiles : jsdom n'applique pas de mise en page, et la classe n'est pas l'expérience. Les captures d'état géantes, qui figent des centaines de lignes de balisage, deviennent illisibles dès la première retouche et finissent par être acceptées sans lecture. Les tests qui émettent des avertissements sur des détails de mise en forme — un attribut purement décoratif, une classe utilitaire — ajoutent du bruit sans ajouter de garantie.
+
+Le bon équilibre ressemble à une pyramide élargie vers le haut, adaptée à une interface. Le tableau ci-dessous donne des proportions indicatives et des exemples concrets tirés du site de l'atelier : lisez-le comme une répartition d'effort, pas comme une contrainte de comptage.
+
+| Échelon | Part indicative | Exemples concrets | Ce qu'il ne doit pas couvrir |
+|---|---|---|---|
+| Unité | Une part modeste | Validation d'un courriel, calcul d'une place restante | Le rendu, les événements |
+| Composant | La plus grande part | Formulaire, fiche d'atelier, liste filtrable | Le style exact, le serveur réel |
+| Intégration | Une part régulière | Parcours inscription complète avec contexte | Les détails de chaque écran |
+| Bout en bout | Une part faible | Publication d'un atelier depuis l'administration | Les cas d'erreur rares |
+| Manuel | Ponctuel, à chaque livraison | Parcours au clavier, lecteur d'écran, contrastes | Ce qui est automatisable |
+
+La répartition se décide au critère du risque, pas au critère de la facilité. Sur le site de l'atelier, il faut couvrir sans hésitation : l'inscription et sa validation, la désinscription et sa confirmation, le filtre de la programmation par créneau, les quatre états de la liste des inscrits, la gestion du focus après ouverture d'un message, et l'ordre de tabulation du formulaire. On laisse volontairement de côté : la teinte exacte du bandeau, les courbes de transition, les textes purement décoratifs, et le comportement interne d'une bibliothèque de graphiques déjà testée par ses auteurs.
+
+Le contre-test ultime consiste à casser votre propre code et à regarder la suite devenir rouge. Modifiez la condition de validation pour accepter tout texte, retirez le message d'erreur du rendu, changez le libellé du bouton : à chaque sabotage, au moins un test doit tomber, et tomber pour la bonne raison. Si un test continue de passer alors que la fonctionnalité est brisée, votre couverture est trompeuse et il faut réécrire ce test. Exercez-vous à ce jeu une fois par fonctionnalité nouvelle : c'est le moyen le plus rapide de savoir ce que vos tests valent réellement.
+
+La couverture de code, elle, reste un indicateur et non un objectif. Un pourcentage élevé signale seulement que des lignes ont été exécutées, pas que des comportements ont été vérifiés : on peut atteindre quatre-vingt-dix pour cent en appelant chaque fonction sans rien affirmer. Regardez plutôt ce qui manque : les branches non parcourues d'un formulaire — le cas d'erreur, le cas vide, la saisie corrigée — sont presque toujours les plus utiles et les plus rentables à écrire. Fixez un seuil modeste pour éviter les régressions silencieuses, puis discutez du contenu, jamais du chiffre seul.
+
+Le dernier critère est la durée. Une suite de composant doit tenir en moins d'une minute sur une machine de développeur : c'est ce qui permet de l'exécuter à chaque validation, sans attendre, sans contourner. Au-delà, cherchez les coupables — appels réseau réels, attentes longues, rendus redondants — plutôt que de déplacer l'exécution dans une intégration continue que personne ne regardera. La qualité n'est utile que si elle accompagne le travail à la vitesse où il se fait.

@@ -1,0 +1,356 @@
+Bienvenue dans ce deuxième chapitre du parcours bases de données. Le chapitre précédent vous a appris à construire des tables correctes : des entités claires, des clés primaires stables, des clés étrangères qui font respecter l'intégrité référentielle, et des données rangées dans les formes normales. Tout ce travail de conception n'aurait aucun sens si vous ne saviez pas ensuite interroger ces tables. C'est précisément l'objet de cette leçon : apprendre à extraire d'une base de données l'information qui compte, ni plus ni moins, en écrivant des requêtes SELECT lisibles, exactes et efficaces. À la fin de ce chapitre, vous saurez sélectionner les colonnes utiles, filtrer les lignes inutiles, trier le résultat selon un ordre métier et ne garder que la portion qui vous intéresse.
+
+Le langage SQL possède une caractéristique qui surprend souvent les débutants : il est déclaratif. Contrairement aux langages de programmation classiques, où vous écrivez pas à pas ce que la machine doit faire, vous décrivez simplement le résultat attendu. Vous indiquez quelles colonnes vous voulez, sous quelles conditions, et dans quel ordre ; c'est le moteur de base de données qui décide, lui-même, de la manière la plus rapide d'y parvenir. Cette séparation entre l'intention et l'exécution est la grande force du SQL. Elle vous permet de rester concentré sur la question métier, pendant que l'optimiseur se charge de parcourir les index, de joindre les tables et de livrer les lignes dans les meilleurs délais. Comprendre cette logique déclarative est la première étape pour écrire des requêtes justes plutôt que des requêtes qui semblent marcher par accident.
+
+Cette leçon est divisée en quatre temps. Nous commencerons par la grammaire de base de toute requête de lecture, avec les clauses SELECT, FROM et WHERE, puis nous explorerons en détail les opérateurs de filtrage : les comparaisons, l'intervalle BETWEEN, la liste IN et le motif LIKE. Nous verrons ensuite comment imposer un ordre explicite au résultat avec ORDER BY, et enfin comment limiter le volume affiché avec LIMIT et OFFSET. La deuxième partie du chapitre sera consacrée aux fonctions d'agrégat et au regroupement avec GROUP BY et HAVING ; la troisième abordera les valeurs nulles, la construction conditionnelle avec CASE WHEN, l'élimination des doublons avec DISTINCT et les sous-requêtes simples. Chaque notion est illustrée sur le même jeu de données que dans le chapitre précédent.
+
+Les exemples de ce cours s'appuient sur la bibliothèque des Lilas, dont vous avez construit le schéma au chapitre 1 : les tables lecteurs, villes, ouvrages, exemplaires, emprunts, emprunt_exemplaires et reservations. Nous écrivons du SQL compatible avec PostgreSQL, mais presque tout ce que vous apprendrez fonctionne à l'identique sur MySQL, SQL Server ou SQLite, à quelques détails de syntaxe près qui sont signalés au passage. Le meilleur réflexe que vous puissiez prendre est de taper chaque requête dans un véritable moteur plutôt que de la lire passivement : les résultats confirment ou infirment immédiatement votre raisonnement, et les messages d'erreur sont de remarquables enseignants. Ouvrez votre client SQL préféré, chargez le script du chapitre 1, et suivons ensemble le premier SELECT.
+
+## SELECT, FROM et WHERE : la grammaire de toute requête
+
+Toute requête de lecture commence par le mot-clé SELECT, qui annonce les colonnes que vous souhaitez obtenir, suivi de la clause FROM, qui indique la table dans laquelle puiser. L'ordre des mots dans la phrase SQL n'est pas l'ordre dans lequel le moteur exécute les opérations : il lit d'abord la table mentionnée dans FROM, il applique ensuite le filtre de WHERE, il trie enfin avec ORDER BY et limite avec LIMIT. Retenez ce déroulé, car il explique la plupart des comportements que vous observerez, y compris les résultats parfois décevants d'une requête mal construite. Pour lister toutes les colonnes d'une table, on pourrait écrire SELECT * FROM lecteurs, mais cette écriture paresseuse est à éviter dans un code destiné à durer : dès qu'une colonne est ajoutée à la table, vos traitements reçoivent une donnée qu'ils n'attendaient pas, et les analyses deviennent fragiles. Préférez toujours nommer explicitement les colonnes dont vous avez besoin.
+
+La liste des colonnes accepte bien davantage que des noms de champs. Vous pouvez y placer des expressions, des constantes, des fonctions et des calculs, à condition de leur attribuer un alias pour que l'en-tête du résultat reste compréhensible. Une requête comme SELECT identifiant, nom, prenom FROM lecteurs renvoie trois colonnes dans l'ordre exact où vous les avez citées, et cet ordre est sous votre contrôle total. Une requête peut même s'exprimer sans table, par exemple pour tester une expression ou une fonction : SELECT 1 + 1 valide l'arithmétique du moteur, SELECT upper('bonjour') vérifie la casse. Ces mini-requêtes sont précieuses pour déboguer une expression compliquée avant de l'intégrer dans une requête plus longue.
+
+La clause WHERE constitue le filtre de lignes. Elle reçoit une condition, une expression booléenne qui vaut vrai ou faux pour chaque ligne candidate, et ne conserve que les lignes pour lesquelles la condition est vraie. C'est une sélection ligne par ligne : le moteur examine la date_inscription de chaque lecteur, compare à la valeur que vous indiquez, et décide de conserver ou d'écarter. Écrivez SELECT identifiant, nom, prenom FROM lecteurs WHERE date_inscription >= '2024-01-01' et vous obtiendrez uniquement les inscrits depuis le début de l'année 2024. Les littéraux de date s'écrivent entre guillemets simples au format année-mois-jour, format que la plupart des moteurs comprennent sans ambiguïté.
+
+Plusieurs conditions se combinent avec les mots-clés AND, OR et NOT. AND exige que toutes les conditions soient vraies, OR suffit à ce qu'une seule le soit, et NOT inverse le résultat. La priorité naturelle du langage place AND avant OR, ce qui produit régulièrement des surprises : la requête WHERE ville = 'Paris' OR ville = 'Lyon' AND code_postal LIKE '75%' ne signifie pas ce que vous croyez. Elle est lue comme ville = 'Paris' OU (ville = 'Lyon' ET code_postal LIKE '75%'), et retournera donc tous les Parisiens, y compris ceux dont le code postal ne commence pas par 75. Dès que vous mélangez AND et OR, encadrez les groupes entre parenthèses : la lisibilité de vos requêtes en dépend, et leur exactitude aussi.
+
+Il existe un raccourci apprécié pour tester plusieurs valeurs d'une même colonne, la clause IN, que nous détaillerons dans la section suivante. Mentionnons dès à présent que WHERE accepte aussi des conditions négatives, avec NOT ou avec l'opérateur de différence. Une condition peut porter sur une colonne calculée, par exemple WHERE prenom || ' ' || nom = 'Marie Dupont' en PostgreSQL, mais cette forme empêche l'usage des index et ralentit les grandes tables. En pratique, filtrez d'abord sur les colonnes simples et indexées, puis affinez. Voici un premier exemple complet qui combine sélection de colonnes, filtre et tri :
+
+```sql
+SELECT identifiant, nom, prenom, date_inscription
+FROM lecteurs
+WHERE date_inscription >= '2024-01-01'
+  AND ville_id = 3
+ORDER BY date_inscription DESC;
+```
+
+Cette requête lit la table lecteurs, ne conserve que les inscrits depuis le 1er janvier 2024 dont l'identifiant de ville vaut 3, affiche quatre colonnes dans l'ordre demandé, et trie le résultat de la date la plus récente à la plus ancienne. Chaque clause a son rôle, et leur ordre d'écriture suit une logique de lecture facile à mémoriser : je veux ces colonnes, depuis cette table, sous cette condition, présenté dans cet ordre.
+
+## Les opérateurs de filtrage : comparer, ranger, chercher
+
+L'opérateur d'égalité s'écrit avec un simple signe égal, comme dans WHERE etat = 'disponible'. Pour exprimer l'inégalité, le standard SQL utilise l'opérateur <> ; de nombreux moteurs acceptent aussi !=, mais <> reste la forme portable que vous devriez privilégier. Les comparaisons d'ordre utilisent ensuite les opérateurs habituels : <, <=, > et >=. Ils fonctionnent sur les nombres, sur les dates et sur les chaînes de caractères, car toute donnée stockée possède un ordre. Pour les chaînes, cet ordre est lexicographique : 'Alpha' précède 'beta' si le moteur compare les majuscules avant les minuscules, et '10' vient avant '2' quand la colonne est de type texte, puisque le caractère '1' précède '2'. La leçon est simple : vérifiez toujours le type de la colonne avant de comparer, et rangez les identifiants et les quantités dans des colonnes numériques plutôt que dans des colonnes de texte.
+
+L'opérateur BETWEEN sert à tester l'appartenance à un intervalle. Il s'écrit colonne BETWEEN borne_basse AND borne_haute, et il est inclusif des deux côtés : WHERE montant BETWEEN 100 AND 200 retient les valeurs exactement égales à 100 et à 200. Cette écriture est équivalente à montant >= 100 AND montant <= 200, mais plus courte et plus proche de l'énoncé métier. BETWEEN est particulièrement commode sur les dates : WHERE date_sortie BETWEEN '2024-06-01' AND '2024-06-30' sélectionne tout le mois de juin, à condition de se souvenir qu'une colonne de type timestamp contient une heure, et que '2024-06-30' y est interprété comme le 30 juin à minuit. Pour inclure toute la journée du 30, écrivez date_sortie < '2024-07-01' ou date_sortie <= '2024-06-30 23:59:59'. Les pièges de ce genre sont fréquents lors des rapports mensuels.
+
+L'opérateur IN compare une colonne à une liste de valeurs explicites : WHERE etat IN ('disponible', 'reserve', 'perdu') est l'équivalent raccourci de trois égalités reliées par OR. Il accepte aussi une sous-requête à la place de la liste, ce que nous étudierons dans la dernière section du chapitre. Son négatif, NOT IN, semble simple mais recèle un danger majeur avec les valeurs nulles : si la liste contient un NULL, l'expression ne renvoie jamais vrai et le résultat devient vide, sans erreur apparente. Nous y reviendrons en détail dans la partie consacrée aux NULL, mais retenez dès maintenant qu'une liste de valeurs ne doit contenir aucun élément manquant. Pour les listes longues et stables, une table de référence interrogée par jointure sera préférable à une liste codée en dur dans la requête.
+
+L'opérateur LIKE permet de rechercher un motif dans une chaîne. Il connaît deux caractères génériques : le signe pourcentage, qui remplace une séquence de caractères de longueur quelconque, et le souligné, qui remplace exactement un caractère. Ainsi WHERE nom LIKE 'Dup%' conserve les noms commençant par Dup, quelle que soit la suite ; WHERE nom LIKE 'Du_ic' exige un unique caractère entre le u et le i. Le motif doit être ancré pour être efficace : LIKE '%riche%' recherche la sous-chaîne partout, mais empêche l'usage d'un index sur cette colonne et force un balayage complet de la table. LIKE 'Bern%' est qualifiable d'index, car le motif commence par des caractères fixes. La sensibilité à la casse dépend du moteur : PostgreSQL distingue 'a' de 'A' avec LIKE, MySQL dépend du jeu de caractères de la colonne, et SQL Server propose LEFT pour une comparaison insensible. L'opérateur NOT LIKE exclut les motifs, par exemple WHERE titre NOT LIKE '%manuel%' pour écarter les manuels d'un catalogue.
+
+Pensez à combiner ces opérateurs avec prudence. Les comparaisons se font toujours deux à deux : colonne opérateur valeur. On ne peut pas écrire montant BETWEEN 100 AND 200 AND 300 ; il faut une troisième condition. Les parenthèses restent votre meilleure amie dès que la logique se complexifie, et une bonne habitude consiste à écrire chaque condition sur sa propre ligne, alignée, pour que le WHERE tienne dans la largeur de l'écran et se relise comme une liste de critères. Le fragment suivant montre les opérateurs principaux utilisés ensemble :
+
+```sql
+SELECT identifiant, titre, isbn, annee
+FROM ouvrages
+WHERE prix BETWEEN 10 AND 50
+  AND categorie IN ('roman', 'essai', 'jeunesse')
+  AND titre LIKE '%guerre%'
+  AND annee >= 2000
+ORDER BY prix DESC;
+```
+
+Chaque ligne du WHERE doit être vraie pour que la ligne soit conservée, car les trois premières conditions sont reliées par AND. Si vous aviez voulu accepter un prix hors intervalre à condition que le titre contienne le mot guerre, il aurait fallu des parenthèses et un OR explicite. Prenez le réflexe de lire votre requête à voix haute, comme une phrase métier : je veux les ouvrages dont le prix est compris entre 10 et 50, et dont la catégorie est l'une de celles-ci, et dont le titre contient guerre, et dont l'année est au moins 2000.
+
+## ORDER BY : donner de l'ordre au résultat
+
+Sans clause ORDER BY, l'ordre des lignes retournées par une requête est officiellement indéterminé. Le moteur renvoie les lignes dans l'ordre où il les a trouvées, souvent celui d'un index ou de la lecture physique des pages, mais rien ne vous garantit que cet ordre sera stable d'une exécution à l'autre, ni d'une version du moteur à l'autre. Une première exécution peut sembler correcte par hasard, puis le résultat changer après une mise à jour ou une réorganisation de la table. La règle est donc sans exception : dès que l'ordre a un sens pour l'utilisateur, ordonnez explicitement avec ORDER BY. C'est le seul endroit du langage où la position d'une colonne dans la clause change le résultat.
+
+Par défaut, le tri est ascendant : les nombres vont du plus petit au plus grand, les dates de la plus ancienne à la plus récente, les chaînes dans l'ordre alphabétique. Le mot-clé DESC inverse ce sens. On peut triser sur plusieurs critères en les séparant par des virgules : ORDER BY date_inscription DESC, nom ASC classe les d'abord du plus récent au plus ancien, et, à date identique, du A au Z. Le premier critère est le dominant, les suivants ne servent qu'à départager les ex æquo. Pour un rapport, il est d'usage de terminer le tri par une colonne unique, comme l'identifiant, afin que l'ordre soit totalement déterministe et que la pagination reste cohérente entre deux appels.
+
+ORDER BY peut référencer une colonne non affichée, ce qui est pratique pour trier sur une donnée que l'on ne veut pas montrer : SELECT nom, prenom FROM lecteurs ORDER BY date_inscription DESC fonctionne même si la date n'apparaît pas dans la sélection. Il accepte également des expressions et des fonctions, par exemple ORDER BY upper(nom) pour un tri insensible à la casse, ou ORDER BY COUNT(*) DESC dans une requête d'agrégation. De même, un alias défini dans SELECT peut être utilisé dans ORDER BY, mais pas dans WHERE, car WHERE s'exécute avant que le calcul de l'alias n'ait lieu. Cette différence d'ordre d'exécution explique bon nombre d'erreurs du type colonne alias n'existe pas, rencontrées par les débutants.
+
+Le placement des valeurs nulles dans le résultat varie selon les moteurs. PostgreSQL les place en dernier pour un tri ascendant et en premier pour un tri descendant, sauf indication contraire avec NULLS FIRST ou NULLS LAST. D'autres moteurs considèrent que NULL est inférieur à toute valeur et le placent donc systématiquement au début. Pour un résultat prévisible, ajoutez l'explicitation quand votre dialecte le permet, ou rendez vos données non nulles dès la conception, avec une contrainte NOT NULL. La sensibilité à la casse du tri dépend elle aussi du moteur et de la collation configurée : sur un système francophone, on s'attend souvent à ce que accentué et non accentué soient traités selon une table de correspondance, mais l'ordre réel peut différer d'une machine à l'autre. Si votre application dépend de l'ordre alphabétique français, vérifiez la collation de votre base.
+
+Voici un exemple de tri multi-critères sur la table des emprunts, avec un ordre descendant sur la date et un départage sur l'identifiant :
+
+```sql
+SELECT identifiant, lecteur_id, date_sortie, date_retour
+FROM emprunts
+WHERE date_sortie BETWEEN '2024-01-01' AND '2024-12-31'
+ORDER BY date_sortie DESC, identifiant DESC;
+```
+
+Le résultat affiche les emprunts de l'année du plus récent au plus ancien, et, quand deux emprunts partagent la même date, c'est le numéro d'ordre plus élevé qui passe devant. Lisez toujours un ORDER BY en vous demandant quel problème d'exiguïté il résout : sans le second critère, l'ordre des ex æquo laisserait au moteur une liberté que la pagination ne lui pardonnera pas.
+
+## LIMIT et OFFSET : réduire le résultat, paginer, extraire le top
+
+Une requête correctement filtrée peut néanmoins renvoyer des dizaines de milliers de lignes, alors que l'écran n'en affichera qu'une vingtaine et que l'utilisateur n'en attend qu'une dizaine. La clause LIMIT résout ce problème en ne conservant qu'un nombre déterminé de lignes après le tri. Écrire ORDER BY prix DESC LIMIT 5 revient à demander les cinq ouvrages les plus chers. LIMIT est la façon la plus simple d'obtenir un classement, un top dix ou un échantillon de contrôle pour vérifier visuellement le contenu d'une table. La syntaxe standard, acceptée par la plupart des moteurs récents, est FETCH FIRST n ROWS ONLY, mais la forme courte LIMIT n est de loin la plus répandue.
+
+Attention, LIMIT s'applique toujours après le tri, jamais avant. Sans ORDER BY, le moteur se contente d'arrêter la lecture après avoir trouvé le nombre de lignes demandées, et les lignes retenues peuvent varier d'une exécution à l'autre. Pour un top, l'intention n'est donc jamais seulement LIMIT : elle est ORDER BY et LIMIT, toujours ensemble. C'est l'un des raccourcis les plus fréquents en production, et il produit des tableaux de bord dont le contenu change sans explication visible. Associez systématiquement les deux clauses, même quand le nombre de lignes vous paraît négligeable.
+
+La pagination repose sur le couple LIMIT et OFFSET. OFFSET saute le nombre de lignes indiqué avant de commencer à en renvoyer : LIMIT 10 OFFSET 20 rend les lignes 21 à 30 d'un résultat trié. Chaque page se construit donc en multipliant l'index de page par la taille de page. Ce mécanisme présente deux limites qu'il faut connaître tôt. D'abord, OFFSET coûte cher sur une grande table, car le moteur doit produire et jeter les lignes sautées : au-delà de quelques milliers de lignes, préférez une pagination par clé, où l'on mémorise la dernière valeur triée et l'on filtre avec WHERE prix < valeur_derniere, ce qui reste rapide à n'importe quelle profondeur. Ensuite, si les données changent entre deux pages, les lignes se décalent et l'utilisateur voit des doublons ou des omissions. Une pagination par clé ou par curseur évite cet effet.
+
+LIMIT sert aussi à extraire un échantillon, utile pour tester une requête longue avant de la lancer sur l'intégralité des données. Commencez par LIMIT 10, vérifiez le format des colonnes, la cohérence des calculs et la lisibilité des valeurs, puis retirez la limite. Ce réflexe fait gagner un temps considérable, surtout lorsque la requête contient des jointures multiples et des agrégations. Certains moteurs proposent d'ailleurs un prélèvement aléatoire avec TABLESAMPLE ou ORDER BY random(), pratique pour constituer un jeu de test représentatif sans extraire la base entière. Enfin, sachez que LIMIT sans ORDER BY n'a aucun sens dans un rapport, mais peut être parfaitement acceptable pour une requête de diagnostic où l'on veut simplement jeter un coup d'œil au contenu d'une table.
+
+```sql
+SELECT o.titre, o.prix, v.nom AS editeur
+FROM ouvrages o
+WHERE o.prix > 0
+ORDER BY o.prix DESC, o.identifiant
+LIMIT 5 OFFSET 10;
+```
+
+Cette requête saute les cinq premiers titres les plus chers et en rend les cinq suivants, en gardant un ordre déterministe grâce à l'identifiant ajouté en second critère. Pour construire la page suivante, il suffit d'écrire OFFSET 15, et ainsi de suite, tant que la requête tourne sur un volume raisonnable. Vous venez d'assembler les quatre briques qui servent de socle à toutes les lectures SQL : sélectionner les colonnes, filtrer les lignes, trier le résultat, limiter son volume. Dans la partie suivante, nous apprendrons à résumer des milliers de lignes en quelques chiffres significatifs avec les fonctions d'agrégat et le regroupement GROUP BY.
+
+Les requêtes que vous avez écrites jusqu'ici ont un point commun : elles renvoient des lignes. Vous sélectionnez des colonnes, vous filtrez des enregistrements, vous triez le résultat, mais le volume final reste celui de la table source, réduit certes par WHERE, jamais résumé. Or la majorité des questions posées à une base de données ne demandent pas des lignes mais des chiffres : combien d'emprunts ce mois-ci, quel est le montant moyen d'un panier, quel lecteur a emprunté le plus souvent, combien d'ouvrages restent disponibles dans chaque catégorie. Pour transformer des milliers de lignes en quelques indicateurs significatifs, SQL dispose de fonctions d'agrégat et d'une clause de regroupement. C'est l'objet central de cette partie.
+
+Une fonction d'agrégat prend une colonne en entrée et produit une seule valeur, résumée sur l'ensemble des lignes qui lui sont soumises. COUNT compte, SUM additionne, AVG calcule la moyenne, MIN et MAX extraient les extrêmes. Ces fonctions se distinguent des fonctions scalaires comme upper ou round, qui s'appliquent ligne par ligne et produisent une valeur par ligne. Cette distinction est fondamentale, car elle commande la grammaire de la requête : dès que l'une de ces fonctions d'agrégat apparaît, la requête change de nature et peut être découpée en groupes avec GROUP BY. Le moteur agrège d'abord, filtre ensuite les agrégats avec HAVING, puis présente les résultats avec les alias que vous aurez définis.
+
+Nous étudierons dans l'ordre les cinq fonctions d'agrégat et leurs comportements face aux valeurs manquantes, la clause GROUP BY qui découpe la table en sous-ensembles, la différence décisive entre WHERE et HAVING, et enfin les alias qui rendent les résultats lisibles. Chaque section s'appuie sur les tables de la bibliothèque des Lilas, et vous gagnerez à exécuter les exemples au fil de l'eau. Un conseil avant de commencer : ouvrez une fenêtre de requête à côté de votre éditeur de texte et recopiez le script de création des données du chapitre précédent. L'habitude d'expérimenter en parallèle de la lecture transforme une notion abstraite en réflexe durable.
+
+## Les fonctions d'agrégat : COUNT, SUM, AVG, MIN, MAX
+
+COUNT est de loin la fonction la plus utilisée, et aussi celle qui contient le plus de pièges. Comptez les lignes d'une table avec SELECT COUNT(*) FROM emprunts : le résultat est le nombre total d'enregistrements, qu'ils contiennent ou non des valeurs dans leurs colonnes. Comptez une colonne précise avec COUNT(date_retour) et le comportement change radicalement : le moteur ignore les valeurs nulles et ne compte que les lignes dont date_retour possède une valeur. La différence entre COUNT(*) et COUNT(colonne) n'est donc pas cosmétique, elle est sémantique. Sur la table emprunts, COUNT(*) donne le nombre total de prêts, tandis que COUNT(date_retour) donne le nombre de prêts déjà rendus. La soustraction des deux vous indique les prêts en cours, à condition de ne pas introduire de filtre dans la requête.
+
+Comptez-vous une colonne distincte ? La forme COUNT(DISTINCT ville_id) ne compte pas les lignes mais les valeurs différentes, ce qui répond à une autre question : combien de villes distinctes sont représentées parmi les lecteurs. Cette variante est précieuse dans les rapports, car elle distingue le nombre d'enregistrements du nombre d'entités. Un même lecteur apparaissant plusieurs fois dans une table de commandes sera compté autant de fois par COUNT(*) qu'une seule fois par COUNT(DISTINCT lecteur_id). Ne confondez pas non plus COUNT avec le comptage effectué par une jointure : dès que vous reliez deux tables, les lignes se multiplient, et COUNT(*) peut gonfler sans que la donnée réelle ait changé. Nous reverrons ce point au chapitre des jointures, mais la méfiance envers COUNT après une jointure est déjà une bonne habitude.
+
+SUM additionne les valeurs numériques d'une colonne. SELECT SUM(montant) FROM emprunts renvoie la somme de tous les montants enregistrés. AVG calcule la moyenne arithmétique, c'est-à-dire la somme divisée par le nombre de valeurs prises en compte, et non par le nombre de lignes : les valeurs nulles sont exclues du dénominateur, ce qui peut surprendre. MIN et MAX extraient respectivement la plus petite et la plus grande valeur ; ils fonctionnent sur les nombres comme sur les dates et sur les chaînes, où l'ordre est lexicographique. Un point crucial à retenir : toutes ces fonctions ignorent les valeurs nulles, sauf COUNT(*), qui les compte comme des lignes. Une colonne entièrement vide produit SUM égal à zéro, AVG, MIN et MAX égaux à NULL, et COUNT(colonne) égal à zéro. Ces comportements ne sont pas des anomalies, ils font partie de la définition du langage.
+
+Les fonctions d'agrégat combinent aussi avec une condition : COUNT(*) WHERE ... ne s'écrit pas ainsi, la condition reste portée par WHERE quand elle s'applique avant l'agrégation. Par exemple, SELECT COUNT(*) FROM emprunts WHERE date_retour IS NULL compte les emprunts non rendus, car WHERE écarte d'abord les lignes, puis COUNT opère sur ce qui reste. À l'inverse, une moyenne conditionnelle exige souvent CASE WHEN, que nous étudierons dans la partie suivante. Voici un exemple qui cumule plusieurs agrégats sur la même requête :
+
+```sql
+SELECT
+  COUNT(*)            AS nombre_emprunts,
+  COUNT(date_retour)  AS nombre_rendus,
+  MIN(date_sortie)    AS premier_emprunt,
+  MAX(date_sortie)    AS dernier_emprunt,
+  AVG(EXTRACT(DAY FROM date_retour - date_sortie)) AS duree_moyenne_jours
+FROM emprunts
+WHERE date_sortie >= '2024-01-01';
+```
+
+Chaque colonne du résultat porte une valeur unique, résumée sur toutes les lignes retenues. L'écart entre nombre_emprunts et nombre_rendus vous donne instantanément le nombre de prêts en cours. Le résultat de AVG peut être NULL si aucune ligne ne contient de date de retour, cas typique d'une période où rien n'a encore été restitué. Prenez l'habitude de lire chaque colonne d'un résultat d'agrégat en vous demandant quelle ensemble de lignes elle résume et ce qu'elle ferait avec des valeurs manquantes.
+
+## GROUP BY : une ligne par groupe
+
+Une seule statistique globale répond rarement à toutes les questions. Le directeur de la bibliothèque veut savoir combien d'emprunts chaque lecteur a effectués, le bibliothécaire veut la répartition des ouvrages par catégorie, et l'analyste veut le chiffre d'affaires par mois. Pour produire ces tableaux, la clause GROUP BY découpe la table en groupes et fait tourner les fonctions d'agrégat à l'intérieur de chacun. Écrivez lecteur_id, COUNT(*) FROM emprunts GROUP BY lecteur_id : le moteur regroupe toutes les lignes partageant le même lecteur_id, compte les lignes de chaque groupe, et renvoie une ligne par groupe avec son compteur. Le résultat a autant de lignes que de valeurs distinctes dans la colonne de regroupement.
+
+La règle à mémoriser est la suivante : dans une requête groupée, toute colonne affichée doit figurer dans GROUP BY ou être enfermée dans une fonction d'agrégat. Si vous demandez nom en même temps que COUNT(*) sans que nom soit groupé, la plupart des moteurs refusent la requête au motif qu'ils ne savent pas quelle valeur choisir parmi celles du groupe. D'autres moteurs, plus permissifs, choisissent une valeur au hasard et vous livrent un résultat faux sans le moindre avertissement. Cette tolérance est un piège redoutable en production : la requête semble marcher sur un petit échantillon, puis diverge. Écrivez toujours GROUP BY sur toutes les colonnes non agrégées de votre SELECT, et vérifiez la liste avant d'exécuter.
+
+GROUP BY accepte plusieurs colonnes, et la granularité se lit directement dans la liste : GROUP BY ville_id, categorie produit un groupe par paire ville et catégorie. On peut également grouper sur une expression calculée, par exemple GROUP BY DATE_TRUNC('month', date_sortie) pour obtenir des groupes mensuels, ou sur un alias défini dans SELECT, ce que certains moteurs autorisent et d'autres non. Pour rester portable, préférez répéter l'expression. Une requête de reporting complète combine presque toujours un WHERE pour restreindre le périmètre, un GROUP BY pour définir la granularité, un ORDER BY pour présenter les lignes et un LIMIT pour ne garder que le top. Le WHERE s'exécute avant le regroupement et porte sur les colonnes de la table ; le HAVING, que nous verrons juste après, s'exécute après et porte sur les agrégats.
+
+Voici un exemple de tableau de bord construit en une seule requête :
+
+```sql
+SELECT
+  lecteur_id,
+  COUNT(*)                   AS nombre_emprunts,
+  MIN(date_sortie)           AS premier_passage,
+  MAX(date_sortie)           AS dernier_passage,
+  COUNT(date_retour)         AS retours_effectues
+FROM emprunts
+WHERE date_sortie >= '2024-01-01'
+GROUP BY lecteur_id
+ORDER BY nombre_emprunts DESC, lecteur_id
+LIMIT 20;
+```
+
+La requête filtre d'abord les emprunts de l'année, les regroupe ensuite par lecteur, calcule quatre indicateurs par groupe, trie du lecteur le plus actif au moins actif et n'affiche que les vingt premiers. Notez que COUNT(*) compte toutes les lignes du groupe, tandis que COUNT(date_retour) ne compte que les restitutions, ce qui vous donne gratuitement le taux de restitution. Notez aussi que ORDER BY utilise l'alias nombre_emprunts, lisible et court, plutôt que l'expression complète : nous y venons dans la dernière section.
+
+## HAVING et WHERE : filtrer avant ou après l'agrégation
+
+WHERE et HAVING se ressemblent syntaxiquement mais ne travaillent pas au même moment, ni sur les mêmes données. WHERE s'exécute tout en début de traitement, avant tout regroupement, et porte sur les colonnes brutes de la table : il décide quelles lignes ont le droit d'entrer dans le calcul. HAVING s'exécute après GROUP BY, une fois les agrégats produits, et porte sur les résultats de ces fonctions : il décide quels groupes ont le droit d'apparaître dans le résultat. En d'autres termes, WHERE filtre les lignes, HAVING filtre les groupes. Cette phrase, répétée jusqu'à ce qu'elle devienne un réflexe, vous évitera la majorité des erreurs de requêtes groupées.
+
+La conséquence pratique est immédiate : on ne peut pas mettre une fonction d'agrégat dans WHERE, car à ce stade de l'exécution aucun agrégat n'existe encore. L'écriture SELECT lecteur_id FROM emprunts GROUP BY lecteur_id WHERE COUNT(*) > 5 est donc illégale ; il faut écrire HAVING COUNT(*) > 5. Symétriquement, il est inutile de placer dans HAVING une condition qui ne dépend que de colonnes brutes, comme WHERE sans regroupement : le filtre sera bien appliqué, mais plus tard qu'il n'aurait dû, ce qui fait perdre au moteur l'opportunité d'écarter des lignes tôt. L'ordre d'exécution correct est toujours WHERE, puis GROUP BY, puis HAVING, puis ORDER BY, puis LIMIT. Retenez cette séquence comme une chorégraphie.
+
+Quand faut-il choisir HAVING plutôt que WHERE ? La question se résout par la nature du critère. Si le critère porte sur une valeur de la table, filtrez au plus tôt avec WHERE : moins de lignes entrent dans l'agrégation, le calcul est plus rapide. Si le critère porte sur un résultat calculé, par exemple un nombre minimum d'emprunts ou une moyenne supérieure à un seuil, utilisez HAVING. Un cas courant consiste à ne conserver que les groupes dont l'effectif dépasse un seuil, typiquement pour éliminer les singularités d'un reporting : GROUP BY lecteur_id HAVING COUNT(*) >= 3 ne garde que les lecteurs ayant emprunté au moins trois fois. Combiner les deux est parfaitement normal : WHERE restreint la période, HAVING conditionne l'affichage du groupe.
+
+```sql
+SELECT
+  o.categorie,
+  COUNT(*)        AS nombre_titres,
+  ROUND(AVG(o.prix), 2) AS prix_moyen
+FROM ouvrages o
+WHERE o.annee >= 2000
+GROUP BY o.categorie
+HAVING COUNT(*) >= 5
+ORDER BY prix_moyen DESC;
+```
+
+Cette requête ne considère que les ouvrages parus depuis 2000, les regroupe par catégorie, calcule le nombre de titres et le prix moyen de chaque catégorie, puis ne conserve que les catégories comptant au moins cinq titres. Le WHERE a été appliqué en premier, sur les colonnes brutes, et le HAVING ensuite, sur les agrégats. Si vous déplacez la condition sur l'année dans HAVING, le moteur renverra une erreur du type agrégat non autorisé dans WHERE, ce qui vous indiquera exactement où vous vous êtes trompé dans la chorégraphie.
+
+## Les alias : rendre les résultats lisibles et les requêtes maintenables
+
+Un résultat d'agrégat produit par défaut des en-têtes techniques : count, sum, avg, parfois même des expressions brutes illisibles. L'alias corrige cela en attribuant un nom à chaque colonne du résultat. Il s'écrit avec le mot-clé AS, facultatif mais recommandé pour la lisibilité : COUNT(*) AS nombre_emprunts, ROUND(AVG(prix), 2) AS prix_moyen. Sans alias, l'en-tête reprend l'expression, et un rapport destiné à un non-technicien affiche alors des intitulés que personne ne comprendra. L'alias ne modifie pas la donnée, seulement son nom de colonne dans le jeu de résultats, et il n'est jamais conservé dans la table : il n'existe que le temps de la requête.
+
+Les alias servent bien au-delà de l'esthétique. Ils permettent d'éviter les répétitions dans les requêtes longues, de rendre les formules explicites et, surtout, de faciliter le tri : ORDER BY peut référencer un alias défini dans SELECT, alors qu'il ne peut pas, dans la plupart des moteurs, référencer une colonne qui n'existe pas dans le résultat. Pour une expression complexe réutilisée plusieurs fois, l'alias supprime la duplication et réduit le risque de erreur de recopie. Une bonne pratique consiste à nommer les agrégats avec un nom qui décrit la mesure et l'unité : nombre_emprunts, montant_total_euros, duree_moyenne_jours. Un intitulé comme total ou result1 force toujours celui qui lit à remonter dans la requête pour le comprendre.
+
+Attention à deux portées distinctes. L'alias défini dans SELECT est utilisable dans ORDER BY, et parfois dans GROUP BY et HAVING selon les moteurs ; il n'est en revanche jamais accessible dans WHERE, car WHERE est évalué avant que SELECT ne calcule quoi que ce soit. Si vous devez filtrer sur une expression, répétez l'expression dans WHERE ou, mieux, repoussez le filtre dans une sous-requête ou une vue. Une autre convention, issue de la jointure, consiste à créer un alias de table : FROM ouvrages o permet d'écrire o.prix partout, ce qui devient indispensable dès que plusieurs tables partagent un nom de colonne. Ces alias de table suivent la même logique : un nom court, utilisé à chaque occurrence, pour éviter l'ambiguïté.
+
+Il existe enfin les alias de colonnes implicites, où l'on place directement un nom après l'expression sans le mot-clé AS : SELECT COUNT(*) nombre_emprunts. Cette écriture fonctionne partout, mais elle est plus facile à manquer à la lecture, surtout quand les colonnes s'empilent sur plusieurs lignes. Le standard SQL et la majorité des guides de style recommandent AS, et la discipline qu'il impose rend le SELECT beaucoup plus facile à scanner. Un dernier conseil : vérifiez que vos alias sont uniques au sein d'une requête. Deux colonnes portant le même nom produisent des résultats ambiguïs dans les clients SQL et des erreurs dans les langages de programmation qui consomment la requête, notamment lors de la conversion en objet. Voici un exemple final qui réunit agrégats, regroupement, filtres et alias :
+
+```sql
+SELECT
+  v.nom                              AS ville,
+  COUNT(*)                           AS nombre_lecteurs,
+  COUNT(DISTINCT l.courriel)         AS adresses_uniques,
+  MIN(l.date_inscription)            AS premiere_inscription,
+  MAX(l.date_inscription)            AS derniere_inscription
+FROM lecteurs l
+JOIN villes v ON v.identifiant = l.ville_id
+WHERE l.date_inscription >= '2023-01-01'
+GROUP BY v.nom
+HAVING COUNT(*) >= 2
+ORDER BY nombre_lecteurs DESC, ville
+LIMIT 15;
+```
+
+Vous y retrouvez tout ce que la partie vient d'enseigner : des colonnes groupées citées dans GROUP BY, des agrégats enveloppés dans des fonctions, un WHERE qui restreint la période avant le regroupement, un HAVING qui écarte les petites villes, des alias lisibles réutilisés dans ORDER BY, et un LIMIT qui ne garde que le haut du tableau. Relisez cette requête ligne à ligne en vous demandant, pour chaque clause, ce qu'elle filtre et à quel moment elle s'exécute. Si vous parvenez à le formuler à voix haute, vous maîtrisez l'essentiel du SQL analytique. La partie suivante vous apprendra à traiter les cas que ces fonctions laissent passer : les valeurs manquantes, les catégories calculées avec CASE WHEN, les doublons avec DISTINCT et les requêtes imbriquées.
+
+Les fonctions d'agrégat et GROUP BY vous permettent de résumer des volumes de données, mais elles reposent toutes sur une hypothèse implicite : que les valeurs sont là, complètes et exploitables. Dans une base réelle, elles ne le sont pas toujours. Une date de retour manquante, un prix inconnu, une catégorie non renseignée : ces absences sont représentées par une valeur particulière, NULL, dont les règles de fonctionnement surprennent même des développeurs confirmés. À côté de ce cas, deux autres besoins reviennent constamment dans les projets : traduire des règles métier en colonnes calculées avec CASE WHEN, éliminer les doublons avec DISTINCT, et imbriquer des requêtes les unes dans les autres pour résoudre des questions que l'on ne saurait formuler en une seule passe. Ces quatre sujets ferment la partie théorique du chapitre.
+
+Commençons par NULL, car il est à l'origine de la majorité des résultats incompréhensibles rencontrés en production. NULL ne signifie pas zéro, ni chaîne vide, ni valeur par défaut : il signifie inconnu, non renseigné, absent. Toutes les opérations arithmétiques et comparatives du langage sont définies de manière à propager cette inconnue plutôt qu'à la traiter comme une valeur ordinaire, et c'est précisément ce qui rend les comparaisons contre NULL délicates. Nous verrons comment tester une absence avec IS NULL et IS NOT NULL, comment fournir un substitut avec COALESCE, et pourquoi l'écrire colonne = NULL ne renverra jamais aucune ligne, même dans une table entièrement vide.
+
+CASE WHEN introduit une logique conditionnelle à l'intérieur d'une requête. Il joue le rôle d'une instruction conditionnelle du langage de programmation, mais reste déclaratif : vous décrivez les conditions et les résultats associés, et le moteur évalue chaque ligne. On l'utilise pour catégoriser, pour créer des indicateurs, pour formater un affichage ou pour rendre une agrégation conditionnelle, par exemple compter uniquement les emprunts rendus. DISTINCT supprime les doublons du résultat, ce qui répond à une question précise : quelles valeurs différentes existent-elles ? Enfin, les sous-requêtes permettent de poser une question intermédiaire et d'utiliser sa réponse comme élément d'une autre requête, avec un ordre d'exécution intérieur d'abord, extérieur ensuite.
+
+Tous les exemples de cette partie restent attachés à la bibliothèque des Lilas et continuent d'utiliser la syntaxe PostgreSQL, sans rien de spécifique qui vous empêcherait de les adapter à votre moteur. Une remarque sur la méthode : ces quatre notions sont celles que l'on apprend le mieux en cassant quelque chose. Modifiez une condition, retirez un filtre, remplacez un IS NULL par un égal, observez le résultat change, puis revenez à la forme correcte. Ce sont ces écarts entre l'attendu et l'obtenu qui ancrent durablement la règle. Ouvrez votre client SQL, préparez un jeu de données volontairement incomplet, et suivons ensemble.
+
+## NULL, IS NULL et COALESCE : travailler avec l'absence
+
+Une valeur NULL peut se trouver dans n'importe quelle colonne non contrainte par NOT NULL, et notamment dans les colonnes facultatives : date_retour d'un emprunt en cours, courriel d'un lecteur anonyme, prix d'un ouvrage gratuit. Le premier réflexe à corriger est la comparaison directe. Écrire WHERE date_retour = NULL ne renvoie aucune ligne, toujours, même si la colonne contient des dizaines de valeurs nulles. La raison tient à la sémantique de NULL : comme la valeur est inconnue, le moteur ne peut pas décider si l'égalité est vraie ou fausse, il répond alors inconnu, et une condition qui n'est pas vraie de façon certaine écarte la ligne. C'est pourquoi le standard définit des opérateurs spécifiques : IS NULL teste l'absence, IS NOT NULL teste la présence. Écrivez WHERE date_retour IS NULL et vous obtiendrez exactement les emprunts en cours.
+
+Cette règle se propage à toutes les comparaisons. Une ligne dont la colonne vaut NULL échappe à la fois aux conditions =, <, >, BETWEEN, IN et LIKE. Elle est donc silencieusement exclue de la plupart des requêtes, ce qui produit des totaux qui ne tombent pas juste et des listes qui semblent incomplètes sans qu'aucune erreur ne soit signalée. Le piège le plus insidieux concerne NOT IN : si la liste contient un élément NULL, la négation devient inconnue pour toutes les lignes, et le résultat est vide du début à la fin. La solution consiste à garantir que la colonne est non nulle avec IS NOT NULL avant de comparer, ou à remplacer la forme négative par un anti-filtre explicite. Retenez que NULL se propage : toute expression impliquant NULL produit NULL, sauf les exceptions prévues par le langage.
+
+COALESCE fournit un substitut dès qu'une valeur manque. Il accepte plusieurs arguments et renvoie le premier qui n'est pas NULL : COALESCE(date_retour, CURRENT_DATE) renvoie la date de retour si elle existe, sinon la date du jour, ce qui permet de calculer la durée d'un prêt en cours. On l'utilise aussi pour fournir un libellé par défaut, COALESCE(categorie, 'non classé'), ou une valeur neutre dans un calcul, COALESCE(montant, 0). Attention à ne pas confondre la substitution à l'affichage et la correction de la donnée : COALESCE ne modifie pas la table, il habille le résultat. Si l'absence de date est un problème métier, il faut le régler par une contrainte ou par une mise à jour, pas par une formule de restitution. Une autre fonction voisine, NULLIF, renvoie NULL quand deux valeurs sont égales, et sert surtout à éviter les divisions par zéro.
+
+Les fonctions d'agrégat traitent NULL selon des règles qu'il faut connaître par cœur. COUNT(*) compte les lignes, y compris celles qui sont entièrement vides, alors que COUNT(colonne) ignore les valeurs nulles. SUM, AVG, MIN et MAX ignorent tous les NULL ; AVG divise par le nombre de valeurs non nuliennes, pas par le nombre de lignes. Une colonne totalement vide donne AVG NULL, SUM zéro et COUNT(colonne) zéro. Dans un rapport, cela signifie qu'une moyenne calculée sur un sous-ensemble partiel de données peut sembler correcte tout en ignorant silencieusement les lignes incomplètes. Le bon réflexe est d'afficher côte à côte COUNT(*) et COUNT(colonne) : leur écart révèle immédiatement le volume de données manquantes.
+
+```sql
+SELECT
+  COUNT(*)                       AS total_emprunts,
+  COUNT(date_retour)             AS emprunts_rendus,
+  COUNT(*) - COUNT(date_retour)  AS emprunts_en_cours,
+  AVG(COALESCE(date_retour, CURRENT_DATE) - date_sortie) AS duree_estimee_jours,
+  COUNT(DISTINCT lecteur_id)     AS lecteurs_concernes
+FROM emprunts
+WHERE date_sortie >= '2024-01-01';
+```
+
+Cette requête illustre les règles en action : total_emprunts vient de COUNT(*) et compte tout, emprunts_rendus vient d'une colonne et ignore les nuls, leur différence donne les prêts ouverts, et la moyenne utilise COALESCE pour que les prêts non rendus soient mesurés jusqu'à aujourd'hui plutôt que d'être exclus du calcul. Le résultat vous donne en une ligne la santé complète du service de prêt sur la période. Si vous remplacez IS NULL par égal dans un filtre, cette requête n'aura plus jamais rien à compter.
+
+## CASE WHEN : traduire des règles métier en SQL
+
+CASE WHEN introduit une condition dans une expression. Sa syntaxe reproduit celle d'une alternative : WHEN suivi d'une condition, THEN suivi d'une valeur, et un ELSE facultatif pour la valeur par défaut. Sans ELSE, la valeur devient NULL quand aucune condition ne convient, ce qui réintroduit la problématique des valeurs manquantes dans votre propre colonne calculée. La forme simple, CASE colonne WHEN valeur THEN resultat, sert à remplacer un dictionnaire de correspondances : elle compare directement la colonne à chaque valeur sans répéter le nom. La forme searched, avec une condition complète après WHEN, est de loin la plus polyvalente, car elle permet de combiner plusieurs colonnes et des opérateurs variés.
+
+L'usage le plus courant est la catégorisation. Pour un rapport, on transforme un prix en tranche, un état en libellé lisible, une date en période de l'année. Écrire CASE WHEN prix < 10 THEN 'accessible' WHEN prix < 30 THEN 'standard' ELSE 'premium' AS gamme crée une colonne qui n'existe pas dans la table mais qui apparaît dans le résultat, prête à être groupée. Attention à l'ordre des branches : le moteur s'arrête à la première condition vraie. Si vous inversez les bornes, un prix de 5 euros peut se retrouver classé premium. Relisez toujours une cascade CASE en partant du premier WHEN et en vérifiant qu'il ne capture pas des cas destinés aux suivants. Pour une plage, BETWEEN reste plus lisible, mais gardez à l'esprit que les bornes sont inclusives.
+
+CASE transforme aussi une condition en indicateur binaire, ce qui débloque les agrégations conditionnelles. Plutôt que de faire deux requêtes, une pour les rendus et une pour les non rendus, vous écrivez une seule qui additionne des CASE : SUM(CASE WHEN date_retour IS NOT NULL THEN 1 ELSE 0 END) compte les restitutions, et COUNT(*) - SUM(CASE WHEN date_retour IS NOT NULL THEN 1 ELSE 0 END) les prêts en cours. Cette technique est le point de départ des tableaux croisés dynamiques, où l'on produit une colonne par état. Elle évite les jointures contre soi-même et reste parfaitement lisible une fois l'habitude prise. Le THEN doit alors fournir une valeur numérique, et ELSE 0 est indispensable : ELSE NULL serait ignoré par SUM, ce qui donne le même résultat ici, mais pas dans tous les cas.
+
+CASE s'utilise partout où une expression est acceptée : dans SELECT, dans ORDER BY pour imposer un ordre métier, dans GROUP BY pour regrouper sur des catégories calculées, et même dans des contraintes CHECK pour documenter une règle. Utilisé dans ORDER BY, il permet de trier les états dans un ordre qui n'est pas l'ordre alphabétique, par exemple les en attente avant les validés. Utilisé dans une agrégation conditionnelle, il remplace avantageusement des requêtes multiples. Il faut en revanche éviter de l'enchaîner indéfiniment : au-delà de quatre ou cinq branches, la formule devient illisible et il vaut mieux joindre une table de référence qui portera la correspondance, ce qui respecte le principe de normalisation vu au chapitre précédent.
+
+```sql
+SELECT
+  titre,
+  prix,
+  CASE
+    WHEN prix IS NULL             THEN 'prix a definir'
+    WHEN prix = 0                 THEN 'gratuit'
+    WHEN prix < 10                THEN 'gamme accessible'
+    WHEN prix BETWEEN 10 AND 30    THEN 'gamme standard'
+    ELSE                              'gamme premium'
+  END AS gamme,
+  CASE categorie
+    WHEN 'roman'     THEN 'fiction'
+    WHEN 'jeunesse'  THEN 'jeunesse'
+    ELSE                 'autres'
+  END AS rayon
+FROM ouvrages
+ORDER BY gamme, prix;
+```
+
+La requête fabrique deux colonnes calculées, l'une sur une fourchette de prix avec test sur NULL, l'autre par correspondance directe sur la catégorie. Le ORDER BY utilise ensuite l'alias gamme pour présenter les résultats dans l'ordre alphabétique des libellés. Remplacez CASE par une équivalence improvisée dans votre code applicatif et vous perdrez la capacité à grouper et à trier côté base, au prix de transferts de données inutiles. Gardez la logique là où vivent les données.
+
+## DISTINCT : ne garder que l'unique
+
+DISTINCT s'applique au résultat d'un SELECT et supprime les lignes strictement identiques. SELECT DISTINCT ville_id FROM lecteurs ne répond pas à la question combien de lecteurs, mais à l'autre question : quelles villes sont représentées ? C'est une distinction fondamentale entre compter des occurrences et lister des valeurs. On retrouve la même différence entre COUNT(*), qui compte les lignes, et COUNT(DISTINCT colonne), qui compte les valeurs différentes. DISTINCT porte sur l'ensemble des colonnes du SELECT : SELECT DISTINCT ville_id, categorie ne conserve que les paires réellement observées, pas chaque colonne séparément. Il faut donc l'utiliser avec discernement, car ajouter une colonne à la sélection augmente souvent le nombre de lignes distinctes et vide la force du filtre.
+
+DISTINCT ne trie pas. Les lignes uniques restent dans l'ordre indéterminé que nous avons décrit en parlant de ORDER BY, et un DISTINCT sur une grande table peut coûter cher, car le moteur doit comparer ou hacher toutes les lignes retenues. Avant de l'ajouter par réflexe, demandez-vous si la question ne peut pas être résolue autrement : une clé primaire donne par défaut des lignes uniques, une jointure mal construite multiplie les doublons qu'un DISTINCT masquera au lieu de corriger, et un rapport d'agrégation GROUP BY produit déjà des lignes uniques. Appliquer DISTINCT comme pansement sur une jointure qui dédoublonne mal est un symptôme que l'on aurait tort de soigner par le symptôme : le vrai correctif se trouve dans les clauses FROM et ON.
+
+Il existe une variante DISTINCT qui s'applique aux agrégats, DISTINCT COUNT(DISTINCT ville_id), et une autre à l'intérieur des fonctions d'ordre, avec des effets différents selon les moteurs. Une écriture fréquente est ORDER BY COUNT(DISTINCT lecteur_id) DESC, qui classe les villes par nombre de lecteurs différents, même si certains lecteurs apparaissent plusieurs fois dans une table de faits. Dans les requêtes d'analyse, compter des entités distinctes est souvent plus juste que compter des lignes : nombre de clients actifs, nombre d'ouvrages empruntés, nombre de sessions uniques. La subtilité tient à ce que DISTINCT s'applique avant l'agrégat sur l'argument, et non après sur le résultat. On peut aussi combiner DISTINCT avec LIMIT pour obtenir un échantillon de valeurs uniques, ou avec ORDER BY pour une liste stable et triée.
+
+```sql
+SELECT DISTINCT
+  e.etat,
+  o.categorie,
+  COUNT(*) AS nombre_exemplaires
+FROM exemplaires e
+JOIN ouvrages o ON o.identifiant = e.ouvrage_id
+GROUP BY e.etat, o.categorie
+ORDER BY e.etat, o.categorie;
+```
+
+Dans cet exemple, le DISTINCT est superflu car GROUP BY produit déjà des lignes uniques par paire état et catégorie ; il est conservé ici pour montrer que les deux se cumulent sans se nuire, mais dans un code de production on le retirerait. La leçon à retenir : DISTINCT répond à une question de présence, pas à une question de quantité. Si vous vous surprenez à l'ajouter parce que le résultat semble contenir des doublons, cherchez d'abord l'origine de ces doublons, presque toujours une jointure ou un regroupement insuffisant.
+
+## Les sous-requêtes simples : une question dans une question
+
+Une sous-requête est une requête imbriquée dans une autre, entre parenthèses. Son principe d'exécution est linéaire : la requête intérieure est évaluée d'abord, et son résultat sert de valeur, de liste ou de table à la requête extérieure. Cette séquence intérieur puis extérieur rend la lecture naturelle, à condition de savoir où elle s'applique. Une sous-requête peut se trouver dans la clause WHERE, dans FROM, dans SELECT ou dans la clause WITH qui nomme des ensembles intermédiaires. Nous nous limitons ici aux formes les plus simples, celles qui suffisent à résoudre l'essentiel des questions posées sans jointure explicite.
+
+La première forme est la sous-requête scalaire, qui renvoie une seule ligne et une seule colonne. Elle se compare comme une valeur : WHERE prix > (SELECT AVG(prix) FROM ouvrages) ne retient que les ouvrages plus chers que la moyenne. Le même mécanisme permet de filtrer sur un agrégat, ce que WHERE interdit directement. Si la sous-requête renvoie plusieurs lignes, la comparaison devient invalide, sauf si l'on utilise IN ou les opérateurs quantifiés ANY et ALL. Cette contrainte d'unicité est la première chose à vérifier quand une sous-requête échoue avec un message du type requête renvoie plus d'une ligne. Une astuce de diagnostic consiste à exécuter la sous-requête seule, avant de la réintégrer dans la requête principale.
+
+La deuxième forme est la sous-requête avec IN, probablement la plus utile au quotidien. WHERE lecteur_id IN (SELECT lecteur_id FROM emprunts WHERE date_sortie >= '2024-06-01') liste les lecteurs ayant emprunté depuis juin. La lecture est directe, et le moteur sait souvent transformer la forme en jointure interne pour gagner en performance. Sa négation, NOT IN, reste dangereuse en présence de NULL, comme nous l'avons vu : préférez NOT EXISTS, que l'on couvrira avec les jointures, ou garantissez l'absence de nulles avec une condition IS NOT NULL dans la sous-requête. La troisième forme est la sous-requête dans FROM, dite dérivée, qui fournit une table temporaire à la requête extérieure : on y place un GROUP BY intermédiaire, puis on filtre ou on trie dessus à l'extérieur. Elle est idéale quand un filtre porte sur un agrégat que l'on ne veut pas encore résumer en HAVING.
+
+```sql
+SELECT
+  v.nom AS ville,
+  stats.nombre_emprunts
+FROM villes v
+JOIN (
+  SELECT l.ville_id, COUNT(*) AS nombre_emprunts
+  FROM lecteurs l
+  JOIN emprunts e ON e.lecteur_id = l.identifiant
+  GROUP BY l.ville_id
+) AS stats ON stats.ville_id = v.identifiant
+WHERE stats.nombre_emprunts >= (
+  SELECT AVG(nombre_emprunts)
+  FROM (
+    SELECT COUNT(*) AS nombre_emprunts
+    FROM lecteurs l2
+    JOIN emprunts e2 ON e2.lecteur_id = l2.identifiant
+    GROUP BY l2.ville_id
+  ) AS par_ville
+)
+ORDER BY stats.nombre_emprunts DESC;
+```
+
+Cette requête montre les trois niveaux de complexité à maîtriser. La sous-requête dérivée stats calcule d'abord le nombre d'emprunts par ville ; la sous-requête scalaire, placée dans WHERE, calcule la moyenne de ces moyennes ; la requête extérieure relie le résultat aux villes et ne garde que celles qui atteignent la moyenne. Chaque niveau répond à une question précise, et l'on peut exécuter chaque niveau isolément pour vérifier son résultat avant de l'emboîter. Si la logique devient trop imbriquée, la clause WITH, ou CTE, permet de nommer chaque étape sur sa propre ligne et de transformer une formule illisible en une suite de questions enchaînées. C'est la porte d'entrée vers les requêtes analytiques plus ambitieuses qui font l'objet des chapitres suivants du parcours.
+
+## À retenir
+
+Le chapitre que vous venez de parcourir couvre l'ensemble des opérations de lecture qui constituent le quotidien d'un utilisateur de base de données. La première grande idée est la grammaire de la requête : SELECT choisit les colonnes, FROM désigne la table, WHERE écarte les lignes indésirables, ORDER BY impose un ordre explicite et LIMIT limite le volume affiché. L'ordre d'écriture ne correspond pas à l'ordre d'exécution, et c'est précisément cette différence qui explique la plupart des surprises : le moteur lit la table, filtre les lignes, agrège, trie, puis tronque. Une requête sans ORDER BY n'a aucun ordre garanti, et une requête avec LIMIT sans ORDER BY sélectionne des lignes dont la présence peut changer d'une exécution à l'autre.
+
+La deuxième idée porte sur les opérateurs de filtrage. Les comparaisons simples, =, <>, <, >, <= et >=, s'appliquent à des colonnes de type comparable ; BETWEEN décrit un intervalle inclusif des deux côtés ; IN vérifie l'appartenance à une liste ; LIKE cherche un motif avec le signe pourcentage pour une séquence de caractères et le souligné pour un caractère unique. Chacun a ses pièges : un BETWEEN sur un timestamp oublie souvent la dernière journée, un motif LIKE qui commence par un signe pourcentage interdit l'usage d'un index, et une liste NOT IN contenant une valeur NULL vide tout le résultat. La règle pratique reste la même partout : filtrez tôt sur des colonnes simples, encadrez vos groupes de conditions entre parenthèses et vérifiez le type de chaque colonne avant de comparer.
+
+La troisième idée est celle du résumé. Les fonctions d'agrégat transforment des milliers de lignes en quelques chiffres : COUNT compte les lignes ou les valeurs non nulles, SUM additionne, AVG calcule une moyenne qui ignore les valeurs manquantes, MIN et MAX extraient les extrêmes. GROUP BY découpe la table en groupes et fait tourner ces fonctions à l'intérieur de chacun, avec cette contrainte impérative que toute colonne affichée doit être groupée ou agrégée. WHERE filtre les lignes avant le regroupement et ne peut donc pas contenir d'agrégat ; HAVING filtre les groupes après le calcul. ORDER BY peut enfin référencer un alias défini dans SELECT, ce qui rend les requêtes longues bien plus lisibles, alors que WHERE ne connaît que les colonnes de la table.
+
+La quatrième idée concerne l'imparfait et le calcul. NULL représente l'inconnu et se teste avec IS NULL ou IS NOT NULL, jamais avec un égal ; COALESCE fournit un substitut d'affichage sans modifier la donnée. CASE WHEN introduit une logique conditionnelle déclarative, utile pour catégoriser, trier selon un ordre métier ou construire des agrégations conditionnelles. DISTINCT élimine les lignes identiques du résultat et répond à une question de valeurs uniques, pas de quantité. Les sous-requêtes permettent d'emboîter les questions, du plus simple au plus complexe, en évaluant d'abord l'intérieur puis en utilisant la réponse à l'extérieur. Ces quatre notions, combinées aux trois précédentes, suffisent à résoudre la très grande majorité des interrogations métier formulées sur une base relationnelle.
+
+## Erreurs fréquentes
+
+La première erreur, et de loin la plus répandue, consiste à écrire WHERE colonne = NULL pour chercher les valeurs manquantes. Cette écriture ne renvoie jamais de ligne, quelle que soit la teneur de la table, parce que l'égalité avec une valeur inconnue n'est jamais vraie. La correction est unique : WHERE colonne IS NULL. La même logique rend caduque toute comparaison, comprise dans un BETWEEN ou dans une liste IN, portant sur une colonne nulle. Si votre requête semble fonctionner sur un échantillon de test où aucune valeur n'est manquante, puis devient silencieusement vide en production, c'est presque toujours cette cause. Affichez côte à côte COUNT(*) et COUNT(colonne) : si les deux diffèrent, des nuls sont présents et votre filtre doit en tenir compte.
+
+La deuxième erreur est de confondre COUNT(*) et COUNT(colonne). Le premier compte les lignes, sans exception ; le second ne compte que les lignes dont la colonne possède une valeur. Sur la table emprunts, la différence entre les deux est exactement le nombre de prêts en cours, ce qui en fait un outil de diagnostic précieux. L'erreur se double souvent d'un COUNT(*) posé après une jointure : dès que la relation multiplie les lignes, le compteur gonfle sans que le phénomène réel ait changé. Comptez alors des identifiants distincts, ou construisez d'abord un agrégat dans une sous-requête dérivée avant de le relier au reste de la requête. Vérifiez toujours ce que vous comptez réellement en posant la question à voix haute.
+
+La troisième famille d'erreurs porte sur l'ordre d'exécution. On ne place pas une fonction d'agrégat dans WHERE, on ne filtre pas un alias défini dans SELECT avec WHERE, et on ne groupe pas sur une colonne absente de GROUP BY. Chacune de ces tentatives produit une erreur explicite sur les moteurs stricts, mais peut passer inaperçue sur les moteurs permissifs, qui choisiront une valeur au hasard et renverront un résultat faux. Vérifiez systématiquement que chaque colonne non agrégée figure dans la clause GROUP BY, que HAVING porte sur des agrégats et WHERE sur des colonnes brutes, et que l'ordre des clauses suit la chorégraphie FROM, WHERE, GROUP BY, HAVING, SELECT, ORDER BY, LIMIT.
+
+Quatrième erreur : oublier le ORDER BY avant un LIMIT, ou négliger un second critère de tri. Les ex æquo étant départagés au gré du moteur, une pagination construite ainsi saute ou duplique des lignes d'une page à l'autre. Ajoutez toujours une colonne unique, généralement la clé primaire, comme dernier critère. Cinquième erreur : utiliser DISTINCT pour masquer une jointure mal formulée. Les doublons ont une cause, trouvez-la plutôt que de les effacer. Sixième erreur : confondre espace vide et NULL. Une chaîne contenant un espace n'est pas nulle, et WHERE prenom <> '' ne détectera pas les valeurs manquantes ; testez les deux cas explicitement. Septième erreur : écrire un CASE sans ELSE, ce qui crée silencieusement des NULL dans une colonne calculée et fausse les regroupements suivants.
+
+Huitième erreur : trier sur une expression textuelle quand on veut trier sur un nombre. Des prix stockés en texte donnent l'ordre 10, 100, 20 ; des identifiants padding en chaîne produisent le même effet. Vérifiez le type des colonnes et corrigez le schéma si nécessaire, c'est un investissement durable. Neuvième erreur : oublier que LIKE sans ancrage scanne toute la table, ce qui devient pénalisant sur des millions de lignes ; commencez le motif par un texte fixe, ou prévoyez un index de texte intégral si la recherche doit être libre. Dixième erreur : enchaîner les sous-requêtes sans les tester séparément. Exécutez d'abord l'intérieur, vérifiez son résultat, puis emboîtez-la ; vous gagnerez un temps considérable et vous comprendrez chaque niveau du calcul.
+
+## Pour aller plus loin
+
+Pour ancrer ces notions, rien ne remplace la pratique quotidienne. Les documentations officielles des moteurs comportent des chapitres de référence exhaustifs sur les fonctions, les opérateurs de comparaison et les règles de traitement des valeurs nulles : gardez-les à portée de main, non pour les lire d'un bout à l'autre, mais pour y revenir dès qu'un comportement vous surprend. PostgreSQL documente avec précision les règles de priorité des opérateurs, la sensibilité à la casse de LIKE et les fonctions de conversion de dates ; MySQL et SQL Server détaillent leurs variantes de syntaxe. Apprenez à chercher dans la documentation le nom exact de l'opérateur dont vous avez besoin, c'est une compétence aussi importante que la mémorisation des clauses.
+
+Les plateformes d'exercice en ligne constituent le meilleur complément : elles fournissent un schéma prêt à l'emploi, une série d'énoncés de difficulté croissante et une validation automatique de vos requêtes. Choisissez-en une qui couvre votre moteur, et travaillez-y régulièrement plutôt que par à-coups. Un exercice par jour pendant deux semaines vaut mieux qu'une session marathon le week-end, car c'est la répétition espacée qui fixe la grammaire. Complétez par des exercices de lecture de requêtes, où l'on vous donne un SELECT complexe et l'on vous demande d'en prédire le résultat avant de l'exécuter : cette discipline développe le sens de l'ordre d'exécution, qui est la clé de tout le chapitre.
+
+Au-delà du SELECT simple, plusieurs sujets voisins méritent votre attention une fois ces bases acquises. Les jointures vous permettront de relier les tables du schéma que vous avez modélisé au premier chapitre et de produire des rapports multi-entités. Les fonctions de date et de formatage affineront vos regroupements temporels, avec la découverte des troncatures mensuelles et des calculs d'intervalle. Les index et l'exploration des plans d'exécution vous montreront pourquoi certains filtres sont instantanés et d'autres laborieux. Les sous-requêtes corrélées et les fenêtres analytiques ouvriront la voie aux calculs de rang, de cumul et de moyenne glissante. Chacun de ces thèmes s'appuie directement sur ce que vous venez d'apprendre, et aucun n'aurait de sens sans la maîtrise des clauses de base.
+
+Prenez également de bonnes habitudes de travail avant d'aller plus loin. Formulez chaque requête en français avant de la traduire en SQL, nommez vos alias comme vous nommeriez une variable dans un programme, gardez vos requêtes alignées avec une clause par ligne, et commentez les règles métier obscures directement dans vos scripts. Versionnez vos requêtes de reporting à côté du code applicatif et relisez-les comme du code : elles sont exécutées des centaines de fois par jour et pèsent sur les performances de la base. Enfin, testez systématiquement vos requêtes avec des données incomplètes : ajoutez une ligne sans date de retour, un ouvrage sans prix, un lecteur sans courriel, et vérifiez que vos totaux et vos moyennes restent cohérents. Les bases de données réelles sont imparfaites, et votre SQL doit l'être aussi, de façon prévisible.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice de fin de chapitre vous demande d'écrire un rapport complet sur la bibliothèque des Lilas, en mobilisant toutes les notions vues dans cette leçon. Vous y produirez des listes filtrées avec les opérateurs de comparaison, de range, de liste et de motif, des classements triés et paginés, des compteurs et des moyennes regroupés par ville, par catégorie d'ouvrage ou par période, et des colonnes calculées avec CASE WHEN pour présenter des libellés métier. Vous traiterez explicitement les valeurs manquantes avec IS NULL et COALESCE, vous vérifierez la différence entre COUNT(*) et COUNT(date_retour), et vous utiliserez une sous-requête pour comparer chaque groupe à la moyenne générale. Traitez cet exercice comme une commande réelle : écrivez d'abord l'énoncé en français, décomposez-le en étapes, exécutez chaque étape isolément, puis assemblez-les.
+
+Si vous bloquez, revenez aux sections de synthèse et reprenez les exemples SQL du chapitre, en les adaptant pas à pas à vos propres données. Commencez par la requête la plus simple, un COUNT(*) avec un WHERE, puis ajoutez progressivement le GROUP BY, le HAVING, l'alias et l'ordre, en vérifiant le résultat après chaque ajout : c'est cette méthode incrémentale qui vous évitera de devoir déboguer une formule de cinquante lignes d'un coup. N'hésitez pas à comparer deux écritures d'une même question et à mesurer le nombre de lignes renvoyées par chacune ; le doute est un excellent enseignant quand il pousse à exécuter plutôt qu'à supposer.
+
+Une fois votre rapport validé, poursuivez avec le chapitre suivant, qui vous apprendra à interroger plusieurs tables à la fois avec les jointures, à combiner les résultats avec UNION, et à écrire des requêtes suffisamment robustes pour survivre à l'évolution du schéma. Les réflexes que vous venez d'acquérir — filtrer tôt, trier explicitement, nommer ses colonnes, se méfier des valeurs nulles, tester chaque niveau d'une sous-requête — vous accompagneront tout au long du parcours. Le terrain de jeu est en place et vos requêtes fonctionnent : il ne reste plus qu'à les complexifier, méthodiquement, en gardant le goût de la vérification.

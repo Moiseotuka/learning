@@ -1,0 +1,178 @@
+## STL et les résidus : le détecteur patient
+
+La décomposition faite en ouverture revient ici sous une autre lumière : une fois l'attendu retiré, il ne reste que l'inattendu, et c'est exactement ce que l'on cherche à alerter. La méthode STL, acronyme de décomposition par lissage de type loess, est l'outil de référence : elle estime tendance et saisonnalité par répétitions de lissages locaux, accepte des périodes longues et se règle sur la largeur du lissage. Elle existe surtout en version robuste, ce qui change tout pour la détection, et cette qualité justifie de lui donner la priorité sur une décomposition classique.
+
+Le principe du détecteur à résidus tient en une phrase : on modélise ce qui devait se passer, puis on mesure l'écart avec ce qui s'est passé. Le résidu de STL est exprimé dans l'unité de la série et ne contient plus ni tendance ni saisonnalité ; il ne mesure donc que la part inexpliquée. Résidu nul : journée parfaitement ordinaire. Résidu positif : journée meilleure que prévu. Résidu négatif : journée en dessous. Pour le Café du Marché, le résidu de la caisse dit la chose utile : ce jour-là, l'encaissement s'est écarté du niveau qu'imposaient le jour de la semaine, la saison et la tendance.
+
+La version robuste de STL répond au paradoxe de toute détection rétroactive. Si une anomalie atteint une décomposition classique, une part en est absorbée par la tendance estimée, le résidu rétrécit et l'alerte sonne moins fort — l'anomalie se détruit elle-même en partie. STL en mode robuste affecte un poids réduit aux points aberrants pendant le lissage : la tendance suit le comportement ordinaire de la série, l'anomalie reste hors de sa courbe, et le déclenchement devient stable d'une exécution à l'autre.
+
+Le seuil sur ces résidus se choisit comme pour tout score. La règle des trois écarts-types est la plus courante, parce que ces écarts s'expriment dans une unité déjà débarrassée du signal : trois variations de bruit au-dessus de l'ordinaire. La variante robuste remplace l'écart-type par l'écart absolu médian, que les propres extrêmes ne déforment pas. Une troisième option, la plus pragmatique, consiste à retenir un quantile : vous gardez les résidus les plus éloignés, soit environ un pour cent du total, ce qui garantit un volume d'alerte constant pour la personne qui les traite.
+
+```python
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.seasonal import STL
+
+stl = STL(serie, period=7, robust=True).fit()
+residus = stl.resid
+
+seuil = 3 * residus.std()
+anomalies = residus[abs(residus) > seuil]
+
+tableau = pd.DataFrame({
+    "kwh": serie.round(1),
+    "attendu": (stl.trend + stl.seasonal).round(1),
+    "residu": residus.round(1),
+}).loc[anomalies.index]
+tableau["direction"] = np.where(tableau["residu"] > 0, "surplus", "manque")
+print(tableau)
+
+print("seuil retenu :", round(seuil, 1))
+print("alertes par semaine :",
+      round(len(anomalies) / (len(serie) / 7), 1))
+```
+
+L'avantage des résidus tient en deux points. Le seuil est unique et lisible, indépendant du niveau : pas besoin de tenir un seuil de kilowattheures pour l'hiver et un autre pour l'été. Le volume d'alertes se compte aussi, ce qui permet de fixer le budget de la personne qui les examine. Un détecteur qui déclenche quarante fois par mois n'est pas un détecteur, c'est une liste d'attente ; viser quelques alertes par mois, traçables et motivées, est la condition d'un usage durable.
+
+La détection au niveau garde sa place à côté des résidus : le résidu STL demande si le jour s'écarte de la normale, le seuil de niveau demande si une borne métier est franchie. Tenez deux colonnes distinctes dans votre journal, niveau et résidu. Le tableau compare les quatre familles du chapitre.
+
+| Détecteur | Question à laquelle il répond | Idéal pour | Limite |
+| --- | --- | --- | --- |
+| Seuil de niveau | Franchit-on une borne de sécurité ou de budget ? | Consommation, plages critiques | Ignore le contexte |
+| Écart-type global | Cette valeur est-elle grande par rapport à toute l'histoire ? | Séries stables et courtes | Aveugle à la tendance |
+| Fenêtre glissante | Cette valeur est-elle grande par rapport aux semaines voisines ? | Séries qui évoluent | La fenêtre absorbe l'anomalie |
+| Résidu STL | Ce jour s'écarte-t-il de ce que le calendrier imposait ? | Séries saisonnières | Exige au moins deux périodes |
+
+## Look-ahead, data leakage et les pièges du temps
+
+La famille des erreurs temporelles porte deux noms souvent employés comme synonymes. Le biais de projection dans le futur, ou look-ahead, désigne la situation où le modèle dispose, à l'entraînement comme au test, d'informations qui n'existaient pas encore à l'instant prédit. La fuite de données, ou data leakage, désigne plus largement toute information qui transite d'une période interdite vers la période autorisée, y compris dans une étape de préparation. Les deux viennent du même péché : traiter le temps comme une colonne ordinaire. Leur conséquence est identique et redoutable : un score excellent, une déception en production.
+
+L'erreur la plus répandue concerne les statistiques calculées sur l'ensemble du fichier. Moyenne, écart-type, quantiles, vocabulaire des modalités, seuils de détection : estimés avec les données complètes, ces objets transmettent au passé ce que seul le futur contenait. Un modèle dont la normalisation est ajustée sur trois ans et demi affiche un score de recette flatteur parce que les paramètres ont déjà vu les semaines de test. Découpez d'abord, ajustez ensuite, sur la seule partie d'entraînement.
+
+La deuxième erreur est plus subtle : elle concerne les fenêtres. Une colonne qui reprend le maximum des trente derniers jours, calculée en restant dans le passé, est légitime ; la même colonne calculée sur une fenêtre centrée, ou en agrégeant toute l'année, emprunte le futur. Le réflexe à acquérir est mécanique : pour chaque colonne, demandez à quelle date le calcul est autorisé à lire. Si la réponse dépasse la ligne de prédiction, la colonne est interdite.
+
+La troisième erreur porte sur la cible elle-même, quand on décale mal les données. Pour prévoir demain, on construit une colonne cible égale à la valeur du lendemain et on garde les caractéristiques d'aujourd'hui. Si l'on oublie de décaler, la cible devient la valeur d'aujourd'hui, le modèle apprend l'identité, le score atteint une corrélation presque parfaite et la démonstration enthousiasme tout le monde. C'est le classique des présentations où le modèle prédit ce qui s'est déjà passé. Vérifiez toujours, sur un échantillon, que la ligne testée ne contient pas sa réponse : si elle la contient, vous ne modélisez pas, vous recopiez.
+
+```text
+Check-list anti-fuite — à passer avant chaque évaluation
+
+1. decoupe temporelle posee, puis plus jamais melangee
+2. moyennes, ecarts-types et quantiles ajustes sur le train seul
+3. normalisation, imputation et encodage ajustes sur le train seul
+4. decomposition et lissage calcules sur le train seul
+5. colonnes derivees : date de lecture de chaque valeur verifiee
+6. cible decalee : la ligne testee ne contient pas sa propre reponse
+7. selection de variables et tests de significativite faits sur le train
+8. periode de recette ouverte une seule fois, en fin de parcours
+```
+
+Le quatrième piège vient des données elles-mêmes : certaines sources sont révisées après publication, un indicateur consolidé, une statistique corrigée, un historique de ventes retraité. Évaluer aujourd'hui avec les valeurs révisées, c'est évaluer ce que vous savez maintenant, pas ce que vous auriez su alors. Gardez une copie figée des données telles qu'elles étaient disponibles à chaque date, ou notez que votre évaluation est optimiste sur ce point. La remarque vaut aussi pour les colonnes exogènes : la météo prévisionnelle d'hier n'est pas la météo observée d'aujourd'hui.
+
+Le tableau suivant regroupe les fuites les plus fréquentes, leur signature et leur correction.
+
+| Erreur | Symptôme visible | Correction |
+| --- | --- | --- |
+| Statistiques sur tout le jeu | Score de recette trop beau | Ajuster sur le train, appliquer au test |
+| Fenêtre centrée ou annuelle | La colonne devine le futur | Fenêtre strictement passée |
+| Cible non décalée | Corrélation proche de un | Décaler la cible d'une période |
+| Décomposition sur toute la série | Erreur qui s'effondre en production | Décomposer sur le train |
+| Mélange aléatoire des lignes | Écart énorme entre validation et réel | Découpage temporel systématique |
+| Données révisées a posteriori | Résultat irréproductible six mois plus tard | Figer les jeux d'origine, documenter |
+
+## Exemple guidé : le café, de la prévision à l'alerte
+
+Réunissons tout le chapitre sur notre commerce. Le Café du Marché dispose de deux ans de relevés journaliers : consommation électrique et chiffre d'affaires. Le gérant attend trois réponses : combien consommer la semaine prochaine pour ajuster commandes et planning, quel encaissement raisonnable attendre, et quelles journées examiner sans être noyé sous les alertes. Le bloc ci-dessous exécute la chaîne de la leçon : régulariser, découper, baseline, métriques, détection.
+
+```python
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.seasonal import STL
+
+def preparer(series):
+    series = series.asfreq("D")
+    return series.interpolate(method="time")
+
+def evaluer(reel, prevu):
+    ecart = np.asarray(reel) - np.asarray(prevu)
+    return {"MAE": round(float(np.mean(abs(ecart))), 1),
+            "RMSE": round(float(np.sqrt((ecart ** 2).mean())), 1)}
+
+def baseline_saisonniere(historique, horizon, periode=7):
+    modele = historique.groupby(historique.index.dayofweek).mean()
+    jours = [(historique.index[-1] + pd.Timedelta(days=k + 1)).dayofweek
+             for k in range(horizon)]
+    return modele.reindex(jours).values
+
+serie_ca = pd.read_csv("caisse.csv", parse_dates=["date"],
+                        index_col="date")["euros"]
+caisse = preparer(serie_ca)
+coupe = caisse.index.max() - pd.Timedelta(days=27)
+entrainement = caisse[caisse.index < coupe]
+test = caisse[caisse.index >= coupe]
+
+prevu = baseline_saisonniere(entrainement, len(test))
+print("baseline saisonniere :", evaluer(test.values, prevu))
+
+stl = STL(entrainement, period=7, robust=True).fit()
+residus = stl.resid
+seuil = 3 * residus.std()
+alertes = residus.index[abs(residus) > seuil]
+print("jours signales dans le passe :", len(alertes))
+```
+
+Trois lectures découlent de cette exécution : la comparaison avec la baseline, qui dit en dix secondes si un modèle plus élaboré apporte quelque chose ; le seuil des résidus, exprimé dans l'unité de la série et donc stable d'un mois à l'autre ; enfin le comptage des alertes passées, qui donne la charge réelle. C'est ce chiffre, plus que la finesse du modèle, qui décide si le gérant gardera l'outil.
+
+```text
+Journal des anomalies — extrait, à remplir chaque matin
+
+date        valeur   attendu   residu   verdict
+2025-07-14   612     704       -92      lundi ferme : exclu du perimetre
+2025-08-03   388     741       -353     canicule 38 degres : explique
+2025-09-12   951     763       +188     mariage de 60 couverts : note
+2025-11-28   684     786       -102     rue fermee pour travaux : conserve
+2025-12-24  1470     869       +601     veille de Noel : attendu, pas anomalie
+2026-01-09   301     777       -476     panne de caisse de 14 h : vraie anomalie
+```
+
+Le journal, plus que le score, fait la différence entre une détection subie et une détection pilotée. Chaque ligne impose trois champs : valeur observée, valeur attendue et verdict motivé. Le verdict fait entrer le terrain dans la méthode et se transforme en règle : un lundi de fermeture est exclu, une canicule déclenche une règle météo, une veille de fête rejoint la liste des journées attendues. Le faux positif recule parce que votre connaissance du commerce est entrée dans le système.
+
+La boucle de fonctionnement tient en trois rendez-vous. Chaque matin, vous lisez les alertes de la veille et vous notez le verdict. Chaque semaine, vous comparez la prévision de sept jours au réalisé et vous vérifiez que l'erreur reste dans la plage annoncée. Chaque mois, vous rouvrez le journal des verdicts pour transformer les explications récurrentes en exclusions paramétrées, puis vous recalculez le seuil. Ce rituel transforme un notebook en outil de gestion.
+
+## À retenir
+
+- Une série temporelle se lit dans son ordre : mélanger les lignes détruit le signal sans changer les moyennes.
+- Fréquence, régularité et fuseau se vérifient avant tout calcul ; une donnée absente n'est jamais un zéro.
+- Tendance, saisonnalité et résidus composent la série ; leur somme, ou leur produit, doit la reconstituer.
+- Additif si l'amplitude est constante, multiplicatif si elle grandit avec le niveau ; STL robuste dans les deux cas.
+- Moyennes mobiles et lissage exponentiel servent à lire et à comparer ; ils écrasent les pics, donc jamais à détecter.
+- Une saisonnalité se confirme par le décalage hebdomadaire et par le profil par jour ; les dates mobiles sont des régresseurs.
+- La baseline saisonnière est la barre que tout modèle doit franchir, et elle s'écrit en une ligne.
+- L'évaluation se fait par découpage temporel, jamais par mélange ; la MAE s'exprime en unités, la RMSE pénalise les grosses erreurs, la MAPE craint les valeurs proches de zéro.
+- Une anomalie se définit par rapport au contexte attendu ; le résidu de STL mesure l'inattendu.
+- Combinez seuil de niveau, fenêtre glissante, résidu et confirmation de deux jours pour limiter les faux positifs.
+- Tout objet statistique s'ajuste sur l'entraînement seul : c'est la règle qui élimine les fuites.
+
+## Erreurs fréquentes
+
+- Piège : mélanger les lignes ou utiliser une validation croisée aléatoire sur une série → Correction : découpage temporel, entraînement sur le passé, test sur le futur.
+- Piège : calculer moyenne, écart-type et normalisation sur le fichier complet → Correction : découper d'abord, ajuster sur le train, appliquer au test.
+- Piège : oublier de décaler la cible et obtenir une corrélation presque parfaite → Correction : cible égale à la période suivante, vérification sur un échantillon.
+- Piège : confondre cyclicité et saisonnalité, ou traiter un jour férié mobile comme une saisonnalité → Correction : seule une période fixe se projette ; le reste est un régresseur.
+- Piège : décomposer avec une période de trois quand la saisonnalité vaut sept → Correction : deux périodes complètes au minimum, période justifiée par le métier.
+- Piège : alerter sur une valeur élevée sans regarder le contexte → Correction : seuil de niveau et résidu de décomposition, toujours séparés.
+- Piège : se contenter d'un score sans le comparer à une baseline → Correction : afficher MAE du modèle, MAE de la persistance et rapport des deux.
+- Piège : déployer un détecteur qui produit trente alertes par jour → Correction : mesurer la charge, annoter les verdicts, ajouter une confirmation de deux jours.
+
+## Pour aller plus loin
+
+La première documentation à ouvrir est celle de pandas, à l'adresse https://pandas.pydata.org/docs/user_guide/time_series.html, qui détaille l'index horodaté, la régularisation de l'index, les agrégations par période et les décalages. Son chapitre sur les séries temporales se lit comme un catalogue de recettes : convertir un fuseau, combler un trou, agréger une semaine, décaler d'une période. Prenez l'habitude de vérifier deux points avant tout calcul : la fréquence annoncée par l'index et le fuseau réellement porté par les horodatages.
+
+La deuxième est la documentation de statsmodels, sur https://www.statsmodels.org/stable/tsa.html, qui rassemble les décompositions, les modèles de state space, les tests de stationnarité et les outils de prévision. La page consacrée à STL, avec ses options de robustesse et de réglage des fenêtres, est à refaire à la main : modifiez la période, observez les résidus, cassez volontairement le modèle, puis réparez-le.
+
+La troisième est le guide de validation de scikit-learn, à l'adresse https://scikit-learn.org/stable/modules/cross_validation.html, dont la section sur la validation croisée temporelle confirme par le code ce que la leçon a établi par la raison : vous y retrouverez TimeSeriesSplit et la justification formelle de l'interdiction du mélange. En complément, l'ouvrage de référence Forecasting: Principles and Practice, consultable gratuitement sur https://otexts.com/fpp3/, développe baselines, métriques et diagnostics avec une exigence de clarté rare. Pratiquez enfin : refaites le cas du café six mois plus tard, sur des données neuves, pour mesurer ce que votre méthode a conservé.
+
+## Et maintenant : passez à l'exercice pratique
+
+La partie théorique s'achève, et l'exercice qui accompagne ce chapitre vous remet une version concentrée de la situation décrite : cinq semaines de relevés journaliers du Café du Marché, consommation électrique et caisse, avec un jour de fermeture où la caisse tombe à zéro et deux journées atypiques enfouies dans le fichier, une panne de terminal d'encaissement et un appareil resté allumé la nuit. Vous devrez charger ces données sans mélanger l'ordre des lignes, découper le passé et le futur, construire une prévision de référence par jour de la semaine, la mesurer en MAE, RMSE et MAPE, puis produire une liste d'anomalies datée à partir des résidus d'une décomposition STL robuste. Le livrable est un script qui donne les chiffres, les décisions et les exclusions retenues.
+
+Travaillez sans rouvrir la leçon, et exigez de vous trois preuves dans votre copie : une ligne de code qui prouve que votre découpage est temporel, un tableau de métriques qui dit si la prévision de référence tient la route, et un journal d'anomalies où chaque alerte porte un verdict motivé. Le quiz de quatre questions qui suit vérifie ensuite les notions les plus coûteuses quand on les ignore : l'interdiction du mélange sur une série, la nature du découpage temporel, la différence entre tendance et saisonnalité, et la façon de réduire les faux positifs sans perdre les vraies anomalies.

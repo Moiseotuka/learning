@@ -1,0 +1,497 @@
+Bienvenue dans le neuvième chapitre du parcours Cybersécurité fondamentaux, le premier qui déplace réellement le terrain d'étude. Les chapitres précédents vous ont appris à reconnaître une faille, à la corriger sur une machine que vous administrez, à dresser l'inventaire de ce qui tourne, puis à investiguer lorsqu'un incident survient : tout cela supposait un serveur que vous ouvriez, un système que vous installiez, des comptes que vous créiez vous-même. Le nuage et les conteneurs ne changent pas les menaces — ce sont toujours des mots de passe volés, des ports ouverts, des images non contrôlées, des privilèges accordés trop larges —, ils changent la répartition du travail. Un hébergeur exploite le datacenter, le réseau, l'hyperviseur, parfois le système d'exploitation ; vous gardez les données, les identités, la configuration et les images. Savoir exactement quelle part vous revient est la compétence fondamentale de ce chapitre, et elle décide de tout le reste.
+
+À la fin de cette leçon, vous saurez faire trois groupes de choses, que vous aurez déjà assemblées dans un document unique. Vous saurez appliquer le modèle de responsabilités partagées : reconnaître le service considéré, IaaS, PaaS ou SaaS, placer la frontière au bon endroit, répondre sans hésiter à la question « qui corrige quoi », puis transformer cette réponse en preuves datées. Vous saurez durcir une image de conteneur et les clés qu'elle emporte : construire l'image en plusieurs étapes, supprimer l'exécution en root, réduire la surface installée, écarter les secrets du dépôt et des couches, vérifier le résultat avec un scan plutôt qu'avec la confiance. Vous saurez enfin gérer les secrets, les rôles et les identités au moindre privilège, que ce soit dans Kubernetes ou chez le fournisseur cloud, en écrivant des politiques qui n'accordent que ce qui est nécessaire, en remplaçant les clés statiques par des jetons éphémères et en surveillant ce qui s'exécute réellement.
+
+Le fil rouge de ce chapitre reste celui du parcours : la Médiathèque des Lilas. Son catalogue en ligne vient d'être migré vers un hébergeur cloud par une petite équipe de bénévoles très compétents mais pressés. Le service fonctionne, les adhérents retrouvent leurs emprunts, et personne n'a encore regardé de près ce qui a été livré. Trois éléments arrivent sur votre table : une image Docker construite par un stagiaire, un cluster Kubernetes monté par l'hébergeur en mode managé, et un compte fournisseur dont la clé d'accès traîne dans un dépôt de scripts. Aucun de ces trois objets n'est catastrophique ; tous trois deviennent dangereux si l'on décide qu'ils ne sont pas de votre responsabilité. Chaque notion de cette leçon s'appliquera donc à ce cas, puis vous le réutiliserez sur votre propre environnement.
+
+Un mot sur la manière d'aborder ce chapitre, avant d'entrer dans le vif du sujet. Le nuage s'apprend comme on apprend un métier : en manipulant un compte d'essai que l'on peut supprimer, jamais en production et jamais en lecture seule. Créez un compte gratuit chez un fournisseur, déployez une machine virtuelle minimale, construisez une image Docker sur votre poste, puis défaites volontairement ce que vous venez de faire : ajoutez un secret dans le dépôt, lancez un conteneur en root, écrivez une politique qui autorise tout, et observez ce que les outils vous disent. Les commandes de cette leçon sont données sous Linux et Docker ; les équivalents existent chez les trois grands fournisseurs et sur Kubernetes, avec des noms différents qu'il vous appartiendra de traduire. Nous avancerons par étapes courtes, en alternant explications, tableaux de responsabilité, blocs de commande et cas concrets. Après la leçon, vous rédigerez seul la fiche de durcissement de l'image livrée, puis vous vérifierez vos acquis avec le quiz de quatre questions.
+
+## Le modèle de responsabilités partagées
+
+Le modèle de responsabilités partagées décrit, pour un service cloud donné, ce qui relève du fournisseur et ce qui relève du client. Il n'existe pas par goût de la bureaucratie : il existe parce que ni l'un ni l'autre ne peut voir l'intégralité du système. Le fournisseur ignore le contenu de vos fichiers, vos mots de passe et le sens de vos traitements ; vous ignorez le matériel qui tourne sous votre machine virtuelle, les correctifs appliqués à l'hyperviseur et l'état du câble dans la salle serveur. La frontière n'est donc pas négociée au coup par coup, elle est définie par le type de service consommé, et elle s'applique en permanence, y compris le dimanche soir lorsque personne n'est disponible pour discuter.
+
+La première conséquence pratique est que partagé ne veut jamais dire moitié-moitié. Ce mot désigne une complémentarité : le fournisseur sécurise le cloud, vous sécurisez ce que vous mettez dans le cloud. Un coffre-fort de secrets externe, correctement configuré et audité, ne vous dispense pas de protéger les comptes qui y ont accès ; une bande passante redondée ne vous dispense pas de chiffrer les données en transit. Là où le modèle échoue le plus souvent, ce n'est pas dans la compréhension de la phrase, c'est dans son oubli : on achète un service managé, on coche la case conformité, puis on cesse de se poser la question. Le fournisseur, lui, ne cessera jamais de poser la sienne.
+
+La deuxième conséquence est que la frontière bouge avec le niveau de service, et qu'elle bouge aussi en sens inverse. Plus vous déléguez, plus le fournisseur prend en charge de couches, mais plus vous perdez de visibilité et de contrôle direct. En infrastructure à la demande, vous appliquez les correctifs du système d'exploitation invité ; en plateforme à la demande, le fournisseur les applique et vous ne pouvez même pas les vérifier par vos propres moyens ; en logiciel à la demande, vous ne voyez plus rien du tout et votre contrôle se réduit à la configuration, aux données et aux habilitations. Une même faille critique du noyau se pilote donc de trois manières différentes selon l'endroit où vous vous situez sur cette échelle.
+
+Un troisième point mérite d'être dit explicitement, car il revient dans chaque incident : certains outils sont co-gérés. Le chiffrement, la journalisation, la gestion des identités et la sauvegarde se situent de part et d'autre de la frontière selon l'offre. Le fournisseur fournit souvent le mécanisme de chiffrement ; c'est vous qui décidez de l'activer, qui conservez la clé et qui prouvez que la clé n'est jamais partie avec les données. Le fournisseur fournit souvent la journalisation ; c'est vous qui l'activez, qui fixez la durée de conservation et qui la lisez. Ce partage est exactement là où les responsabilités se perdent, parce qu'une case cochée par personne ressemble à une case cochée par tout le monde.
+
+Le schéma suivant résume le déplacement de la frontière. Lisez-le de gauche à droite : la ligne en pointillés monte à mesure que le fournisseur prend en charge des couches, et tout ce qui reste au-dessus de la ligne vous appartient intégralement, sans possibilité de transférer la responsabilité par contrat.
+
+```text
+Responsabilite selon le niveau de service
+
+  donnees        [ CLIENT  ] [ CLIENT ] [ CLIENT ]
+  identites      [ CLIENT  ] [ CLIENT ] [ CLIENT ]
+  application    [ CLIENT  ] [ CLIENT ] [ FOURN.  ]
+  runtime        [ CLIENT  ] [ FOURN. ] [ FOURN.  ]
+  systeme        [ CLIENT  ] [ FOURN. ] [ FOURN.  ]
+  virtualisation [ FOURN.  ] [ FOURN. ] [ FOURN.  ]
+  materiel       [ FOURN.  ] [ FOURN. ] [ FOURN.  ]
+                 ------------------------------------
+                   IaaS        PaaS       SaaS
+
+  "Tout ce qui reste au-dessus de la ligne vous appartient."
+```
+
+Pour ancrer ces principes, prenons un exemple. Votre hébergeur annonce un correctif de sécurité appliqué automatiquement : cela concerne l'hyperviseur, et c'est sa charge. Vous constatez en revanche que votre image conteneur embarque une bibliothèque de chiffrement datée de trois ans : cela vous revient, quelle que soit la diligence du fournisseur. Un incident causé par une clé d'accès volée dans un dépôt public vous revient également, car les clés sont vos identités. Posez-vous systématiquement la question en trois temps : de quel niveau de service s'agit-il, quelle couche est en cause, et qui peut exécuter l'action corrective. Trois questions, dix secondes, et la plupart des malentendus disparaissent avant l'incident.
+
+## IaaS, PaaS, SaaS : trois positions d'une frontière mobile
+
+Pour placer la frontière avec précision, il faut d'abord décomposer un service informatique en couches empilées, du plus matériel au plus immatériel. De bas en haut : le datacenter et son câblage, les serveurs, le réseau, le stockage, la virtualisation, le système d'exploitation, les bibliothèques et le runtime, l'application, enfin les données. Chacune de ces couches est indépendante des autres pour la maintenance, l'observabilité et la sécurité. Une faille dans la couche basse se corrige chez le fournisseur ; une faille dans la couche haute se corrige chez vous. Les trois grands modèles de service ne sont rien d'autre que trois coupes verticales dans cette pile, et c'est la position de la coupe qui détermine vos obligations.
+
+L'infrastructure à la demande, ou IaaS, vous fournit la pile jusqu'à la virtualisation : des machines virtuelles, des disques, des réseaux, des adresses et des pare-feux logiques. Vous installez le système d'exploitation, vous le mettez à jour, vous installez le moteur d'application, vous configurez le pare-feu d'hôte et vous sauvegardez. L'avantage est le contrôle total et la portabilité ; l'inconvénient est que tout correctif du système d'exploitation retombe sur vous, y compris ceux que vous n'avez pas demandés. C'est le modèle le plus fréquent quand on déplace un serveur existant vers le nuage sans rien réécrire, et c'est celui où l'on croit le plus souvent à tort que le fournisseur s'occupe des mises à jour.
+
+La plateforme à la demande, ou PaaS, ajoute par-dessus l'infrastructure un environnement d'exécution géré : un serveur d'application, un moteur de base de données, un système de fichiers, un service de files d'attente. Le fournisseur installe, corrige et fait évoluer ces éléments ; vous déposez votre code et vos données. Ce modèle fait gagner un temps considérable, mais il déplace la responsabilité vers votre configuration : index de base de données mal dimensionnés, règles de rétention absentes, options de chiffrement laissées par défaut, secrets d'accès écrits dans votre code. Un service managé mal paramétré reste un service mal sécurisé, et personne ne le paramétra à votre place.
+
+Le logiciel à la demande, ou SaaS, vous livre un usage fini : une messagerie, un agenda, une gestion de documents, un enregistrement de factures. L'application, le runtime, le système et le matériel sont entièrement chez le fournisseur ; il ne vous reste que quatre leviers, extrêmement puissants : les données que vous déposez, les comptes et leurs droits, les paramètres de partage et de rétention, et la façon dont vous exportez ce contenu si le service disparaît. Presque tous les incidents SaaS relevés en pratique relèvent de ces quatre leviers : un dossier partagé publiquement, un compte administrateur sans seconde facteur, une rétention supprimée par erreur, aucun export planifié.
+
+Le tableau ci-dessous met face à face les trois modèles, couche par couche. Sertez-en jusqu'à ce que vous puissiez, devant une facture cloud, placer la frontière sans y réfléchir : c'est le premier réflexe attendu de vous dans ce chapitre.
+
+```table
+| Couche | IaaS | PaaS | SaaS |
+|---|---|---|---|
+| Données et leur contenu | Client | Client | Client |
+| Identités, droits et configuration | Client | Client | Client |
+| Application et code | Client | Client | Fournisseur |
+| Runtime, base de données managée | Client | Fournisseur | Fournisseur |
+| Système d'exploitation invité | Client | Fournisseur | Fournisseur |
+| Hyperviseur et conteneur hôte | Fournisseur | Fournisseur | Fournisseur |
+| Serveurs, réseau, stockage, datacenter | Fournisseur | Fournisseur | Fournisseur |
+| Mise à jour du système invité | Client | Fournisseur | Fournisseur |
+```
+
+
+Un mot sur les cas intermédiaires, car la réalité en est pleine. Une base de données déployée sur une machine virtuelle relève de l'IaaS, et vous appliquez les correctifs du système ; la même base proposée en service managé relève du PaaS, et le fournisseur les applique, mais votre schéma, vos comptes applicatifs et vos sauvegardes restent chez vous. Un conteneur déployé dans un service managé héberge votre application, donc votre code ; l'image, elle, vous appartient dans tous les cas. C'est précisément pourquoi ce chapitre insiste sur les images : quel que soit le modèle, l'image que vous publiez reste la partie de la pile où votre responsabilité est la plus totale et la moins visible.
+
+## Appliquer le modèle : tâche par tâche, preuve par preuve
+
+Comprendre le modèle ne suffit pas : il faut le transformer en décisions et en preuves. La méthode tient en quatre questions à poser dans l'ordre. Premier temps, identifier le niveau de service réellement consommé, pas celui du catalogue marketing : une machine virtuelle avec disque persistant est de l'IaaS, point. Second temps, situer la couche en cause dans la pile. Troisième temps, vérifier qui peut matériellement exécuter l'action corrective, car la responsabilité n'a de sens que si elle est assortie d'une capacité d'action. Quatrième temps, consigner la réponse avec une preuve : une date, un nom, une commande, une capture d'écran ou un lien vers un ticket. Une responsabilité sans preuve se confond avec une supposition, et les suppositions ne se relisent pas en pleine nuit.
+
+Appliquons cela à trois situations typiques de la Médiathèque. La première : l'hébergeur annonce une faille critique dans l'hyperviseur. L'IaaS est en cause, la couche est sous la ligne : le fournisseur corrige, vous n'avez rien à faire, mais vous devez vérifier la notification et conserver la trace de son traitement. La seconde : une bibliothèque obsolète dans votre image conteneur lève une alerte de scan. La couche runtime est dans votre périmètre, quelle que soit la promesse du fournisseur : vous reconstruisez l'image, vous republiez, vous redéployez. La troisième : un comptable rejoint l'entreprise et hérite par habitude des droits d'administration sur le service de facturation. Aucune couche technique n'est en cause, la responsabilité est purement cliente, et l'action corrective est une révocation de droits immédiate.
+
+Le piège classique consiste à confondre managé et sécurisé. Un service annoncé comme managé signifie que le fournisseur exécute certaines tâches de maintenance ; il ne signifie pas que vos options sont correctement réglées, ni que vos données sont chiffrées, ni que vos journaux sont conservés assez longtemps, ni que vos comptes sont protégés par un second facteur. À chaque service managé, posez donc la question de la configuration par défaut : chiffrement au repos activé, chiffrement en transit obligatoire, journalisation exportée vers un espace que vous contrôlez, suppression automatique des sauvegardes, portée réseau limitée. Ces cinq vérifications coûtent une heure par service et éliminent la majorité des découvertes désagréables.
+
+Un autre réflexe à installer est la revue périodique de la frontière. Les services migrent : on passe d'une machine virtuelle à un service managé, on ajoute un outil tiers, on externalise l'envoi de courriers. Chaque migration déplace la ligne, donc redéplace les obligations. Prévoyez une revue semestrielle de deux heures, avec une question simple pour chaque service : si ce service tombait demain, qui devrait agir, en combien de temps, avec quel accès. Toute réponse du type je ne sais pas ou ce sera probablement le fournisseur doit être convertie en un nom, une échéance et une vérification. C'est exactement le format que vous avez appris à écrire dans le chapitre consacré à la politique de sécurité.
+
+Le tableau ci-dessous est le modèle de preuve attendu. Il ne s'agit pas d'une liste de vœux : chaque ligne doit pouvoir être remplie par une personne qui n'a jamais vu l'environnement, en s'appuyant uniquement sur les éléments cités. Si une case reste vide, la responsabilité n'est pas encore partagée, elle est perdue.
+
+```table
+| Tâche | Responsable | Preuve attendue | Fréquence |
+|---|---|---|---|
+| Correctif de l'hyperviseur | Fournisseur | Notification datée et accusé de traitement | À chaque annonce |
+| Correctif du système invité | Client en IaaS, fournisseur en PaaS | Journal de mise à jour ou bulletin du fournisseur | Mensuelle |
+| Reconstruction de l'image après alerte | Client | Nouvel identifiant d'image et rapport de scan | Après chaque alerte |
+| Chiffrement des données au repos | Client, mécanisme fourni | Option activée et preuve de conservation des clés | À la création, revue semestrielle |
+| Comptes, droits et seconde facteur | Client | Export des habilitations daté et contresigné | Trimestrielle |
+| Journalisation exportée | Co-géré | Preuve d'export vers un espace contrôlé par le client | Continue, vérifiée mensuellement |
+| Sauvegarde et restauration testées | Client | Compte rendu de restauration avec durée mesurée | Semestrielle |
+```
+
+
+En résumé, le modèle de responsabilités partagées n'est pas un diagramme à apprendre par cœur : c'est une grille de décision qui doit s'appliquer avant l'achat, pendant la configuration et après l'incident. Un service choisi sans lecture de la frontière, configuré avec les valeurs par défaut et jamais revu produit exactement ce que la leçon redoute : une chaîne de responsabilités où chacun croit que l'autre a vérifié. Les sections suivantes appliquent cette grille à l'objet que vous contrôlez le plus, l'image de conteneur, puis aux identités qui l'accompagnent.
+
+## Une image Docker, réellement
+
+Avant de durcir quoi que ce soit, il faut savoir ce qu'on durcit. Une image de conteneur n'est pas un disque virtuel : c'est un empilement de couches en lecture seule, décrit par un manifeste et assorti d'un fichier de configuration qui indique comment lancer le contenu. Chaque instruction exécutée dans le Dockerfile — installation d'un paquet, copie d'un fichier, réglage d'une variable — crée une couche supplémentaire, et ces couches s'additionnent sans jamais être modifiées : le système de fichiers en union superpose les couches et donne l'illusion d'un disque unique. Une conséquence en découle, décisive pour la sécurité : supprimer un fichier dans une couche postérieure ne l'efface pas des couches antérieures, il reste intact et consultable par quiconque disposera de l'image.
+
+Cette architecture explique également la vitesse et la légèreté du modèle. Les couches identiques sont partagées entre images, la mise en cache d'une instruction invalide toutes les suivantes et rien que celle-ci, et le transport d'une image revient à n'envoyer que les couches manquantes. Le prix à payer est une discipline de construction : l'ordre des instructions devient un choix de sécurité autant qu'un choix de performance, une couche inutile reste gravée à jamais, et un cache réutilisé à tort peut reconstruire un binaire depuis une source que l'on croyait abandonnée. Construire une image propre demande donc de penser couches, et non fichiers.
+
+L'image se distingue du conteneur par un point simple : l'image ne fait rien, le conteneur exécute. Au démarrage, le moteur prend l'image, ajoute un système de fichiers éphémère en écriture, applique les paramètres de lancement — utilisateur, variables, commandes, limites de ressources — puis isole le processus avec les espaces de noms et les groupes de contrôle du noyau hôte. Deux conteneurs peuvent partager la même image et avoir des vies radicalement différentes : l'un tourne en lecture seule avec un utilisateur non privilégié, l'autre en root avec des privilèges étendus. La sécurité d'un déploiement se joue donc sur deux tableaux, l'image que l'on a construite et la manière dont on la lance ; ce chapitre passe le premier au crible dans cette section, puis le second dans la suite.
+
+Pourquoi l'image devient-elle l'unité de sécurité de référence ? Parce qu'elle se copie, se partage et se déploie partout sans être relue. La même image passe du poste d'un développeur au registre de l'équipe, puis en production, puis dans un environnement de recette oublié. Si elle contient un compte de service, une bibliothèque vulnérable ou un shell d'administration, cette faiblesse voyage avec elle et se multiplie à chaque déploiement. À l'inverse, une image vérifiée, signée et minimale donne à l'équipe un objet unique à contrôler : on l'analyse une fois, on l'autorise une fois, puis on la déploie en confiance. C'est tout l'intérêt du contrôle de la chaîne d'approvisionnement logicielle, que la section consacrée à ce sujet approfondira.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/docker-container.png
+| Le conteneur ajoute à l'image une couche éphémère en écriture : durcir l'image, c'est agir sur les couches qui voyagent partout.
+```
+
+Les trois commandes suivantes sont le minimum à maîtriser pour ouvrir une image avant de l'accepter. Elles se lisent sur votre poste comme sur un registre distant, et aucune ne nécessite d'exécuter le contenu. Prenez l'habitude de les lancer avant chaque import : elles vous diront en moins d'une minute qui a construit quoi, avec quels outils, et sous quel identifiant d'utilisateur le processus démarrera.
+
+```bash
+# Couches, taille et date de construction de chaque instruction
+docker history --no-trunc monimage:1.4.0
+
+# Configuration de lancement : utilisateur, points d'entree, variables, commande
+docker image inspect --format '{{json .Config}}' monimage:1.4.0
+
+# Empreinte immuable de l'image, celle qu'il faut verrouiller en production
+docker inspect --format '{{index .RepoDigests 0}}' monimage:1.4.0
+```
+
+Un dernier point de vocabulaire, souvent source de confusion : l'identifiant court que vous voyez, six ou douze caractères hexadécimaux, est celui du manifeste local et il change à chaque reconstruction ; l'empreinte de dépôt, celle qui suit l'arobase, désigne le contenu exact tel que publié. Verrouiller une version par le simple nom du tag revient à dire : prends ce qui est là demain. Verrouiller par empreinte revient à dire : prends exactement ceci, quoi qu'il arrive. En production, la seconde formule est la seule acceptable, et nous la retrouverons dans la construction de l'image durcie.
+
+## Durcir une image : du Dockerfile fourni à l'image livrée
+
+Le durcissement d'une image suit un ordre : choisir la base, construire par étapes, retirer les privilèges, réduire ce qui est installé, puis vérifier. Chaque étape a un effet mesurable et une commande de contrôle associée ; une étape non contrôlée est une étape non faite. L'exemple qui suit est celui de l'image livrée par les bénévoles de la médiathèque, une application web écrite en Python qui sert le catalogue des emprunts, avec un serveur de développement pour lancer l'application en local et des outils de compilation laissés dans l'image pour éviter les surprises en production.
+
+La base est la première décision, et souvent la plus rentable. Une distribution complète apporte des milliers de fichiers, un gestionnaire de paquets, des outils de débogage et des services que l'application n'utilisera jamais : tout cela constitue la surface d'attaque, se met à jour malgré vous et grossit l'image inutilement. Une image minimale, du type image de base sans système d'exploitation complet ou distribution allégée, réduit le périmètre à ce qui exécute réellement votre code. Exigez en revanche une provenance connue : préférez un dépôt officiel, épinglez la version par empreinte, et refusez le tag flottant qui désignera une version différente demain matin. Une base choisie par commodité et jamais revue devient, en six mois, la principale source de correctifs à traiter.
+
+La construction en plusieurs étapes est le levier suivant, et il règle deux problèmes à la fois. Dans la première étape, on installe l'environnement de compilation et les dépendances de développement ; dans la seconde, on ne copie que l'artefact exécutable et les dépendances d'exécution. Le compilateur, les en-têtes de développement et les caches ne franchissent jamais la frontière : ils restent dans une image jetable qui n'est jamais publiée. Le gain est double, en taille et en sécurité, puisque les outils qui permettent de transformer du code en binaire disparaissent de l'environnement de production. Cette technique suffit à elle seule à supprimer la moitié des vulnérabilités remontées par les analyseurs, car beaucoup concernent des composants de compilation qu'aucun code applicatif n'invoque.
+
+Le troisième geste est le plus souvent oublié, et c'est lui que l'on vérifie en premier : exécuter le conteneur sans privilège. Par défaut, l'image ne définit aucun utilisateur, le processus démarre donc avec les droits de l'utilisateur racine du conteneur, et un détournement de la moindre vulnérabilité applicative donne à l'attaquant un accès complet à l'environnement, avec la possibilité de modifier les fichiers de l'application, d'installer un outil et d'essayer d'échapper au conteneur. Définir un utilisateur non privilégié, lui donner la seule propriété des fichiers dont il a besoin et refuser toute élévation transforme cette compromission en échec : l'attaque reste contenue, elle ne peut ni modifier l'image ni persister. L'atelier de fin de chapitre vous demandera justement de corriger ce point sur l'image livrée.
+
+Le quatrième geste consiste à retirer tout ce qui ne sert pas en production : le serveur de développement, les outils de débogage, les clients de connexion à distance, les clés d'accès de compilation, les fichiers de test et les exemples fournis avec les bibliothèques. Cette suppression se fait pendant la construction, jamais après, précisément à cause du mécanisme de couches vu plus haut. S'y ajoutent deux réflexes simples : ne jamais lancer de démon d'arrière-plan dans l'image, préférer un superviseur externe ou l'orchestrateur, et déclarer une commande de santé explicite afin que l'orchestrateur puisse détecter une application bloquée au lieu de la croire vivante.
+
+```table
+| Défaut de l'image livrée | Conséquence en production | Durcissement attendu |
+|---|---|---|
+| Base complète et tag flottant | Surface large, reproduction impossible | Base minimale, version épinglée par empreinte |
+| Compilation dans l'image finale | Outils transformant du code présents | Construction en plusieurs étapes |
+| Processus exécuté en root | Compromission totale à la moindre faille | Utilisateur non privilégié dédié |
+| Serveur de développement inclus | Port de mise au point exposé, code de test exploitable | Suppression des outils inutiles à la construction |
+| Commande de santé absente | Défaillance invisible pour l'orchestrateur | Santé déclarée et testée |
+| Secrets copiés puis effacés | Secrets conservés dans les couches antérieures | Aucun secret dans le contexte de construction |
+```
+
+
+Voici l'image de départ livrée par l'équipe, à dessein imparfaite : construction en une seule étape, image de base complète, exécution en root, outillage de développement conservé. Relisez-la ligne à ligne avant de la comparer à la version durcie : chaque défaut correspond à une ligne, et vous devrez pouvoir nommer le défaut sans hésiter.
+
+```dockerfile
+# Image livree par l'equipe — a corriger dans l'atelier
+FROM python:3.12
+
+WORKDIR /app
+COPY . .
+
+RUN pip install --no-cache-dir -r requirements.txt \
+    && apt-get update && apt-get install -y curl vim net-tools \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV FLASK_ENV=production
+EXPOSE 8000
+
+CMD ["python", "run.py"]
+```
+
+La version durcie applique les quatre gestes dans l'ordre : base minimale et épinglée, étape de compilation séparée, utilisateur dédié créé sans shell, fichiers appartenant à cet utilisateur, dépendances réduites à l'exécution et commande de santé. Notez que rien n'a été supprimé après construction : tout ce qui n'est pas nécessaire a été simplement absent de la couche finale. C'est cette discipline qui rend l'image vérifiable, et la section suivante traite le cas le plus délicat de la construction, celui des secrets.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+# Meme application, reconstruite selon les regles du chapitre
+
+FROM python:3.12-slim@sha256:5f1a9c2d7e4b8a6f3c0d5e2b9a7f4c1d8e6b3a0f5c2d9e7b4a1f8c6d3e0b7a4f AS compilation
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+FROM python:3.12-slim@sha256:5f1a9c2d7e4b8a6f3c0d5e2b9a7f4c1d8e6b3a0f5c2d9e7b4a1f8c6d3e0b7a4f
+
+RUN groupadd --system app && useradd --system --gid app --home /app app
+
+WORKDIR /app
+COPY --from=compilation /install /usr/local
+COPY --chown=app:app . .
+
+USER app
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD ["python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+
+CMD ["python", "run.py"]
+```
+
+## Secrets et clés : ce qui ne doit jamais entrer dans une image
+
+La construction d'une image rassemble trois acteurs qui n'ont pas le même niveau de confiance : le dépôt de code, la machine de construction et le registre. Un secret peut fuiter dans chacun de ces trois endroits, et les mécanismes diffèrent. Le plus fréquent est aussi le plus bête : une variable d'environnement déclarée dans le Dockerfile avec le mot de passe du service de messagerie, ou un argument de construction passé en clair à la commande d'image. Ces valeurs ne sont pas des commentaires, elles sont gravées dans la configuration de l'image, affichées par la commande d'inspection, listées dans l'historique et copiées dans chaque conteneur dérivé. Un utilisateur sans aucun privilège, capable uniquement de lancer un conteneur depuis le registre, lit ainsi votre clé en une commande.
+
+Le deuxième mécanisme de fuite est subtil : la couche abandonnée. On copie un fichier de configuration contenant un jeton, on s'en aperçoit, on ajoute une instruction qui supprime le fichier, on recommence la construction. Le résultat semble propre, mais la couche intermédiaire contient toujours le fichier d'origine, et un extracteur de couches le restitue en quelques secondes. La règle à appliquer est mécanique : aucun secret ne doit entrer dans le contexte de construction, donc aucun fichier secret ne doit se trouver dans le répertoire envoyé au démon, donc le fichier d'exclusion du contexte doit être écrit et relu avant la première construction, pas après la première alerte.
+
+Le troisième point concerne le dépôt de code. Un jeton commité une fois reste dans l'historique même après suppression du fichier, et l'historique est souvent public ou lu par plus de monde qu'on ne croit. Les outils de détection de secrets dans l'historique, les alertes de forge et la rotation systématique forment un trio indispensable : détecter, révoquer, remplacer. Une clé volée ne se rachète pas par une suppression, elle se rachète par une révocation datée et par la preuve que l'ancienne ne fonctionne plus. Notez que les empreintes d'accès aux registres, les clés d'API du fournisseur cloud et les jetons d'intégration relèvent exactement de la même logique.
+
+Existe-t-il un moyen légitime de fournir un secret à la construction ? Oui, et il est récent : la prise en charge des montages de secrets par le moteur de construction permet de transmettre un fichier depuis le gestionnaire de secrets de la machine de construction, sans jamais l'ajouter au contexte, sans le placer dans une couche et sans l'exposer dans la ligne de commande. La valeur reste limitée à l'instruction qui en a besoin. Employez ce mécanisme pour ce qui doit réellement être présent à la construction, comme un accès à un dépôt privé ; pour tout le reste, préférez une injection à l'exécution, où le conteneur reçoit son secret sous forme de fichier monté, avec une durée de vie courte et une rotation indépendante de l'image.
+
+```dockerfile
+# INTERDIT : la valeur est gravee dans la configuration de l'image
+FROM node:22-slim
+ARG API_TOKEN=sk_live_51Hxxxxxxxxxxxx
+ENV MAIL_PASSWORD=motdepasse123
+COPY .env /app/.env
+
+# CORRECT : le secret est monte uniquement pendant l'instruction qui en a besoin
+FROM node:22-slim AS build
+WORKDIR /src
+COPY package.json .
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+    npm ci --omit=dev
+```
+
+Passons aux vérifications concrètes, à exécuter avant d'accepter une image venue de l'extérieur. Cherchez les variables sensibles dans la configuration, les fichiers de configuration courants copiés dans les couches, les empreintes privées, les jetons d'accès au format reconnu et les clés SSH. Balayez également l'historique du dépôt de code, pas seulement l'état courant, car c'est souvent là que le premier commit contient ce que les suivants ont effacé. Enfin, tenez un registre des secrets connus avec leur date de création, leur propriétaire et leur échéance de rotation : un secret sans propriétaire et sans date devient, en pratique, un secret permanent, et un secret permanent finit toujours par être lu par quelqu'un qui n'aurait pas dû le voir.
+
+Un dernier réflexe complète la détection : la rotation. Prévoyez, pour chaque type de secret, la procédure de remplacement et le délai dans lequel il doit être exécuté. Un jeton de registre révélé doit être révoqué en moins d'une heure ; une clé d'accès au fournisseur cloud, en moins de vingt-quatre heures ; un mot de passe de base de données partagé, à l'occasion de la prochaine fenêtre de maintenance. Réécrivez ces délais dans votre document de politique, avec le nom de la personne qui déclenche l'opération : c'est le même exercice de responsabilité nommée que dans le modèle vu au début du chapitre, appliqué à un objet qui, lui, ne pardonne pas l'approximation.
+
+## Kubernetes : abaisser les privilèges au niveau du pod
+
+Un orchestrateur tel que Kubernetes ne se contente pas de lancer vos conteneurs : il décide où ils tournent, avec quels droits, sur quel nœud, et il applique des règles que vous pouvez rendre contraignantes. Le pod, unité de déploiement, regroupe un ou plusieurs conteneurs partageant réseau et stockage ; c'est à ce niveau que se placent les garde-fous, parce que c'est aussi à ce niveau qu'un conteneur compromis pourrait sinon toucher le nœud hôte. Le principe directeur tient en une phrase : chaque pod doit tourner avec le minimum de droits qui lui permet de faire son travail, et ce minimum doit être imposé par le contrôle du plan de gestion, pas seulement déclaré dans un fichier que n'importe qui peut modifier.
+
+Kubernetes propose trois profils de sécurité applicables par espace de noms, qui remplacent avantageusement les anciens plug-ins de restriction. Le profil strict interdit presque tout, le profil de base exclut les pratiques les plus dangereuses sans entraver les usages courants, et le profil restreint — celui à retenir — impose l'exécution sans privilège, l'absence d'élévation, le refus des accès au nœud et le filtre d'appels système par défaut. Étiqueter un espace de noms selon le profil restreint revient à refuser le déploiement de tout pod qui ne respecte pas ces règles : la déclaration devient alors une garantie, et l'équipe découvre l'écart au moment du déploiement plutôt qu'après un incident.
+
+Le cœur de la configuration tient dans un bloc de champs relativement court. Exiger l'exécution sans privilège, fixer un identifiant numérique non nul, refuser toute élévation de privilèges, rendre la racine du système de fichiers inécritable, retirer toutes les capacités système, n'autoriser que le filtre d'appels système par défaut et déposer les données temporaires sur un volume dédié. Chacun de ces réglages a une conséquence visible : si l'application échoue à démarrer parce qu'elle veut écrire dans son répertoire d'installation, ce n'est pas le réglage qui est en cause, c'est l'application qui écrit là où elle ne devrait pas, et la correction appartient au code.
+
+S'y ajoutent des interdictions qui ne se négocient pas : ne pas partager les espaces de noms du nœud, ne pas monter le système de fichiers du nœud, ne pas ouvrir le réseau du nœud depuis un pod applicatif, ne pas passer en mode privilégié. Ces options existent pour des workloads très particuliers — démons de surveillance, contrôleurs de stockage — et leur usage doit être réservé à ces cas, dans un espace de noms dédié et avec une justification écrite. Toute équipe qui réclame le mode privilégié pour une application web doit d'abord démontrer que la demande vient d'un besoin réel et non d'une configuration héritée d'un tutoriel.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/kubernetes.png
+| L'hélice de Kubernetes règle le placement des pods : la sécurité se déclare au niveau du pod, puis elle s'impose par le contrôle d'admission.
+```
+
+Le tableau ci-dessous sert de grille de relecture d'un manifeste. Avant d'approuver un déploiement, parcourez chaque ligne et exigez la valeur de la colonne de droite ; toute valeur différente doit être motivée par écrit, datée et rattachée à une personne. C'est la même discipline que pour la fiche de durcissement d'un poste, transposée à un objet déclaratif qui, lui, se redéploie automatiquement.
+
+```table
+| Champ du manifeste | Valeur par défaut risquée | Valeur exigée |
+|---|---|---|
+| securityContext.runAsNonRoot | false ou absent | true |
+| securityContext.runAsUser | 0 | Identifiant non nul dédié |
+| securityContext.allowPrivilegeEscalation | true ou absent | false |
+| securityContext.readOnlyRootFilesystem | false | true, volume pour /tmp |
+| securityContext.capabilities.drop | aucune | ALL |
+| seccompProfile.type | Unconfined | RuntimeDefault |
+| resources.limits | aucune limite | limite mémoire et processeur |
+| serviceAccountName | défaut du namespace | compte dédié à l'application |
+| image | tag flottant | empreinte épinglée |
+```
+
+
+## Secrets et identités dans un cluster Kubernetes
+
+Commençons par le point qui surprend toujours : un secret Kubernetes n'est pas chiffré par défaut. Il est encodé en base64, ce qui est un format de représentation et non une protection, et il est stocké dans l'état du cluster. Quiconque dispose d'un droit de lecture sur les secrets voit donc les mots de passe en clair après une conversion triviale. La protection exige deux mesures distinctes : le chiffrement de l'état au repos, configuré par le fournisseur du service ou par l'administrateur du cluster, et la restriction radicale des droits de lecture sur la ressource secret. Si vous ne pouvez obtenir ni l'une ni l'autre, déplacez vos secrets hors du cluster, dans un gestionnaire externe qui les distribue à la demande.
+
+La manière dont le secret est remis au processus compte autant que son stockage. Sous forme de variable d'environnement, il apparaît dans la description du pod, il est visible par un utilisateur qui peut lire les pods, il est hérité par tous les processus enfants et il ressort dans les journaux d'application qui impriment leur environnement. Sous forme de fichier monté, il reste hors de la ligne de commande, il peut être rendu accessible à un seul conteneur et il est rechargé sans redémarrer le pod lorsque le gestionnaire de secrets le renouvelle. La règle à retenir est brève : secret monté en fichier, droits de lecture limités, jamais passé par la ligne de commande ni par une variable héritée.
+
+L'identité du pod, elle, se nomme compte de service. Chaque espace de noms en possède un par défaut, réutilisé par tous les pods qui n'en déclarent pas, et ce compte dispose souvent d'un jeton d'accès à l'API monté automatiquement. Le résultat est prévisible : une application qui n'a aucun besoin d'interroger l'API emporte néanmoins un jeton capable de le faire. Déclarez un compte de service dédié pour chaque charge de travail, désactivez le montage automatique du jeton pour celles qui n'en ont pas besoin, et attribuez à chacune exactement les droits qu'elle exerce. Un compte partagé entre dix applications rend impossible l'imputation d'une action, exactement comme un compte informatique partagé entre dix personnes.
+
+Ces droits s'expriment par des liaisons de rôle : un rôle décrit des verbes sur des ressources, une liaison rattache ce rôle à un compte de service ou à un groupe. Le principe du moindre privilège s'applique ici avec une sévérité particulière, car l'API de gestion est le centre du système : posséder le droit de créer des pods avec des privilèges élevés, ou de monter des fichiers depuis le nœud, revient à obtenir la maîtrise du cluster. Commencez par un droit nul, accordez la lecture avant l'écriture, refusez par défaut les actions sur les ressources sensibles, et vérifiez le résultat avec la commande d'interrogation des autorisations plutôt qu'avec la lecture du manifeste.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalogue-web
+  namespace: catalogue
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: catalogue-lecture-secrets
+  namespace: catalogue
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["catalogue-configuration"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: catalogue-web-lecture
+  namespace: catalogue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: catalogue-lecture-secrets
+subjects:
+  - kind: ServiceAccount
+    name: catalogue-web
+    namespace: catalogue
+```
+
+Avant de rendre cette configuration pour bonne, interrogez-la depuis le point de vue de l'identité elle-même. Les deux commandes suivantes prennent quelques secondes et répondent à la question que personne ne se pose avant l'incident : que peut réellement faire ce compte de service, et surtout, peut-il faire quelque chose que je n'attendais pas de lui. Conservez la sortie datée dans votre dossier de déploiement, elle fait office de preuve exactement comme l'export des habilitations dans la section précédente.
+
+```bash
+# Que peut faire ce compte de service dans son espace de noms ?
+kubectl auth can-i --list --namespace=catalogue \
+  --as=system:serviceaccount:catalogue:catalogue-web
+
+# Verification ciblee : droit de creer des pods privilegies ?
+kubectl auth can-i create pods --namespace=catalogue \
+  --as=system:serviceaccount:catalogue:catalogue-web
+```
+
+Le renouvellement complète le dispositif. Un secret distribué dans un cluster a une durée de vie ; si personne ne la définit, les jetons restent valides des mois après le départ d'un prestataire. Fixez la durée de rotation pour chaque type de secret, nommez la personne qui déclenche le renouvellement, et automatisez ce qui peut l'être. La combinaison chiffrement au repos, droits de lecture restreints, comptes de service dédiés, jetons montés en fichiers et rotation datée constitue le socle : rien de spectaculaire, mais chaque maillon retire une porte que l'attaquant aurait ouverte sans bruit.
+
+## IAM chez le fournisseur : rôles, politiques et moindre privilège
+
+Chez le fournisseur cloud, l'identité devient le principal périmètre de sécurité. Il n'y a plus de pare-feu physique à proximité, plus de port Ethernet à débrancher, et les accès transitent par l'interface de programmation depuis n'importe où. La question n'est donc plus de savoir qui se trouve dans le bâtiment, mais quelle identité détient quel droit, depuis quand et pour faire quoi. Une identité, dans ce contexte, désigne aussi bien une personne qu'une application, un compte de déploiement ou un service externe ; ces identités partagent toutes le même mécanisme de politiques d'autorisation, et c'est ce mécanisme qu'il faut maîtriser avant tout le reste.
+
+Une politique d'autorisation s'articule autour de quatre éléments : l'effet, qui accorde ou refuse ; l'action, qui décrit l'opération, créer un conteneur, lire un objet, attacher un rôle ; la ressource, qui précise sur quoi l'opération s'exécute ; enfin la condition, qui restreint selon l'heure, l'adresse source, la présence d'un second facteur ou un étiquetage. Le raccourci à éviter est unique : l'astérisque en action combiné à l'astérisque en ressource. Cette formulation signifie accorder tout le reste du service, y compris ce qui n'existe pas encore comme fonctionnalité, et elle transforme une identité applicative en administrateur complet sans que personne ne s'en aperçoive dans la console.
+
+Le second raccourci dangereux consiste à conserver des clés d'accès longue durée dans un dépôt, un fichier de configuration ou un gestionnaire de mots de passe partagé. Ces clés sont permanentes jusqu'à leur révocation, elles ne portent aucun contexte, et leur vol passe inaperçu des mois durant. La pratique moderne remplace ces clés par des jetons éphémères obtenus par fédération : le compte de déploiement s'identifie auprès du fournisseur avec une identité à durée courte, souvent fondée sur l'identité de l'intégration continue, et reçoit un jeton valable quelques minutes. Pour une personne, la même logique s'applique avec le second facteur et une session courte ; pour un service externe, avec une fédération entre fournisseurs.
+
+```image
+https://gmgmrywvloszxlqmellw.supabase.co/storage/v1/object/public/course-images/cloud-security.png
+| Le nuage fermé à clé ne protège que la porte qu'on a ouverte : chez le fournisseur, c'est la politique d'autorisation qui décide de qui entre.
+```
+
+La séparation des comptes constitue le troisième pilier. Un compte pour la production, un autre pour la recette, un troisième pour l'expérimentation, jamais les mêmes identités d'un compte à l'autre, et aucune identité ne possède de droits à la fois sur la production et sur le poste de travail. Cette règle nuit à la commodité et rend les dépannages un peu plus lents ; elle empêche en revanche la compromission d'un poste de débogage de se transformer en compromission des données des adhérents. S'y ajoute l'habillage des politiques par étiquetage et par conditions, qui permet de dire : ce droit s'exerce uniquement depuis le réseau interne, uniquement avec un second facteur actif, uniquement sur les ressources étiquetées comme préproduction.
+
+Enfin, l'audit n'est pas une option. Les politiques accordent des droits qui ne sont jamais utilisés, et un droit accordé puis oublié finit par être exercé, par vous ou par quelqu'un d'autre. Revoyez trimestriellement la dernière utilisation réelle de chaque rôle, révoquez ce qui dort depuis plus de quatre-vingt-dix jours, établissez une alerte sur toute élévation de privilège et sur toute création de nouvelle politique ouverte, et faites relire les écarts par une personne qui n'est pas l'auteur de la demande. Le tableau ci-dessous résume les cinq contrôles attendus, avec la preuve que vous devez pouvoir produire pour chacun.
+
+```table
+| Contrôle | Question à laquelle il répond | Preuve à conserver |
+|---|---|---|
+| Absence de rôle complet | Une identité peut-elle tout faire ? | Politique sans effet global d'accord |
+| Pas de clé longue durée | Une fuite de dépôt donne-t-elle un accès permanent ? | Liste des jetons actifs et leur échéance |
+| Fédération et sessions courtes | Un accès volé reste-t-il valable des heures ? | Durée de session configurée et vérifiée |
+| Séparation des comptes | Un poste de débogage peut-il toucher la production ? | Matrice des comptes et des identités autorisées |
+| Revue et alertes | Un droit oublié est-il détecté ? | Export daté de la dernière utilisation par rôle |
+```
+
+
+Le moindre privilège, chez le fournisseur, ne se décrète pas : il se retire. Partez d'une identité qui ne peut rien, accordez l'opération précise nécessaire à la tâche, sur la ressource précise concernée, avec une condition qui limite le contexte, puis mesurez. Chaque retrait se vérifie en lançant réellement l'opération et en constatant le refus, tout comme vous aviez vérifié la disparition d'un service après redémarrage dans le chapitre sur le durcissement. La preuve d'un droit révoqué est un message d'erreur daté, pas une ligne cochée dans un tableau.
+
+## La chaîne d'approvisionnement : d'où vient l'image que vous exécutez
+
+Tout ce que vous venez de durcir suppose une image dont vous êtes l'auteur. En pratique, vous exécuterez majoritairement des images que d'autres ont construites : une base de données officielle, une bibliothèque fournie par un éditeur, un outil d'équipe publié dans un registre partagé. La chaîne d'approvisionnement logicielle désigne l'ensemble des étapes qui séparent le code source de l'exécution : dépendances récupérées, compilation, assemblage, signature, publication, transfert puis admission dans le cluster. Une compromission à n'importe lequel de ces maillons produit une image qui paraît parfaitement normale et qui ne l'est pas.
+
+Les attaques les plus fréquentes ne sont pas exotiques. Une dépendance dont le nom se rapproche d'une bibliothèque connue attend d'être installée par inadvertance. Un fichier de configuration d'intégration continue copié depuis un modèle contient un accès réel. Une image de base récupérée d'un registre public et retaguée contient un logiciel d'écoute. Une étape de construction qui exécute un script téléchargé à la volée donne un accès complet à la machine de construction et, par suite, à toutes les images produites. Le défenseur ne peut pas empêcher ces événements ; il peut en revanche s'assurer qu'une image non conforme ne dépasse jamais le portail du registre ni l'étape d'admission du cluster.
+
+La première barrière est la reproductibilité : construction dans l'intégration continue et non sur un poste, dépendances verrouillées par version exacte et par empreinte, image de base épinglée, et journal de construction conservé. La seconde est la traçabilité : une attestation de provenance indique qui a construit quoi, à partir de quel dépôt et avec quelle configuration ; une signature rattache l'image à ce journal ; un inventaire des composants détaille chaque bibliothèque embarquée avec sa version. Ces trois artefacts permettent de répondre, au moment de l'admission, à une question que la simple lecture du tag ne pose jamais : est-ce bien cette équipe, depuis ce dépôt, qui a produit cet objet ?
+
+La troisième barrière s'exerce dans le cluster, au moment du déploiement. Refusez tout ce qui ne vient pas du registre autorisé, exigez la signature valide, refusez les tags flottants, interdisez le mode de mise à jour qui redirige vers une autre image, et imposez un compte de service de tirage dédié dont la clé n'est connue que du système. Un contrôle d'admission, qu'il soit déclaratif ou piloté par une politique, transforme ces règles en refus automatique ; sans lui, la règle repose sur la bonne volonté de chaque équipe, ce qui a été suffisant exactement le temps de la première urgence.
+
+```bash
+# Signature de l'image apres publication, avec la cle privee de l'equipe
+cosign sign --key cosign.key registre.exemple.fr/catalogue@sha256:9f2c...
+
+# Verification obligatoire avant admission dans le cluster
+cosign verify --key cosign.pub registre.exemple.fr/catalogue@sha256:9f2c...
+
+# Inventaire des composants produit automatiquement a la construction
+syft registre.exemple.fr/catalogue@sha256:9f2c... -o spdx-json > sbom.json
+
+# Controle de depart : quelles dependances, quelles versions, quels defauts
+trivy image --severity HIGH,CRITICAL registre.exemple.fr/catalogue:1.4.0
+```
+
+Un point mérite d'être dit sur les dépendances elles-mêmes, car c'est le maillon le plus négligé. Verrouillez le fichier de résolution, examinez les ajouts avant acceptation, écartez les paquets qui n'ont pas d'auteur identifié ou dont la dernière publication date de plusieurs années sans maintenance, et refusez les scripts de préinstallation qui exécutent du code arbitraire au moment de l'installation. Faites remonter les alertes de sécurité dans le flux de travail de l'équipe, avec une échéance et un responsable, comme pour les correctifs système du chapitre précédent. La chaîne d'approvisionnement n'est pas un sujet séparé : c'est la même discipline de correctifs, appliquée à des objets que vous ne compilez plus vous-même.
+
+## Journaliser et surveiller des conteneurs éphémères
+
+Un conteneur s'arrête, se redémarre, se remplace : si ses journaux restent sur son disque, ils disparaissent avec lui. C'est la différence fondamentale avec le serveur physique que vous avez durci dans le chapitre quatre, où les fichiers de journalisation résidaient sur une machine que l'on pouvait saisir. La règle à appliquer est donc simple et non négociable : un conteneur n'écrit que sur la sortie standard, la sortie d'erreur et un volume monté ; tout ce qui doit survivre au conteneur est immédiatement expédié vers un système extérieur qui, lui, appartient à une échelle de conservation que vous avez fixée. La sortie standard d'un conteneur est un tuyau, pas un fichier.
+
+Ce que vous écrivez compte autant que l'endroit où vous l'écrivez. Structurez vos journaux en format machine lisible, avec un horodatage, un niveau, un identifiant de requête, le compte appelant et l'identifiant de la ressource concernée. N'y placez jamais de secret, de jeton d'accès, de numéro de carte ou de mot de passe, même en mode débogage : les journaux sont lus par plus de monde qu'on ne croit, ils sont copiés dans des outils d'analyse et ils sont conservés des mois. Chaque ligne de journal doit répondre à l'une de ces questions : qui a fait quoi, sur quelle ressource, à quel moment, avec quel résultat. Une ligne qui ne répond à aucune n'est du bruit, et le bruit fait disparaître les signaux rares qui, eux, doivent attirer l'attention.
+
+La centralisation se fait en deux temps. Le moteur de conteneurs et l'orchestrateur collectent les journaux des conteneurs en cours et de ceux qui viennent de s'arrêter, mais cette collecte est locale et limitée dans le temps ; un système central, distinct du cluster et non modifiable par les comptes applicatifs, reçoit le flux, l'indexe et l'y conserve le temps défini dans votre politique. Cette séparation a un but précis : dans un incident, l'attaquant qui contrôle un pod ne doit pas pouvoir effacer la trace de ce qu'il a fait. Conservez au minimum douze mois les journaux d'authentification et d'administration, trois mois les journaux d'erreur applicatifs, une semaine les journaux de mise au point — les mêmes durées que pour les postes et les serveurs du parc, pour les mêmes raisons.
+
+La surveillance ajoute une couche que la lecture de journaux ne remplace pas : l'observation continue de signaux rares. Un conteneur redémarré à répétition, une défaillance de mémoire, un refus de déploiement dû à un profil de sécurité, un échec de tirage d'image, une élévation refusée, l'apparition d'un compte de service inconnu, un volume monté depuis le nœud, un trafic sortant vers une adresse inhabituelle : chacun de ces signaux est fréquent isolément et préoccupant lorsqu'il devient répétitif ou inattendu. Fixez pour chacun un seuil, une canalisation d'alerte et un destinataire nommé. Une alerte sans destinataire est un événement que personne ne verra, et l'histoire du parcours est remplie de notifications partées vers une adresse abandonnée.
+
+Le bloc suivant donne les commandes de premier niveau, à exécuter dans les minutes qui suivent un signalement. Elles répondent, dans l'ordre, aux trois questions posées dans tous les chapitres d'investigation : que s'est-il passé, quand, et par quelle identité. Notez la commande qui interroge le journal du conteneur précédent : elle est souvent la première trace concrète d'une application qui plante ou d'une tentative qui échoue.
+
+```bash
+# Journal du conteneur en cours, avec le conteneur precedent s'il existe
+kubectl logs -n catalogue catalogue-web-7f9c4b-x2k9d --previous --timestamps
+
+# Evenements du cluster : refus d'admission, echecs de tirage, eviction
+kubectl get events -n catalogue --sort-by=.lastTimestamp
+
+# Redemarrages, etat reseau et volume monte depuis le noeud
+kubectl describe pod -n catalogue catalogue-web-7f9c4b-x2k9d
+
+# Journal applicatif cible : erreurs d'authentification sur la fenetre concernee
+kubectl logs -n catalogue -l app=catalogue-web --since=2h | grep -i "auth"
+```
+
+## Mini-projet : la fiche de durcissement de l'image livrée
+
+Vous voici devant la mission qui réunit tout le chapitre. L'équipe de bénévoles a publié une image pour le catalogue des emprunts ; votre responsable vous demande une fiche de durcissement complète, opposable, avant la mise en production prévue dans trois semaines. Le livrable n'est pas une impression générale du type « l'image paraît propre », c'est un document structuré en six rubriques, daté, signé, où chaque affirmation est accompagnée de la commande qui l'a produite et du résultat obtenu. Un collègue qui n'a jamais vu l'environnement doit pouvoir rejouer vos vérifications dans l'ordre et obtenir les mêmes réponses.
+
+La première rubrique décrit l'image : identifiant complet avec empreinte, date de construction, auteur déclaré, provenance de la base et nombre de couches. La deuxième présente l'analyse des vulnérabilités : outil employé, version de la base de données de référence, date du scan, nombre de failles par gravité et décision pour chacune, corrigée, différée avec motif, non applicable. La troisième porte sur les secrets : résultat de la recherche dans les couches, dans la configuration et dans l'historique du dépôt, puis, si un élément a été trouvé, la date de révocation et la personne qui l'a effectuée. Ces trois rubriques se lisent en cinq minutes et constituent le cœur du document.
+
+La quatrième rubrique rassemble les preuves de durcissement : base choisie et épinglée, construction en étapes séparées, utilisateur non privilégié effectif, système de fichiers de la couche finale appartenant à cet utilisateur, absence d'outillage de compilation, commande de santé déclarée. Pour chaque point, donnez la commande et sa sortie attendue, par exemple l'identifiant numérique renvoyé par la commande d'exécution, qui doit être non nul. La cinquième rubrique décrit le déploiement : manifeste du pod avec son profil de sécurité, compte de service dédié, droits vérifiés par interrogation, limites de ressources, refus attendu lors d'un déploiement non conforme. La sixième enfin fixe la surveillance : journaux exportés, durées de conservation, seuils d'alerte et destinataire nommé.
+
+```text
+FICHE DE DURCISSEMENT D'IMAGE — (nom de l'application) — (date)
+
+1. IDENTITE DE L'IMAGE
+   Reference complete avec empreinte : <registre>/<image>@sha256:<empreinte>
+   Date de construction, auteur, provenance de la base, nombre de couches
+   Commande utilisee : docker image inspect ...
+
+2. ANALYSE DES VULNERABILITES
+   Outil et version : <outil> <version> — date du scan : <date>
+   Failles : critiques <n> / elevees <n> / moderees <n>
+   Decision par ligne : corrigee | differee jusqu'au <date> | non applicable
+
+3. SECRETS
+   Recherche dans les couches, la configuration et l'historique : <resultat>
+   Si trouve : cle revoquee le <date> par <nom> — nouvelle valeur en place : oui/non
+
+4. PREUVES DE DURCISSEMENT
+   Utilisateur effectif (non nul) : <sortie de la commande>
+   Proprietaire des fichiers de l'application : <sortie>
+   Outils de compilation presents : oui/non — preuve : <sortie>
+   Sante declaree : <commande de controle>
+
+5. DEPLOIEMENT
+   Profil de securite impose : <profil> — espace de noms : <espace>
+   Compte de service : <nom> — droits : <sortie de l'interrogation>
+   Limites de ressources : <memoire> / <processeur>
+   Test negatif effectue : <description du deploiement refuse>
+
+6. SURVEILLANCE
+   Export des journaux vers : <destination> — conservation : <durees>
+   Seuils et destinataire : <seuil> — <nom>
+   Prochaine relecture : <date> — declencheurs anticipe : <evenements>
+```
+
+Pour mener l'atelier à son terme, travaillez dans cet ordre : inspectez l'image reçue avant de la modifier, conservez la sortie originale ; corrigez le Dockerfile puis reconstruisez ; relancez l'analyse et comparez les deux rapports ; déployez en environnement de recette avec le manifeste durci ; tentez volontairement un déploiement non conforme pour constater le refus ; enfin rédigez la fiche avec les résultats réels, jamais avec des intentions. Prévoyez deux bonnes heures, un espace de recette jetable et un registre que vous pouvez vider. Le rendu se fait sans votre formateur sous les yeux : si un collègue ne peut pas rejouer une vérification, c'est qu'elle n'a pas été faite.
+
+## À retenir
+
+- Le modèle de responsabilités partagées place la frontière selon le niveau de service : en IaaS vous appliquez les correctifs du système, en PaaS le fournisseur les applique, en SaaS il gère l'application.
+- Partagé signifie complémentaire, jamais moitié-moitié : le fournisseur sécurise le cloud, vous sécurisez ce que vous y déposez.
+- Les données, les identités et la configuration restent du côté du client dans les trois modèles.
+- Un service managé n'est pas un service configuré : les options par défaut restent votre responsabilité.
+- Une responsabilité sans preuve se confond avec une supposition : nom, date, commande, résultat.
+- Une image est un empilement de couches en lecture seule ; supprimer un fichier dans une couche postérieure ne l'efface pas des couches antérieures.
+- L'image voyage partout : une faiblesse embarquée se multiplie à chaque déploiement.
+- Verrouillez la base et les dépendances par empreinte, jamais par un tag flottant.
+- Construisez en plusieurs étapes pour que les outils de compilation ne franchissent jamais la frontière vers la production.
+- Exécutez sans privilège : un processus racine transforme une faille applicative en prise de contrôle de l'environnement.
+- Aucun secret ne doit entrer dans le contexte de construction, ni dans l'historique du dépôt, ni dans une variable d'environnement.
+- Injectez les secrets à l'exécution, sous forme de fichier monté, avec une durée de vie courte et une rotation datée.
+- En Kubernetes, imposez le profil restreint, refusez l'élévation, rendez la racine inécritable et retirez toutes les capacités.
+- Un compte de service dédié par charge de travail, sans jeton monté lorsque l'application n'en a pas besoin.
+- Les secrets Kubernetes ne sont protégés qu'après chiffrement de l'état au repos et restriction des droits de lecture.
+- Chez le fournisseur, refusez les actions et ressources en astérisque, remplacez les clés longue durée par des jetons éphémères.
+- Séparez les comptes, révoyez les droits inutilisés et alertez sur toute élévation de privilège.
+- La chaîne d'approvisionnement se verrouille par provenance, signature, inventaire des composants et contrôle d'admission.
+- Un conteneur écrit sur la sortie standard ; ce qui doit survivre part immédiatement vers un système central non modifiable.
+
+## Erreurs fréquentes
+
+- Piège : croire que le fournisseur corrige le système d'exploitation d'une machine virtuelle. Correction : en IaaS le correctif du système invité vous revient, inscrivez-le dans votre calendrier de maintenance.
+- Piège : acheter un service managé et laisser toutes les options par défaut. Correction : relevez les cinq vérifications de configuration et consignez chaque écart.
+- Piège : placer la frontière une fois puis ne plus la revoir. Correction : prévoyez une revue semestrielle à chaque migration de service.
+- Piège : construire l'image sur le poste d'un développeur. Correction : construisez dans l'intégration continue et conservez le journal de construction.
+- Piège : conserver un tag flottant pour la production. Correction : épinglez l'image par empreinte et écrivez cette empreinte dans le manifeste.
+- Piège : supprimer un secret avec une instruction de nettoyage. Correction : reconstruisez sans jamais faire entrer le secret, puis révoquez l'ancien.
+- Piège : faire tourner l'application en root parce que le port d'écoute est inférieur à mille vingt-quatre. Correction : utilisez un port au-dessus, ou ajustez l'autorisation de connexion sans relever le privilège.
+- Piège : reprendre un manifeste d'exemple contenant le mode privilégié. Correction : appliquez le profil restreint et motivez par écrit toute exception.
+- Piège : partager le compte de service par défaut entre toutes les applications. Correction : un compte par charge de travail, droits vérifiés par interrogation.
+- Piège : lire un secret Kubernetes encodé en base64 et le croire chiffré. Correction : activez le chiffrement au repos et restreignez les droits de lecture.
+- Piège : conserver une clé d'accès statique dans un dépôt. Correction : fédération, jeton éphémère, révocation datée et vérification de l'ancienne clé.
+- Piège : accorder une action complète sur toutes les ressources par commodité. Correction : nommez les actions et les ressources réellement nécessaires.
+- Piège : déployer une image non signée en production parce qu'elle vient d'un registre connu. Correction : exigez la signature et la provenance au contrôle d'admission.
+- Piège : laisser les journaux dans le conteneur. Correction : export immédiat vers un système central, durées de conservation chiffrées.
+- Piège : créer une alerte sans destinataire nommé. Correction : désignez la personne et son suppléant, vérifiez la réception mensuellement.
+- Piège : livrer une fiche remplie d'intentions. Correction : joignez à chaque rubrique la commande, la sortie et la date.
+
+## Pour aller plus loin
+
+La documentation Docker consacrée aux bonnes pratiques de construction reste la référence la plus directe : elle détaille l'ordre des instructions, la mise en cache, la construction en plusieurs étapes et la réduction du contexte de construction, avec des exemples complets à recopier. Elle est accessible à l'adresse https://docs.docker.com/build/building/best-practices/ et mérite une relecture intégrale après l'atelier, car chaque paragraphe correspond à un défaut que vous avez corrigé de vive voix. Complétez-la par la documentation des bases d'images officielles, qui indique pour chaque distribution ce qui est installé, comment les correctifs sont appliqués et quelle est la politique de durée de vie des versions.
+
+Côté orchestration, les documents de référence du projet Kubernetes sur la sécurité des pods constituent la seconde lecture obligatoire. Les profils de sécurité applicables par espace de noms y sont décrits champ par champ, avec la liste exacte des interdictions du profil restreint et la marche à suivre pour une migration progressive depuis un espace permissif. Prenez également les pages consacrées aux comptes de service, aux règles d'autorisation et au chiffrement de l'état, qui répondent précisément aux interrogations de la commande d'autorisation vue dans la leçon. Ces pages sont publiées à l'adresse https://kubernetes.io/docs/concepts/security/ et évoluent avec chaque version majeure : vérifiez la version que votre cluster exécute.
+
+Le modèle de responsabilités partagées est décrit par chaque grand fournisseur, et leurs formulations, proches mais pas identiques, méritent d'être confrontées. La note de référence de Microsoft, publiée à l'adresse https://learn.microsoft.com/en-us/azure/security/fundamentals/shared-responsibility, présente la frontière couche par couche et insiste sur les cas de co-gestion qui posent problème en pratique. La lire après le tableau du début de chapitre vous donnera l'habitude de traduire un vocabulaire commercial en une ligne de responsabilité concrète. En complément, les listes de contrôle du Center for Internet Security pour les conteneurs et pour Kubernetes fournissent des items numérotés, justifiés et vérifiables, idéals pour construire vos propres fiches de durcissement plutôt que de rédiger vos critères à partir de zéro.
+
+Enfin, pour la chaîne d'approvisionnement, explorez les spécifications de provenance et d'inventaire des composants logiciels, ainsi que les outils de signature d'images associés. L'objectif n'est pas d'adopter chaque outil, mais de comprendre le schéma commun : un artefact construit de façon reproductible, accompagné d'un journal signé, d'un inventaire de composants, puis accepté uniquement s'il correspond à ce journal. Ce schéma se lit en une soirée et il change durablement la manière dont on accepte une image venue de l'extérieur.
+
+## Et maintenant : passer de la fiche au réflexe
+
+Vous avez désormais la grille complète : placer la frontière de responsabilité, durcir l'image qui franchit cette frontière, ôter les secrets de tout ce qui voyage, abaisser les privilèges au niveau du pod et chez le fournisseur, vérifier la provenance de chaque artefact, puis observer ce qui s'exécute réellement. L'exercice pratique qui suit cette leçon vous demandera d'appliquer la totalité de cette chaîne à l'image du catalogue, sans vous appuyer sur la fiche modèle : c'est à ce moment-là que vous mesurerez ce que vous avez retenu de l'ordre des couches, des champs de sécurité et de la commande d'interrogation des autorisations. Le quiz de quatre questions qui accompagne le chapitre vérifie ensuite, en quelques minutes, les notions que l'on confond le plus souvent.
+
+Deux rendez-vous valent mieux qu'une résolution générale de mieux faire. Le premier est mensuel : une heure passée à relire les empreintes d'images déployées, les droits effectivement utilisés chez le fournisseur et les secrets proches de leur échéance de rotation. Le second est trimestriel : la revue de la frontière de responsabilité, service par service, avec le nom de la personne qui agirait en cas d'incident et le délai qu'elle mettrait. Un environnement cloud n'est pas plus sûr qu'un serveur parce qu'il est plus grand, il est plus sûr quand quelqu'un, à une date précise, a vérifié ce qu'il contenait. Les habitudes durables tiennent en trois verbes : vérifier, consigner, revenir.

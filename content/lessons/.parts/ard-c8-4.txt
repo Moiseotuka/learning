@@ -1,0 +1,118 @@
+## Adresser un site : plan d'adresses et passerelles
+
+Un segment RS-485 se conçoit comme une ligne téléphonique dont chaque poste aurait un numéro : la liste des numéros se rédige avant le premier câble, pas après la première panne. La règle tient en trois points : une seule adresse par équipement sur un même segment, un maître unique par segment, et un document qui associe chaque adresse à son équipement, sa position physique et ses registres. Ce document, qui tient dans un tableau d'une page, fait partie de la recette : c'est le seul outil qui permette, un an plus tard, de répondre à la question de savoir pourquoi tel registre est à tel numéro.
+
+Chaque ligne du tableau correspond à un choix qui a une conséquence directe sur la maintenance. Les adresses faibles vont aux équipements fixes et critiques, afin qu'elles ne changent jamais quand on ajoute du matériel ; les adresses de service restent libres pour un appareil de mesure emporté ; la passerelle possède la sienne, puisqu'on doit aussi pouvoir l'interroger pour connaître son état de santé.
+
+| Adresse | Équipement | Registres principaux | Rôle dans la ligne |
+|---|---|---|---|
+| 1 | Variateur VX-400 du convoyeur n°2 | 0, 1, 2 en lecture, 10 en écriture | entraînement principal |
+| 2 | Capteur de température et d'humidité | 0 à 3 | météo de salle |
+| 3 | Capteur de pression différentielle | 0 et 1 | suivi des filtres |
+| 4 | Compteur d'entrées diverses | 0 à 7 | fins de course |
+| 5 | Passerelle vers le bus CAN | 0 à 5 | état et compteurs d'erreurs |
+| 20 à 30 | réservées | — | matériel d'intervention |
+
+La longueur des trames impose elle aussi un dimensionnement. L'unité Modbus ne dépasse jamais deux cent cinquante-six octets, contrôle d'intégrité compris, ce qui limite une lecture à cent vingt-cinq registres et une écriture multiple à cent vingt-trois. À 9600 bauds, une trame de cette taille occupe déjà plusieurs dizaines de millisecondes : on regroupe donc les registres contigus plutôt que d'interpeller chaque mesure. Si les valeurs doivent être publiées plus souvent que le segment ne le permet, on ajoute un segment, on n'augmente pas le débit au-delà de ce que la longueur autorise.
+
+Les passerelles répondent à deux besoins distincts qu'il ne faut pas confondre. La première fait changer de support : une passerelle Modbus RTU vers Modbus TCP expose le même modèle de données au port 502 et rend les équipements du terrain accessibles au réseau de supervision. La seconde fait changer de protocole : votre ESP32 lit le segment série dans une tâche FreeRTOS et republie les valeurs en MQTT, comme au chapitre six, en y ajoutant l'état de la liaison. Dans les deux cas, le segment reste isolé : on ne raccorde jamais directement deux segments RS-485 entre eux, ni deux maîtres sur le même segment, parce que la règle d'un seul maître n'admet aucune exception.
+
+Le bus CAN se planifie sur le même principe, avec ses propres unités. On attribue des identifiants en veillant à ce que les informations critiques disposent des identifiants les plus faibles, donc des meilleures priorités : 0x120 à 0x12F pour l'état de la sertiuse, 0x130 pour sa consigne, 0x1F0 pour les compteurs de cycle, le diagnostic réservé en fin de plage. Ce tableau se conserve à côté du plan d'adresses Modbus.
+
+## Mesurer ce qui circule : analyseur, multimètre, oscilloscope
+
+Trois instruments se partagent le travail de vérification et chacun pose une question que les deux autres ne peuvent pas poser. Le multimètre dit si la ligne est électriquement conforme. L'oscilloscope dit ce qui se passe réellement sur les fronts : surtensions, fronts arrondis, bruit superposé. L'analyseur dit ce que les protocoles échangent, trame par trame. Commencer par l'analyseur en ignorant les deux autres fait perdre le plus de temps, car un logiciel ne montre pas une terminaison manquante.
+
+Deux mesures au multimètre suffisent à éliminer la moitié des pannes. La première se fait hors tension, entre A et B : environ 60 ohms signale deux terminaisons de 120 ohms correctement posées, 120 ohms en indique une manquante, une valeur élevée ou instable annonce l'absence totale ou un mauvais contact. La seconde se fait sous tension : sans émission, la différence A moins B reste de quelques centièmes de volt et dépasse une volte et demie seulement pendant l'émission, et chaque ligne doit rester dans sa plage admise par rapport à la masse.
+
+L'oscilloscope devient nécessaire dès que la liaison fonctionne par intermittence. On y cherche des fronts francs, l'absence de surtensions aux changements d'état, et un bruit laissant une large marge par rapport au seuil de décision du récepteur. Une précaution souvent négligée concerne la pince : elle est rattachée à la terre du secteur, et la brancher sur une ligne d'une armoire à potentiel différent crée un courant indésirable. On mesure chaque ligne séparément par rapport à la masse du segment, ou l'on emploie une sonde différentielle.
+
+```image
+oscilloscope
+| Oscilloscope de laboratoire en cours de mesure : on y lit la forme exacte des fronts, leur amplitude et le bruit superposé au signal avant de conclure sur l'état d'une liaison.
+```
+
+Les valeurs attendues diffèrent selon le bus : notez-les sur la fiche de l'installation plutôt que de les apprendre par cœur. Sur du RS-485 conforme, la différence A moins B vaut quelques dizaines de millivolts au repos puis dépasse une volte et demie à l'émission. Sur du CAN haute vitesse, les deux lignes flottent autour de deux volts et demi au repos, la haute montant vers trois volts et demi et la basse descendant vers un volt et demi pendant l'émission. Un écart notable oriente : front arrondi pour une terminaison manquante, mode commun hors plage pour un problème de masse, niveaux figés pour un émetteur bloqué.
+
+L'analyseur apporte enfin la couche protocole. Sur du Modbus RTU, il affiche chaque requête et chaque réponse en hexadécimal, les délais et les trames rejetées ; sur du CAN, il liste les identifiants et les compteurs d'erreurs, et en mode silencieux il capte sans jamais émettre, ce qui est indispensable sur une ligne en production. La capture suivante montre ce que l'on cherche : la régularité des échanges, la durée des réponses et l'absence d'écart avec l'identifiant attendu.
+
+```text
+CAPTURE DU SEGMENT RS-485 — 9600 8E1, convertisseur en ecoute seule
+12:04:31.882  TX  01 03 00 00 00 03 05 CB
+12:04:31.904  RX  01 03 06 01 2C 00 55 01 F4 A1 65   reponse en 22 ms
+12:04:31.926  TX  02 03 00 00 00 04 44 3A
+12:04:31.949  RX  02 03 08 01 90 02 BC 00 1E 00 00 FB 69
+12:04:31.971  TX  01 03 00 0A 00 01 A4 08
+12:04:32.016  RX  -- timeout apres 400 ms, tentative 1 sur 3
+12:04:32.462  RX  01 03 02 00 64 49 73   reprise au deuxieme essai
+```
+
+Ce que vous compterez dans ces captures vaut mieux que n'importe quelle impression : le taux de réponses réussies, les contrôles d'intégrité erronés, l'écart des temps de réponse, les interruptions simultanées. Publiés en MQTT avec l'état de la liaison, ces indicateurs transforment une panne subie en un événement dont on connaît la fréquence, et distinguent une dégradation progressive du câble d'un incident brutal.
+
+## Diagnostiquer un lien série industriel : méthode en six temps
+
+Le dépannage suit un ordre fixe, du plus tangible au plus subtil, et on ne passe à l'étape suivante que si la précédente est concluante. Premièrement, coupez et mesurez : résistance du segment, continuité des paires, terminaisons. Deuxièmement, vérifiez les paramètres de ligne des deux côtés, en lisant les écrans des appareils. Troisièmement, écoutez : mettez un analyseur et confirmez que la requête part et qu'aucune réponse ne revient. Quatrièmement, mesurez les tensions et les fronts. Cinquièmement, isolez : ne laissez qu'un esclave sur le segment, puis remettez les appareils un par un. Sixièmement, comptez : une observation isolée ne prouve rien, mille échanges sans erreur prouvent que la liaison est revenue.
+
+Le tableau suivant condense les symptômes les plus fréquents et la vérification qui les confirme ; il ne remplace pas la méthode, il l'accélère.
+
+| Symptôme observé | Cause la plus fréquente | Vérification |
+|---|---|---|
+| Aucune réponse, aucune erreur affichée | débit ou adresse erroné | comparer les réglages des deux côtés |
+| Réponse tronquée ou incompréhensible | coupure de ligne, alimentation faible | ohmmètre sur A et B, tension d'alimentation |
+| Contrôle d'intégrité erroné, par intermittence | terminaison absente, bruit de variateur | oscilloscope, blindage, trajet du câble |
+| Réponse venant d'un autre équipement | adresse en double sur le segment | débrancher les appareils un à un |
+| La requête écrite revient à l'identique | récepteur laissé actif pendant l'émission | état des broches de contrôle du module |
+| Échecs espacés à intervalle régulier | autre maître ou autre trafic sur la ligne | analyseur en écoute une minute |
+| Sur du CAN, plus aucune trame d'un nœud | passage en état hors bus | demander la récupération, contrôler le débit |
+
+Chaque famille d'erreurs Modbus a sa signature. Un délai d'attente sans activité signifie que la requête n'arrive pas ou que l'esclave est hors service : le problème est avant la réponse. Un contrôle d'intégrité erroné signifie que la requête arrive mais se déforme : le problème est sur la ligne ou dans le bruit. Un code d'exception est une réponse valide qui signale une erreur de demande — adresse hors plage, fonction interdite, valeur incohérente — et n'est surtout pas une panne de liaison. Une réponse à la mauvaise longueur trahit un défaut de synchronisation du tampon, qu'on corrige en vidant l'entrée avant chaque requête.
+
+Côté CAN, les symptômes se lisent dans les compteurs du contrôleur, un pour l'émission, un pour la réception, qui augmentent à chaque erreur et diminuent à chaque trame valide. Tant qu'ils restent bas, le nœud est en état actif ; dépassés un seuil, ils le placent en état passif, où il signale les problèmes sans perturber les autres ; dépassés le seuil supérieur, il se met hors bus et ne transmit plus. Lire ces deux nombres transforme une question vague, pourquoi la sertiuse ne répond-elle plus, en un constat précis : contrôleur hors bus depuis trente-trois erreurs d'émission consécutives, apparues pendant le démarrage du convoyeur.
+
+La fiche de panne qui suit est le livrable du diagnostic : elle se remplit pendant l'intervention, pas après, avec les mesures avant et après l'action correctrice.
+
+```text
+FICHE DE PANNE — segment RS-485 n°1, Ets. Lartigue
+Date et heure        : ....-..-.. ..:..   Operateur : .....
+Symptome rapporte    : ...
+
+Avant action
+  Alimentation coupee : resistance A-B = .... ohms (attendu 60)
+  Terminations        : .... relevees sur deux attendues
+  Parametres relus    : 9600 8E1 des deux cotes, adresses uniques oui/non
+  Analyseur           : requete presente, reponse absente ou presente
+  Tension A-B repos   : .... V      emission : .... V
+  Mode commun A-masse : .... V (plage admise -7 a +12)
+
+Action correctrice    : ...
+Apres action          : 1000 echanges, 0 erreur, latence moyenne .... ms
+Conclusion a conserver: ...
+```
+
+Une règle ferme termine cette section : ne concluez jamais sur une observation unique. Une liaison parfaite pendant une minute n'est pas réparée, elle n'a pas encore rencontré la panne. Le critère de sortie d'un diagnostic est chiffré : mille échanges sans erreur, ou un taux ramené sous le seuil acceptable pendant une durée donnée, inscrit dans la fiche avec la date.
+
+## À retenir
+
+Choisir un bus se ramène à deux grandeurs et à une discipline : la distance, le bruit et la volonté de documenter ce que l'on installe. Sous un mètre et dans un boîtier propre, l'I2C et le SPI restent gratuits ; au-delà, le RS-485 porte le Modbus de l'atelier et le CAN s'impose dès que plusieurs intervenants doivent se partager la parole avec des priorités. Le CAN apporte l'arbitrage non destructif, le bit de remplissage, le CRC sur quinze bits et le confinement des erreurs par compteurs. Le RS-485 apporte le signal différentiel, la plage de mode commun, la portée de douze cents mètres et l'obligation stricte de la demi-duplex.
+
+Modbus RTU tient en peu de mots : une adresse d'esclave de un à cent quarante-sept, la zéro réservée à la diffusion sans réponse, un code de fonction, des données et un contrôle d'intégrité sur seize bits dont le poids faible part en premier. Les fonctions 0x03, 0x06 et 0x10 couvrent la lecture, l'écriture simple et l'écriture multiple, pour cent vingt-cinq registres lus et cent vingt-trois écrits au maximum. L'adresse de protocole part de zéro quand l'affichage des automates part souvent de quarante mille un : convertissez avant d'écrire, et vérifiez par une lecture plutôt que par un raisonnement.
+
+La fiabilité, enfin, se mesure : une terminaison hors tension par environ soixante ohms entre A et B, les niveaux sous tension, les échanges avec un analyseur. Un diagnostic qui ne produit aucun chiffre — résistance, tension, taux d'erreur, latence — n'est qu'une hypothèse.
+
+## Erreurs fréquentes
+
+La première erreur consiste à câbler une terminaison de 120 ohms sur chaque appareil au lieu de les mettre aux deux extrémités du segment : la ligne est surchargée, les fronts s'arrondissent et les erreurs n'apparaissent qu'au-delà d'une certaine longueur, ce qui trompe sur la cause. La seconde est d'oublier que la demi-duplex interdit d'émettre et d'écouter en même temps, d'où des réponses écrasées par un maître qui relâche le bus trop tard. La troisième est de n'envoyer la trame qu'en plusieurs écritures : le silence intermédiaire la fragmente au sens du protocole.
+
+On voit ensuite des adresses en double, dues à un appareil remplacé sans mise à jour du plan, et des conversions d'adresse oubliées entre l'affichage et le protocole. Le contrôle d'intégrité est un piège classique : calculer les deux octets en poids fort au lieu de poids faible, ou initialiser le registre à zéro au lieu de 0xFFFF, produit un envoi que l'esclave rejette. Un débit, une parité ou un nombre d'arrêt différent d'un seul côté donne exactement le même résultat que le silence total.
+
+Côté CAN, on retrouve la terminaison mal placée, mais aussi les dérivations trop longues, les étoiles qui multiplient les réflexions et les débits différents entre deux nœuds. Un nœud laissé hors bus faute de demande de récupération fait croire à une panne matérielle. Enfin, la panne la plus coûteuse est celle que l'on corrige sans la mesurer : l'intervention fonctionne le jour même, personne ne note ce qui a été fait, et la panne revient sans qu'on sache si elle est la même.
+
+## Pour aller plus loin
+
+Les documents officiels restent les sources les plus sûres. L'organisation Modbus publie la spécification du protocole d'application, qui décrit les codes de fonction et le modèle de données, et la spécification des communications sur ligne série, qui fixe les formats RTU et ASCII et les durées de silence : deux documents courts qui se lisent en une soirée. Pour le CAN, les tutoriels pratiques des fabricants d'outillage couvrent la structure de trame, les cinq types d'erreur et les états de confinement, avec des captures réelles ; la documentation Espressif décrit l'ensemble des fonctions du pilote TWAI, y compris les filtres, la configuration des temps bits et la récupération après hors bus.
+
+Côté outillage, investissez progressivement : un convertisseur USB vers RS-485 de faible coût couvre la grande majorité des diagnostics, un second convertisseur en écoute fait gagner le reste, un analyseur CAN se loue pour les interventions rares. Complétez par le dimensionnement d'une liaison : impédance caractéristique, capacité par appareil, réflexions aux extrémités. La compétence qui se transfère le mieux reste la tenue du dossier : plan d'adresses, schéma, paramètres de ligne et fiche de panne.
+
+## Et maintenant : passez au banc d'essai
+
+Vous avez la théorie, les trames et la méthode de mesure : il reste à produire la preuve. L'exercice pratique vous demande de lire trois registres d'un variateur Modbus RTU sur une liaison RS-485, de les afficher avec leur échelle, de gérer les échecs par un délai d'attente et des tentatives, puis de journaliser le taux de réussite. Le quiz vérifie quatre pièges : la valeur de la terminaison, l'interdiction de la demi-duplex, la différence entre contrôle d'intégrité et somme de contrôle, et la destination de l'adresse zéro. Mesurez d'abord la résistance du segment, et ne lancez le script qu'ensuite : l'ordre des gestes compte autant que le code.

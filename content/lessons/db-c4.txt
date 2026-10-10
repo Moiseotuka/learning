@@ -1,0 +1,512 @@
+Jusqu'ici, ce parcours bases de données vous a surtout appris à lire. Vous avez appris à décrire un domaine avec des tables, des clés primaires et des clés étrangères, puis à interroger ces tables avec SELECT, des filtres, des jointures et des agrégations. Tout cela est essentiel, mais tout cela est immuable : vos requêtes ne changent rien, elles vous rendent une image du monde stocké. Or une base de données qui ne fait que répondre à des lectures est un annuaire. La vraie vie d'une application commence le jour où l'on écrit dedans : un lecteur s'inscrit, un livre change d'état, une réservation est annulée, un tarif évolue.
+
+Ce quatrième chapitre est donc consacré aux écritures et aux transactions, c'est-à-dire aux deux moitiés d'un même geste. La première moitié, c'est le verbe : modifier physiquement le contenu des tables avec les commandes INSERT, UPDATE et DELETE. La seconde, c'est la discipline : entourer plusieurs verbes d'une frontière pour qu'ils aboutissent ensemble ou pas du tout, ce que l'on appelle une transaction. Sans la première, votre base reste vide ; sans la seconde, elle se remplit d'erreurs silencieuses que personne ne détectera avant qu'un rapport de comptabilité ne s'effondre.
+
+L'exemple fil rouge de la bibliothèque municipale nous accompagne. Des lecteurs s'inscrivent, des exemplaires sont catalogués, des emprunts sont enregistrés, puis des prêts sont restitués. Chaque opération métier se traduit par une ou plusieurs lignes qui apparaissent, changent ou disparaissent dans les tables. Nous prendrons chaque commande une par une, avec sa syntaxe, ses variantes utiles et, surtout, ses pièges. Deux d'entre eux reviendront régulièrement parce qu'ils causent l'essentiel des accidents en production : la mise à jour exécutée sans condition de WHERE, et la transaction qu'on oublie de valider.
+
+Une méthode avant de commencer. Devant toute opération d'écriture, posez-vous deux questions. D'abord : quelles lignes vais-je toucher exactement ? Réponsez avec un SELECT qui porte la même condition que votre écriture. Ensuite : que se passe-t-il si cette écriture échoue en cours de route, ou si je change d'avis ? Réponsez avec une transaction, un BEGIN suivi d'un COMMIT si tout va bien et d'un ROLLBACK sinon. Écrire dans une base, ce n'est pas taper une commande, c'est savoir précisément quel ensemble de lignes vous allez transformer et ce qui restera si le serveur s'arrête à la seconde près. Ce chapitre vous donne les réflexes pour répondre à ces deux questions avant chaque frappe sur la touche Entrée.
+
+## INSERT : ajouter des lignes avec des valeurs explicites
+
+INSERT est la commande qui fait entrer de la donnée dans la base. Sa forme la plus courante prend une table, une liste de colonnes et une liste de valeurs, dans cet ordre exact. La liste de colonnes n'est pas facultative par snobisme : elle documente l'intention, elle protège contre la réorganisation future du schéma, et elle permet d'omettre volontairement les colonnes que l'on souhaite laisser à leur valeur par défaut. Quand vous écrivez explicitement les colonnes que vous renseignez, une colonne ajoutée plus tard dans la table ne casse pas votre insertion, parce que votre requête ne dépend pas de l'ordre physique des colonnes.
+
+Les valeurs respectent quelques règles simples. Le texte est entouré de guillemets simples, les nombres ne le sont pas, les dates respectent le format ISO, à savoir quatre chiffres pour l'année, deux pour le mois, deux pour le jour. Une colonne à laquelle vous n'assignez rien reçoit sa valeur par défaut si la table en définit une, sinon elle accepte NULL si la colonne l'autorise, sinon l'écriture est refusée. Ce dernier cas est le plus fréquent chez le débutant : il oublie une colonne obligatoire et reçoit un message d'erreur qui lui semble obscur, alors qu'il dit simplement qu'une information manquante est requise.
+
+```sql
+INSERT INTO lecteurs (identifiant, nom, prenom, courriel, date_inscription)
+VALUES (1, 'Moreau', 'Claire', 'claire.moreau@example.fr', '2026-01-12');
+
+INSERT INTO exemplaires (identifiant, ouvrage_id, cote, etat)
+VALUES (101, 7, 'ROM-0001', 'neuf'),
+       (102, 7, 'ROM-0002', 'bon'),
+       (103, 9, 'BD-00010', 'usagé');
+```
+
+L'insertion multiple mérite qu'on s'y attarde, parce qu'elle est à la fois plus rapide et plus lisible qu'une série d'appels individuels. Une seule commande porte dix lignes, le serveur traite une fois la vérification de la grammaire, une fois la planification, et les verrous sont pris de manière groupée. Attention toutefois : dans la plupart des moteurs, si la troisième ligne viole une contrainte, toute la commande est rejetée. Il n'existe pas de demi-échec partiel silencieux. C'est précisément ce comportement qui rend l'opération commode à l'intérieur d'une transaction : soit les dix lignes entreront, soit aucune.
+
+Les contraintes sont vos alliées lors de l'insertion. Une clé primaire dupliquée provoque un rejet, ce qui vous évite d'avoir deux fois le même identifiant. Une clé étrangère qui pointe vers un identifiant inexistant est refusée, ce qui vous évite un emprunt rattaché à un lecteur fantôme. Une valeur qui ne correspond pas au type de la colonne, par exemple un texte dans un entier, déclenche une erreur de conversion avant même l'écriture. Ne contournez jamais ces refus avec des astuces : lisez le message, corrigez la donnée ou le schéma, puis réessayez. Une base qui accepte tout est une base qui ne garantit plus rien.
+
+Enfin, certaines colonnes se remplissent toutes seules. Un identifiant auto-incrémenté, une colonne de temporisation par défaut, une colonne calculée : vous les écartez de la liste de colonnes et laissez le moteur faire. Dans PostgreSQL, vous pouvez alors ajouter la clause RETURNING pour obtenir immédiatement l'identifiant attribué, ce qui évite une seconde requête de recherche. C'est le geste le plus économique quand votre application a besoin de l'identifiant de la ligne fraîchement créée pour, par exemple, enregistrer immédiatement un emprunt associé.
+
+## INSERT : sous-requêtes, INSERT ... SELECT et identifiants générés
+
+Au-delà des valeurs écrites à la main, INSERT sait recevoir le résultat d'une requête. La forme INSERT ... SELECT copie en une seule opération l'ensemble des lignes renvoyées par une lecture. On s'en sert pour alimenter une table de reporting à partir d'une table de détail, pour dupliquer un jeu de données vers un autre schéma, ou pour importer des lignes temporaires de travail. L'avantage n'est pas seulement la concision : le serveur lit et écrit dans le même flux, sans passer par l'application, ce qui supprime toute possibilité de divergence entre ce que vous avez lu et ce que vous avez écrit.
+
+```sql
+INSERT INTO emprunts_archivees (identifiant, lecteur_id, date_sortie, date_retour)
+SELECT identifiant, lecteur_id, date_sortie, date_retour
+FROM emprunts
+WHERE date_retour IS NOT NULL AND date_retour < '2025-01-01';
+
+INSERT INTO lecteurs (nom, prenom, courriel, date_inscription)
+SELECT nom, prenom, courriel, '2026-02-01'
+FROM lecteurs_en_attente
+WHERE valide = true;
+```
+
+La sous-requête peut aussi se trouver à l'intérieur de la liste de valeurs, entre parenthèses, pour fournir une valeur unique. C'est typique lorsqu'on souhaite référencer la clé primaire d'une ligne que l'on vient de créer ou que l'on cherche par critère métier. Par exemple, créer un emprunt pour le lecteur dont le courriel est connu consiste à chercher son identifiant avec une sous-requête scalar et à l'utiliser directement dans l'insertion. Si la sous-requête renvoie plus d'une ligne, le moteur refuse l'écriture : une valeur attendue est unique, pas un jeu de résultats.
+
+L'identifiant technique, lui, est presque toujours laissé au moteur. Les séquences et les colonnes d'identité existent précisément pour éviter de calculer vous-même le prochain numéro, ce qui serait faux dès que deux utilisateurs insèrent simultanément. Au lieu de cela, vous omettez la colonne et le serveur attribue un valeur unique, souvent séquentielle. Quand l'application doit connaître cette valeur immédiatement, vous utilisez la clause RETURNING avec PostgreSQL, ou les fonctions spécifiques du moteur avec MySQL et SQL Server. La récupération de l'identifiant se fait donc dans la foulée de l'écriture, jamais par une seconde recherche approximative.
+
+Un cas fréquent en production est la ré-importation d'un jeu de données déjà partiellement présent. Insérer à l'identique une seconde fois provoque une erreur de clé primaire, et l'import s'arrête. Trois stratégies existent. La première consiste à filtrer la source avec une sous-requête NOT EXISTS, ce qui n'insère que les lignes réellement absentes. La deuxième, dans PostgreSQL, utilise la clause ON CONFLICT DO NOTHING ou DO UPDATE, qui transforme le conflit en décision explicite. La troisième, dans MySQL, repose sur INSERT IGNORE ou REPLACE, avec des sémantiques légèrement différentes qu'il faut lire attentivement avant de s'y fier.
+
+Voici un exemple de reprise d'import tolérante aux doublons :
+
+```sql
+INSERT INTO ouvrages (identifiant, titre, auteur, isbn)
+VALUES (7, 'Le Quai aux fleurs', 'A. Nardal', '978-2-1234-5678-9')
+ON CONFLICT (identifiant) DO UPDATE
+SET titre = EXCLUDED.titre,
+    auteur = EXCLUDED.auteur;
+```
+
+Notez que cette variante exécute deux opérations distinctes : une insertion si la ligne est absente, une mise à jour si elle existe. Elle est donc un raccourci pratique, pas un substitut à la compréhension. Préférez-la quand l'intention est réellement de synchroniser, et gardez une insertion simple quand votre intention est d'ajouter.
+
+## UPDATE : la clause SET et le filtre WHERE
+
+UPDATE modifie des lignes existantes. Sa grammaire tient en trois mots clés : la table à toucher, la clause SET qui liste les colonnes et leurs nouvelles valeurs, et la clause WHERE qui désigne les lignes concernées. Le SET décrit le changement, le WHERE décrit son périmètre. Toute mise à jour se lit donc comme une phrase : pour cette table, fixez ces colonnes à ces valeurs, pour les lignes qui vérifient cette condition. Si l'une des parties manque, la phrase cesse d'avoir un sens précis, et c'est là que naissent les accidents.
+
+```sql
+UPDATE exemplaires
+SET etat = 'bon', date_reforme = NULL
+WHERE identifiant = 103;
+
+UPDATE emprunts
+SET date_retour = '2026-02-14'
+WHERE identifiant = 4821
+  AND date_retour IS NULL;
+```
+
+Les expressions de la clause SET peuvent être calculées. On ajoute une remise en multipliant un prix, on incrémente un compteur en additionnant une unité, on concatène deux chaînes. Attention à une subtilité importante : quand vous écrivez montant = montant + 100, le moteur évalue la valeur d'origine de chaque ligne avant application, et non la valeur déjà modifiée de la première ligne. Votre intention est donc correctement servie. En revanche, si vous faites référence à une autre table, la lecture se fait avec l'état de cette table au moment de l'exécution, ce qui impose parfois une sous-requête pour obtenir le résultat attendu.
+
+Le piège capital de UPDATE est l'oubli de la clause WHERE. Sans condition, la commande s'applique à toutes les lignes de la table. Si votre intention était de corriger le tarif d'un abonnement précis et que vous oubliez le filtre, vous venez de modifier l'intégralité de votre fichier d'abonnements. Ce n'est pas une erreur théorique : c'est l'un des gestes les plus souvent exécutés à tort, y compris par des professionnels pressés, et son effet est immédiat, massif et, dans un moteur sans journal de restauration, difficile à inverser. La base, elle, n'a rien à dire : la commande est syntaxiquement parfaite.
+
+La parade est mécanique, et elle doit devenir un réflexe. Avant toute mise à jour, écrivez le SELECT équivalent avec exactement la même condition et regardez le nombre de lignes renvoyées. Ce nombre doit être celui que vous attendez, ni plus, ni moins. Ensuite, enfermez l'écriture dans une transaction, relancez le SELECT avec la nouvelle condition pour vérifier le résultat, et ne validez qu'au moment où tout correspond. Si le compte est surprenant, un simple ROLLBACK vous rend votre base intacte. Cette discipline coûte quinze secondes et supprime la quasi-totalité du risque.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM abonnements WHERE tarif = 'ancien';  -- périmètre attendu
+
+UPDATE abonnements
+SET tarif = 'nouveau'
+WHERE tarif = 'ancien';
+
+SELECT COUNT(*) FROM abonnements WHERE tarif = 'nouveau'; -- vérification
+
+COMMIT;
+```
+
+Enfin, UPDATE peut cibler plusieurs tables à l'aide d'une jointure ou d'une sous-requête. Corriger les états d'exemplaires en fonction des informations d'un ouvrage, ajuster une commission en lisant un barème, sont des opérations courantes. Là encore, la sous-requête doit renvoyer une valeur unique par ligne concernée, sous peine d'erreur. Préférez toujours la forme la plus lisible, et souvenez-vous que l'optimiseur réécrira votre requête si nécessaire : votre rôle est d'exprimer l'intention clairement, pas d'anticiper les choix du moteur.
+
+## DELETE : supprimer sans dégâts
+
+DELETE retire des lignes d'une table. Sa grammaire est la plus courte des trois commandes : DELETE FROM suivi de la table, puis d'une condition WHERE. Et comme pour UPDATE, l'absence de condition supprime l'intégralité de la table. La différence avec UPDATE, c'est l'irréversibilité perçue : on redoute davantage une suppression, on la remarque moins vite, et une table vidée peut rester inaperçue plusieurs jours jusqu'à la prochaine consultation. Supprimer est un geste métier comme un autre, mais il exige la même rigueur que les autres, davantage même.
+
+La méthode en trois temps que nous avons vue pour UPDATE s'applique ici à la lettre. Première étape : reformuler la condition dans un SELECT et compter les lignes. Deuxième étape : exécuter la suppression à l'intérieur d'une transaction. Troisième étape : vérifier le résultat avec un second SELECT, puis valider. Si votre intention était de retirer trois lignes en retard et que le compte vous en annonce quatre mille, vous saurez immédiatement que la condition est mal formulée, avant que quiconque ne s'en aperçoive.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM reservations
+WHERE date_demande < '2025-06-01' AND ouvrage_id IS NULL;
+
+DELETE FROM reservations
+WHERE date_demande < '2025-06-01' AND ouvrage_id IS NULL;
+
+SELECT COUNT(*) FROM reservations
+WHERE date_demande < '2025-06-01';
+
+COMMIT;
+```
+
+Les clés étrangères compliquent la suppression, et c'est voulu. Si un lecteur possède encore des emprunts, sa ligne ne peut pas disparaître : les emprunts resteraient orphelins. Le moteur refuse alors la suppression et vous renvoie une erreur d'intégrité référentielle. Votre réponse correcte est soit de traiter d'abord les lignes filles, soit de modifier la contrainte pour qu'elle propage la suppression, avec la clause ON DELETE CASCADE, soit d'annuler l'opération. Chacune de ces réponses est une décision métier, pas un détail technique : supprimer en cascade un lecteur, c'est effacer aussi son historique de prêts, ce que l'équipe peut considérer comme inacceptable.
+
+Notez que la suppression n'efface pas forcément la mémoire. Une clé étrangère peut être déclarée avec ON DELETE SET NULL, ce qui conserve la ligne mère mais vide la référence, ou avec ON DELETE RESTRICT, ce qui interdit la suppression tant que des enfants existent. Ces politiques se choisissent lors de la conception, dans la foulée de la discussion sur les cardinalités du premier chapitre. Elles transforment une règle écrite en français dans un cahier des charges en une garantie que le moteur fait respecter à chaque écriture.
+
+Une alternative à DELETE existe : TRUNCATE. Cette commande vide la table en une opération rapide, parce qu'elle alloue à nouveau des pages plutôt que de marquer chaque ligne comme supprimée. Elle est idéale pour recharger un jeu de données de test, mais elle comporte trois différences majeures. Elle ne prend pas de condition WHERE, donc on ne peut pas supprimer partiellement. Elle réinitialise souvent les séquences d'identité. Et dans de nombreux moteurs, elle est transactionnelle, mais son effet visible diffère : testez toujours le comportement de votre moteur avant de l'utiliser sur des données réelles.
+
+Enfin, la suppression non committée mérite d'être comprise, parce qu'elle surprend. Tant que la transaction reste ouverte, les lignes supprimées le sont pour votre session et invisible pour les autres, mais elles ne sont pas définitivement perdues. Un ROLLBACK les ramène, y compris leurs anciens identifiants. En revanche, si la connexion se coupe sans COMMIT ni ROLLBACK, la majorité des moteurs annule automatiquement la transaction, et la suppression disparaît. C'est un comportement sûr, mais il peut donner l'impression qu'une opération a réussi alors qu'elle a été perdue : vérifiez toujours le retour d'état de votre bibliothèque de données avant de considérer une écriture comme terminée.
+
+Une écriture isolée suffit quand elle ne dépend d'aucune autre. Ajouter un lecteur, c'est une seule ligne, une seule décision, une seule chance d'échouer. Mais la plupart des opérations réelles sont composées. Enregistrer un emprunt, c'est créer la ligne d'emprunt, rattacher l'exemplaire, changer l'état de cet exemplaire, décrémenter le nombre de exemplaires disponibles, inscrire éventuellement une réservation honorée. Trois ou quatre écritures dans deux ou trois tables, qui n'ont de sens que si elles aboutissent ensemble. Si la troisième échoue et que les deux premières sont déjà enregistrées, votre base raconte un mensonge : un emprunt existe sans exemplaire concerné.
+
+C'est exactement le problème que résout la transaction. Une transaction délimite dans le temps un ensemble d'écritures que le moteur traite comme une seule unité indivisible. Tant que la frontière n'est pas posée, chaque commande s'applique immédiatement et séparément. Dès que vous ouvrez une transaction, le serveur regroupe tout ce qui suit jusqu'à votre décision finale. Cette décision en est une de deux : valider, ce qui rend l'ensemble définitivement visible pour tout le monde, ou annuler, ce qui efface l'ensemble comme s'il n'avait jamais eu lieu. Il n'y a pas de troisième issue, et surtout pas de demi-validation partielle.
+
+Les trois commandes qui portent ce mécanisme sont simples à retenir. BEGIN, parfois écrit START TRANSACTION, marque le début. COMMIT rend l'ensemble permanent. ROLLBACK annule. Elles se placent dans votre code exactement comme des accolades le feraient dans un langage de programmation : ce qui est entre BEGIN et COMMIT constitue une opération métier. La différence, c'est que la base de données elle-même comprend cette délimitation, peut suspendre les écritures, isoler les autres sessions, et rétablir l'état antérieur en cas de panne sans que votre application ait à gérer la moindre reconstruction manuelle.
+
+Notons enfin que la transaction n'est pas un luxe réservé aux opérations bancaires. Elle sert dès que plusieurs lignes se dépendent, dès qu'une lecture doit correspondre exactement à ce que l'écriture a produit, dès qu'une opération de maintenance touche des centaines de milliers de lignes dont la cohérence doit être totale. Dans la pratique professionnelle, on commence une transaction avant toute opération qui contient plus d'une commande d'écriture, on la termine par un COMMIT explicite, et on prévoit un ROLLBACK dans le chemin d'erreur. Ce réflexe est l'un des plus importants de ce cours.
+
+## BEGIN, COMMIT et ROLLBACK : poser les frontières
+
+Ouvrir une transaction, c'est donner au serveur une consigne : retiens tout, je vais décider plus tard. À partir du BEGIN, les lignes que vous insérez, modifiez ou supprimez sont visibles par votre session, mais les autres sessions continuent de voir l'ancien état. Vous travaillez donc dans un espèce de brouillon privé, que vous pouvez inspecter, corriger, recommencer, avant de le rendre public d'un seul coup. Cette visibilité partielle est la clé pour comprendre les comportements étranges que nous étudierons au chapitre suivant, alors gardez-la en tête : pendant la transaction, votre vue n'est pas celle des autres.
+
+```sql
+BEGIN;
+
+INSERT INTO emprunts (identifiant, lecteur_id, date_sortie)
+VALUES (9001, 12, '2026-03-02');
+
+UPDATE exemplaires
+SET etat = 'emprunté'
+WHERE identifiant = 101;
+
+UPDATE ouvrages
+SET nb_disponibles = nb_disponibles - 1
+WHERE identifiant = 7;
+
+COMMIT;
+```
+
+Le COMMIT est le point de non-retour. À cet instant, le serveur écrit dans ses journaux ce qu'il faut pour garantir que l'opération survit à une coupure électrique, puis rend les lignes visibles aux autres sessions. Avant ce moment, une défaillance entraîne une annulation automatique : les données ne sont jamais partiellement appliquées. Après ce moment, il n'y a plus de retour arrière par la base elle-même : la seule façon d'annuler une opération validée est d'exécuter une nouvelle opération inverse, ce qui suppose de savoir exactement ce que l'on a fait. C'est pourquoi on valide tard et seulement après vérification.
+
+Le ROLLBACK, lui, détruit tout ce qui s'est passé depuis le BEGIN. Il restaure l'état de la base tel qu'il était à l'ouverture de la transaction, y compris les identifiants consommés par les séquences si le moteur le prévoit. On l'utilise pour trois raisons : une condition métier qui s'avère fausse, une erreur technique détectée en cours de route, ou une vérification dont le résultat ne correspond pas aux attentes. Dans un code applicatif sain, chaque chemin d'erreur appelle ROLLBACK avant de remonter l'exception vers l'utilisateur. Ne laissez jamais une transaction ouverte par accident : une session qui oublie de terminer sa transaction peut bloquer des nettoyages, retenir des verrous, et faire dériver la mémoire du serveur.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM exemplaires WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+UPDATE exemplaires
+SET etat = 'bon'
+WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+SELECT COUNT(*) FROM exemplaires WHERE ouvrage_id = 7 AND etat = 'neuf';
+
+ROLLBACK;
+```
+
+Il existe une notion complémentaire, le point de sauvegarde, déclaré avec SAVEPOINT. Il marque à l'intérieur d'une transaction un jalon auquel on peut revenir sans annuler tout le reste. On l'utilise quand une opération comporte plusieurs phases indépendantes et que l'échec de la deuxième ne doit pas effacer la première. Dans la pratique, on préfère presque toujours découper le traitement en plusieurs transactions courtes, plus simples à raisonner et à tester. Le point de sauvegarde reste utile dans les scripts de migration et les imports longs, à condition de ne jamais s'en servir pour masquer un problème de cohérence : si une étape échoue, la bonne question est souvent de savoir pourquoi, pas seulement de rebondir au jalon précédent.
+
+Un mot sur les transactions implicites. Selon la configuration du moteur et les réglages de votre bibliothèque de données, une commande isolée peut être entourée automatiquement d'une transaction que le système valide lui-même. C'est pratique pour une lecture unique, mais cela prête à confusion quand on débute : on croit écrire sans transaction, alors que le moteur en crée une. La règle simple est de rendre l'explicite dès que vous avez plusieurs commandes, et de vérifier dans la documentation de votre moteur comment se comportent les commandes exécutées à l'extérieur de toute déclaration explicite.
+
+## ACID expliqué simplement
+
+Le sigle ACID résume quatre propriétés que tout système de gestion de base de données sérieux garantit pour vos transactions. Ce sont atomicité, cohérence, isolation et durabilité. Chacune répond à une question précise sur ce qui se passe quand tout se passe mal, ou quand tout se passe en même temps. Inutile d'en connaître les algorithmes internes pour les utiliser correctement, mais il est essentiel de savoir ce qu'elles vous promettent, car vos choix d'application en dépendent.
+
+L'atomicité est la propriété la plus intuitive : tout ou rien. Une transaction se termine soit par application complète, soit par annulation complète. Il n'existe pas d'état intermédiaire dans lequel la moitié des commandes serait appliquée. Si le troisième UPDATE d'un lot échoue, les deux premiers sont annulés comme s'ils n'avaient jamais été exécutés. C'est cette promesse qui vous dispense de coder un mécanisme de compensation manuelle, et qui fait de BEGIN, COMMIT et ROLLBACK une grammaire suffisante pour gérer l'échec.
+
+La cohérence, ou intégrité, signifie que la transaction amène la base d'un état valide à un autre état valide. Toutes les contraintes déclarées sur le schéma sont vérifiées : clés primaires uniques, clés étrangères référencées, colonnes obligatoires remplies, types respectés, règles métier encodées. Si la transaction viole l'une d'entre elles, elle est intégralement rejetée. La base ne se contente pas d'exécuter vos ordres, elle refuse ceux qui conduiraient à un état absurde, ce qui fait d'elle le dernier rempart de vos règles métier.
+
+L'isolation traite de la concurrence. Quand deux sessions écrivent en même temps, chacune doit avoir l'impression d'être seule. Les effets d'une transaction non validée ne doivent pas fuiter dans les lectures d'une autre, et deux transactions qui touchent les mêmes lignes doivent s'organiser sans se marcher dessus. L'isolation n'est pas un simple souhait : elle se décline en plusieurs niveaux, plus ou moins stricts, dont les compromis font l'objet d'une section entière du chapitre suivant. Retenez surtout que le niveau choisi détermine quelles anomalies sont tolérées.
+
+La durabilité dit que si le COMMIT a été renvoyé, la transaction est enregistrée définitivement, même si le serveur plante une seconde plus tard. Le moteur s'appuie pour cela sur un journal d'écriture : avant de rendre la main, il note l'opération sur un support persistent. Si la machine redémarre, il rejoue ce qui devait être appliqué et rejette ce qui ne l'était pas. Vous pouvez donc considérer qu'une validation réussie équivaut à une écriture physique sur disque, sans avoir à attendre vous-même le fsync du système de fichiers.
+
+```sql
+BEGIN;
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111';
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+COMMIT;
+```
+
+Ces quatre propriétés forment un tout : retenir l'une sans les autres ne suffit pas. Une base peut garantir l'atomicité de vos commandes sans qu'aucune contrainte n'assure la cohérence de vos données, et elle peut valider durablement une opération dont le niveau d'isolation laisse des fenêtres ouvertes à la concurrence. C'est pourquoi les fournisseurs de bases de données affichent le sigle ACID comme une promesse globale, et pourquoi vous devez vérifier, dans la documentation de votre moteur, quel comportement exact est couvert pour chaque niveau d'isolation déclaré.
+
+Ce petit exemple de virement illustre les quatre propriétés d'un coup. Atomicité : si le débit échoue, le crédit est annulé. Cohérence : un solde qui deviendrait négatif si une contrainte l'interdit fait échouer l'opération entière. Isolation : un autre client qui lit les comptes pendant l'opération ne verra jamais le débit sans le crédit. Durabilité : une fois le COMMIT renvoyé, le virement survit à tout incident matériel. Comprenez bien que vous n'écrivez aucune ligne de code pour obtenir ces garanties : elles sont le service rendu par le moteur, à condition que vous utilisiez correctement les transactions.
+
+## Exemples SQL : quatre opérations métier pas à pas
+
+Voyons maintenant comment une opération métier complète se traduit en transactions SQL réelles. Le premier exemple est la création d'un emprunt. On commence par vérifier que le lecteur existe et que l'exemplaire est disponible, puis on insère l'emprunt, on rattache l'exemplaire, on change son état. Chaque étape lit avant d'écrire, ce qui permet d'abandonner proprement si la prémisse est fausse.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM lecteurs WHERE identifiant = 12;
+
+SELECT COUNT(*) FROM exemplaires
+WHERE identifiant = 101 AND etat = 'neuf';
+
+INSERT INTO emprunts (identifiant, lecteur_id, date_sortie)
+VALUES (9002, 12, '2026-03-05');
+
+UPDATE exemplaires
+SET etat = 'emprunté', emprunt_id = 9002
+WHERE identifiant = 101;
+
+COMMIT;
+```
+
+Le deuxième exemple est la restitution d'un emprunt, qui inverse le précédent : on date le retour, on libère l'exemplaire, on recalcule la disponibilité. Notez la condition date_retour IS NULL dans la mise à jour : elle protège contre un double enregistrement de restitution, au cas où deux agents cliqueraient en même temps sur le même bouton. C'est une protection applicative simple, qui complète la protection offerte par les contraintes.
+
+```sql
+BEGIN;
+
+UPDATE emprunts
+SET date_retour = '2026-03-19'
+WHERE identifiant = 9002 AND date_retour IS NULL;
+
+UPDATE exemplaires
+SET etat = 'bon', emprunt_id = NULL
+WHERE identifiant = 101;
+
+COMMIT;
+```
+
+Le troisième exemple illustre la gestion d'erreur. On ouvre la transaction, on effectue une mise à jour conditionnée par un SELECT préalable, puis on décide. Si la condition n'est pas réunie, on annule ; sinon, on valide. Cette structure se retrouve dans toutes les applications bien écrites : la décision de valider est prise après lecture, jamais avant.
+
+```sql
+BEGIN;
+
+SELECT COUNT(*) FROM emprunts WHERE lecteur_id = 12 AND date_retour IS NULL;
+
+UPDATE lecteurs
+SET statut = 'suspendu'
+WHERE identifiant = 12
+  AND 3 <= (SELECT COUNT(*) FROM retards WHERE lecteur_id = 12);
+
+ROLLBACK;
+```
+
+Le quatrième exemple montre une opération de maintenance à grande échelle. Recalculer une colonne dérivée sur cent mille lignes n'est pas une opération anodine : pendant son exécution, les lecteurs voient des valeurs incohérentes si la transaction n'est pas utilisée. En enfermant le lot dans une transaction, vous assurez que les autres sessions verront soit l'ancien calcul, soit le nouveau, jamais un mélange des deux. La durée de la transaction augmente, ce qui oblige à réfléchir au niveau d'isolation et aux verrous, mais la cohérence est préservée.
+
+```sql
+BEGIN;
+
+UPDATE ouvrages
+SET nb_disponibles = (
+  SELECT COUNT(*)
+  FROM exemplaires e
+  WHERE e.ouvrage_id = ouvrages.identifiant
+    AND e.etat <> 'emprunté'
+);
+
+COMMIT;
+```
+
+Un dernier conseil sur la longueur des transactions. Une transaction maintenue ouverte trop longtemps retient des verrous, empêche certains nettoyages et peut ralentir les autres sessions. Il faut donc les garder courtes dès que possible : lire d'abord hors transaction, préparer les valeurs, puis ouvrir, écrire et valider. À l'inverse, une transaction qui contiendrait des appels réseaux, des appels à un service externe ou des calculs longs est une transaction mal conçue. Le périmètre idéal est une suite courte de commandes SQL qui se terminent par un COMMIT ou un ROLLBACK explicite et déterministe.
+
+## Ce que la transaction ne fait pas
+
+Il est utile de délimiter ce qui relève de la transaction et ce qui en sort, pour éviter deux illusions fréquentes. Première illusion : la transaction protège contre toutes les erreurs. Elle protège contre l'échec partiel, pas contre l'erreur de logique. Si vous validez une mise à jour dont la condition était fausse mais syntaxiquement correcte, la base appliquera fidèlement votre erreur et la rendra définitive. Seule la lecture préalable du périmètre vous protège de ce cas.
+
+Deuxième illusion : la transaction rend les opérations atomiques pour l'utilisateur final. Si votre application appelle deux services distants, un pour le paiement et un pour l'expédition, la transaction de base de données ne couvre pas le service externe. Elle ne coordonne que ce qui se passe à l'intérieur du moteur. Au-delà, il faut un protocole de compensation ou une architecture adaptée. Savoir exactement où s'arrête la garantie est une compétence professionnelle essentielle, et elle commence par la compréhension de ce que BEGIN et COMMIT délimitent réellement.
+
+Troisième point, plus pratique : toutes les commandes ne sont pas transactionnelles. Certaines opérations de structure, comme créer une table ou ajouter une colonne, sont automatiquement validées dans certains moteurs, indépendamment de la transaction en cours. D'autres, comme TRUNCATE dans certaines configurations, se comportent différemment. Consultez la documentation de votre moteur avant d'enfermer une opération DDL dans une transaction que vous comptez annuler, et testez systématiquement dans un environnement de préproduction le comportement exact que vous attendez.
+
+Enfin, la transaction ne remplace pas la sauvegarde. Elle garantit la cohérence en temps réel, pas la récupération après une suppression volontaire ou accidentelle mal validée. Un COMMIT effectué sur la mauvaise condition est parfaitement durable, ce qui signifie que la base appliquera votre erreur avec la même fiabilité qu'une opération correcte. Combinez les deux disciplines : transactions pour la cohérence, sauvegardes et journaux pour le temps long, lectures préalables pour la justesse de l'intention. Ensemble, ces trois réflexes couvrent la grande majorité des incidents de données rencontrés en production.
+
+Le chapitre précédent vous a montré comment encadrer plusieurs écritures pour qu'elles aboutissent ensemble. La question qui suit est naturelle : que se passe-t-il quand deux personnes font cela en même temps ? Dans une bibliothèque, deux agents peuvent rendre le même exemplaire pendant que le responsable met à jour les tarifs, et un import de nuit peut tourner pendant que les usagers consultent le catalogue. Si chaque transaction travaille comme si elle était seule, leurs écritures peuvent se croiser, se perdre ou produire un résultat que personne n'avait prévu.
+
+Le mécanisme qui règle ce problème s'appelle l'isolation. Son principe est simple à énoncer : chaque transaction doit avoir l'impression d'être la seule à agir, et les autres sessions ne doivent jamais observer un état intermédiaire, c'est-à-dire une situation qui n'a jamais existé dans la réalité métier. Le problème est que respecter ce principe à la lettre coûte cher en performance, car il faut alors sérialiser les opérations les unes après les autres. Les ingénieurs ont donc conçu plusieurs niveaux, du plus strict au plus souple, qui acceptent chacun des anomalies particulières en échange d'un débit plus élevé.
+
+Ces niveaux sont décrits dans les normes relationnelles et repris par les grands moteurs, avec des noms qui varient un peu selon les systèmes. Vous rencontrerez READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ et SERIALIZABLE, auxquels s'ajoute souvent le niveau par défaut de PostgreSQL, appelé READ COMMITTED avec des règles de détection des conflits. Comprendre ces quatre échelons, c'est comprendre quelles illusions votre application peut observer, et donc quelles vérifications elle doit ajouter pour rester correcte.
+
+Une distinction préalable aide à lire tout ce qui suit. Le verrouillage pessimiste considère qu'un conflit est probable et empêche d'accéder aux données en conflit : celui qui écrit pose un verrou, les lecteurs attendent. L'optimiste considère qu'un conflit est rare et laisse tout le monde travailler, puis détecte à la validation si quelqu'un a modifié les mêmes lignes, auquel cas il rejette et recommence. Les moteurs combinent les deux approches selon le contexte. Pour vous, l'essentiel est moins le mécanisme que le résultat observable : à chaque niveau d'isolation correspond un catalogue précis d'anomalies autorisées.
+
+Enfin, un rappel de vocabulaire. Une lecture sale, ou dirty read, est la lecture d'une donnée modifiée par une transaction non validée. Une lecture non répétable, ou non-repeatable read, c'est la même lecture qui donne un résultat différent parce qu'une autre transaction a modifié entre-temps les lignes lues. Un fantôme, ou phantom read, c'est le même phénomène sur l'ensemble des lignes correspondant à une condition : une ligne apparaît ou disparaît entre deux exécutions. Ces trois anomalies sont les repères centraux du chapitre, et chacune est neutralisée par un niveau d'isolation supérieur.
+
+## Les niveaux d'isolation
+
+Le niveau READ UNCOMMITTED est le plus permissif, au point d'être parfois implémenté comme un alias de READ COMMITTED par des moteurs qui refusent les lectures sales. Lorsqu'il est réellement disponible, il autorise une transaction à lire les modifications d'une autre transaction avant que celle-ci ne valide. On comprend l'intérêt théorique : aucune attente, débit maximal. En pratique, il est si dangereux qu'aucune application de gestion sérieuse ne l'utilise, car il revient à travailler sur des données qui peuvent disparaître à tout instant.
+
+Le niveau READ COMMITTED est le plus répandu. Une transaction ne voit que les données validées par les autres, et plus précisément celles qui étaient validées au moment où chaque lecture a eu lieu. L'anomalie résiduelle est la lecture non répétable : deux lectures identiques, séparées par une validation concurrente, renvoient deux réponses différentes. C'est acceptable dans la plupart des applications, à condition de ne pas raisonner en plusieurs lectures indépendantes pour prendre une décision unique.
+
+```sql
+-- Session A                          -- Session B
+BEGIN;                                BEGIN;
+SET TRANSACTION ISOLATION LEVEL      SET TRANSACTION ISOLATION LEVEL
+  READ COMMITTED;                       READ COMMITTED;
+SELECT solde FROM comptes             UPDATE comptes
+WHERE numero = 'FR111';               SET solde = solde + 100
+SELECT solde FROM comptes             WHERE numero = 'FR111';
+WHERE numero = 'FR111';               COMMIT;
+-- les deux lectures peuvent différer
+```
+
+Le niveau REPEATABLE READ ajoute l'image stable : dès qu'une transaction a lu une ligne, les lectures ultérieures de cette même ligne renvoient la même valeur. On élimine donc les lectures non répétables sur les lignes déjà vues. En revanche, les nouveaux éléments qui arrivent dans le périmètre d'une condition peuvent rester invisibles ou apparaître selon les implémentations, ce qui laisse la place aux fantômes. PostgreSQL va plus loin à ce niveau et rejette les transactions qui tenteraient de modifier une ligne déjà lue, transformant ainsi le problème en erreur plutôt qu'en résultat faux.
+
+Le niveau SERIALIZABLE est le plus strict. Il garantit que l'exécution concurrente de plusieurs transactions équivaut à une exécution séquentielle, l'une après l'autre, dans un ordre quelconque mais cohérent. Aucune anomalie n'est permise : ni lecture sale, ni lecture non répétable, ni fantôme. Le prix se paie en conflits. Quand deux transactions raisonnent sur les mêmes données, l'une d'elles est souvent rejetée avec une erreur de sérialisation, et l'application doit recommencer. On réserve ce niveau aux opérations financières, aux calculs d'inventaire et aux contraintes qui doivent être absolues.
+
+Comment choisir ? La règle courante est de partir du niveau par défaut du moteur, généralement READ COMMITTED, puis de l'élever uniquement là où une anomalie réelle a été identifiée. Monter systématiquement à SERIALIZABLE par sécurité revient à rendre toutes les transactions lentes et conflictuelles sans bénéfice mesurable. À l'inverse, descendre en dessous du défaut pour gagner quelques millisecondes revient à accepter des données fausses en production. La bonne pratique consiste à documenter le choix par opération, à le justifier par un scénario de concurrence précis, et à le tester avec deux sessions réelles plutôt que de raisonner dans l'abstrait.
+
+## Dirty read : lire des données non confirmées
+
+La lecture sale se produit quand une session lit une valeur qui appartient à une transaction ouverte, c'est-à-dire qui n'a pas encore été validée et qui peut donc être annulée à tout moment. Le cas classique est le suivant. Une transaction porte un solde de 1000 à 1500, une seconde lit 1500, puis la première annule l'opération. La deuxième session a travaillé sur un chiffre qui n'a jamais existé de manière durable. Si elle déclenche une décision, cette décision repose sur une fiction.
+
+Le danger va au-delà de la simple valeur erronée. Imaginez un rapport d'inventaire qui lit, pendant une mise à jour massive, les valeurs intermédiaires d'une colonne recalculée ligne à ligne. Chaque ligne est cohérente prise isolément, mais l'ensemble ne correspond à aucun état réel de la base. L'application produit alors un total qui n'a jamais été juste, et personne ne s'en aperçoit puisque les nombres sont plausibles. Les lectures sales sont d'autant plus redoutables qu'elles ne provoquent aucune erreur : elles renvoient simplement du faux.
+
+```sql
+-- Transaction 1 : mise à jour non validée
+BEGIN;
+UPDATE comptes SET solde = 5000 WHERE numero = 'FR111';
+-- à ce stade, la valeur n'existe que pour la session 1
+
+-- Transaction 2 avec READ UNCOMMITTED
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT solde FROM comptes WHERE numero = 'FR111';  -- lit 5000
+ROLLBACK;
+
+-- Transaction 1 annule à son tour
+ROLLBACK;
+-- La session 2 a traité un solde qui n'a jamais été validé.
+```
+
+Les niveaux READ COMMITTED, REPEATABLE READ et SERIALIZABLE interdisent tous cette anomalie, puisqu'ils n'exposent que des données validées. C'est la raison pour laquelle READ UNCOMMITTED est pratiquement abandonné, et pourquoi la plupart des références modernes le décrivent comme équivalent au niveau par défaut. Dans votre code, cela signifie qu'il n'y a presque rien à faire : le défaut vous protège déjà. Il faut en revanche comprendre ce qui se passe lorsqu'une transaction est annulée après avoir été lue par un autre processus, pour ne pas confondre disponibilité et exactitude.
+
+Le cas concret le plus fréquent dans une application est le scénario de lecture puis écriture, souvent appelé problème du lost update. Deux agents lisent le même stock, voient 10 exemplaires, en retirent chacun un et écrivent 9. La base enregistre 9 alors que deux exemplaires ont été retirés : il en reste 8. Le niveau READ COMMITTED n'a rien fait de mal, car chaque lecture était valide au moment où elle a eu lieu. C'est l'écart entre la lecture et l'écriture qui crée l'incohérence. Deux parades existent : ajouter une condition atomique dans l'UPDATE, par exemple soustraire directement la quantité plutôt qu'affecter une valeur calculée, ou monter le niveau d'isolation à SERIALIZABLE et gérer la reprise.
+
+```sql
+-- Écriture sûre : on exprime une différence, pas une valeur lue
+UPDATE stocks
+SET quantite = quantite - 1
+WHERE ouvrage_id = 7 AND quantite > 0;
+```
+
+Retenez que la lecture sale est un problème de visibilité, et que les moteurs modernes la suppriment presque toujours. Le problème du lost update, lui, est un problème de raisononnement à distance entre deux requêtes. Vous ne pouvez pas compter sur le niveau d'isolation par défaut pour le résoudre toujours : c'est à vous d'écrire des mises à jour qui portent leur propre logique, comme l'exemple ci-dessus, ou à vous fier à une transaction strictement sérialisable quand la décision est critique.
+
+## Phantom read : quand les lignes apparaissent et disparaissent
+
+Le fantôme désigne une anomalie particulière : entre deux lectures d'une même condition, une ligne entre ou sort du résultat parce qu'une autre transaction a inséré ou supprimé des lignes. Il diffère de la lecture non répétable, qui porte sur des lignes déjà présentes. Le fantôme concerne l'ensemble, le périmètre, la réponse à une question posée deux fois. Prenons l'exemple d'une requête qui compte les emprunts en cours pour un lecteur : si un autre agent enregistre un nouvel emprunt entre les deux comptes, la seconde interrogation retourne une valeur différente.
+
+```sql
+-- Session A                                -- Session B
+BEGIN;                                      BEGIN;
+SET TRANSACTION ISOLATION LEVEL             SET TRANSACTION ISOLATION LEVEL
+  REPEATABLE READ;                            READ COMMITTED;
+SELECT COUNT(*) FROM emprunts               INSERT INTO emprunts (identifiant,
+WHERE date_retour IS NULL;                   lecteur_id, date_sortie)
+SELECT COUNT(*) FROM emprunts               VALUES (9100, 12, '2026-04-01');
+WHERE date_retour IS NULL;                  COMMIT;
+-- avec READ COMMITTED : deux comptes différents, c'est un fantôme
+```
+
+À READ COMMITTED, ce phénomène est autorisé et courant. C'est d'ailleurs ce niveau qui produit le plus de surprises dans les applications : une boucle qui traite un résultat en plusieurs passages peut voir ce résultat changer sous ses yeux, un filtre appliqué avant une action peut ne plus correspondre après. REPEATABLE READ réduit le problème en figeant l'image des données déjà consultées, mais il ne couvre pas toujours les insertions concurrentes. Seul SERIALIZABLE garantit l'absence totale de fantômes, au prix de rejections à reprendre.
+
+Le remède applicatif le plus simple consiste à ne pas découper une décision en plusieurs lectures indépendantes. Récupérez le jeu complet dont vous avez besoin en une seule requête, ou enfermez l'ensemble dans une transaction au niveau suffisant, et décidez sur cette image unique. Si vous devez agir ligne à ligne sur un résultat volumineux, traitez-le en une seule opération SQL plutôt qu'en une boucle applicative : une mise à jour conditionnée par une jointure ou un IN porté par une sous-requête reste atomique, alors qu'une boucle de mille appels ne l'est pas.
+
+Une variante utile est la lecture de contrôle, aussi appelée phantom de comptage. Avant d'insérer un enregistrement supposé unique, vous vérifiez son absence, puis vous l'insérez. Entre les deux, une autre session peut faire de même : les deux vérifications passent, les deux insertions sont refusées par la contrainte d'unicité, et l'une des deux obtient une erreur. C'est précisément pour cela que l'on préfère toujours déclarer une contrainte plutôt que de faire une vérification manuelle. La contrainte agit au moment exact de l'écriture, sans fenêtre de temps exploitable, alors que la vérification ne couvre jamais l'intervalle qui la sépare de l'insertion.
+
+Le quatrième type d'anomalie, souvent oublié, est l'écriture perdue : deux transactions mettent à jour la même ligne, la dernière validation écrase la première sans avertissement. Les moteurs à verrous empêchent ce cas en bloquant la seconde écriture jusqu'à validation ou expiration de la première. Si votre application travaille avec un connecteur en mode optimiste, elle peut recevoir une erreur de concurrence qu'il faudra traduire en nouveau calcul. Dans tous les cas, la bonne pratique reste de garder les transactions courtes, de ne jamais effectuer d'appel réseau à l'intérieur d'une transaction, et de rejouer proprement une opération rejetée plutôt que de la forcer.
+
+## Cas bancaire : débit et crédit en toute sécurité
+
+Le virement bancaire est le cas d'école des transactions, et il mérite d'être traité avec soin parce qu'il concentre toutes les difficultés. L'opération doit débiter un compte, créditer un autre, et éventuellement enregistrer une ligne d'écriture dans un journal. Les deux mouvements de solde sont indissociables : ni débit seul, ni crédit seul n'a de sens métier. La somme totale des soldes doit rester constante, ce qui est une contrainte de cohérence au sens ACID du terme.
+
+La première étape consiste à lire les soldes hors transaction afin de vérifier les prérequis, notamment que le compte débiteur dispose de la somme. Cette lecture préalable n'a qu'une valeur indicative : entre votre lecture et votre écriture, un autre virement peut intervenir. D'où l'importance de rejouer le contrôle au moment de l'écriture, avec une condition portée directement dans l'UPDATE. On ne vérifie pas un solde, on écrit une condition sur le solde. La base évalue cette condition au moment exact de la modification, sous verrou, et refuse l'opération si elle n'est plus vraie.
+
+```sql
+BEGIN;
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111'
+  AND solde >= 150;
+
+-- si aucune ligne n'a été mise à jour, le solde était insuffisant
+-- ou le compte n'existe pas : on annule
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+INSERT INTO ecritures (compte_debit, compte_credit, montant, date_operation)
+VALUES ('FR111', 'FR222', 150, '2026-05-12');
+
+COMMIT;
+```
+
+La structure ci-dessus illustre le bon réflexe : la condition de disponibilité est portée par le premier UPDATE, et la vérification du nombre de lignes modifiées détermine la suite. Si le débit n'a touché aucune ligne, vous appelez ROLLBACK et remontez une erreur métier, par exemple solde insuffisant. Si le débit a porté, vous poursuivez et validez. Aucune lecture intermédiaire n'est nécessaire, et aucune autre session ne peut modifier le solde entre la condition et l'application, grâce aux verrous posés par le moteur.
+
+Le niveau d'isolation approprié dépend des règles exactes. Pour un simple transfert de fonds entre deux comptes, READ COMMITTED suffit souvent, car la contrainte de solde non négatif est portée par la condition de l'UPDATE et, idéalement, par une contrainte sur la colonne. Pour un calcul de total qui doit correspondre exactement à la somme des opérations enregistrées, ou pour une clôture comptable qui examine toutes les lignes d'une période, SERIALIZABLE est préférable, car il interdit qu'une écriture concurrente modifie le périmètre entre deux lectures. On accepte alors des reprises automatiques, car l'opération est rare et critique.
+
+Voici comment on refuse proprement un débit impossible, avec une procédure stockée simplifiée. Elle montre la séquence complète : ouverture, contrôle, décision, validation ou annulation.
+
+```sql
+BEGIN;
+
+SELECT solde FROM comptes WHERE numero = 'FR111';
+
+UPDATE comptes
+SET solde = solde - 150
+WHERE numero = 'FR111' AND solde >= 150;
+
+UPDATE comptes
+SET solde = solde + 150
+WHERE numero = 'FR222';
+
+-- contrôle du débit effectif avant validation
+SELECT solde FROM comptes WHERE numero = 'FR111';
+
+COMMIT;
+```
+
+Trois pièges restent à connaître dans ce cas. Le premier est l'oubli du COMMIT : la transaction reste ouverte, les autres sessions ne voient rien, le virement disparaît quand la connexion se ferme. Le deuxième est le contrôle hors transaction, qui donne un faux sentiment de sécurité et introduit une fenêtre de concurrence. Le troisième est l'ordre des opérations : toujours débiter avant de créditer, afin que le compte le plus contraint soit traité en premier, ce qui limite les verrous retenus et rend l'abandon immédiat si la condition échoue.
+
+Un mot sur le journal d'écritures. Conserver une ligne d'historique à chaque mouvement, en plus de la mise à jour des soldes, double le volume d'écritures mais apporte une traçabilité indispensable : on peut reconstruire un solde, détecter une anomalie et expliquer un différent. Cette table d'historique s'insère dans la même transaction que les deux mises à jour, car un solde modifié sans écriture est un mouvement illégitime. La règle professionnelle est donc toujours la même : regroupez dans une unique transaction tout ce qui doit être vrai en même temps, et rien de plus.
+
+Enfin, la transaction ne dispense pas de la contrainte. Déclarez sur la colonne solde une règle interdisant les valeurs négatives si le métier l'exige, et laissez le moteur refuser l'opération même si votre condition a été contournée par erreur ailleurs dans le code. Contrainte et transaction jouent à deux niveaux différents : la contrainte garantit l'état admissible, la transaction garantit le passage d'un état admissible à un autre. Ensemble, elles constituent la réponse complète à la question de savoir ce qui se passe quand deux utilisateurs transfèrent de l'argent en même temps.
+
+Vous voici au terme d'un chapitre qui a transformé votre rapport à la base de données. Jusqu'ici, elle répondait à des questions ; désormais, elle reçoit des décisions. Nous avons vu les trois verbes d'écriture, INSERT pour faire entrer, UPDATE pour transformer, DELETE pour retirer, et nous les avons toujours abordés avec la même exigence : savoir quelles lignes seront touchées avant de les toucher. Nous avons ensuite posé la frontière qui donne à ces verbes leur sens collectif, la transaction, avec sa grammaire minimale BEGIN, COMMIT et ROLLBACK et les quatre garanties regroupées sous le sigle ACID. Enfin, nous avons exploré ce qui se passe quand plusieurs de ces opérations se chevauchent, avec les niveaux d'isolation et le catalogue des anomalies qu'ils autorisent ou interdisent.
+
+Le fil rouge de la bibliothèque illustre à chaque étape la même logique. Un emprunt n'est pas une ligne, c'est un ensemble de lignes qui doit apparaître ensemble. Une restitution n'est pas une date, c'est une date, un état d'exemplaire et une disponibilité recalculée. Un virement n'est pas un chiffre, c'est un débit et un crédit dont la somme doit rester nulle. Dans chaque cas, la question n'est pas de savoir si la commande est correctement écrite, mais si l'ensemble tient debout face à une panne, à une erreur de saisie et à une seconde session qui travaille en même temps.
+
+Trois réflexes suffisent à couvrir l'essentiel des risques que ce chapitre a décrits. Le premier est la lecture préalable : reformulez le périmètre de votre écriture dans un SELECT, comptez les lignes, comparez au nombre attendu. Le second est la transaction courte : ouvrez, écrivez, vérifiez, validez ou annulez, sans jamais laisser une transaction ouverte par distraction. Le troisième est la contrainte plutôt que la vérification : dès qu'une règle peut être exprimée dans le schéma, déclarez-la, et laissez le moteur la faire respecter au moment exact de l'écriture, là où aucune fenêtre de concurrence ne subsiste.
+
+Ces réflexes ne demandent aucune architecture particulière ni aucune bibliothèque externe. Ils tiennent en quelques lignes de code SQL et en une discipline de lecture. C'est précisément ce qui les rend accessibles dès maintenant, y compris dans un petit projet personnel. Le reste du parcours construira dessus : la performance viendra ajouter les index, les plans d'exécution et les stratégies de requête, mais elle supposera que vos écritures sont justes. Un index accélère une opération ; il ne décide jamais de l'endroit exact où elle doit s'appliquer.
+
+## À retenir
+
+- INSERT ajoute des lignes : listez explicitement les colonnes, respectez les types, et laissez le moteur attribuer les identifiants techniques.
+- INSERT ... SELECT copie en une opération un jeu de lignes lu dans une autre table, sans passer par l'application.
+- Les formes ON CONFLICT et INSERT IGNORE gèrent les doublons à l'import, mais elles remplacent une décision métier explicite.
+- UPDATE transforme des lignes avec SET, et son périmètre est défini par WHERE : les deux parties sont indissociables.
+- Une UPDATE sans WHERE modifie toute la table ; c'est l'un des gestes les plus dangereux du langage.
+- Anticipez chaque écriture par un SELECT identique qui compte le périmètre, et ne validez que si le compte correspond.
+- DELETE retire des lignes, et son piège est identique à celui de UPDATE : sans condition, tout disparaît.
+- TRUNCATE vide une table entièrement, ne prend pas de condition, réinitialise souvent les séquences et se comporte différemment selon les moteurs.
+- BEGIN ouvre une transaction, COMMIT la rend définitive pour tous, ROLLBACK l'annule intégralement.
+- Une transaction non validée reste invisible pour les autres et disparaît à la fermeture de la connexion : le COMMIT manqué est un incident fréquent.
+- ACID garantit l'atomicité, la cohérence, l'isolation et la durabilité ; ces promesses s'appliquent à condition d'utiliser correctement les transactions.
+- Les niveaux d'isolation vont de READ UNCOMMITTED, inutilisable en pratique, à SERIALIZABLE, strict et conflictuel.
+- READ COMMITTED autorise les lectures non répétables, REPEATABLE READ fige les lignes lues, seul SERIALIZABLE interdit aussi les fantômes.
+- La dirty read consiste à lire une donnée non confirmée, donc susceptible d'être annulée ; les niveaux modernes l'interdisent presque tous.
+- Le phantom read apparaît quand une ligne entre ou sort du périmètre d'une condition entre deux lectures.
+- Le problème du lost update n'est pas supprimé par le niveau par défaut : préférez une écriture qui porte sa propre logique, comme soustraire une quantité au lieu d'affecter une valeur lue.
+- Dans un virement, débitez avant de créditez, portez la condition de solde dans le UPDATE lui-même, et insérez l'écriture de journal dans la même transaction.
+- Contrainte et transaction agissent à deux niveaux : la contrainte garantit l'état admissible, la transaction garantit le passage d'un état admissible à un autre.
+
+## Erreurs fréquentes
+
+L'erreur la plus répandue, et la plus coûteuse, reste la mise à jour exécutée sans clause WHERE. Elle arrive toujours dans les mêmes conditions : une correction urgente, une condition qu'on croit évidente, un oubli au moment de finaliser la requête. Le moteur n'objecte rien, la commande réussit, et toute la table est modifiée. Le réflexe à installer est mécanique : ne tapez jamais un UPDATE ni un DELETE dans une console sans avoir préalablement exécuté le SELECT équivalent avec la même condition. Si le SELECT retourne un nombre de lignes surprenant, c'est qu'il faut corriger la condition avant d'écrire quoi que ce soit.
+
+La seconde erreur est l'écriture effectuée dans une transaction qu'on oublie de valider. Le développement se passe bien, les tests semblent concluants, mais rien n'apparaît côté client, ou les données disparaissent au redémarrage du service. Le symptôme est trompeur, car il ressemble à un problème d'affichage ou de cache. Vérifiez systématiquement que votre chemin de code se termine par un COMMIT explicite, que le chemin d'erreur appelle ROLLBACK, et que votre bibliothèque de données n'est pas configurée pour valider automatiquement avant que votre logique métier ne soit complète. Une transaction ouverte prolongément retient aussi des verrous et ralentit les autres utilisateurs, si bien que l'oubli se paie d'abord en latence, ensuite en confusion.
+
+La troisième erreur consiste à séparer la lecture et l'écriture dans deux requêtes indépendantes, en pensant que la base garantira la cohérence entre elles. Elle ne le fait pas : entre votre SELECT et votre UPDATE, une autre session peut intervenir. Cette fenêtre est la source du problème du lost update et de la plupart des incohérences de compteur. La parade est d'écrire la logique dans l'UPDATE lui-même, avec une condition évaluée au moment de l'écriture, ou de monter le niveau d'isolation et de gérer la reprise. En pratique, préférez toujours la première solution : elle est plus rapide, plus lisible et indépendante du réglage global de la base.
+
+La quatrième erreur est de croire qu'une transaction protège contre l'erreur de logique. Elle ne protège que contre l'échec partiel. Une condition fausse mais valide syntaxiquement, un montant inversé entre débit et crédit, une mauvaise ligne identifiée : tout cela sera validé avec la même fiabilité qu'une opération correcte, puis rendu définitif par le COMMIT. Seules la lecture préalable, le contrôle du nombre de lignes modifiées et, idéalement, une contre-vérification avant validation permettent de détecter ce type d'incident. La transaction rend vos opérations fiables ; elle ne les rend pas justes.
+
+La cinquième erreur concerne les clés étrangères lors des suppressions. Devant l'erreur d'intégrité référentielle, beaucoup de débutants cherchent à contourner le contrôle plutôt que à comprendre ce qu'il signifie. Le message vous dit qu'un enfant existe encore, c'est-à-dire qu'une donnée métier reste rattachée à celle que vous voulez effacer. Décidez alors explicitement : traiter les lignes filles, appliquer une politique de cascade adaptée, ou annuler. Ajouter une cascade uniquement pour faire taire l'erreur revient à accepter la disparition d'un historique sans l'avoir décidée, et cette décision, prise par commodité, se regrette longtemps après.
+
+La sixième erreur est de négliger les verrous et la durée des transactions. Une transaction qui contient un appel réseau, une lecture de fichier distant ou une boucle applicative maintient des verrous pendant des secondes, parfois des minutes. Les autres sessions attendent, les files d'attente gonflent, et l'utilisateur perçoit une base lente alors que le problème vient de la structure du code. Sortez les opérations longues de la transaction, ne gardez à l'intérieur que des commandes SQL courtes, et validez dès que possible. Ce n'est pas une optimisation avancée, c'est une exigence de base dès que plusieurs personnes utilisent la même base.
+
+Enfin, la septième erreur est de confondre isolation et sauvegarde. Une transaction parfaitement sérialisable n'empêche pas une suppression validée par erreur d'être durable, et une sauvegarde ne garantit pas la cohérence pendant l'exécution. Les deux dispositifs répondent à des questions différentes : l'un traite le temps court et la concurrence, l'autre le temps long et la récupération. Complétez ces réflexes par une huitième discipline, souvent négligée : nommez vos transactions et vos vérifications dans le code, écrivez dans un commentaire ce que chaque condition protège. Un code auto-explicite se relit en revue, se teste plus facilement et transmet les intentions à la personne qui l'héritera dans deux ans.
+
+Une erreur plus discrète mérite d'être signalée : écrire une transaction correcte mais ne jamais vérifier son résultat. Le COMMIT renvoie un succès, l'application affiche un message, et personne ne regarde si les lignes attendues sont réellement présentes. Prévoyez systématiquement une contre-vérification, même simple : un SELECT qui compte les lignes modifiées, un contrôle du solde après virement, une comparaison d'avant et d'après. Cette étape ne ralentit presque rien et transforme un silence suspect en confirmation tangible, ce qui change radicalement la qualité du diagnostic le jour où un incident survient.
+
+## Pour aller plus loin
+
+Rien ne remplace la manipulation pour ancrer ces notions. Ouvrez une base locale, recréez le schéma de la bibliothèque, insérez quelques dizaines de lecteurs, d'exemplaires et d'emprunts, puis ouvrez deux sessions côte à côte dans deux fenêtres de terminal distinctes. Exécutez dans la première une transaction que vous ne validez pas, et observez dans la seconde ce que les autres sessions voient réellement. Cette expérience, menée une seule fois, vaut plus qu'une page de description : elle rend concret le sens du mot isolation et la différence entre données modifiées et données validées.
+
+Reproduisez ensuite chaque anomalie décrite dans ce chapitre. Avec READ UNCOMMITTED, si votre moteur le permet, provoquez une lecture sale, puis annulez la transaction source et constatez la valeur fantôme. À READ COMMITTED, réalisez deux lectures séparées par une validation concurrente et mesurez l'écart. En REPEATABLE READ, insérez une ligne entre deux lectures d'une même condition et cherchez si elle apparaît. Ces mini-expériences se préparent en dix minutes, et elles vous donnent une intuition durable des niveaux d'isolation, bien plus solide que la mémorisation d'un tableau.
+
+Pour les écritures, entraînez-vous à écrire systématiquement le SELECT de contrôle avant chaque UPDATE et chaque DELETE. Puis, volontairement, retirez la condition WHERE dans un environnement de test et observez le nombre de lignes concernées. Vous verrez de vos yeux l'ampleur du périmètre que la commande touche, et ce souvenir visuel vous retiendra à vie d'exécuter la vérification en production. Ajoutez à cela des exercices de reprise d'erreur : simulez un échec au milieu d'une transaction, vérifiez que ROLLBACK restaure bien l'état initial, y compris les identifiants.
+
+Les documentations officielles des moteurs comportent des chapitres précis sur les transactions, les verrous et les niveaux d'isolation, avec pour chacun des exemples exécutables. Lisez d'abord celui du moteur que vous utilisez réellement, car les détails de comportement diffèrent : le traitement des fantômes, la détection des conflits et les commandes de structure ne sont pas identiques partout. Complétez par quelques articles consacrés aux transactions distribuées, non abordés ici mais qui reprennent exactement les mêmes principes à plus grande échelle, avec en supplément la difficulté de valider sur plusieurs serveurs.
+
+Des environnements interactifs vous permettent d'écrire du SQL dans le navigateur sans rien installer, ce qui convient parfaitement pour tester des transactions : ouvrez plusieurs onglets, c'est votre concurrence simulée. Préférez les exercices qui vous demandent d'expliquer un scénario plutôt que de produire une requête unique, car la vraie compétence dans ce chapitre est de raisonner sur ce qui se passe quand deux actions se croisent. Enfin, quand vous serez à l'aise, abordez les sujets voisins : la sélection d'un index pour accélérer les mises à jour, les politiques de réplication, et les stratégies de migration qui permettent de modifier un schéma en production sans interrompre le service.
+
+Une bonne façon de structurer ces apprentissages consiste à tenir un carnet d'incidents fictifs : décrivez chaque scénario d'échec que vous avez provoqué, la commande exacte qui a produit le problème, le message obtenu et la correction appliquée. Ce carnet devient rapidement la meilleure des références, car il parle votre langue et il correspond à des situations que vous avez réellement observées. Au bout d'une dizaine d'entrées, vous constaterez que les mêmes motifs reviennent, et vous reconnaîtrez un danger avant même d'avoir exécuté la commande fautive.
+
+## Et maintenant : passez à l'exercice
+
+L'exercice de fin de chapitre vous demande de mettre en place le circuit d'écritures complet de la bibliothèque. Vous y créerez des lecteurs et des ouvrages avec des INSERT multiples, vous enregistrerez des emprunts dans une transaction qui combine insertion et mise à jour, vous traiterez les restitutions, vous appliquerez une politique de réservation périmée avec un DELETE conditionné, et vous écrirez enfin un virement de fonds de garantie entre deux comptes, avec débit, crédit et ligne de journal dans une même transaction. Chaque étape doit comporter sa lecture de contrôle et sa décision explicite de validation.
+
+Traitez ce travail comme une mise en production miniature. Avant chaque écriture, écrivez le SELECT de comptage et notez le nombre attendu. Enfermez les opérations en plusieurs commandes dans BEGIN et terminez-les par COMMIT ou ROLLBACK, jamais par la fermeture de la fenêtre. Vérifiez ensuite, dans une seconde session, que les modifications sont bien visibles après validation et invisibles avant. Si vous avez oublié un COMMIT, vous le verrez immédiatement : c'est exactement l'incident que ce chapitre cherchait à vous faire éprouver une fois, à froid, plutôt qu'une fois en production.
+
+Si vous bloquez, revenez aux sections de synthèse, puis reprenez l'exemple du virement bancaire qui déroule la séquence complète. L'important n'est pas de produire le script le plus concis, mais de sentir la logique : périmètre vérifié avant écriture, frontière de transaction posée, décision prise après contrôle, contrainte déclarée quand la règle est structurelle. Une fois votre script exécuté et vos deux sessions de vérification passées, poursuivez avec le chapitre suivant, qui approfondira précisément les niveaux d'isolation, les verrous et la concurrence. Vous arriverez alors avec du code éprouvé et des situations déjà vues de vos propres yeux, ce qui change tout pour comprendre la théorie qui vient se poser dessus.

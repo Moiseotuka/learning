@@ -1,0 +1,189 @@
+## Du déploiement manuel au déploiement continu
+
+Le déploiement que vous avez pratiqué au chapitre 8 repose sur une séquence exécutée par une personne : valider localement, construire le dossier de publication, le transférer, vérifier depuis l'adresse publique. Elle fonctionne, votre checklist la décrit, mais elle présente trois défauts structurels. Elle dépend de la mémoire de celui qui l'exécute. Elle n'est jamais exécutée deux fois dans des conditions identiques. Et elle ne se déclenche qu'au moment où quelqu'un y pense, si bien qu'une correction urgente attend la fin d'une journée et qu'une mise en ligne reste un événement. L'intégration continue confie cette séquence à une machine déclenchée par le dépôt.
+
+Les termes se précisent vite, et il vaut mieux les distinguer une fois pour toutes. L'intégration continue fusionne fréquemment le travail de chacun dans la branche principale, chaque fusion déclenchant une construction et des vérifications. La livraison continue désigne l'état où le logiciel est prêt à être publié, la dernière fusion ayant passé ces vérifications. Le déploiement continu va plus loin : la publication se fait elle-même, sans intervention, dès que la chaîne est verte. Le sigle courant désigne l'ensemble : la difficulté est organisationnelle, pas technique.
+
+Trois prérequis conditionnent tout le reste, et aucun n'est optionnel. Le premier est que le dépôt contienne tout ce qui sert à la reconstruction : sources, styles, scripts, dépendances avec leur arbre verrouillé, script de construction. Le deuxième est que la construction soit reproductible depuis un état vierge, sans fichier oublié sur votre machine. Le troisième est que la configuration se fasse par variables d'environnement, pour que le même code fonctionne partout. Manque l'une d'elles, la chaîne échoue et vous la réparerez plus que vous ne publierez.
+
+Le modèle de branches qui accompagne cette méthode reste volontairement simple, et le schéma suivant en montre le cycle : une branche de travail naît de la branche principale, y retourne après vérification, et l'étape de fusion reçoit une étiquette pour marquer l'état publié.
+
+```image
+git-branch
+| Un schéma de branches Git : une branche de travail fusionnée dans la branche principale, puis une étiquette posée sur la fusion pour marquer la version publiée.
+```
+
+La branche principale reste toujours publiable. Chaque correction ou fonctionnalité vit sur une branche courte et rejoint la principale par une demande de fusion. La demande déclenche les vérifications, reçoit au moins une relecture humaine, puis fusionne. Les étiquettes ne servent pas à décorer : elles marquent les états réellement en production, ce qui permet de revenir à un état connu en une commande. Une seule règle tient tout cela : aucune modification directe sur la branche principale, jamais, y compris pour une coquille.
+
+| Critère | Déploiement manuel | Déploiement continu |
+|---|---|---|
+| Déclencheur | Une personne, au moment où elle y pense | La fusion dans la branche principale |
+| Conditions vérifiées | Celles dont on se souvient | La même liste, à chaque fois, sans exception |
+| Reproductibilité | Dépend de l'état de la machine | Construction depuis un état vierge |
+| Historique | Une note dans un tableau de bord | Une entrée datée, reliée à une révision |
+| Retour arrière | Reconstruire à la main | Republier la révision précédente |
+
+Les bénéfices sont réels, mais les risques doivent être nommés avant d'être subis. Le premier est la chaîne ignorée : si les vérifications échouent souvent pour des raisons secondaires, l'équipe finit par fusionner quand même, et l'ensemble perd toute valeur. Le second est la construction lente : passé quelques minutes, personne ne vérifie plus son travail avant de fusionner. Le troisième est la fuite de secrets, un jeton placé dans le fichier de travail restant visible dans l'historique du dépôt. Le quatrième est la publication malgré un échec, quand la condition de publication oublie d'exiger l'état vert.
+
+## Anatomie d'un workflow d'intégration continue
+
+Un workflow est un fichier de configuration placé dans un dossier réservé du dépôt, un par chaîne d'automatisation, écrit en format structuré lisible par l'humain. Il décrit quatre choses : quand il se déclenche, ce qu'il exécute, dans quel environnement, et ce qu'il publie. Le format impose peu de règles, mais deux sans négociation : l'indentation structure le document, une faute d'alignement casse la chaîne ; et chaque expression dynamique est évaluée à l'exécution, jamais à l'écriture.
+
+Les déclencheurs décident de la fréquence et du contexte. La demande de fusion ouvre la vérification : c'est là qu'on veut savoir, avant de fusionner, si le travail est sain. La fusion dans la branche principale déclenche la vérification puis la publication. Le déclencheur manuel sert aux interventions d'urgence et aux rejeux. Enfin, un déclencheur planifié exécute périodiquement un audit complet, la nuit par exemple, certaines vérifications variant selon l'heure et la charge.
+
+Chaque travail s'exécute sur une machine jetable préparée à la demande, et il est composé d'étapes exécutées dans l'ordre. Une étape invoque une action préexistante, comme la récupération des sources ou l'installation d'un environnement, ou bien elle exécute une commande. Les travaux indépendants partent en parallèle ; dès qu'un travail en dépend d'un autre, on l'indique explicitement. Cette distinction compte pour le temps total : une chaîne où tout se suit sans nécessité devient lente, et une chaîne lente n'est plus consultée.
+
+L'installation des dépendances mérite attention : elle est la source la plus fréquente de décalage entre votre machine et la machine éphémère. On installe à partir de l'arbre verrouillé, et non d'une résolution libre : c'est la seule façon d'obtenir exactement les mêmes versions. On fige la version de l'environnement d'exécution au patch près. On active enfin le cache du dossier de dépendances, ce qui réduit la préparation à quelques secondes sans toucher à la verrouillation.
+
+```yaml
+name: Livraison du site de l'atelier
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: livraison-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11
+          cache: npm
+      - name: Installer les dépendances
+        run: npm ci
+      - name: Vérifier le code
+        run: npm run lint
+      - name: Lancer les tests
+        run: npm test
+      - name: Construire le dossier de publication
+        run: npm run build
+      - name: Audit de performance
+        run: npx @lhci/cli autorun
+      - name: Conserver le rapport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-audit
+          path: .lighthouseci
+
+  publier:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: verifier
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://mediatheque-des-lilas.example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.11
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - uses: actions/deploy-pages@v4
+```
+
+Trois détails de ce fichier méritent une lecture attentive. Le groupe de concurrence n'autorise qu'une exécution vivante par branche : trois poussées de suite, deux exécutions annulées. La restriction de permissions limite le travail aux droits strictement nécessaires, au lieu d'un jeton large par défaut. Enfin, le travail de publication porte deux conditions cumulatives : l'exécution doit provenir de la branche principale, et elle doit avoir attendu la réussite du travail de vérification. Oubliez la seconde et vous obtenez le défaut le plus dangereux du déploiement continu, une mise en ligne malgré un échec. Conservez le rapport d'audit comme artefact : dans un mois, vous le rouvrirez et le comparerez sans rien recalculer.
+
+## Qualité bloquante : rendre la livraison dégradée impossible
+
+Une vérification n'a de valeur que si elle peut empêcher une fusion. Un rapport produit à côté du dépôt, consulté par personne, n'est pas un contrôle : c'est une dépense. Le principe de la qualité bloquante tient en une phrase : toute dégradation mesurable du projet doit se traduire par un échec de la chaîne, donc par une fusion impossible tant qu'elle n'est pas réparée. Cela suppose de hiérarchiser les contrôles en deux catégories, celles qui bloquent et celles qui informent, et de ranger dans la première exactement ce que le projet ne tolère pas.
+
+La chaîne se construit par couches, chacune répondant à une question différente. Le filtre de style répond : les conventions sont-elles respectées. Les tests répondent : les comportements attendus fonctionnent-ils encore. La construction répond : le projet s'assemble-t-il en l'état. La vérification des liens et du balisage répond : aucune adresse morte n'est partie en production. Le contrôle d'accessibilité répond : le clavier et le lecteur d'écran passent-ils encore. Le budget de performance répond : la page a-t-elle pris du poids ou perdu de vitesse.
+
+Cette dernière couche est la plus facile à négliger, parce que sa dégradation est progressive et silencieuse. Un outil dédié la rend objective : il exécute l'audit de laboratoire sur les pages que vous désignez, le répète plusieurs fois pour retenir une valeur médiane, puis applique des seuils que vous fixez. Si l'un d'eux est dépassé, le travail échoue, donc la fusion est bloquée. Placez ces seuils à la limite du seuil correct : vous ne voulez pas être prévenu quand la page devient mauvaise, mais quand elle cesse d'être excellente.
+
+```yaml
+ci:
+  collect:
+    numberOfRuns: 3
+    url:
+      - https://mediatheque-des-lilas.example/
+      - https://mediatheque-des-lilas.example/ateliers/
+      - https://mediatheque-des-lilas.example/ateliers/inscription/
+    settings:
+      preset: desktop
+  assert:
+    assertions:
+      categories:performance:
+        assertMedianScore: 0.9
+      largest-contentful-paint:
+        assertNumericValue: 2500
+      cumulative-layout-shift:
+        assertNumericValue: 0.1
+      total-blocking-time:
+        assertNumericValue: 200
+  upload:
+    target: temporary-public-storage
+```
+
+À côté des contrôles automatiques, la protection de la branche constitue le second verrou, et il est humain. On exige au moins une relecture, on impose les contrôles obligatoires avant fusion, on interdit toute écriture directe sur la branche principale, et on impose une histoire linéaire pour que chaque révision corresponde à un état publié. Ces réglages se font en quelques clics et transforment la discipline collective en règle de la plateforme : plus de discussion pour savoir si l'on peut fusionner quand la chaîne est rouge.
+
+La gestion des échecs demande elle aussi une règle écrite. Un échec réel bloque, sans exception ni dérogation. Un test à échec intermittent est isolé dans une file de réparation, avec une date et un responsable, jamais supprimé : un contrôle qu'on ignore ne vaut pas mieux que pas de contrôle. Un contrôle d'accessibilité ou de performance qui échoue ne se discute pas en revue : il se corrige, ou la fonctionnalité reste hors ligne.
+
+Le retour arrière ferme la boucle. Conservez les dossiers de publication par révision : publier l'état précédent revient alors à en désigner un autre, sans reconstruction. Videz le cache de diffusion à chaque publication, faute de quoi certains visiteurs verront encore l'ancienne version pendant des minutes. Terminez par la vérification depuis le domaine public, celle que la checklist du chapitre 8 vous a appris à mener : en-têtes, titre d'onglet, images, formulaire, canonique, plan du site. Automatiser la chaîne ne dispense pas de constater le résultat là où le visiteur se trouve.
+
+## À retenir
+
+- Les indicateurs vitaux sont trois et ne se combinent pas en une note : affichage, réactivité, stabilité visuelle.
+- Seuils à retenir : moins de 2,5 secondes, moins de 200 millisecondes, moins de 0,1.
+- Le verdict repose sur la soixante-quinzième valeur de vingt-huit jours de visites.
+- Le laboratoire sert à décider d'une correction ; le terrain sert à en confirmer l'effet.
+- L'élément principal se diagnostique phase par phase : réponse, chargement, transfert, rendu.
+- Préchargez l'image de tête, sans chargement différé, avec ses dimensions déclarées.
+- Répartissez les traitements longs, déportez le travail lourd, réduisez le script exécuté au chargement.
+- Réservez l'espace de tout média avant son arrivée.
+- Un budget de performance transforme l'optimisation en décision : dépassement, correction obligatoire.
+- Titre unique et court, description rédigée à la main, directive d'indexation choisie, partage illustré.
+- Le balisage structuré décrit ce qui est visible ; il se génère depuis la même donnée que la page.
+- Une seule adresse canonique par page, identique dans le plan du site et dans le lien partagé.
+- Toute la construction vit dans le dépôt, se reconstruit depuis un état vierge et se configure par variables.
+- Une fusion ne devient publique qu'après vérification verte, relecture humaine et déploiement automatique.
+
+## Erreurs fréquentes
+
+- Piège : conclure d'un score de laboratoire sur l'expérience réelle → Correction : tranchez sur les données de terrain, déboguez en laboratoire.
+- Piège : changer trois paramètres après un relevé médiocre → Correction : une seule modification, puis nouveau relevé dans des conditions identiques.
+- Piège : appliquer le chargement différé à l'image qui porte l'indicateur d'affichage → Correction : réservez-lui son espace, déclarez sa priorité, chargez-la sans différé.
+- Piège : ne mesurer qu'au moment de la mise en ligne → Correction : instaurez un audit périodique et conservez la courbe, pas le score isolé.
+- Piège : laisser un script tiers croître sans le compter dans le budget → Correction : tenez un inventaire daté et mesurez son temps de blocage.
+- Piège : poser une canonique et une directive d'interdiction sur la même page → Correction : choisissez un seul signal d'exclusion.
+- Piège : publier le workflow avec un jeton écrit dans le fichier → Correction : les secrets vivent dans les variables de l'environnement d'exécution.
+- Piège : conditionner la publication à l'événement seul, sans exiger la réussite des vérifications → Correction : cumulez la branche et l'état vert.
+- Piège : tolérer la chaîne rouge pour gagner une heure → Correction : un contrôle que l'on ignore ne vaut pas mieux que pas de contrôle.
+
+## Pour aller plus loin
+
+La référence de premier choix pour tout ce qui touche aux indicateurs reste https://web.dev, qui publie les définitions officielles, les seuils, les guides d'optimisation pour chacun des trois indicateurs et les méthodes de mesure sur le terrain. Revenez à ces pages plutôt qu'à des articles de deuxième main : les seuils y sont datés et justifiés, et l'historique vous évitera de travailler avec des valeurs périmées, comme celles de l'ancien indicateur de première interaction retiré en 2024.
+
+Côté référencement, la documentation du moteur de recherche rassemblée sur https://developers.google.com/search explique comment les pages sont explorées, ce qu'est une adresse canonique, comment lire les rapports de couverture et à quoi servent les balisages retenus pour les présentations enrichies. Pour la chaîne d'automatisation, https://docs.github.com/en/actions contient la référence complète des déclencheurs, des expressions, des environnements et des actions officielles, avec des exemples par cas d'usage.
+
+Enfin, deux lectures valent le détour au-delà du cadre technique. Celle sur la définition et la mesure des indicateurs vous aidera à argumenter devant un responsable de projet, car elle relie une valeur à une conséquence mesurable pour l'utilisateur. Celle sur les pratiques de fusion et de relecture vous aidera à convaincre une équipe, car elle montre qu'un déploiement continu est une affaire de fréquence et de confiance, pas d'outils.
+
+## Et maintenant : la dernière ligne de la checklist
+
+Vous tenez l'ensemble du dispositif. Vous savez mesurer ce que vivent vos visiteurs, distinguer une mesure de laboratoire d'une mesure de terrain et traiter chaque indicateur par ses causes plutôt que par des recettes. Vous savez donner à chaque page un en-tête qui la désigne, la décrit et la distingue, un balisage qui rend sa donnée lisible par les machines et une adresse unique vers laquelle tout converge. Vous savez enfin décrire une chaîne qui vérifie et publie à chaque fusion, et la rendre impossible à contourner.
+
+Le travail qui vous reste est le même que celui de tous les chapitres précédents : l'exercice pratique. Prenez le dépôt du site de l'atelier, écrivez le fichier de workflow, faites échouer volontairement une vérification pour constater que la fusion est bien bloquée, puis réparez-la. Faites publier une modification triviale, une date corrigée, et vérifiez depuis l'adresse publique que la modification est visible, que le rapport d'audit est conservé et que l'étiquette de version a été posée. Ce point est souvent oublié, et pourtant il vous dira, dans six mois, ce qui était en ligne tel jour.
+
+Le quiz qui accompagne ce chapitre vérifie que les seuils, le rôle de la canonique et le fonctionnement d'une chaîne de vérification sont bien fixés, pièges classiques compris. Prenez-le sans revenir à la leçon : il vous dira honnêtement ce qui reste fragile. S'il est rouge, relisez la section correspondante, plutôt que la leçon en entier.
+
+Une remarque pour finir. Ce parcours ne s'arrête pas à la mise en ligne, mais à la capacité de maintenir en ligne quelque chose de sain. Un site n'est pas un objet livré, c'est un service entretenu. Les mesures que vous avez apprises, les en-têtes que vous rédigez et les chaînes que vous configurez sont les trois gestes de cet entretien. Répétez-les, consignez-les dans votre checklist, et vous n'aurez plus jamais à improviser une mise en production.

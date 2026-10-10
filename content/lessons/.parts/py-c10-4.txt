@@ -1,0 +1,136 @@
+## Pré-commit et intégration continue : verrouiller la qualité
+
+La règle qui commande tout le reste de ce chapitre tient en une phrase : ce qui n'est pas vérifié automatiquement ne sera pas vérifié. Vous pouvez écrire les conventions les plus belles du monde dans le README, tant que leur respect dépend de votre vigilance d'un vendredi soir, elles seront bafouées à la première semaine chargée. La réponse professionnelle consiste à déplacer la vérification du domaine de l'humain vers celui de la machine, à deux niveaux complémentaires : le niveau local, où le contrôle se déclenche au moment du commit, et le niveau distant, où le contrôle se rejoue sur une machine neuve à chaque demande de fusion. Les deux sont nécessaires, ils ne se remplacent pas.
+
+Le premier niveau utilise l'outil pre-commit, qui s'installe dans votre environnement de développement et y ajoute un hook, c'est-à-dire un script exécuté avant chaque commit. La configuration vit dans un fichier unique, .pre-commit-config.yaml, où l'on déclare les contrôles à exécuter : ruff pour l'analyse, ruff-format pour la réécriture du style. L'installation se fait par `pre-commit install`, une seule fois par clone. Ensuite, chaque tentative de commit déclenche les hooks ; s'ils signalent un défaut, le commit est refusé et rien n'est écrit dans l'historique : la contrainte s'interpose entre le développeur pressé et la sauvegarde de son travail.
+
+```yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+```
+
+Deux détails de cette configuration méritent votre attention. L'argument --fix confie à ruff la correction automatique des défauts qu'il sait réparer sans risque, comme un import inutilisé ; les défauts qui exigent une décision restent bloquants. Le hook local exécute les tests au moment du push plutôt qu'à chaque commit, parce qu'une suite de vingt secondes rendrait chaque enregistrement pénible, tandis qu'un push est un geste volontaire qui justifie une vérification complète. La seule règle intangible est que le contrôle ne doit jamais être assez lent pour être désactivé.
+
+Le niveau distant porte un autre nom : intégration continue. Le principe est de rejouer, sur une machine vierge et à chaque branche poussée, exactement les mêmes commandes que sur votre machine, puis de n'autoriser la fusion que si toutes réussissent. Le workflow se décrit dans un fichier YAML placé dans le dépôt : récupérer le code, installer une version précise de Python, installer le paquet avec ses dépendances de développement, contrôler le style, exécuter les tests avec la couverture. Chaque étape s'arrête à la première défaillance, et le code de retour décide de tout.
+
+```yaml
+name: qualité
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest --cov=analyse_notes --cov-report=term-missing
+```
+
+L'intérêt de rejouer sur une machine neuve dépasse la simple redondance. C'est là que se révèlent les dépendances que vous avez installées à la main sans les déclarer dans pyproject.toml, les imports qui ne fonctionnent que parce que votre éditeur ajoute un chemin, les tests qui supposent un fichier présent dans votre dossier. La machine de l'intégration continue ne possède rien de tout cela : elle n'a que ce que le pyproject déclare, ce qui en fait le juge le plus honnête de l'installation que vous avez décrite. Ajoutez-y la publication du rapport de couverture et vous disposez d'une information objective, discutable sur des faits plutôt que sur des impressions.
+
+```image
+git-branch
+| Le schéma des branches Git : chaque branche de fonctionnalité est fusionnée après vérification, et un tag marque la version livrée.
+```
+
+Ces deux niveaux se placent dans un ordre précis de rapidité, et cet ordre constitue à lui seul une méthode de travail. Le formateur tourne à chaque enregistrement, en moins d'une seconde. Le linter tourne à chaque commit. Les tests locaux tournent à chaque push. L'intégration continue rejoue le tout sur une machine fraîche et exige le vert absolu avant fusion. Plus on descend dans cette cascade, moins le contrôle est fréquent et plus il est exhaustif. Une équipe qui fait confiance au contrôle distant pour rattraper les négligences locales perd dix minutes par jour en allers-retours évitables.
+
+## La revue de code : lire, commenter, décider
+
+L'automatisation traite du style et des défauts mécaniques, elle ne dit rien de la qualité d'une idée. C'est le rôle de la revue de code, et son économie est redoutable : on écrit du code beaucoup moins souvent qu'on ne le lit, et une erreur repérée avant la fusion coûte quelques minutes, tandis qu'une erreur découverte en production se chiffre en jours de diagnostic. La revue n'est pas un contrôle hiérarchique : c'est la transmission du projet entre personnes qui en sont responsables, le moment où le savoir-faire d'un développeur expérimenté se dépose sur le code de quelqu'un d'autre, sans jamais y déposer son ego.
+
+Le format détermine l'issue. Une demande de fusion doit être petite, autour de quelques centaines de lignes modifiées au maximum, avec une description qui dit trois choses : ce qui change pour l'utilisateur, comment le vérifier, et ce qui a été laissé de côté. Au-delà de cette taille, la relecture dégénère en survol : personne ne voit le détail, tout le monde approuve, et la revue devient une formalité qui rassure sans protéger. Découper volontairement un travail en demandes successives demande un effort au départ, mais c'est le seul moyen d'obtenir des relectures attentives. Une demande qui mélange un refactoring, une correction de bug et une fonctionnalité nouvelle est la pire des combinaisons : aucun des trois sujets ne reçoit l'attention qu'il mérite.
+
+L'ordre dans lequel on lit compte autant que l'attention qu'on consacre. On commence par l'intention : que fait cette demande, et le code la sert-il ? On passe ensuite aux cas limites, en cherchant ce qui arrive quand l'entrée est vide, absente ou absurde. On examine les noms, parce qu'un nom imprécis annonce une responsabilité floue, puis la duplication éventuelle, puis la présence de tests qui échoueraient sans le changement. Le style, lui, ne fait pas partie de la grille : ruff l'a déjà tranché.
+
+```table
+Question de revue | Pourquoi elle vaut la peine | Signal d'alerte
+Le comportement demandé est-il obtenu ? | C'est la seule finalité de la demande | Le diff ne contient rien de vérifiable
+Les cas d'erreur sont-ils traités ? | C'est là que naissent les incidents | Un try sans traduction en message clair
+Les noms décrivent-ils la réalité ? | Un nom faux induit en erreur plus que le code | data2, truc, helper_final
+Y a-t-il duplication ? | Elle double le coût de chaque future modification | Deux blocs quasi identiques dans un même diff
+Les tests échoueraient-ils sans le correctif ? | Sinon ils ne prouvent rien | Un test ajouté qui passe déjà avant la correction
+```
+
+La manière de commenter conditionne la qualité des échanges. Préférez la question à l'affirmation : plutôt que « ceci est faux », écrivez « que se passe-t-il si le fichier est vide ici ? ». Formulez le pourquoi, car une exigence sans raison ressemble à un caprice et sera contournée à la première occasion. Distinguez explicitement le bloquant du souhait, un préfixe tel que bloquant ou mineur épargnant à votre collègue de deviner ce qui lui est réellement demandé. Gardez enfin la revue pour les sujets qui demandent un jugement, la découpe des responsabilités, la lisibilité des messages d'erreur, les hypothèses de robustesse : tout ce qui est mécanique appartient à l'outil, pas à la conversation.
+
+Côté auteur de la demande, trois réflexes font la différence. Relisez votre propre diff avant de le proposer, en jouant le rôle du lecteur : les commentaires que vous vous adressez à vous-même sont ceux que la revue vous évitera de recevoir. Répondez à chaque point soulevé, même par un accord, car un commentaire resté sans réponse impose au relecteur de relire tout le fil au moment de la fusion. Enfin, acceptez les désaccords de fond comme un signe que le sujet mérite d'être traité, et tranchez-les en deux minutes de discussion en direct plutôt qu'en quinze messages successifs. Les signes d'une revue malade sont faciles à repérer : des demandes de mille lignes, des threads qui s'éternisent sur l'indentation, des approbations données en moins d'une minute.
+
+## Dette technique et couches : domaine et infrastructure
+
+Le mot dette technique désigne un compromis conscient ou non : vous choisissez aujourd'hui la solution rapide, et vous empruntez du temps à votre futur, avec intérêts. Il n'y a rien d'immoral dans cette opération, à condition qu'elle soit une décision et non un accident. Résumer un traitement en une fonction qui lit, calcule et écrit, faute d'avoir le temps de bien découper, est une dette acceptable si vous l'écrivez dans le fichier des retards et si vous savez quand vous la rembourserez. Produire le même code par inadvertance, parce que personne n'a réfléchi à la structure, n'est pas une dette : c'est une dégradation, et elle ne portera pas d'échéance.
+
+Les symptômes de la dette se mesurent sans outil particulier. Le temps nécessaire pour ajouter une fonctionnalité simple augmente alors que le projet grossit à peine. Chaque modification déclenche une peur diffuse d'abîmer un ailleurs, et le même bug réapparaît après avoir été corrigé, parce que la correction n'a touché qu'un des deux endroits où la logique est dupliquée. À ces signes, la réponse n'est pas un grand soir de refactoring, mais un remboursement régulier : à chaque changement, vous améliorez la zone que vous touchez, vous supprimez la duplication que vous rencontrez, vous ajoutez le test qui manquait. Appliquée pendant des mois, cette politique fait plus pour la santé d'un projet qu'une réécriture totale que personne ne termine.
+
+Le découpage en couches est l'outil principal contre cette dette, et votre analyseur l'applique déjà sans le savoir. Le domaine regroupe les règles métier, pures et stables : la moyenne, la médiane, la règle des ex æquo, la grille des mentions. Elles ne dépendent d'aucun fichier ni d'aucun terminal et changeront rarement, parce que les règles d'un établissement évoluent lentement. L'infrastructure regroupe tout ce qui parle au monde extérieur : la lecture d'un CSV, l'écriture de rapport.txt, l'affichage terminal, les arguments de la ligne de commande. Ces éléments changent souvent, eux, parce que les formats et les habitudes évoluent vite.
+
+La règle de dépendance est simple à énoncer, difficile à violer une fois en place : l'infrastructure connaît le domaine, jamais l'inverse. Le module chargement importe les types du domaine pour construire des étudiants ; le module calcul n'a jamais à savoir d'où viennent les notes. Si un jour vous remplacez le CSV par une base de données, par une interface web ou par un appel réseau, vous écrivez un nouvel adaptateur d'entrée et vous ne modifiez pas une ligne du domaine. C'est la promesse de cette architecture, et elle se vérifie concrètement : le test du domaine ne crée aucun fichier, il fournit une liste de nombres, il s'exécute en millisecondes, et il reste identique quel que soit le format d'entrée retenu.
+
+```table
+Couche | Ce qu'elle contient dans l'analyseur | Ce qu'elle ne doit jamais contenir | Tests associés
+Domaine | moyenne, mediane, classement, mention, seuils | Lecture de fichier, impression, argparse, chemins | Tests unitaires très rapides
+Infrastructure | charger_notes, écriture du rapport, sortie terminal | Règle de calcul ou seuil de mention | Tests d'intégration avec fichiers temporaires
+Application | cli, séquence charger puis calculer puis rendre | Formule métier dupliquée | Tests de bout en bout sur la commande
+```
+
+Deux signes indiquent qu'une couche a fui dans une autre, et ils se détectent à la lecture d'un import. Si le dossier des fonctions de calcul importe csv ou ouvre un fichier, une règle métier s'est chargée d'infrastructure : les tests devront alors fabriquer un fichier pour vérifier une formule, ce qui est exactement ce que vous vouliez éviter. Si le module de chargement contient un seuil de mention, une décision de politique éducative vit dans un parseur de fichiers : la prochaine révision de la grille modifiera du code de lecture. Dans les deux cas, la correction consiste à déplacer la responsabilité vers sa couche, pas à commenter le symptôme. Un projet dont les couches sont nettes se teste vite et se transforme sans panique : c'est la séparation entre chargement, calcul et rendu du chapitre huit, élevée au rang de principe d'organisation.
+
+## À retenir
+
+- Un projet devient un paquet quand il possède une structure src, un pyproject.toml unique et une installation reproductible.
+- La structure src/ garantit que les tests vérifient le paquet installé, et non le dossier que le hasard place dans le chemin de recherche.
+- pyproject.toml concentre métadonnées, dépendances, points d'entrée et configuration des outils : chaque information n'existe qu'à un seul endroit.
+- Le lot dev sépare les dépendances de l'utilisateur de celles du contributeur, et s'installe avec `pip install -e ".[dev]"`.
+- Un test est une affirmation précise, exécutée automatiquement, qui doit être rapide, isolé et déterministe.
+- pytest découvre les tests par convention, réécrit les assertions et organise la préparation avec les fixtures.
+- Le paramétrage transforme une table de cas limites en spécification lisible et en identifiants filtrables.
+- On ne remplace que les frontières hors de votre contrôle : horloge, environnement, réseau, répertoire ; jamais la fonction que l'on teste.
+- La couverture signale les lignes jamais exécutées ; elle ne dit jamais si les comportements sont les bons.
+- ruff remplace linter et formateur : le style cesse d'être une décision, donc cesse d'être discuté.
+- pre-commit verrouille le contrôle au moment du commit, l'intégration continue le rejoue sur une machine neuve avant fusion.
+- Une revue de code porte sur l'intention, les cas limites et les tests, jamais sur la position d'une virgule.
+- L'infrastructure dépend du domaine, jamais l'inverse : c'est cette règle qui rend les règles métier testables sans fichier.
+
+## Erreurs fréquentes
+
+- Tester le dossier source au lieu du paquet installé → passez à la structure src/ et installez en éditable avant de lancer pytest.
+- Une configuration éclatée entre setup.py, requirements.txt et trois fichiers d'outils → migrez vers pyproject.toml et ne gardez qu'une source de vérité.
+- Copier la préparation d'un fichier dans chaque test → une fixture unique dans conftest.py, avec tmp_path pour un territoire propre à chaque test.
+- Écrire un test par donnée similaire → paramétrez : le corps se écrit une fois, les cas s'ajoutent en une ligne.
+- Mocker la fonction que l'on teste → le test ne vérifie plus rien ; remplacez seulement horloge, environnement, fichier ou réseau.
+- Poursuivre un pourcentage de couverture → lisez les lignes rouges comme des questions, et supprimez le code mort plutôt que de le couvrir à vide.
+- Corriger le style à la main ou en discuter en revue → lancez ruff format avant de commiter et laissez ruff check les défauts qui demandent un jugement.
+- Des demandes de fusion de mille lignes, relues en une minute → découpez, décrivez l'intention, les cas limites et les tests, dans cet ordre.
+- Une règle métier écrite dans le module de lecture de fichiers → déplacez-la vers le domaine : sinon sa prochaine modification casse le chargement.
+
+## Pour aller plus loin
+
+La documentation officielle de pytest est longue, mais deux pages seulement suffisent pour ancrer l'essentiel : le guide des fixtures, https://docs.pytest.org/en/stable/how-to/fixtures.html, détaille les portées, la composition et les fixtures intégrées comme tmp_path et monkeypatch ; le guide du paramétrage, https://docs.pytest.org/en/stable/how-to/parametrize.html, montre comment déclarer des cas, leur donner des identifiants lisibles et faire échouer un scénario précis. Lisez-les en gardant à côté de vous un test de votre analyseur que vous réécririez au fur et à mesure.
+
+La référence de ruff, https://docs.astral.sh/ruff/linter/, liste les familles de règles disponibles et les défauts concrets qu'elle attrape : une lecture efficace pour comprendre ce que votre configuration surveille et ce qu'elle ignore. Le guide du formateur, https://docs.astral.sh/ruff/formatter/, précise ce que l'outil réécrit et ce qu'il refuse de changer. Quant au packaging, le tutoriel officiel, https://packaging.python.org/en/latest/tutorials/packaging-projects/, décrit pas à pas la construction d'une distribution à partir d'un pyproject.toml, exactement la structure que vous venez d'installer.
+
+## Et maintenant : passez à l'exercice pratique
+
+La leçon est terminée, la transformation ne l'est pas : votre analyseur de notes vit encore à plat dans son dossier, sans tests automatisés ni contrôle de style. L'exercice de ce chapitre consiste justement à le faire passer de l'un à l'autre, en appliquant une par une les étapes que vous venez de lire, sans rien changer aux règles métier qui fonctionnent déjà. Vous livrerez une distribution installable, une suite pytest qui couvre les cas limites, un contrôle ruff exécuté en une commande, et un pré-commit qui empêche de valider un défaut connu.
+
+Travaillez dans l'ordre, en vérifiant à chaque étape : structurez le dossier src, écrivez le pyproject, installez en éditable, lancez la commande, puis seulement ensuite ajoutez les tests. Quand la suite est verte et que ruff ne signale plus rien, relisez votre travail avec la grille de revue : un autre développeur doit pouvoir cloner votre dépôt, taper trois commandes et obtenir le même résultat que vous. C'est le critère de réussite de ce dixième chapitre.

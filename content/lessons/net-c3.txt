@@ -1,0 +1,449 @@
+Bienvenue dans le troisième chapitre du parcours Réseaux et protocoles de routage. Les deux chapitres précédents vous ont appris à achemener des trames d'une machine à une autre sur un même réseau, à segmenter ce réseau en VLAN et à attribuer à chaque machine une adresse IP valide et bien calculée. Nous restons dans le même monde, mais nous changeons d'échelle : jusqu'ici, vous parliez de cartes réseau, de commutateurs, de trames Ethernet et de plages d'adresses ; désormais, vous allez parler de processus, de services et de conversations. Une adresse IP indique bien quelle machine doit recevoir un paquet, mais elle ne dit pas duquel de ses programmes il s'agit. C'est exactement le problème que résout la couche transport, et c'est le sujet de première moitié de ce chapitre avec ses deux grands protocoles, TCP et UDP. La seconde moitié est consacrée aux services applicatifs qui font tourner un réseau d'entreprise au quotidien : DNS qui traduit les noms, DHCP qui distribue les adresses, HTTP et TLS qui sécurisent le web.
+
+À la fin de cette leçon, vous saurez faire quatre choses très concrètes, et chacune d'elles vous sera déjà arrivée sous forme d'exercice ou d'analyse de capture. Premièrement, vous saurez comparer les mécanismes de TCP et de UDP, expliquer pourquoi la poignée de main en trois temps existe, décrire le rôle des numéros de séquence, de la fenêtre glissante et du contrôle de congestion, puis justifier le choix d'un protocole pour un service donné. Deuxièmement, vous saurez diagnostiquer une résolution DNS : isoler le client, le résolveur et la zone, interroger le bon serveur avec dig, distinguer une réponse NXDOMAIN d'un échec SERVFAIL ou d'un simple délai d'attente, et repérer les pièges des caches et des durées de vie. Troisièmement, vous saurez suivre un bail DHCP depuis le premier DISCOVER jusqu'au renouvellement de T1, lire les quatre messages du processus DORA dans une capture, identifier les options utiles et dépanner les pannes classiques comme une plage épuisée ou un serveur parasite. Quatrièmement, vous saurez suivre une session TLS de bout en bout : comprendre ce qui se passe entre le premier paquet TCP et le premier octet de données chiffrées, vérifier un certificat et sa chaîne de confiance, et distinguer les symptômes d'un certificat expiré de ceux d'une chaîne incomplète.
+
+Le fil rouge de tout le chapitre sera un exemple unique, repris d'un bout à l'autre, afin que vous ne perdiez jamais le lien entre les notions : le site web d'une médiathèque municipale, hébergé sur un serveur du VLAN des services, consulté depuis les postes publics du VLAN 10, le Wi-Fi des visiteurs du VLAN 20 et l'extérieur. Un usager tape un nom de domaine dans son navigateur, et en moins d'une seconde une dizaine d'étapes se déroulent invisibles : le poste demande son adresse au serveur DHCP s'il vient d'arriver, il interroge le résolveur DNS pour transformer le nom en adresse IP, il établit une connexion TCP sur le port 443 avec un serveur qui se trouve peut-être derrière plusieurs équipements, il négocie une session TLS, puis il envoie une requête HTTP et reçoit une réponse. Chaque étape peut échouer, et chacune échoue à sa manière, avec ses propres messages d'erreur et ses propres commandes de vérification. Apprendre le réseau, c'est apprendre à remonter cette chaîne dans le bon ordre.
+
+Un dernier conseil avant d'entrer dans le vif du sujet, sur la manière d'aborder ce cours. Comme pour la programmation, rien ne remplace l'observation du réel : les protocoles de ce chapitre sont parmi les plus faciles à observer, parce qu'ils transportent du texte et que leurs en-têtes sont courts. Installez Wireshark sur une machine de test ou ouvrez un terminal avec tcpdump, puis capturez une visite à un site que vous connaissez : vous verrez apparaître les segments SYN, SYN-ACK et ACK de la poignée de main, la requête DNS et sa réponse, l'échange ClientHello et ServerHello de TLS, la requête HTTP et la réponse. Chaque notion abstraitement expliquée dans les pages qui suivent correspondra alors à une ligne concrète dans votre capture. Les commandes de ce chapitre sont toutes du même type : dig, nslookup, ipconfig, dhclient, ss, netstat, curl, openssl, tcpdump. Elles sont courtes, disponibles sur tous les systèmes et se combinent en une méthode de diagnostic que vous réutiliserez toute votre carrière.
+
+## Comprendre : la couche transport, les ports et les conversations
+
+Pour mesurer l'utilité de la couche transport, repartons d'un problème précis. Votre machine reçoit un paquet IP dont l'adresse de destination est la sienne : c'est très bien, le paquet est arrivé au bon endroit. Mais sur une machine contemporaine, plusieurs programmes attendent simultanément des données : un navigateur, un client de messagerie, une horloge qui synchronise l'heure, un agent de supervision, peut-être un serveur de fichiers. Lequel de ces programmes doit recevoir le paquet ? Aucun des en-têtes IP ne contient cette information. La couche transport la fournit, en ajoutant à chaque segment deux nombres de 16 bits appelés port source et port destination. On compare volontairement ce mécanisme à celui d'un immeuble : l'adresse IP est le numéro de l'immeuble, le port est le numéro de l'appartement, et le facteur distribue le courrier en fonction des deux. Sans numéro d'appartement, la lettre arrive dans le hall et personne ne sait à qui elle revient.
+
+Les ports vont de 0 à 65535, ce qui donne 65536 valeurs possibles pour chaque sens de communication. Par convention, on en découpe trois plages. Les ports de 0 à 1023 sont dits bien connus : ce sont ceux que les systèmes ont réservés historiquement aux services standardisés, et il faut généralement les privilèges d'administrateur pour les écouter. Les ports de 1024 à 49151 sont enregistrés, attribués par l'autorité de gestion des numéros pour éviter les collisions entre logiciels. Les ports de 49152 à 65535 sont dits éphémères : votre navigateur, lorsqu'il se connecte à un site, se voit attribuer aléatoirement l'un de ces ports pour identifier sa propre extrémité de la conversation. Cette distinction a un usage direct en diagnostic : quand vous regardez une table de connexions, un port élevé en colonne source vous indique qu'il s'agit d'une connexion initiée par ce poste, tandis qu'un port bas en colonne destination vous indique le service contacté.
+
+La notion complète qui relie les deux mondes est celle de socket. Une socket n'est pas seulement un numéro de port : c'est la combinaison d'une adresse IP locale, d'un port local, d'une adresse IP distante et d'un port distant. Cette quadruple d'identifiants suffit à distinguer sans ambiguïté n'importe quelle conversation en cours sur la machine. Concrètement, un serveur web écoute sur le port 443, en attente ; il peut simultanément servir cinquante clients, et chacun de ces cinquante clients occupe une socket différente malgré le même port serveur, car l'adresse et le port du client varient. C'est la raison pour laquelle une seule machine peut héberger des centaines de connexions simultanées sur un seul port sans jamais confondre deux échanges. Retenez la formule : une connexion TCP est identifiée par un couple de sockets, c'est-à-dire par quatre valeurs.
+
+Avant que les segments ne circulent, il faut que la couche transport et la couche réseau s'entendent sur le protocole employé. Dans l'en-tête IP, un champ nommé protocol porte ce choix : la valeur 6 désigne TCP, la valeur 17 désigne UDP, la valeur 1 ICMP. À la réception, la machine lit ce champ et remet le contenu au bon gestionnaire. On dit que la couche transport réalise un multiplexage à l'émission, en ajoutant des identifiants, et un démultiplexage à la réception, en les lisant. Ce mécanisme explique aussi un phénomène que vous rencontrerez dans vos pare-feu : pour autoriser un service, il faut ouvrir à la fois le bon port et le bon protocole. Autoriser le TCP 443 ne laisse passer aucun paquet UDP, et l'inverse est vrai également.
+
+Un dernier point technique, souvent négligé et pourtant fondateur : la segmentation. Les réseaux Ethernet manipulent des trames limitées en taille, typiquement 1500 octets de charge utile, et l'adresseur IP ne fragmente volontiers plus les paquets sur le chemin. La couche transport découpe donc le flux d'octets de l'application en morceaux qui tiendront dans une trame, en prenant soin de ne pas couper au milieu d'un mot si le protocole le demande, et elle annonce la taille maximale de segment utile dans la poignée de main. Un segment trop grand fragmenté en route est une cause classique de dégradation : le paquet voyage avec le drapeau du fragment interdit, et si un équipement en chemin refuse de le fragmenter sans renvoyer le message d'erreur, la connexion se bloque silencieusement. Vous reverrez ce scénario dans le mini-projet, car il produit exactement le symptôme d'un site web qui refuse de charger sur certains liens.
+
+```table
+| Service | Port | Protocole | Rôle rappelé en une phrase |
+| --- | --- | --- | --- |
+| SSH | 22 | TCP | Terminal distant chiffré, administration des équipements |
+| DNS | 53 | UDP puis TCP | Résolution des noms, UDP pour les échanges courts, TCP pour les grandes zones et les transferts |
+| DHCP | 67 et 68 | UDP | Serveur sur 67, client sur 68, diffusion pour trouver un serveur |
+| HTTP | 80 | TCP | Site web en clair, redirigé vers HTTPS aujourd'hui |
+| HTTPS | 443 | TCP | Site web chiffré par TLS, le port des sessions sécurisées |
+| NTP | 123 | UDP | Synchronisation d'horloge, messages courts et périodiques |
+| SNMP | 161 | UDP | Supervision des équipements, interrogations et trap |
+| MySQL | 3306 | TCP | Base de données, connexion fiable avec ordre garanti |
+```
+
+
+Pour visualiser cette table sur votre propre machine, la commande ss du paquet iproute2 est la plus rapide sous Linux, et netstat reste disponible partout. L'option l affiche les services qui écoutent, l'option n évite la résolution inverse qui ralentirait l'affichage, et l'option p montre le programme propriétaire lorsque vous disposez des droits. Sous Windows, l'équivalent exact s'écrit netstat -ano et le résultat se lit de la même manière : colonnes état, adresse locale, adresse distante.
+
+```text
+$ ss -lntup
+Netid  State   Recv-Q  Send-Q  Local Address:Port   Peer Address:Port
+tcp    LISTEN  0       511     0.0.0.0:80           0.0.0.0:*      users:(("nginx",pid=612,fd=6))
+tcp    LISTEN  0       128     0.0.0.0:22           0.0.0.0:*      users:(("sshd",pid=701,fd=3))
+tcp    LISTEN  0       4096    10.10.0.53:53        0.0.0.0:*      users:(("named",pid=844,fd=5))
+udp    UNCONN  0       0       0.0.0.0:67           0.0.0.0:*      users:(("dhcpd",pid=910,fd=7))
+$ ss -tn state established
+State   Recv-Q  Send-Q  Local Address:Port        Peer Address:Port
+ESTAB   0       0       10.10.10.24:443           10.10.10.50:54321
+ESTAB   0       0       10.10.10.24:22            10.10.10.5:51204
+```
+
+## TCP : établir une connexion fiable, étape par étape
+
+TCP, l'acronyme de Transmission Control Protocol, est le protocole de couche transport que vous utiliserez la plupart du temps sans jamais le voir. Il fournit trois garanties que UDP ne donne pas : un service orienté connexion, une livraison sans perte ni duplication, et un ordre strict des octets. Sa définition formelle insiste sur un point capital : TCP ne livre pas des messages mais un flux d'octets. L'application n'a aucune raison de connaître la taille des segments qui ont servi à transporter ce flux : la couche transport a découpé, le récepteur a recomposé, et le programme reçoit exactement la suite d'octets qu'il a envoyée, dans le même ordre. Une comparaison familière aide à fixer l'idée : UDP expédie des cartes postales qui peuvent se perdre ou arriver dans le désordre, alors TCP organise un colis suivi, numéroté, dont chaque étape est confirmée par un reçu.
+
+La garantie commence par l'établissement de la connexion, réalisé par la célèbre poignée de main en trois temps, qu'on appelle aussi three-way handshake. L'idée sous-jacente est simple à énoncer mais essentielle à comprendre : les deux extrémités doivent se synchroniser sur un numéro de séquence initial, et aucune des deux ne peut deviner celui de l'autre. Le client envoie donc un premier segment portant le drapeau SYN et son numéro de séquence initial, souvent noté x. Le serveur répond par un segment portant à la fois SYN et ACK : il accepte la demande, donne son propre numéro de séquence initial y, et accuse réception du numéro x du client en annonçant qu'il attend x plus un. Le client accuse à son tour réception du numéro y du serveur. Trois segments ont circulé, deux numéros de séquence ont été échangés, et les deux paquets d'ouverture ont été confirmés : la connexion est en état établi. Un segment SYN perdu est simplement retransmis, un SYN-ACK perdu également ; le protocole ne suppose jamais qu'un message d'ouverture est arrivé.
+
+```text
+Capture Wireshark : poignée de main TCP vers le port 443
+No.   Time        Source          Destination     Protocol  Info
+1     0.000000    10.10.10.50     10.10.10.24     TCP       54321 → 443 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 SACK_PERM=1
+2     0.001234    10.10.10.24     10.10.10.50     TCP       443 → 54321 [SYN, ACK] Seq=0 Ack=1 Win=65160 Len=0 MSS=1460 SACK_PERM=1
+3     0.001456    10.10.10.50     10.10.10.24     TCP       443 [ACK] Seq=1 Ack=1 Win=64240 Len=0
+4     0.001500    10.10.10.50     10.10.10.24     TLSv1.3   Client Hello (SNI=lilas-biblio.fr)
+5     0.004210    10.10.10.24     10.10.10.50     TLSv1.3   Server Hello, Change Cipher Spec, Application Data
+```
+
+Ce que vous lisez dans cette capture mérite qu'on s'y attarde, car vous le relirez des dizaines de fois. La première ligne montre le client qui annonce son port source 54321 et le MSS, c'est-à-dire la taille maximale de segment utile qu'il accepte de recevoir, ici 1460 octets, le poids utile classique d'une trame Ethernet de 1500 octets. La seconde ligne montre le serveur qui répond avec ses propres paramètres et accuse déjà réception, puisque la colonne Ack vaut 1 alors que la colonne Seq du client valait 0 : l'accusé de réception désigne toujours le prochain numéro attendu, donc celui-ci pointe juste après le numéro 0. La troisième ligne referme la poignée de main. Dès la quatrième ligne, le contenu n'est plus du TCP mais du TLS : la couche transport a fait son travail et se contente désormais de transporter des octets qui lui sont indifférents.
+
+Les drapeaux que vous rencontrerez dans vos captures tiennent en un mot : SYN signale l'ouverture, ACK confirme, FIN demande la fermeture propre, RST interrompt brutalement, PSH demande à l'application de traiter sans attendre, et URG signale des données prioritaires. Un drapeau rare mais décisif est le drapeau ACK qui n'est jamais seul dans un accusé : un segment sans ACK n'accuse rien. Cette grammaire vous permet de comprendre un symptôme avant même d'avoir identifié la cause : un flux fait de SYN répétés sans réponse signifie que le service n'écoute pas ou que quelque chose bloque ; des RST immédiats signifient que le service refuse la connexion ; un SYN suivi d'un SYN-ACK suivi d'un nouveau SYN indique une négociation de paramètres qui échoue.
+
+Le second pilier de la fiabilité est la numérotation. Chaque octet envoyé porte un numéro de séquence, et le récepteur acquitte en indiquant le numéro du prochain octet attendu. Si l'émetteur ne reçoit pas d'accusé pour une plage donnée dans le délai calculé, il renvoie les données. Le protocole tolère donc les accusations cumulatives : un seul accusé peut couvrir plusieurs segments reçus, ce qui économise le trafic. Il tolère aussi les accusations dupliquées, qui sont en réalité utiles : trois accusations identiques successives indiquent que les segments intermédiaires sont arrivés alors que l'un d'eux a été perdu, et déclenchent une retransmission anticipée sans attendre le délai d'expiration. Vous verrez ce phénomène apparaître dans les captures, sous la forme de trois ACK portant le même numéro.
+
+Enfin, TCP distingue soigneusement la fiabilité du débit. La fiabilité dit si les données arrivent ; le contrôle de flux et le contrôle de congestion disent à quelle vitesse on peut les envoyer sans submerger le récepteur ni le réseau. C'est le sujet de la section suivante, mais gardez déjà l'idée : une connexion TCP peut être parfaitement fiable et pourtant terriblement lente, et un réseau saturé n'est pas nécessairement un réseau défaillant. Savoir lire la taille de fenêtre dans une capture vous évitera de conclure à la hâte qu'un serveur est en panne alors qu'il met simplement en attente un récepteur débordé.
+
+## Terminer une connexion : états, fermeture et diagnostics
+
+Une connexion TCP a un début, une vie et une fin, et chacune de ces trois phases possède sa propre grammaire. La fermeture mérite autant d'attention que l'ouverture, parce qu'elle est la source de la majorité des anomalies observées sur des serveurs très sollicités. Là où la poignée de main occupait trois segments, la fermeture propre en occupe quatre : chaque côté, à son tour, envoie un segment portant le drapeau FIN pour annoncer qu'il n'a plus de données à émettre, et l'autre côté accuse réception. Le client envoie FIN, le serveur répond ACK, puis le serveur envoie à son tour son FIN et le client achève par un ACK. Deux demi-fermetures, deux accusés, et la conversation est close. Cette symétrie vient de la nature même du protocole : une connexion TCP est bidirectionnelle et chaque sens se ferme indépendamment, si bien qu'un côté peut avoir terminé l'envoi de ses données tout en continuant d'en recevoir.
+
+Cette mécanique produit un état qui intrigue souvent les débutants lorsqu'il apparaît dans une table de connexions : le client a envoyé FIN, le serveur a accusé réception, mais le serveur n'a pas encore fermé de son côté. Il reste dans un état nommé CLOSE_WAIT, qui se traduit littéralement par attente de fermeture, et il y demeure aussi longtemps que le processus applicatif ne referme pas sa socket. Quand vous voyez des centaines de connexions en CLOSE_WAIT sur un serveur, le réseau n'est pas en cause : c'est le programme qui fuit des descripteurs de fichiers. C'est un diagnostic purement applicatif, mais il se lit dans une commande de couche transport, et savoir le faire vous fera gagner une heure de recherche. L'opposé se produit également : si le client ferme et que le serveur tarde, le client reste dans FIN_WAIT_2, en attendant un FIN qui ne vient pas.
+
+Après le dernier accusé, la connexion n'est pas immédiatement oubliée. L'extrémité qui a fermé en premier demeure un temps dans un état nommé TIME_WAIT, d'une durée égale à deux fois le délai maximum de vie d'un segment, soit une cinquantaine de secondes dans la pratique. Cette attente a une raison précise : si le dernier accusé se perdait, l'autre côté renverrait son FIN, et la machine doit pouvoir répondre à nouveau sans confondre ce retour avec une nouvelle connexion portant les mêmes numéros. C'est aussi la raison pour laquelle un serveur qui accepte énormément de connexions courtes voit s'accumuler des entrées en TIME_WAIT et peut, à force, manquer de ports éphémères pour ses propres connexions sortantes. Les correctifs existent, mais le premier réflexe correct est de comprendre le phénomène avant de modifier des paramètres du noyau.
+
+```text
+Fermeture propre (quatre segments) puis états courants
+  client                                  serveur
+    |  FIN  (je n'ai plus rien à écrire)    |
+    | ----------------------------------->  |
+    |  ACK  (reçu)                          |
+    | <-----------------------------------  |
+    |                                     |  le processus applicatif
+    |  FIN  (à mon tour, plus rien)        |  referme enfin sa socket
+    | <-----------------------------------  |
+    |  ACK                                   |
+    | ----------------------------------->  |
+    |  TIME_WAIT environ 60 s               |
+
+$ ss -tan | awk '{print $1}' | sort | uniq -c | sort -rn
+     142 ESTAB
+      60 TIME-WAIT
+       4 CLOSE-WAIT
+       1 LISTEN
+```
+
+Il existe une alternative brutale à cette fermeture gracieuse, le drapeau RST. Un segment RST met fin à la connexion sans acquittement, sans délai d'attente, sans état intermédiaire. Il apparaît quand une machine reçoit un paquet pour un port où plus personne n'écoute, quand un processus est tué alors qu'une connexion était ouverte, ou quand un pare-feu veut couper net une session. Lire un RST ne signifie donc pas que le réseau est cassé, mais que quelqu'un a décidé de refermer brutalement. Un cas classique mérite d'être signalé : lorsqu'un serveur redémarre, les clients qui possédaient encore une connexion en mémoire envoient des données, reçoivent un RST, et doivent ouvrir une nouvelle connexion. Si l'application n'est pas prévue pour réessayer, l'utilisateur voit une erreur au moment précis du redémarrage. Enfin, gardez l'existence du keep-alive : TCP peut envoyer des sondes pour détecter qu'un pair a disparu, mais cette fonctionnalité est désactivée par défaut et ses délais sont souvent très longs ; ne comptez pas sur elle pour déceler rapidement un poste qui a quitté le réseau.
+
+## Contrôle de flux et contrôle de congestion : la vitesse mesurée
+
+Le second grand mécanisme de TCP répond à une question différente de la fiabilité : combien d'octets peut-on envoyer avant d'avoir la preuve que le précédent lot est arrivé ? Sans régulation, un émetteur rapide submergerait un récepteur lent, qui verrait son tampon déborder et ses données jetées. La couche transport introduit donc une fenêtre, annonce sa taille à chaque accusé de réception, et refuse d'avancer au-delà. On parle de fenêtre glissante : à chaque accusé reçu, la fenêtre se décale d'autant, autorisant de nouveaux octets à partir du numéro de séquence confirmé. Quand la fenêtre tombe à zéro, l'émetteur s'arrête proprement et attend qu'elle soit réouverte. C'est le contrôle de flux, et il se lit directement dans la colonne Win d'une capture : une fenêtre à zéro n'est pas une panne, c'est un récepteur qui demande du temps.
+
+Le contrôle de congestion traite d'un autre obstacle : le réseau lui-même, dont les équipements intermédiaires disposent de tampons finis. Si l'émetteur injecte plus vite que les routeurs ne peuvent évacuer, des paquets sont perdus, et chaque perte déclenche des retransmissions qui aggravent encore la congestion. TCP règle le problème avec une logique de réaction progressive, décrite par l'algorithme de lancement progressif, ou slow start. Au début de la connexion, une variable appelée fenêtre de congestion, notée cwnd, vaut un seul segment ; elle double à chaque tour aller-retour complet, c'est-à-dire à chaque accusé qui revient. La croissance est donc exponentielle mais prudente. Quand elle atteint un seuil appelé ssthresh, ou lorsqu'une perte est détectée, la croissance passe à une augmentation linéaire d'un segment par aller-retour. Le but est d'occuper rapidement le lien disponible sans dépasser brutalement ce que le chemin peut absorber.
+
+À la perte, TCP ne se contente pas d'attendre l'expiration du délai : il distingue deux réactions. Le retransmettement rapide, ou fast retransmit, se déclenche dès trois accusés dupliqués : l'émetteur en déduit que le segment intermédiaire a disparu et le renvoie immédiatement, sans attendre le chronomètre, puis bascule en récupération rapide où il divise la fenêtre de congestion au lieu de repartir de zéro. Le cas plus lent est l'expiration du délai de retransmission, calculé dynamiquement à partir d'un aller-retour lissé et de sa variance : le premier échantillon dure un aller-retour complet, les suivants se rapprochent de la valeur mesurée. Un délai trop court provoque des retransmissions inutiles, un délai trop long laisse la connexion inerte. Quand une connexion est lente, la bonne question n'est donc pas seulement quel est le débit, mais quelle réaction TCP met en œuvre : accusés dupliqués, expiration, ou fenêtre à zéro.
+
+```table
+| Étape | Déclencheur | Effet sur la fenêtre de congestion | Ce que cela indique dans une capture |
+| --- | --- | --- | --- |
+| Lancement progressif | Début de connexion | Doublement à chaque aller-retour à partir d'un segment | Accélérations rapides puis ralentissement |
+| Évitement de congestion | Dépassement du seuil ssthresh | Croissance linéaire d'un segment par aller-retour | Phase régulière et stable |
+| Réduction mi-voie | Trois accusés dupliqués | Division par deux, passage en récupération rapide | Trois ACK identiques puis retransmission |
+| Expiration | Délai de retransmission dépassé | Retour au lancement progressif, seuil divisé par deux | Silences d'environ 200 à 400 ms |
+| Fenêtre à zéro | Tampon du récepteur plein | Envoi suspendu jusqu'à réouverture | ACK avec Win 0 puis sondes de réouverture |
+```
+
+
+Un exemple concret vous fixera l'ensemble. Un poste télécharge un gros fichier depuis un serveur local : la fenêtre de congestion croît exponentiellement, la liaison devient saturée, les accusés se bousculent, puis un tampon de commutateur déborde et un segment se perd. TCP détecte trois accusés dupliqués, renvoie le segment manquant, divise la fenêtre par deux, et repart en croissance linéaire. Sur une capture, vous observerez la séquence caractéristique : une phase d'accélération, une coupure nette, une reprise régulière. Si en revanche le ralentissement se produit sans accusé dupliqué et avec Win 0, le réseau n'est pas en cause : c'est le récepteur qui est lent. Savoir distinguer ces deux situations à la seule lecture des accusés est la compétence qui sépare un diagnostic précis d'une devinette.
+
+```text
+Fenêtre glissante vue par l'émetteur, fenêtre de 4 segments
+ numéros de séquence :   1   2   3   4   5   6   7   8   9  10  11  12
+ fenêtre initiale       [   4 segments autorisés            ]
+ accusé reçu = 2        [   4 segments autorisés            ]  (glisse de 2)
+ accusé reçu = 5              [   4 segments               ]
+ accusé reçu = 9 Win 0                              [ vide : attente ]
+
+$ ss -ti dst 10.10.10.24
+ESTAB  cwnd:10  ssthresh:20  bytes_acked:524288  rtt:12.4/1.2  rcv_space:65535
+```
+
+## UDP : la voie rapide, sans garantie
+
+UDP, User Datagram Protocol, tient dans un en-tête de huit octets, ce qui en fait le protocole de transport le plus minimaliste du réseau IP. Ces huit octets contiennent quatre champs seulement : le port source, le port destination, la longueur totale du datagramme et une somme de contrôle destinée à détecter une altération. Rien d'autre. Il n'y a pas de numéro de séquence, pas d'accusé de réception, pas de fenêtre, pas de chronomètre de retransmission, pas de drapeau, pas de poignée de main. L'application émet un datagramme, le réseau le transporte s'il le peut, et personne ne rend de compte. Cette simplicité n'est pas un défaut d'ambition : c'est un choix délibéré, celui de ne pas faire payer à tous les usages le coût d'une garantie que certains n'attendent pas. Le datagramme peut contenir jusqu'à 65 507 octets utiles en IPv4, mais en pratique on reste très en deçà pour tenir dans une trame sans fragmentation.
+
+Tout ce que TCP apporte, UDP l'ignore, et les conséquences doivent être claires avant de choisir. Un datagramme peut se perdre : UDP n'enverra jamais de retransmission, l'application verra simplement une requête sans réponse. Il peut arriver deux fois, ou arriver après un autre émis plus tard, et le protocole ne déordera rien. Il peut même être altéré en route sans que le détecteur ne signale quoi que ce soit, sauf si la somme de contrôle est renseignée. Cette dernière est facultative en IPv4, où elle était historiquement souvent omise pour alléger le calcul, et obligatoire en IPv6, où la détection d'erreur est considérée comme indispensable. Aucune de ces faiblesses n'est dramatique quand l'application sait ce qu'elle fait, et c'est précisément le contrat : UDP fournit la transmission, l'application fournit la logique.
+
+Alors pourquoi tant de services y ont recours ? Trois raisons reviennent systématiquement. La première est la latence : sans poignée de main, sans accusé, sans attente de retransmission, le premier octet part immédiatement et un datagramme perdu n'entraîne aucune pause, contrairement à TCP où la perte bloque l'envoi suivant en attendant l'accusé retardé. On appelle ce phénomène le blocage en tête de file, et il est fatal pour la voix ou la vidéo : vingt millisecondes de silence se remarquent, la perte d'une image ne se remarque pas. La seconde raison est la simplicité des échanges ponctuels : une requête DNS ou une interrogation d'horloge tient en un message et sa réponse, établir une connexion entière serait du luxe. La troisième est la diffusion : UDP transporte naturellement les adresses de diffusion et de multidiffusion, ce qui permet de parler à plusieurs destinataires d'un coup, une capacité que TCP ne possède pas.
+
+Ces choix ont un revers qu'il faut énoncer sans détour. Un service UDP qui débite beaucoup, sans mécanisme de régulation, peut saturer un lien alors même que chaque émetteur se croit raisonnable : personne ne contrôle la congestion au niveau transport. C'est la raison pour laquelle les protocoles contemporains réimplémentent une partie de TCP au-dessus d'UDP. QUIC, la base de HTTP/3, fournit accusés, ordre, retransmission et contrôle de congestion dans son propre code, tout en gardant la latence de démarrage faible d'UDP. RTP, utilisé pour la VoIP et le streaming, ajoute numérotation et horodatage, accompagné de RTCP qui remonte des statistiques de perte. Le point à retenir n'est donc pas que UDP remplace TCP, mais que la frontière de responsabilité se déplace : moins de travail dans le protocole, plus de travail dans l'application.
+
+```text
+En-tête UDP : 8 octets seulement (chacun fait 16 bits)
+ +----------------+----------------+
+ |  Port source   | Port destin.   |
+ +----------------+----------------+
+ |   Longueur     | Somme contrôle |
+ +----------------+----------------+
+ |        Données applicatives     |
+ +---------------------------------+
+
+Requête DNS typique échangée sur UDP 53 (capture Wireshark)
+No.   Time      Source         Destination    Protocol  Info
+1     0.000000  10.10.10.50    10.10.0.53     DNS       Standard query 0x1f2a A www.lilas-biblio.fr
+2     0.004120  10.10.0.53     10.10.10.50    DNS       Standard query response 0x1f2a A 10.10.10.24
+```
+
+Voici, résumé en quelques lignes, comment arbitrer au quotidien. Choisissez TCP quand l'ordre et l'absence de perte sont indispensables, quand l'échange comporte plusieurs allers-retours, quand le volume est important ou quand il faut une connexion fiable avec un service précis. Choisissez UDP quand la réactivité prime, quand l'échange tient en un ou deux messages, quand vous avez besoin de diffusion, ou quand votre application est conçue pour gérer elle-même les pertes. Retenez que beaucoup de services utilisent les deux : DNS sollicite UDP pour ses requêtes courtes et bascule sur TCP pour les réponses longues ou les transferts de zone, et un même port peut servir les deux protocoles sans confusion, car ils sont identifiés séparément dans l'en-tête IP.
+
+- UDP ajoute seulement ports, longueur et somme de contrôle, pour huit octets d'en-tête.
+- Aucune retransmission, aucun ordre garanti, aucun contrôle de congestion : l'application décide.
+- Latence minimale et absence de blocage en tête de file en font le choix de la voix, du temps réel et des requêtes ponctuelles.
+- QUIC et RTP montrent la bonne méthode : ajouter la fiabilité au-dessus d'UDP quand elle est nécessaire.
+- Un service sans régulation peut saturer un lien : surveillez-le avec les mêmes outils qu'un service TCP.
+
+## Choisir entre TCP et UDP : une décision d'usage
+
+La question se pose toujours de la même façon dans un projet : quel service allons-nous faire tourner, et qu'attend-on de lui ? Quatre critères tranchent presque à eux seuls. Le premier est la tolérance aux pertes : si perdre un message corrompt le résultat, il faut TCP ; si une perte se rattrape à la couche suivante ou se voit à l'écran, UDP suffit. Le second est la réactivité : un échange qui doit démarrer en quelques millisecondes ne supporte pas l'aller-retour supplémentaire de la poignée de main. Le troisième est le nombre de destinataires : parler à une centaine de machines en même temps relève de la diffusion, donc d'UDP. Le quatrième est le volume : un flux long et structuré se décompose mal en datagrammes indépendants, alors qu'un échange en deux messages s'y prête parfaitement.
+
+De ce découpage naissent des habitudes stables qu'il vaut mieux connaître par cœur. Le web, la messagerie, les terminaux distants, les transferts de fichiers et les bases de données passent par TCP, car ils exigent l'intégrité octet par octet et l'ordre strict. Le temps réel — la voix, la vidéo en direct, les jeux multijoueurs — passe par UDP, car une retransmission arrive trop tard pour être utile et bloque en chemin les données suivantes. Les services d'infrastructure comme l'horloge, la supervision ou la découverte de pairs utilisent eux aussi UDP, parce qu'ils émettent des messages courts et périodiques dont la perte d'un exemplaire est sans conséquence. Le cas particulier du DNS mérite d'être retenu : les requêtes ordinaires voyagent en UDP sur le port 53 pour gagner du temps, mais le protocole bascule sur TCP quand la réponse dépasse la taille admise, notamment lors des transferts de zone entre serveurs autoritatifs.
+
+Un troisième genre de solutions est apparu plus récemment, et il illustre la bonne manière d'évoluer : réimplémenter la fiabilité là où elle est utile, sans en payer le coût partout. QUIC, qui sert de socle à HTTP/3, conserve UDP comme couche de transport mais ajoute ses propres accusés, son propre ordre et son propre contrôle de congestion, tout en établissant une session chiffrée dès le premier échange. Le résultat combine la simplicité de démarrage d'UDP et les garanties de TCP, avec en plus la possibilité de faire migrer une connexion d'un réseau à un autre sans la perdre, par exemple en passant du Wi-Fi à la 4G. Retenez donc la leçon de méthode : face à un besoin de fiabilité très particulier, on n'écrit pas un nouveau protocole de transport, on ajoute la logique manquante au-dessus d'UDP.
+
+```table
+| Critère | TCP | UDP |
+| --- | --- | --- |
+| Connexion | Poignée de main en trois temps avant les données | Aucune, les données partent immédiatement |
+| Fiabilité | Accusés et retransmission, aucun octet perdu en silence | Pertes, doublons et réordonnancement possibles |
+| Ordre | Séquence stricte des octets | Arrivée dans l'ordre du réseau, pas de l'émission |
+| Débit | Régulé par le contrôle de congestion | Non régulé, l'application s'en charge |
+| Diffusion | Un seul destinataire par connexion | Diffusion et multidiffusion naturelles |
+| Coût d'en-tête | Au moins 20 octets par segment | 8 octets par datagramme |
+| Usages types | Web, SSH, messagerie, bases de données, fichiers | DNS, DHCP, NTP, SNMP, VoIP, streaming, jeux |
+```
+
+
+## DNS : comment les noms deviennent des adresses
+
+Aucun humain ne retient d'adresses IP, et aucun administrateur ne devrait les figer dans une configuration : elles changent quand on déplace un serveur, quand on remplace une machine, quand un service migre vers un autre site. Le Domain Name System résout ce problème en introduisant une indirection stable : on interroge un nom, et une infrastructure distribuée répond par l'adresse du moment. Au-delà de la commodité, DNS apporte un niveau d'abstraction indispensable à l'exploitation : vos liens, vos certificats et vos règles de pare-feu peuvent citer des noms, tandis que les adresses restent libres de bouger derrière. Comprendre DNS, c'est donc comprendre le système de coordonnées dans lequel vos applications vivent.
+
+L'organisation est hiérarchique et gérée collectivement. Tout en haut, le domaine racine, noté par un simple point, délègue les extensions génériques comme com ou org et les extensions nationales comme fr à des serveurs de noms dédiés, qu'on appelle les serveurs de top niveau. Ceux-ci délèguent à leur tour chaque domaine, comme lilas-biblio.fr, vers les serveurs de noms que son propriétaire a déclarés. Chaque niveau ne connaît donc que son voisin direct : c'est ce qui rend l'ensemble scalable, car aucune base centrale ne contient toutes les adresses du monde. Les zones gérées par un niveau donné sont décrites par des enregistrements NS, et le serveur qui les porte est dit autoritatif : lui seul détient la vérité pour les noms de sa zone, les autres ne font que la relayer.
+
+```text
+Hiérarchie DNS et délégations, puis trajet d'une résolution
+                         (racine)
+                            |
+        +-------------------+-------------------+
+      com.                                     fr.
+        |                                        |
+  exemples.com.                              nic.fr.
+                                               |
+                                    lilas-biblio.fr.  (autoritatif interne)
+                                               |
+                            www.lilas-biblio.fr.  →  A 10.10.10.24
+
+Trajet d'une requête récursive depuis un poste du VLAN 10
+poste → résolveur local (cache ?) → serveur racine → serveur TLD .fr
+      → serveur autoritatif de la zone → réponse remontée et mise en cache
+```
+
+La plupart du temps, votre machine ne réalise pas ce parcours elle-même : elle délègue à un résolveur, configuré par DHCP ou par l'administrateur, qui interroge les niveaux successifs au nom de tous ses clients et met les réponses en cache. On appelle cette première approche une résolution récursive, du point de vue du client, qui se contente d'envoyer une question et d'attendre. L'approche inverse est dite itérative : interpellé, un serveur répond non pas par l'adresse finale mais par une adresse de renvoi vers le niveau suivant, et c'est le demandeur qui continue. En pratique, le résolveur alterne les deux : il travaille de façon itérative avec les serveurs du monde entier, et de façon récursive avec les postes qu'il dessert. Les réponses sont mises en cache avec une durée de vie appelée TTL, indiquée par enregistrement ; un TTL court se propage vite mais charge davantage les serveurs, un TTL long soulage les serveurs mais retarde la prise en compte d'un changement.
+
+Le vocabulaire des enregistrements est court mais complet, et le connaître vous fera gagner un temps considérable en diagnostic. L'enregistrement A donne l'adresse IPv4 d'un nom, son homologue AAAA donne l'adresse IPv6, et les deux coexistent souvent pour le même nom, ce qui explique que certains postes choisissent une voie et d'autres l'autre. CNAME crée un alias pointant vers un autre nom, pratique pour un domaine nu qui renvoie vers www, mais incompatible avec les enregistrements de type MX sur le même nom. MX indique les serveurs de messagerie d'un domaine, TXT transporte des informations textuelles variées — les déclarations d'autorisation d'envoi de courrier, des vérifications de propriété, des fichiers de politique —, NS désigne les serveurs de noms d'une zone et SOA décrit les paramètres de la zone elle-même. Enfin PTR fait l'inverse des autres : il mappe une adresse vers un nom, et il est indispensable aux outils qui refusent les connexions venues d'anonymes.
+
+Un dernier détail d'implémentation a des conséquences directes sur le réseau : les échanges par défaut se font sur le port 53 en UDP, parce qu'ils sont courts ; mais dès que la réponse dépasse quelques centaines d'octets, ou qu'un transfert de zone a lieu entre deux serveurs autoritatifs, le protocole bascule sur TCP. Les grands fournisseurs utilisent aussi des extensions qui augmentent la taille de message acceptable au-dessus du premier échange, sans bascule immédiate. Sachez enfin que d'autres services parlent le même langage sur d'autres ports : la découverte automatique d'équipements domestiques utilise le port 5353, la résolution de noms de travail Windows le port 5355. Quand un pare-feu bloque l'une de ces variantes, le symptôme ressemble à un défaut de réseau alors que le service fonctionne parfaitement ailleurs.
+
+## Diagnostiquer une résolution DNS pas à pas
+
+Une démarche efficace commence toujours par isoler la couche fautive. Posez-vous trois questions dans l'ordre : le nom se résout-il du tout, quel serveur a répondu, et la réponse est-elle la bonne ? La première question sépare les pannes de nom des pannes de connexion : si le nom ne résout pas, inutile de tester le port 443. La deuxième question sépare le client du service : le même nom interrogé auprès du résolveur interne et auprès d'un résolveur public peut donner deux réponses, ce qui arrive fréquemment quand une vue interne et une vue externe coexistent dans la même zone. La troisième question protège des réponses périmées : un cache qui conserve encore l'ancienne adresse d'un serveur migré produit un symptôme bizarre, où la moitié du trafic part au mauvais endroit.
+
+L'outil de référence s'appelle dig, et quelques de ses options suffisent à tout faire. Dig interroge un serveur précis quand vous lui indiquez une adresse après le symbole arobase, affiche la réponse brute quand vous ajoutez le raccourci court, et déroule la résolution complète niveau par niveau quand vous demandez le suivi. La même commande avec l'option qui affiche uniquement les enregistrements de réponse donne un résultat propre, exploitable dans un script. nslookup reste disponible partout et convient à un contrôle rapide, mais son format d'affichage et ses avertissements induisent souvent en erreur les débutants ; préférez dig pour tout diagnostic sérieux, et complétez avec les outils du système : getenthosts sous Linux, la commande d'affichage du cache DNS sous Windows, et la commande de purge du même cache après un changement de configuration.
+
+```text
+Contrôle méthodique de la résolution d'un nom interne
+$ dig www.lilas-biblio.fr A +short
+10.10.10.24
+
+$ dig @10.10.0.53 www.lilas-biblio.fr A +noall +answer
+www.lilas-biblio.fr.  300  IN  A  10.10.10.24
+
+$ dig @8.8.8.8 www.lilas-biblio.fr A +noall +answer
+www.lilas-biblio.fr.  300  IN  A  203.0.113.10
+
+$ dig +trace lilas-biblio.fr NS
+.            172800  IN  NS  a.root-servers.net.
+fr.          172800  IN  NS  d.nic.fr.
+lilas-biblio.fr. 3600 IN NS  ns1.lilas-biblio.fr.
+
+$ dig -x 10.10.10.24 +short
+www.lilas-biblio.fr.
+```
+
+L'interprétation des résultats se résume à quelques situations. Un délai d'attente au lieu d'une réponse signale que le serveur consulté n'est pas joignable ou ne répond pas : vérifiez la route, le pare-feu et le port. NXDOMAIN signifie que le nom n'existe pas, point : c'est une réponse valide et non une erreur réseau, souvent causée par une faute de frappe ou un enregistrement absent. SERVFAIL signale que le résolveur n'a pas réussi à obtenir ou à valider la réponse finale, par exemple à cause d'une signature invalide lorsque la vérification de sécurité est activée, ou d'un serveur autoritatif injoignable. REFUSED indique que le serveur accepte les requêtes mais refuse celles provenant de vous, ce qui arrive vite quand un client pointe vers le mauvais serveur. Enfin, une réponse correcte mais ancienne révèle un cache : regardez alors la durée de vie restante, car elle vous dit combien de temps le problème peut encore durer.
+
+Les pannes les plus fréquentes se rangent en cinq catégories. La première est la configuration du client : un poste qui conserve un ancien serveur après une migration continuera de l'interroger tant que sa configuration n'est pas renouvelée ; le renouvellement du bail apporte souvent le correctif. La deuxième est la vue partagée : la zone répond différemment selon l'origine de la requête, et comparer le résultat interne au résultat public est le seul moyen de le constater. La troisième est la sécurité : si la validation échoue, la réponse devient SERVFAIL même si les enregistrements sont justes, et il faut alors examiner les signatures et les délégations. La quatrième est la protection contre les abus : certains serveurs limitent le nombre de requêtes par unité de temps et répondent par des refus quand le seuil est franchi, typiquement après un incident de type tempête de requêtes. La cinquième est la taille : une réponse trop volumineuse pour le chemin emprunté, avec fragmentation bloquée, se traduit par un silence ou un échec alors que la même interrogation en TCP réussit.
+
+- Isolez toujours : client, résolveur, autoritatif — un test par niveau, pas un mélange.
+- Comparez deux résolveurs différents pour mettre en évidence une vue ou un cache divergent.
+- Lisez le code de réponse : NXDOMAIN, SERVFAIL, REFUSED et délai d'attente n'ont pas la même cause.
+- Vérifiez la durée de vie restante avant de conclure à une panne durable.
+- Après un changement, videz le cache du client, sinon l'ancienne réponse persiste encore.
+
+## DHCP : obtenir une adresse automatiquement
+
+Attribuer une adresse à la main fonctionne tant que le parc est réduit, puis devient ingérable : une erreur de saisie produit un conflit, un poste déplacé garde une configuration inadaptée, et personne ne sait plus quelle adresse est réellement libre. Le Dynamic Host Configuration Protocol règle le problème en centralisant la décision. Un serveur dispose de plages d'adresses dites étendues, découpées par VLAN ou par plage de commutateurs, et les clients qui en réclament une la reçoivent avec tout le lot d'informations nécessaires à leur communication : masque de sous-réseau, adresse de la passerelle, serveurs de noms, serveur d'horloge, parfois un serveur de fichiers ou une URL de configuration. Le client, lui, ne connaît rien à l'avance et passe le premier temps de sa vie réseau en quête d'un serveur prêt à lui répondre.
+
+Cette quête suit un scénario en quatre messages dont l'acronyme DORA a fait toute la renommée du protocole. Le client émet d'abord une diffusion générale portant la demande DISCOVER, depuis l'adresse zéro puisque le poste n'en possède pas encore, avec un numéro de transaction qu'il conservera pendant tout l'échange. Tous les serveurs du réseau entendent la demande ; ceux qui disposent d'une adresse disponible répondent par un OFFER contenant une proposition. Le client choisit généralement la première offre reçue et l'accepte par un message REQUEST, envoyé de nouveau en diffusion générale afin que tous les serveurs — y compris ceux dont la proposition a été écartée — sachent qu'ils peuvent retirer leur réservation. Le serveur retenu confirme par un ACK : le bail est ouvert, le client configure son interface et peut communiquer. Quatre messages, deux diffusions, et une entente entre acteurs qui ne se sont jamais parlé.
+
+```text
+Bail complet capturé sur le VLAN 10 (Wireshark)
+No.   Time      Source           Destination        Protocol  Info
+1     0.000000  0.0.0.0          255.255.255.255    DHCP      DHCP Discover   - Transaction ID 0x6a3b12f4
+2     0.001400  10.10.0.1        255.255.255.255    DHCP      DHCP Offer      - Transaction ID 0x6a3b12f4 (10.10.10.50)
+3     0.001520  0.0.0.0          255.255.255.255    DHCP      DHCP Request    - Transaction ID 0x6a3b12f4 (10.10.10.50)
+4     0.001700  10.10.0.1        10.10.10.50        DHCP      DHCP ACK        - Transaction ID 0x6a3b12f4 (10.10.10.50)
+
+Transitions visibles sur le client juste après l'ACK
+$ ip address show dev eth0
+inet 10.10.10.50/22 brd 10.10.3.255 scope global dynamic eth0
+   valid_lft 86400sec preferred_lft 75600sec
+```
+
+La puissance de DHCP tient aux options, ces coupleurs nommés-numéro qui accompagnent chaque message. Quelques-unes suffisent à configurer entièrement un poste : l'option portant le masque de sous-réseau, celle désignant la passerelle par défaut, celle listant les serveurs de noms, celle précisant le nom de domaine local, celle donnant la durée du bail, et celle qui indique l'adresse du serveur lui-même quand la réponse traverse un relais. D'autres ouvrent des usages plus avancés : la fourniture d'horloges pour la synchronisation, la distribution d'une URL de configuration, ou la préparation au démarrage sans disque des postes, où les options dédiées signalent le serveur de fichiers et le script à charger. Un mécanisme de réservation permet enfin d'offrir la même adresse à une machine donnée en la liant à son identifiant matériel, ce qui combine la stabilité d'une configuration manuelle et la centralisation de l'attribution.
+
+```table
+| Option | Rôle pratique | Valeur typique observée |
+| --- | --- | --- |
+| Masque du sous-réseau | Définit l'étendue locale du poste | 255.255.252.0 pour un /22 |
+| Routeur par défaut | Indique la passerelle de sortie du VLAN | 10.10.0.1 |
+| Serveurs de noms | Fournit la liste des résolveurs utilisés | 10.10.0.53 et 10.10.0.54 |
+| Nom de domaine local | Complète les noms courts résolus par le poste | lilas-biblio.fr |
+| Durée du bail | Fixe la validité de l'attribution | 86400 secondes, soit 24 heures |
+| Serveur d'horloge | Synchronise l'heure des machines | 10.10.0.2 |
+| Informations du relais | Signale le VLAN et le port d'origine du client | Circuit identifier, Remote ID |
+```
+
+
+Un arrangement fréquent dans les réseaux d'entreprise mérite d'être compris parce qu'il contre-intuitif au départ : le serveur DHCP n'est presque jamais sur le VLAN des clients. Pour éviter de multiplier les serveurs, on équipe les routeurs ou les commutateurs de couche 3 d'une directive d'aiguillage vers le serveur central. Cette commande convertit la diffusion reçue sur un VLAN en une requête unicast adressée au serveur, en y ajoutant une option qui précise d'où vient la demande, avec le numéro de VLAN et l'interface d'entrée. Le serveur, qui ne connaît pas le réseau par expérience directe, en déduit l'étendue à utiliser et répond ; le relais renvoie la réponse au client en diffusion sur le VLAN d'origine. Tant que cette chaîne est rompue — directive absente sur une interface, pare-feu bloquant les ports dédiés, option retirée par un équipement —, aucun client du VLAN ne reçoit d'adresse, alors même que le serveur fonctionne parfaitement pour les autres.
+
+Les choses changent en IPv6, où l'adressage peut se faire sans aucun serveur. Le routeur diffuse des messages d'annonce de routeur qui contiennent le préfixe du lien ; le poste en dérive alors une adresse selon une méthode d'autoconfiguration sans état, à partir de son identifiant matériel ou d'une valeur aléatoire qu'il vérifie par une demande de duplication d'adresse. Comme cette méthode ne transmet aucune configuration complémentaire, on l'associe fréquemment à un serveur de configuration sans état qui fournit au moins les serveurs de noms. Le mode entièrement piloté par serveur existe également, avec un échange court entre le client et le serveur et une durée de vie qui tient compte du préfixe, et c'est la méthode recommandée dès que l'on veut tracer les attributions. Une différence notable apparaît côté identité : là où IPv4 identifiait la machine par son adresse matérielle, IPv6 utilise un identifiant unique de périphérique incorporant la façon dont la machine a obtenu sa configuration, ce qui suit le poste lorsqu'il change de réseau sans trahir autant d'informations.
+
+## Suivre un bail et dépanner DHCP
+
+Le bail est une location : il a une durée, des moments de renouvellement et une fin. Sur la ligne renseignée après l'attribution, la durée totale apparaît à côté d'une durée préférée plus courte ; c'est que le client sait qu'il doit demander l'autorisation de conserver son adresse avant l'échéance. Il tente un renouvellement à mi-parcours, en s'adressant directement en unicast au serveur qui lui a tout donné, puis, s'il n'a pas obtenu de réponse, à un moment ultérieur, en rediffusant pour toucher n'importe quel serveur disponible. Si l'échéance passe sans confirmation, le client abandonne son adresse, recommence le processus complet depuis la découverte et, sur un réseau où aucun serveur ne répond, finit souvent par s'attribuer une adresse de secours de la plage réservée au lien local. Cette dernière situation produit un symptôme immédiatement reconnaissable : la machine est connectée au câble, elle a une adresse, mais elle ne parle à personne.
+
+Le diagnostic d'un problème DHCP suit la même logique de cloisonnement que le diagnostic DNS : vérifier d'abord le client, puis le chemin, puis le serveur. Côté client, deux commandes suffisent : l'une affiche la configuration actuelle en indiquant si elle provient bien d'un bail ou d'une saisie manuelle, l'autre relance l'obtention et affiche en clair les quatre messages échangés, avec les refus éventuels. Un renouvellement qui échoue alors qu'une autre machine du même VLAN obtient une adresse oriente immédiatement vers le poste : câble, commutateur, plage, filtre. Côté serveur, les journaux indiquent chaque accord et chaque refus avec l'adresse proposée et le identifiant du client ; croiser l'heure d'un refus avec l'heure de l'incident chez l'utilisateur est souvent la preuve attendue. Enfin, contrôlez l'étendue : un pool épuisé ne produit pas d'erreur spectaculaire, simplement des refus successifs.
+
+Les pannes de DHCP ont une catalogue bref et très régulier. L'étendue épuisée arrive en premier, typiquement après un événement qui fait revenir beaucoup de machines à la fois ou après un bail beaucoup trop long pour le nombre d'adresses disponibles ; l'allongement du bail double mécaniquement la consommation, la diminution le réduit. Le conflit d'adresse survient quand une machine utilise une adresse hors de tout bail, par exemple parce qu'elle était configurée à la main ; le client détecte le doublon lors de son auto-vérification et refuse l'attribution, ce qui se voit dans les journaux du serveur. Le serveur parasite est plus insidieux : un routeur domestique branché par erreur ou un ordinateur portable configuré en partage de connexion répond au DISCOVER avant le serveur officiel, et le client accepte sa proposition. Une communication inter-vlan mal dimensionnée ou une directive de relais manquante produit le même résultat pour tout un segment.
+
+La défense s'organise sur le commutateur. Le filtrage DHCP autorise les messages de serveur uniquement sur les liaisons menant vers le serveur réel, ce qui élimine le serveur parasite dès l'entrée sur le réseau. Ce même filtrage limite le nombre de messages de requête acceptés par seconde sur chaque port d'accès, ce qui neutralise les tempêtes générées par un client défectueux ou par un attaquant. En complément, la base de connaissances alimentée par les baux enregistrés permet de refuser toute adresse qui n'a pas été accordée par le serveur. À cela s'ajoutent des durées adaptées au contexte : courtes pour un réseau sans fil où les stations tournent, plus longues pour des postes filaires stables, avec une marge d'étendue surveillée par une alerte quand l'occupation dépasse un seuil raisonnable.
+
+```text
+Enchaînement de diagnostic quand un poste n'obtient pas d'adresse
+$ ipconfig /all          (Windows)  ou  $ ip addr show        (Linux)
+  → Adresse 169.254.x.x  : aucun bail, le client est en attente d'un serveur
+
+$ ipconfig /renew        (Windows)  ou  $ dhclient -v eth0     (Linux)
+  → Discover envoyé, aucun Offer reçu en 30 s : chemin ou serveur en cause
+  → Refus reçu         : étendue épuisée ou identifiant refusé
+  → Offer + ACK reçus   : le problème est ailleurs, vérifiez la configuration
+
+$ tcpdump -i eth0 -n udp port 67 or udp port 68 -c 20
+  → Les quatre messages voyagent-ils sur le lien ? Le relais répond-il ?
+
+Contrôle côté serveur (journal typique)
+Mar 12 14:07:21 dhcpd DHCPREQUEST for 10.10.10.50 from 00:1a:2b:3c:4d:5e
+Mar 12 14:07:21 dhcpd DHCPACK on 10.10.10.50 to 00:1a:2b:3c:4d:5e via 10.10.10.1
+Mar 12 14:07:44 dhcpd DHCPDISCOVER from 00:1a:2b:3c:4d:5f via eth1 : no free leases
+```
+
+Trois réflexes de prévention valent mieux que n'importe quelle intervention d'urgence : dimensionner l'étendue avec une marge calculée sur la durée du bail plutôt que sur le nombre de machines, surveiller son taux d'occupation et alerter avant saturation, et documenter quel serveur est responsable de quelle étendue, quel est l'état de la directive de relais sur chaque interface, et quelles options sont transmises à chaque VLAN. Un problème DHCP bien documenté se règle en quelques minutes ; le même problème découvert dans l'urgence, un matin où la moitié du service public n'a plus d'accès, coûte une matinée entière.
+
+## HTTP et TLS : de la requête à la session chiffrée
+
+HTTP est un protocole simple dont la logique tient en une phrase : le client envoie une requête composée d'une méthode, d'une adresse de ressource et d'une liste d'informations complémentaires, le serveur répond par un état, ses propres informations et un contenu. Les méthodes courantes disent l'intention : obtenir une ressource, en envoyer une nouvelle, la remplacer, la supprimer, ou seulement connaître ses caractéristiques. Les codes de réponse racontent l'issue en trois chiffres : succès, redirection, erreur du client, erreur du serveur. Le version 1.1 a introduit une amélioration décisive en conservant la connexion ouverte après chaque échange, de sorte que plusieurs requêtes se suivent sur le même canal TCP sans refaire la poignée de main, et qu'elle devient la règle plutôt que l'exception. Le version suivante a rendu le transport binaire et permis de superposer plusieurs échanges simultanément, évitant qu'une réponse lente ne bloque celles qui arrivent derrière ; la version la plus récente déplace l'ensemble vers un transport sans connexion pour gagner en réactivité.
+
+TLS, acronyme de Transport Layer Security, s'intercale entre la couche transport et l'application pour fournir trois garanties : personne d'autre ne lit les échanges, personne ne les modifie sans que cela soit détecté, et le serveur bien identifié est bien celui qu'il prétend être. Le service écoute sur le port dédié au web sécurisé et la connexion commence par une négociation : le client annonce les algorithmes qu'il sait utiliser et propose une graine d'échange de clés, le serveur choisit, répond avec son certificat et sa propre graine, puis les deux dérivent par calcul les clés qui serviront à chiffrer tout ce qui suivra. Le protocole actuel réduit cet échange à un seul aller-retour, et propose en plus un mode de reprise qui permet de transmettre des données dès le premier message lors d'une visite suivante, au prix d'une confiance renforcée dans le fait que la première session s'est bien déroulée.
+
+```text
+Séquence complète, du SYN TCP aux données chiffrées (TLS 1.3)
+ client                                    serveur
+   |  TCP SYN                                   |
+   | ----------------------------------------> |
+   |  TCP SYN-ACK                               |
+   | <----------------------------------------- |
+   |  TCP ACK                                   |
+   | ----------------------------------------> |
+   |  ClientHello : versions, suites, graine,   |
+   |                nom de ressource demandé    |
+   | ----------------------------------------> |
+   |  ServerHello : suite retenue, graine       |
+   |  Certificat : feuille et intermédiaires    |
+   |  Finished : preuve du calcul des clés      |
+   | <----------------------------------------- |
+   |  Finished : preuve côté client             |
+   | ----------------------------------------> |
+   |  Application Data : la requête HTTP        |
+   | ----------------------------------------> |
+   |  Application Data : la réponse HTTP        |
+   | <----------------------------------------- |
+```
+
+Le certificat mérite une attention particulière, car il est le seul élément de la chaîne que l'utilisateur peut voir. Il s'agit d'un fichier signé par une autorité reconnue, contenant le nom du site, la période de validité, les noms alternatifs couverts — c'est la liste qui détermine si votre adresse exacte est acceptée — et la clé publique servant à l'échange. Le navigateur vérifie la signature en remontant d'autorité en autorité jusqu'à une autorité de confiance présente dans le système, contrôle les dates, puis regarde si le nom consulté figure parmi les noms couverts. Un défaut quelconque dans cette chaîne se traduit par un avertissement : date dépassée, nom non couvert, autorité intermédiaire absente de la configuration du serveur. Les certificats gratuits délivrés par des organisations reconnues ont considérablement démocratisé le chiffrement, et leur renouvellement automatique s'inscrit dans une tâche périodique dont la défaillance constitue l'une des causes les plus fréquentes d'incident sur un site.
+
+```text
+Échange HTTP visible une fois la session ouverte (déchiffré côté client)
+GET /catalogue HTTP/1.1
+Host: www.lilas-biblio.fr
+User-Agent: Mozilla/5.0
+Accept: text/html
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 14207
+Strict-Transport-Security: max-age=31536000
+```
+
+```text
+Contrôle d'une session depuis un poste de test
+$ openssl s_client -connect 10.10.10.24:443 -servername www.lilas-biblio.fr -tls1_3 < /dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+subject=CN = www.lilas-biblio.fr
+issuer=C = US, O = Let's Encrypt, CN = R3
+notBefore=Jun 15 00:00:00 2026 GMT
+notAfter=Sep 13 00:00:00 2026 GMT
+subjectAltName = DNS:www.lilas-biblio.fr, DNS:lilas-biblio.fr
+
+$ curl -sv -o /dev/null https://www.lilas-biblio.fr/ 2>&1 | grep -E 'subject:|expire|SSL connection using'
+*  subject: CN=www.lilas-biblio.fr
+*  expire date: Sep 13 00:00:00 2026 GMT
+*  SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384
+```
+
+La lecture d'une capture complète relie enfin toutes les parties du chapitre. Vous verrez la poignée de main TCP, puis le ClientHello avec le nom de ressource qui permet au serveur de choisir le bon certificat, puis la réponse contenant les certificats, puis une série de messages désormais chiffrés que vous ne pourrez pas déchiffrer sans les clés de session, enfin les octets de la requête et de la réponse. Un point de vigilance s'impose à ce sujet : depuis l'extérieur, un proxy de filtrage ne lit pas le contenu, mais il lit le nom de ressource transmis pendant la négociation, ce qui lui suffit pour appliquer une politique d'accès. Si vous devez analyser le décodage réel d'une session sur un équipement que vous maîtrisez, il faut exporter les clés depuis le client et les fournir à l'analyseur — une technique légale et courante en supervision interne. Enfin, ne confondez pas chiffrement et authentification : une connexion chiffrée avec un certificat non vérifié protège contre l'écoute mais pas contre l'usurpation.
+
+```table
+| Symptôme observé | Cause probable | Contrôle à exécuter |
+| --- | --- | --- |
+| Avertissement de certificat expiré | Renouvellement automatique défaillant | Vérifier les dates avec l'utilitaire d'examen de certificat |
+| Certificat réputé non valide sans date dépassée | Nom consulté absent des noms couverts | Lister les noms alternatifs du certificat présenté |
+| Erreur de chaîne de confiance côté serveur | Certificat intermédiaire non envoyé | Reconstituer la chaîne et l'inspecter avec l'utilitaire du système |
+| Négociation refusée entièrement | Version obsolète ou algorithmes retirés | Forcer la version attendue et comparer les réponses |
+| Connexion établie puis coupée après quelques secondes | Coupe au niveau du pare-feu ou de l'équilibreur | Observer les segments avec l'outil de capture du système |
+```
+
+
+## Mini-projet : diagnostic complet de l'accès web intermittent
+
+Le chapitre se clôt sur la mise en œuvre réunie de tout ce qui précède. Le site de la médiathèque se Charge mal, par intermittence, depuis deux réseaux différents, et l'intervenant ne dispose d'aucune capture préalable. La consigne de travail reste la même que celle que vous appliquerez en poste : partir des symptômes observés, formuler plusieurs hypothèses classées par probabilité, concevoir un test discriminant pour chacune, exécuter les tests avec des commandes dont la sortie est conservée, remonter jusqu'à la cause racine, corriger, valider sur une période suffisamment longue, puis mettre en place les mesures qui empêcheront le retour du problème. L'objectif n'est pas de trouver vite, mais de produire une preuve que quelqu'un d'autre pourra relire sans être présent pendant l'intervention.
+
+Le rapport attendu comporte sept parties dans cet ordre : les symptômes avec leur fréquence mesurée, les hypothèses avec leur probabilité estimée, les tests avec les commandes exactes et leurs résultats, la cause racine justifiée par les captures, la correction appliquée, la validation obtenue après un cycle complet d'utilisation, et les mesures préventives qui transforment l'incident en connaissance partagée. Prenez particulièrement soin des tests : chacun doit pouvoir écarter au moins une hypothèse, et une commande dont la sortie n'est pas interprétée ne sert à rien. C'est cette rigueur, plus que le choix de l'outil, qui fait la différence entre un diagnostic et une supposition.
+
+```text
+Squelette de rapport — accès web intermittent, site de la médiathèque
+SYMPTOMES       qui, quand, quoi, fréquence mesurée
+HYPOTHESES      au moins cinq pistes classées, chacune avec son test
+TESTS           commande, sortie commentée, hypothèse écartée ou confirmée
+CAUSE RACINE    le mécanisme expliqué en une phrase, preuve à l'appui
+CORRECTION      ce qui a changé, où, quand, par qui
+VALIDATION      durée d'observation, indicateurs suivis, résultat
+PRÉVENTION      surveillance, alertes, documentation mise à jour
+```
+
+## À retenir
+
+- TCP fournit une connexion fiable et ordonnée : poignée de main en trois temps, numéros de séquence, accusés cumulatifs, retransmission.
+- La fenêtre de réception régule le flux, la fenêtre de congestion régule le débit ; slow start puis évitement, réduction à trois accusés dupliqués.
+- Les états d'une connexion se lisent avec ss ou netstat ; CLOSE_WAIT signale une fuite applicative, TIME_WAIT est normal après une fermeture.
+- UDP ajoute huit octets d'en-tête et rien d'autre : ni accusé, ni ordre, ni régulation ; l'application décide de tout.
+- Le choix entre les deux suit trois critères : tolérance à la perte, besoin de réactivité, besoin de diffusion.
+- DNS transforme un nom en adresse selon une hiérarchie racine, top niveau, domaine, zone ; les réponses se mettent en cache avec une durée de vie.
+- Un diagnostic DNS isole le niveau : client, résolveur, autoritatif ; NXDOMAIN, SERVFAIL et délai d'attente n'ont pas la même cause.
+- DHCP déroule quatre messages, diffuse au départ, prolonge le bail à mi-parcours, et se protège contre les serveurs parasites par le filtrage sur le commutateur.
+- TLS authentifie le serveur par son certificat, dérive des clés en un seul aller-retour, puis chiffre tout l'échange HTTP.
+- La méthode de diagnostic reste invariable : hypothèses, tests, preuves, cause, correction, validation, prévention.
+
+## Erreurs fréquentes
+
+La première erreur consiste à confondre fiabilité et rapidité, et à croire qu'un protocole garanti est toujours plus rapide. Une perte chez TCP bloque l'envoi suivant et fait chuter le débit, alors qu'UDP continue ; c'est pourquoi un débit mesuré faible ne désigne pas nécessairement un lien saturé. Vérifiez la réaction du protocole avant de conclure sur l'état de la liaison.
+
+La deuxième erreur est de lire un résultat DNS sans regarder qui l'a produit. Une réponse identique obtenue auprès du résolveur interne et d'un résolveur public ne prouve pas grand-chose si l'un met en cache et pas l'autre ; comparez toujours l'adresse interrogee, le nom complet avec son point final, et la durée de vie restante. Une troisième erreur fréquente est de conclure à une panne de serveur alors que le nom ne résout pas du tout : dans ce cas, aucun test de port n'a de sens, et la séquence des couches impose de revenir en arrière.
+
+Du côté DHCP, les deux pièges classiques sont l'étendue mal dimensionnée, qui se manifeste par des refus successifs et non par une alerte, et le serveur parasite, qui répond depuis un équipement non maîtrisé ; le filtrage sur le port d'accès tranche les deux cas. Côté TLS, un avertissement affiché par le navigateur ne dit jamais tout : lisez la raison exacte, car date dépassée, nom non couvert et chaîne incomplète se corrigent de trois manières différentes. Enfin, ne modifiez jamais un paramètre de congestion ou de temporisation sans avoir observé le comportement précédent : une valeur changée sans mesure ne se valide pas.
+
+## Pour aller plus loin
+
+Les spécifications restent la référence la plus fiable, et elles sont plus lisibles qu'on ne le croit : la définition de TCP s'écrit en trois documents que l'on peut lire sélectivement, la résolution des noms tient en deux, et la négociation de sécurité se lit en un seul. Elles se trouvent gratuitement à l'adresse https://datatracker.ietf.org/doc/html/rfc9293 pour la couche transport, https://datatracker.ietf.org/doc/html/rfc1035 pour le système de noms et https://datatracker.ietf.org/doc/html/rfc8446 pour la version la plus récente de la sécurité des transports.
+
+Pour la pratique, équipez-vous d'un analyseur de trames et refaites sur votre propre machine les captures décrites dans ce chapitre : ouvrez un site, observez la poignée de main, filtrez sur le port du service, suivez la requête de nom et la négociation de sécurité. Les ressources de l'outil se lisent sur le site https://www.wireshark.org/docs/ et les contrôles complets d'une configuration de sécurité se lancent avec le projet https://testssl.sh/. Avant de terminer, relisez les objectifs du chapitre et demandez-vous, pour chacun, quelles commandes exactes vous enverriez.
+
+## Et maintenant : lancez votre première capture
+
+Lancez votre première capture avec Wireshark sur une requête que vous venez de provoquer (un appel DNS, l'ouverture d'une page, le renouvellement d'un bail DHCP) et suivez les échanges couche par couche : la résolution de nom, la poignée de main TCP, puis celle de TLS. C'est exactement le raisonnement que l'exercice pratique attend de vous. Une fois la capture lue, refaites l'exercice de mémoire sur un autre service : cette répétition, plus que la lecture, fixe la mécanique de bout en bout.

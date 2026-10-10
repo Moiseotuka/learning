@@ -1,0 +1,116 @@
+Les fonctions d'agrégat et GROUP BY vous permettent de résumer des volumes de données, mais elles reposent toutes sur une hypothèse implicite : que les valeurs sont là, complètes et exploitables. Dans une base réelle, elles ne le sont pas toujours. Une date de retour manquante, un prix inconnu, une catégorie non renseignée : ces absences sont représentées par une valeur particulière, NULL, dont les règles de fonctionnement surprennent même des développeurs confirmés. À côté de ce cas, deux autres besoins reviennent constamment dans les projets : traduire des règles métier en colonnes calculées avec CASE WHEN, éliminer les doublons avec DISTINCT, et imbriquer des requêtes les unes dans les autres pour résoudre des questions que l'on ne saurait formuler en une seule passe. Ces quatre sujets ferment la partie théorique du chapitre.
+
+Commençons par NULL, car il est à l'origine de la majorité des résultats incompréhensibles rencontrés en production. NULL ne signifie pas zéro, ni chaîne vide, ni valeur par défaut : il signifie inconnu, non renseigné, absent. Toutes les opérations arithmétiques et comparatives du langage sont définies de manière à propager cette inconnue plutôt qu'à la traiter comme une valeur ordinaire, et c'est précisément ce qui rend les comparaisons contre NULL délicates. Nous verrons comment tester une absence avec IS NULL et IS NOT NULL, comment fournir un substitut avec COALESCE, et pourquoi l'écrire colonne = NULL ne renverra jamais aucune ligne, même dans une table entièrement vide.
+
+CASE WHEN introduit une logique conditionnelle à l'intérieur d'une requête. Il joue le rôle d'une instruction conditionnelle du langage de programmation, mais reste déclaratif : vous décrivez les conditions et les résultats associés, et le moteur évalue chaque ligne. On l'utilise pour catégoriser, pour créer des indicateurs, pour formater un affichage ou pour rendre une agrégation conditionnelle, par exemple compter uniquement les emprunts rendus. DISTINCT supprime les doublons du résultat, ce qui répond à une question précise : quelles valeurs différentes existent-elles ? Enfin, les sous-requêtes permettent de poser une question intermédiaire et d'utiliser sa réponse comme élément d'une autre requête, avec un ordre d'exécution intérieur d'abord, extérieur ensuite.
+
+Tous les exemples de cette partie restent attachés à la bibliothèque des Lilas et continuent d'utiliser la syntaxe PostgreSQL, sans rien de spécifique qui vous empêcherait de les adapter à votre moteur. Une remarque sur la méthode : ces quatre notions sont celles que l'on apprend le mieux en cassant quelque chose. Modifiez une condition, retirez un filtre, remplacez un IS NULL par un égal, observez le résultat change, puis revenez à la forme correcte. Ce sont ces écarts entre l'attendu et l'obtenu qui ancrent durablement la règle. Ouvrez votre client SQL, préparez un jeu de données volontairement incomplet, et suivons ensemble.
+
+## NULL, IS NULL et COALESCE : travailler avec l'absence
+
+Une valeur NULL peut se trouver dans n'importe quelle colonne non contrainte par NOT NULL, et notamment dans les colonnes facultatives : date_retour d'un emprunt en cours, courriel d'un lecteur anonyme, prix d'un ouvrage gratuit. Le premier réflexe à corriger est la comparaison directe. Écrire WHERE date_retour = NULL ne renvoie aucune ligne, toujours, même si la colonne contient des dizaines de valeurs nulles. La raison tient à la sémantique de NULL : comme la valeur est inconnue, le moteur ne peut pas décider si l'égalité est vraie ou fausse, il répond alors inconnu, et une condition qui n'est pas vraie de façon certaine écarte la ligne. C'est pourquoi le standard définit des opérateurs spécifiques : IS NULL teste l'absence, IS NOT NULL teste la présence. Écrivez WHERE date_retour IS NULL et vous obtiendrez exactement les emprunts en cours.
+
+Cette règle se propage à toutes les comparaisons. Une ligne dont la colonne vaut NULL échappe à la fois aux conditions =, <, >, BETWEEN, IN et LIKE. Elle est donc silencieusement exclue de la plupart des requêtes, ce qui produit des totaux qui ne tombent pas juste et des listes qui semblent incomplètes sans qu'aucune erreur ne soit signalée. Le piège le plus insidieux concerne NOT IN : si la liste contient un élément NULL, la négation devient inconnue pour toutes les lignes, et le résultat est vide du début à la fin. La solution consiste à garantir que la colonne est non nulle avec IS NOT NULL avant de comparer, ou à remplacer la forme négative par un anti-filtre explicite. Retenez que NULL se propage : toute expression impliquant NULL produit NULL, sauf les exceptions prévues par le langage.
+
+COALESCE fournit un substitut dès qu'une valeur manque. Il accepte plusieurs arguments et renvoie le premier qui n'est pas NULL : COALESCE(date_retour, CURRENT_DATE) renvoie la date de retour si elle existe, sinon la date du jour, ce qui permet de calculer la durée d'un prêt en cours. On l'utilise aussi pour fournir un libellé par défaut, COALESCE(categorie, 'non classé'), ou une valeur neutre dans un calcul, COALESCE(montant, 0). Attention à ne pas confondre la substitution à l'affichage et la correction de la donnée : COALESCE ne modifie pas la table, il habille le résultat. Si l'absence de date est un problème métier, il faut le régler par une contrainte ou par une mise à jour, pas par une formule de restitution. Une autre fonction voisine, NULLIF, renvoie NULL quand deux valeurs sont égales, et sert surtout à éviter les divisions par zéro.
+
+Les fonctions d'agrégat traitent NULL selon des règles qu'il faut connaître par cœur. COUNT(*) compte les lignes, y compris celles qui sont entièrement vides, alors que COUNT(colonne) ignore les valeurs nulles. SUM, AVG, MIN et MAX ignorent tous les NULL ; AVG divise par le nombre de valeurs non nuliennes, pas par le nombre de lignes. Une colonne totalement vide donne AVG NULL, SUM zéro et COUNT(colonne) zéro. Dans un rapport, cela signifie qu'une moyenne calculée sur un sous-ensemble partiel de données peut sembler correcte tout en ignorant silencieusement les lignes incomplètes. Le bon réflexe est d'afficher côte à côte COUNT(*) et COUNT(colonne) : leur écart révèle immédiatement le volume de données manquantes.
+
+```sql
+SELECT
+  COUNT(*)                       AS total_emprunts,
+  COUNT(date_retour)             AS emprunts_rendus,
+  COUNT(*) - COUNT(date_retour)  AS emprunts_en_cours,
+  AVG(COALESCE(date_retour, CURRENT_DATE) - date_sortie) AS duree_estimee_jours,
+  COUNT(DISTINCT lecteur_id)     AS lecteurs_concernes
+FROM emprunts
+WHERE date_sortie >= '2024-01-01';
+```
+
+Cette requête illustre les règles en action : total_emprunts vient de COUNT(*) et compte tout, emprunts_rendus vient d'une colonne et ignore les nuls, leur différence donne les prêts ouverts, et la moyenne utilise COALESCE pour que les prêts non rendus soient mesurés jusqu'à aujourd'hui plutôt que d'être exclus du calcul. Le résultat vous donne en une ligne la santé complète du service de prêt sur la période. Si vous remplacez IS NULL par égal dans un filtre, cette requête n'aura plus jamais rien à compter.
+
+## CASE WHEN : traduire des règles métier en SQL
+
+CASE WHEN introduit une condition dans une expression. Sa syntaxe reproduit celle d'une alternative : WHEN suivi d'une condition, THEN suivi d'une valeur, et un ELSE facultatif pour la valeur par défaut. Sans ELSE, la valeur devient NULL quand aucune condition ne convient, ce qui réintroduit la problématique des valeurs manquantes dans votre propre colonne calculée. La forme simple, CASE colonne WHEN valeur THEN resultat, sert à remplacer un dictionnaire de correspondances : elle compare directement la colonne à chaque valeur sans répéter le nom. La forme searched, avec une condition complète après WHEN, est de loin la plus polyvalente, car elle permet de combiner plusieurs colonnes et des opérateurs variés.
+
+L'usage le plus courant est la catégorisation. Pour un rapport, on transforme un prix en tranche, un état en libellé lisible, une date en période de l'année. Écrire CASE WHEN prix < 10 THEN 'accessible' WHEN prix < 30 THEN 'standard' ELSE 'premium' AS gamme crée une colonne qui n'existe pas dans la table mais qui apparaît dans le résultat, prête à être groupée. Attention à l'ordre des branches : le moteur s'arrête à la première condition vraie. Si vous inversez les bornes, un prix de 5 euros peut se retrouver classé premium. Relisez toujours une cascade CASE en partant du premier WHEN et en vérifiant qu'il ne capture pas des cas destinés aux suivants. Pour une plage, BETWEEN reste plus lisible, mais gardez à l'esprit que les bornes sont inclusives.
+
+CASE transforme aussi une condition en indicateur binaire, ce qui débloque les agrégations conditionnelles. Plutôt que de faire deux requêtes, une pour les rendus et une pour les non rendus, vous écrivez une seule qui additionne des CASE : SUM(CASE WHEN date_retour IS NOT NULL THEN 1 ELSE 0 END) compte les restitutions, et COUNT(*) - SUM(CASE WHEN date_retour IS NOT NULL THEN 1 ELSE 0 END) les prêts en cours. Cette technique est le point de départ des tableaux croisés dynamiques, où l'on produit une colonne par état. Elle évite les jointures contre soi-même et reste parfaitement lisible une fois l'habitude prise. Le THEN doit alors fournir une valeur numérique, et ELSE 0 est indispensable : ELSE NULL serait ignoré par SUM, ce qui donne le même résultat ici, mais pas dans tous les cas.
+
+CASE s'utilise partout où une expression est acceptée : dans SELECT, dans ORDER BY pour imposer un ordre métier, dans GROUP BY pour regrouper sur des catégories calculées, et même dans des contraintes CHECK pour documenter une règle. Utilisé dans ORDER BY, il permet de trier les états dans un ordre qui n'est pas l'ordre alphabétique, par exemple les en attente avant les validés. Utilisé dans une agrégation conditionnelle, il remplace avantageusement des requêtes multiples. Il faut en revanche éviter de l'enchaîner indéfiniment : au-delà de quatre ou cinq branches, la formule devient illisible et il vaut mieux joindre une table de référence qui portera la correspondance, ce qui respecte le principe de normalisation vu au chapitre précédent.
+
+```sql
+SELECT
+  titre,
+  prix,
+  CASE
+    WHEN prix IS NULL             THEN 'prix a definir'
+    WHEN prix = 0                 THEN 'gratuit'
+    WHEN prix < 10                THEN 'gamme accessible'
+    WHEN prix BETWEEN 10 AND 30    THEN 'gamme standard'
+    ELSE                              'gamme premium'
+  END AS gamme,
+  CASE categorie
+    WHEN 'roman'     THEN 'fiction'
+    WHEN 'jeunesse'  THEN 'jeunesse'
+    ELSE                 'autres'
+  END AS rayon
+FROM ouvrages
+ORDER BY gamme, prix;
+```
+
+La requête fabrique deux colonnes calculées, l'une sur une fourchette de prix avec test sur NULL, l'autre par correspondance directe sur la catégorie. Le ORDER BY utilise ensuite l'alias gamme pour présenter les résultats dans l'ordre alphabétique des libellés. Remplacez CASE par une équivalence improvisée dans votre code applicatif et vous perdrez la capacité à grouper et à trier côté base, au prix de transferts de données inutiles. Gardez la logique là où vivent les données.
+
+## DISTINCT : ne garder que l'unique
+
+DISTINCT s'applique au résultat d'un SELECT et supprime les lignes strictement identiques. SELECT DISTINCT ville_id FROM lecteurs ne répond pas à la question combien de lecteurs, mais à l'autre question : quelles villes sont représentées ? C'est une distinction fondamentale entre compter des occurrences et lister des valeurs. On retrouve la même différence entre COUNT(*), qui compte les lignes, et COUNT(DISTINCT colonne), qui compte les valeurs différentes. DISTINCT porte sur l'ensemble des colonnes du SELECT : SELECT DISTINCT ville_id, categorie ne conserve que les paires réellement observées, pas chaque colonne séparément. Il faut donc l'utiliser avec discernement, car ajouter une colonne à la sélection augmente souvent le nombre de lignes distinctes et vide la force du filtre.
+
+DISTINCT ne trie pas. Les lignes uniques restent dans l'ordre indéterminé que nous avons décrit en parlant de ORDER BY, et un DISTINCT sur une grande table peut coûter cher, car le moteur doit comparer ou hacher toutes les lignes retenues. Avant de l'ajouter par réflexe, demandez-vous si la question ne peut pas être résolue autrement : une clé primaire donne par défaut des lignes uniques, une jointure mal construite multiplie les doublons qu'un DISTINCT masquera au lieu de corriger, et un rapport d'agrégation GROUP BY produit déjà des lignes uniques. Appliquer DISTINCT comme pansement sur une jointure qui dédoublonne mal est un symptôme que l'on aurait tort de soigner par le symptôme : le vrai correctif se trouve dans les clauses FROM et ON.
+
+Il existe une variante DISTINCT qui s'applique aux agrégats, DISTINCT COUNT(DISTINCT ville_id), et une autre à l'intérieur des fonctions d'ordre, avec des effets différents selon les moteurs. Une écriture fréquente est ORDER BY COUNT(DISTINCT lecteur_id) DESC, qui classe les villes par nombre de lecteurs différents, même si certains lecteurs apparaissent plusieurs fois dans une table de faits. Dans les requêtes d'analyse, compter des entités distinctes est souvent plus juste que compter des lignes : nombre de clients actifs, nombre d'ouvrages empruntés, nombre de sessions uniques. La subtilité tient à ce que DISTINCT s'applique avant l'agrégat sur l'argument, et non après sur le résultat. On peut aussi combiner DISTINCT avec LIMIT pour obtenir un échantillon de valeurs uniques, ou avec ORDER BY pour une liste stable et triée.
+
+```sql
+SELECT DISTINCT
+  e.etat,
+  o.categorie,
+  COUNT(*) AS nombre_exemplaires
+FROM exemplaires e
+JOIN ouvrages o ON o.identifiant = e.ouvrage_id
+GROUP BY e.etat, o.categorie
+ORDER BY e.etat, o.categorie;
+```
+
+Dans cet exemple, le DISTINCT est superflu car GROUP BY produit déjà des lignes uniques par paire état et catégorie ; il est conservé ici pour montrer que les deux se cumulent sans se nuire, mais dans un code de production on le retirerait. La leçon à retenir : DISTINCT répond à une question de présence, pas à une question de quantité. Si vous vous surprenez à l'ajouter parce que le résultat semble contenir des doublons, cherchez d'abord l'origine de ces doublons, presque toujours une jointure ou un regroupement insuffisant.
+
+## Les sous-requêtes simples : une question dans une question
+
+Une sous-requête est une requête imbriquée dans une autre, entre parenthèses. Son principe d'exécution est linéaire : la requête intérieure est évaluée d'abord, et son résultat sert de valeur, de liste ou de table à la requête extérieure. Cette séquence intérieur puis extérieur rend la lecture naturelle, à condition de savoir où elle s'applique. Une sous-requête peut se trouver dans la clause WHERE, dans FROM, dans SELECT ou dans la clause WITH qui nomme des ensembles intermédiaires. Nous nous limitons ici aux formes les plus simples, celles qui suffisent à résoudre l'essentiel des questions posées sans jointure explicite.
+
+La première forme est la sous-requête scalaire, qui renvoie une seule ligne et une seule colonne. Elle se compare comme une valeur : WHERE prix > (SELECT AVG(prix) FROM ouvrages) ne retient que les ouvrages plus chers que la moyenne. Le même mécanisme permet de filtrer sur un agrégat, ce que WHERE interdit directement. Si la sous-requête renvoie plusieurs lignes, la comparaison devient invalide, sauf si l'on utilise IN ou les opérateurs quantifiés ANY et ALL. Cette contrainte d'unicité est la première chose à vérifier quand une sous-requête échoue avec un message du type requête renvoie plus d'une ligne. Une astuce de diagnostic consiste à exécuter la sous-requête seule, avant de la réintégrer dans la requête principale.
+
+La deuxième forme est la sous-requête avec IN, probablement la plus utile au quotidien. WHERE lecteur_id IN (SELECT lecteur_id FROM emprunts WHERE date_sortie >= '2024-06-01') liste les lecteurs ayant emprunté depuis juin. La lecture est directe, et le moteur sait souvent transformer la forme en jointure interne pour gagner en performance. Sa négation, NOT IN, reste dangereuse en présence de NULL, comme nous l'avons vu : préférez NOT EXISTS, que l'on couvrira avec les jointures, ou garantissez l'absence de nulles avec une condition IS NOT NULL dans la sous-requête. La troisième forme est la sous-requête dans FROM, dite dérivée, qui fournit une table temporaire à la requête extérieure : on y place un GROUP BY intermédiaire, puis on filtre ou on trie dessus à l'extérieur. Elle est idéale quand un filtre porte sur un agrégat que l'on ne veut pas encore résumer en HAVING.
+
+```sql
+SELECT
+  v.nom AS ville,
+  stats.nombre_emprunts
+FROM villes v
+JOIN (
+  SELECT l.ville_id, COUNT(*) AS nombre_emprunts
+  FROM lecteurs l
+  JOIN emprunts e ON e.lecteur_id = l.identifiant
+  GROUP BY l.ville_id
+) AS stats ON stats.ville_id = v.identifiant
+WHERE stats.nombre_emprunts >= (
+  SELECT AVG(nombre_emprunts)
+  FROM (
+    SELECT COUNT(*) AS nombre_emprunts
+    FROM lecteurs l2
+    JOIN emprunts e2 ON e2.lecteur_id = l2.identifiant
+    GROUP BY l2.ville_id
+  ) AS par_ville
+)
+ORDER BY stats.nombre_emprunts DESC;
+```
+
+Cette requête montre les trois niveaux de complexité à maîtriser. La sous-requête dérivée stats calcule d'abord le nombre d'emprunts par ville ; la sous-requête scalaire, placée dans WHERE, calcule la moyenne de ces moyennes ; la requête extérieure relie le résultat aux villes et ne garde que celles qui atteignent la moyenne. Chaque niveau répond à une question précise, et l'on peut exécuter chaque niveau isolément pour vérifier son résultat avant de l'emboîter. Si la logique devient trop imbriquée, la clause WITH, ou CTE, permet de nommer chaque étape sur sa propre ligne et de transformer une formule illisible en une suite de questions enchaînées. C'est la porte d'entrée vers les requêtes analytiques plus ambitieuses qui font l'objet des chapitres suivants du parcours.
