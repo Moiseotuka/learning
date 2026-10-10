@@ -1,0 +1,8660 @@
+-- easyLearn — seed des pages numérotées du Cours (678 pages, 44 chapitres)
+-- Chaque section « ## » d'une leçon devient une page titrée.
+-- Idempotent : remplace les pages des chapitres listés.
+-- Généré par scripts/generate-pages-migration.mjs — ne pas éditer à la main.
+-- Prérequis : 202610040004_chapter_pages.sql (table chapter_pages).
+
+
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c1-p1', 'ia-c1', 1, $lesson$Pourquoi explorer ses données avant de les modéliser$lesson$, $lesson$
+Bienvenue dans ce premier chapitre du parcours Intelligence Artificielle et Data Science. Si vous avez déjà ouvert un tableur, compté des lignes à la main ou écrit quelques scripts Python, vous avez tout ce qu'il faut pour suivre cette leçon. Elle ne suppose ni cours de statistiques, ni bibliothèque installée, ni jeu de données exotique : seulement l'envie de comprendre comment on passe d'un fichier brut à une information digne de confiance. Tous les exemples exécutables de ce cours n'utilisent que la bibliothèque standard de Python, ce qui signifie qu'aucune installation ne viendra interrompre votre apprentissage. Les outils professionnels que vous entendrez souvent nommer, notamment pandas, feront l'objet d'illustrations en prose : ils éclairent la démarche, mais ce sont les modules csv, statistics, collections et math qui porteront votre code.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes. Premièrement, vous décrirez un jeu de données : lignes, colonnes, types, granularité et rôle de chaque variable. Deuxièmement, vous mesurerez sa qualité avec des comptages précis : cellules vides, doublons, valeurs incohérentes, valeurs extrêmes. Troisièmement, vous appliquerez un traitement justifié à chaque défaut trouvé, en sachant pourquoi vous remplacez, pourquoi vous supprimez et pourquoi vous gardez. Quatrièmement, vous produirez des visualisations simples — histogrammes, boîtes à moustaches, tableaux de corrélations — qui font parler les nombres avant qu'un algorithme ne parle à leur place. Ces quatre compétences forment le socle des chapitres suivants : classification, régression, évaluation de modèles et projets conduits de bout en bout.
+
+Un dernier conseil avant de commencer. On apprend l'exploration de données comme on apprend à réparer un vélo : en touchant, en se trompant, en recommençant. Rien ne remplace le geste d'ouvrir un fichier soi-même, d'afficher les dix premières lignes, de découvrir avec surprise qu'une colonne de nombres contient en réalité du texte, puis de réparer cette surprise. Les erreurs que vous ferez ici coûtent peu : elles sont la meilleure école. Nous avancerons en alternant explications détaillées, comptages exécutables et bonnes pratiques issues du terrain, avec un fil rouge : un fichier de ventes imparfait que vous nettoierez pas à pas dans l'exemple guidé, puis seul dans l'exercice pratique.
+
+
+
+La phrase est devenue un slogan, mais elle reste exactement vraie : des données pauvres produisent des résultats pauvres, quel que soit le talent de celui qui modélise. Un algorithme ne voit que des nombres dans une grille. Il ne sait pas qu'une quantité ne peut pas être négative, qu'un prix à 1250 euros n'est pas un prix à 12,50 euros mal converti, qu'un client apparaissant trois fois n'est pas trois clients. Il ingère ce qu'on lui donne, et il produit avec la même confiance un résultat faux que un résultat juste. Le modèle n'est jamais le maillon faible au départ : c'est toujours la qualité de l'alimentation. Explorer les données, c'est donc inspecter la chaîne alimentaire avant de servir quoi que ce soit.
+
+Ce défaut a un coût, et ce coût augmente avec le moment où on le découvre. Détecté pendant l'exploration, un champ mal nommé se corrige en une ligne. Détecté après l'entraînement, il impose de relancer tout le pipeline, de revalider les métriques et parfois de refaire les collectes. Détecté en production, il se transforme en décision erronée : recommandation absurde, facturation fausse, diagnostic contesté. Les équipes professionnelles parlent d'ailleurs de dette technique des données, par analogie avec la dette logicielle : chaque raccourci de nettoyage reporté devient un intérêt à payer plus tard, avec intérêts. Le temps passé à inspecter n'est pas du temps volé à la modélisation, c'est du temps investi pour éviter une facture bien plus lourde.
+
+L'exploration de données a été formalisée par John Tukey dans les années 1970, bien avant l'essor de l'apprentissage automatique. Tukey défendait une idée presque révolutionnaire pour l'époque : on peut apprendre beaucoup sur un ensemble de mesures sans chercher à prédire quoi que ce soit, simplement en le décrivant, en le découpeant et en le regardant. Il appelait cela l'analyse exploratoire, et il inventait au passage des représentations que vous utiliserez tout au long de ce parcours, comme la boîte à moustaches. L'idée a survécu parce qu'elle correspond à une réalité de terrain : la majorité des projets de data science passent plus de temps à préparer et à comprendre les données qu'à construire des modèles, souvent cité aux trois quarts du calendrier total.
+
+Explorer, ce n'est donc pas hésiter : c'est se donner le droit de ne pas encore modéliser. Concrètement, l'analyse exploratoire pose quatre questions. D'abord, de quoi est composé ce jeu de données : quelles colonnes, quel type, quelle unité, quelle période. Ensuite, quelles sont ses blessures : cellules vides, doublons, formats hétérogènes, valeurs impossibles. Puis, quelles relations apparaissent : quelle variable monte quand l'autre monte, quel groupe se distingue des autres. Enfin, que peut-on en conclure honnêtement : quelles sont les limites de l'échantillon, ce qu'il ne représente pas, et ce qu'il ne faut surtout pas en déduire. Un jeu de données propre et compris en vaut souvent plusieurs beaux mais illisibles.
+
+Il y a une raison plus douce, mais tout aussi décisive : l'exploration est le moment où l'on développe son intuition métier. Aucun dictionnaire de variables ne vous dira qu'un pic de commandes tombe toujours un lundi, qu'une ville apparaît avec un nom variant entre deux orthographes, ou qu'un produit n'a jamais été vendu en hiver. Ces découvertes naissent d'un regard insisté sur des tableaux et des graphiques simples. Elles changent ensuite la question posée au modèle : on ne demande plus « prédire les ventes », mais « prédire les ventes du lundi, en tenant compte du fait que mars est atypique ». La qualité de la question dépend directement de la qualité de l'observation.
+
+Voici ce que vous devez être capable de produire après cette leçon, en termes très concrets. Vous saurez dire, pour un fichier donné, combien il contient de lignes et de colonnes, quel pourcentage de cellules manque par colonne, combien de lignes sont strictement identiques, quelles colonnes sont numériques en réalité mais stockées comme du texte, quels sont les quartiles d'une variable continue et où se situent les observations extrêmes. Vous saurez justifier chaque décision de nettoyage en une phrase. Et vous saurez produire deux ou trois visualisations qui racontent une histoire lisible, plutôt qu'une collection de graphiques décoratifs.
+$lesson$),
+  ('ia-c1-p2', 'ia-c1', 2, $lesson$Ce que contient vraiment un jeu de données$lesson$, $lesson$
+Un jeu de données est un tableau rectangulaire : des lignes qui décrivent des observations, des colonnes qui décrivent des caractéristiques. Chaque ligne est un enregistrement — un client, une transaction, une mesure météo, un examen médical — et chaque colonne est une variable mesurée sur cet enregistrement. Deux règles simples aident à tout analyser : les lignes sont en général nombreuses et interchangeables, les colonnes sont en petit nombre et fixes, et c'est toujours sur elles qu'on raisonne. Quand quelqu'un vous dit « j'ai 50 000 données », il veut dire 50 000 lignes ; quand un analyste s'inquiète, c'est presque toujours à propos d'une colonne.
+
+Le premier travail, avant tout calcul, consiste à attribuer un rôle à chaque colonne. Certaines décrivent la cible que l'on cherche à prédire, d'autres sont des descripteurs utiles, d'autres encore sont des identifiants qui ne doivent jamais être utilisés comme variables d'entrée. Toutes ne se lisent pas de la même manière, et confondre un identifiant avec une variable prédictive est l'une des erreurs les plus classiques : un numéro de dossier a un sens par ligne, aucun sens en tant que grandeur. Le tableau ci-dessous résume les familles que vous rencontrerez le plus souvent, avec leur nature et l'analyse typique qu'on en fait.
+
+| Famille de variable | Nature | Exemple | Analyse typique |
+|---|---|---|---|
+| Identifiant | unique par ligne | numero_client | sert de clé, jamais de prédicteur |
+| Qualitative nominale | étiquette sans ordre | ville, produit | effectifs et proportion par modalité |
+| Qualitative ordinale | étiquette ordonnée | satisfaction de 1 à 5 | distribution, tendance centrale par rang |
+| Quantitative discrète | entier comptable | quantite | somme, moyenne, médiane |
+| Quantitative continue | mesure avec décimales | prix, durée, temperature | histogramme, quartiles, dispersion |
+| Temporelle | date ou instant | date_vente | décomposition, saisonnalité, décalage |
+
+Cette classification n'est pas un exercice scolaire : elle détermine le traitement. Une variable nominale ne se moyenne pas, on la compte. Une variable ordinale se résume par sa médiane plus souvent que par sa moyenne. Une variable continue se raconte avec un histogramme, une variable discrète avec des barres de comptage. Une variable temporelle exige presque toujours d'être décomposée en année, mois, jour de semaine avant toute analyse, car la date brute ne veut rien dire pour un algorithme.
+
+Un deuxième concept mérite votre attention dès maintenant : la granularité. Elle désigne ce qu'une ligne représente exactement. Une ligne par commande ? Par client et par jour ? Par relevé toutes les dix minutes ? Tant que cette question n'a pas de réponse claire, aucun comptage n'est fiable, car la même phrase, « 1 200 ventes », ne veut pas dire la même chose selon le niveau de détail. La granularité détermine aussi ce qui constitue un doublon : deux lignes identiques sont un problème à l'échelle d'une commande unique, mais un phénomène normal si l'on compte des relevés répétés.
+
+Il faut ensuite distinguer la cardinalité d'une variable, c'est-à-dire le nombre de valeurs différentes qu'elle prend, de sa distribution, c'est-à-dire la manière dont ses valeurs se répartissent. Une colonne ville avec trois modalités se lit dans un tableau de effectifs ; une colonne code_postal en possède des milliers et se traite autrement. Une distribution peut être symétrique, étalée sur les deux côtés d'une valeur centrale, ou asymétrique, avec une queue qui s'allonge vers les grandes valeurs — c'est le cas le plus fréquent pour les revenus, les prix et les durées. Cette forme décide si la moyenne raconte une histoire honnête ou si la médiane doit la remplacer.
+
+Enfin, un jeu de données n'existe jamais tout seul : il a une source, une date de collecte, un périmètre et des règles d'inclusion. Un extrait de commandes d'un mois de mars ne représente pas l'année. Des données collectées avant une réglementation ne décrivent pas la période suivante. Noter ces informations en tête de fichier, même en deux lignes, fait partie du nettoyage : c'est ce qu'on appelle les métadonnées, et leur absence est la raison pour laquelle tant d'analyses anciennes sont impossibles à reproduire.
+$lesson$),
+  ('ia-c1-p3', 'ia-c1', 3, $lesson$Première rencontre avec un fichier CSV$lesson$, $lesson$
+Le format le plus répandu est le CSV : un fichier texte où chaque ligne contient les champs d'une observation, séparés par une virgule ou par un point-virgule. Sa popularité vient de sa simplicité : un éditeur de texte suffit à l'ouvrir, tous les logiciels le lisent, et il n'y a aucun format binaire à décoder. Sa simplicité est aussi son piège : le CSV ne porte aucune information de type. Il ne dit pas si 12,50 est un nombre ou un texte, si la colonne vide est un zéro oublié ou une vraie absence. Tout doit être deviné puis vérifié, et c'est précisément le début de l'exploration.
+
+En Python standard, le module csv fait ce travail en quelques lignes. La fonction DictReader lit la première ligne comme une liste d'en-têtes, puis renvoie chaque ligne suivante sous forme de dictionnaire associant en-tête et valeur. Toutes les valeurs arrivent sous forme de texte, sans exception : c'est la règle du format texte, et vous devrez convertir explicitement chaque colonne numérique. L'exemple ci-dessous charge un fichier, affiche le nombre de lignes et les cinq premières, puis compte les champs vides par colonne avec un dictionnaire de compteurs.
+
+```python
+import csv
+
+with open("ventes.csv", encoding="utf-8", newline="") as f:
+    lignes = list(csv.DictReader(f))
+
+print("lignes :", len(lignes))
+print("colonnes :", list(lignes[0].keys()))
+for ligne in lignes[:5]:
+    print(ligne)
+
+manquantes = {}
+for ligne in lignes:
+    for cle, valeur in ligne.items():
+        if valeur is None or valeur.strip() == "":
+            manquantes[cle] = manquantes.get(cle, 0) + 1
+
+print("vides :", manquantes)
+```
+
+Trois détails de cette première lecture méritent d'être mémorisés. Le paramètre encoding="utf-8" évite l'erreur la plus fréquente à l'ouverture d'un fichier contenant des accents, notamment sous Windows où l'encodage par défaut peut différer. Le paramètre newline="" est exigé par le module csv pour gérer correctement les retours à la ligne. Enfin, le compteur de vides utilise la méthode strip(), qui supprime les espaces en début et en fin de chaîne : une cellule remplie d'espaces est une cellule vide, et un simple test d'égalité avec la chaîne ne la détecterait pas.
+
+Avant d'aller plus loin, il est utile de vérifier que le fichier ressemble bien à ce que l'on croit lire. Deux affichages suffisent : les dix premières lignes brutes, et pour chaque colonne, quelques valeurs distinctes avec leur nombre d'occurrences. Un simple dictionnaire de fréquences suffit, et il vous apprendra souvent qu'une colonne supposedment numérique contient en réalité les chaînes "NC" ou "n/a", ou qu'une colonne de ville comporte « Paris », « paris  » et « PARIS », trois modalités qui n'en sont qu'une.
+
+```python
+from collections import Counter
+
+def frequence(lignes, cle):
+    compteur = Counter((ligne.get(cle) or "").strip() for ligne in lignes)
+    return compteur.most_common(10)
+
+print(frequence(lignes, "ville"))
+print(frequence(lignes, "produit"))
+
+colonnes = list(lignes[0].keys())
+print("nombre de colonnes :", len(colonnes))
+for cle in colonnes:
+    exemples = {ligne.get(cle) for ligne in lignes[:50]}
+    print(cle, "->", sorted(exemples)[:5])
+```
+
+Cette habitude de regarder avant de calculer est la plus rentable que vous puissiez prendre. Elle prend trente secondes, elle fait gagner des heures, et elle vous sauve d'une erreur difficile à rattraper : analyser sereinement une colonne dont on n'a jamais vérifié le contenu réel. La suite de cette leçon va transformer ce premier regard en méthode systématique, en passant en revue les quatre grandes familles de défauts que l'on trouve dans presque tous les fichiers du monde réel.
+$lesson$),
+  ('ia-c1-p4', 'ia-c1', 4, $lesson$Les quatre défauts qui ruinent une analyse$lesson$, $lesson$
+Vous savez maintenant regarder un fichier. Il reste à donner un nom précis à ce que vous voyez, car nommer un défaut est déjà commencer à le résoudre. Dans presque tous les jeux de données réels cohabitent quatre grandes familles d'imperfections, et elles n'apparaissent jamais seules : une cellule vide provoque un calcul faux, un doublon fausse une moyenne, une valeur aberrante déforme une médiane, une incohérence de format casse un regroupement. Le tableau suivant les résume avec leur symptôme observable, la cause la plus fréquente et la stratégie de réparation que nous allons détailler dans les sections suivantes.
+
+| Défaut | Symptôme visible | Cause la plus fréquente | Stratégie typique |
+|---|---|---|---|
+| Valeur manquante | cellule vide, n/a, null | saisie facultative, fiche incomplète | compter, puis imputer ou exclure |
+| Doublon | ligne identique observée deux fois | export concaténé, ressaisie | dédupliquer sur une clé métier |
+| Valeur aberrante | observation très éloignée du reste | erreur de saisie, unité confuse | vérifier, puis corriger ou exclure |
+| Incohérence | mêmes valeurs écrites différemment | normalisation absente | harmoniser formats et casse |
+
+Une règle d'or traverse toutes ces stratégies : on ne répare jamais ce que l'on n'a pas d'abord compté. Supprimer silencieusement dix pour cent des lignes parce qu'elles gênent un calcul n'est pas du nettoyage, c'est de la triche. Chaque traitement doit être précédé d'un comptage affiché, accompagné d'une justification écrite et suivi d'un nouveau comptage. Si vous ne pouvez pas expliquer en une phrase pourquoi vous avez supprimé une ligne, c'est qu'il est trop tôt pour la supprimer.
+$lesson$),
+  ('ia-c1-p5', 'ia-c1', 5, $lesson$Valeurs manquantes$lesson$, $lesson$
+Une valeur manquante, c'est une information absente : le champ existe, la colonne existe, mais rien n'a été saisi. Le piège est que l'absence elle-même porte une information. Dans un formulaire médical, une question non renseignée n'a pas le même sens qu'une question à réponse non ; dans un fichier de ventes, un prix vide n'a probablement pas le même sens qu'une ville vide. Avant toute décision, il faut donc distinguer trois situations : la donnée est manquante au hasard, c'est-à-dire sans lien avec les autres variables ; elle est manquante pour une raison liée à la variable elle-même, comme un champ facultatif rempli surtout par les nouveaux clients ; ou elle est manquante pour une raison liée à la cible, ce qui est le cas le plus dangereux.
+
+La première étape est toujours la même : mesurer. Un pourcentage par colonne suffit à changer votre lecture du fichier. Dix pour cent de vides répartis partout demandent une stratégie, un champ qui manque à quatre-vingt-dix pour cent mérite d'être abandonné, et une colonne qui ne manque jamais ne pose aucun problème. Le comptage tient en quelques lignes avec la bibliothèque standard, et il gagne à être affiché en pourcentage plutôt qu'en nombre brut, car un chiffre brut ne signifie rien sans la taille du fichier.
+
+```python
+import csv
+
+def taux_manquants(lignes):
+    if not lignes:
+        return {}
+    compte = {cle: 0 for cle in lignes[0]}
+    for ligne in lignes:
+        for cle in compte:
+            valeur = ligne.get(cle)
+            if valeur is None or valeur.strip() == "":
+                compte[cle] += 1
+    total = len(lignes)
+    return {cle: round(100 * n / total, 1) for cle, n in compte.items()}
+
+print(taux_manquants(lignes))
+```
+
+Une fois le diagnostic posé, quatre remèdes s'offrent à vous, et aucun n'est universel. Le tableau ci-dessous les compare selon leur effet sur le volume de données, sur la distribution observée et sur le risque d'introduire un biais : c'est cet effet, et non une habitude, qui doit guider votre choix.
+
+| Remède | Volume conservé | Effet sur la distribution | Quand l'utiliser |
+|---|---|---|---|
+| Suppression de la ligne | diminue | peut déformer si la perte n'est pas aléatoire | très peu de vides, perte sans lien avec la cible |
+| Remplacement par la moyenne | conservé | resserre la distribution, sous-estime la variance | variable symétrique sans valeur extrême |
+| Remplacement par la médiane | conservé | robuste aux valeurs extrêmes | variable asymétrique, cas le plus fréquent |
+| Indicateur de disponibilité | conservé | ajoute une variable | l'absence elle-même est un signal |
+
+La suppression est le remède le plus simple et le plus dangereux. Simple, parce qu'une ligne incomplète n'existe plus et que les calculs suivants fonctionnent d'emblée. Dangereux, parce que si les vides se concentrent dans un groupe — les lignes de la succursale la plus récente, les clients les moins actifs — vous ne perdez pas des données au hasard, vous perdez un groupe, et vos statistiques décrivent alors un échantillon que plus personne n'a demandé. La règle est donc de supprimer uniquement quand le pourcentage est faible et que la perte reste visiblement indifférente.
+
+Le remplacement par une statistique de position, moyenne ou médiane, conserve le volume mais invente une valeur. Ce n'est pas un crime, à condition d'être honnête : la valeur inventée est une estimation, pas une observation. Pour une variable asymétrique, comme la plupart des montants, la moyenne tire la remplissage vers le haut et fausse la lecture ; la médiane, elle, reste insensible à quelques valeurs extrêmes et se comporte beaucoup mieux. On peut aussi choisir le mode pour une variable textuelle ou catégorielle, la modalité la plus fréquente étant alors l'estimation la plus prudente.
+
+La quatrième option mérite d'être connue dès maintenant : au lieu de cacher l'absence, la rendre explicite. On ajoute une colonne booléenne qui signale que la valeur d'origine manquait, puis on impute. Cette technique est particulièrement utile quand l'absence est informative, car elle permet au modèle ultérieur d'utiliser le signal sans jamais confondre une valeur réelle avec une valeur de remplacement. Dans le code standard, l'opération se écrit comme un parcours de colonne avec un dictionnaire de règles.
+
+```python
+def imputer(lignes, colonne, strategie="mediane"):
+    valeurs = []
+    for ligne in lignes:
+        brut = (ligne.get(colonne) or "").strip()
+        if brut:
+            try:
+                valeurs.append(float(brut))
+            except ValueError:
+                pass
+    if not valeurs:
+        retour = None
+    elif strategie == "moyenne":
+        retour = sum(valeurs) / len(valeurs)
+    else:
+        tri = sorted(valeurs)
+        n = len(tri)
+        retour = tri[n // 2] if n % 2 else (tri[n // 2 - 1] + tri[n // 2]) / 2
+    remplis = []
+    for ligne in lignes:
+        brut = (ligne.get(colonne) or "").strip()
+        copie = dict(ligne)
+        if not brut:
+            copie[colonne] = retour
+            copie[colonne + "_impute"] = "oui"
+        else:
+            copie[colonne + "_impute"] = "non"
+        remplis.append(copie)
+    return remplis
+```
+
+Un dernier point sur le vocabulaire, que vous rencontrerez fréquemment : l'imputation désigne précisément cette opération de remplacement, et la valeur utilisée pour remplacer s'appelle la valeur imputée. Le mot revient dans tous les guides de prétraitement, y compris dans ceux des bibliothèques d'apprentissage automatique, où des stratégies complètes comme la plus proche voisine ou l'iteration sont proposées. La logique reste la même que dans votre script standard : estimer, remplacer, marquer, puis mesurer l'effet du traitement sur la distribution d'origine.
+$lesson$),
+  ('ia-c1-p6', 'ia-c1', 6, $lesson$Doublons : détecter, décider, dédupliquer$lesson$, $lesson$
+Un doublon est une ligne qui raconte deux fois la même chose. Son effet sur une analyse est toujours dans le même sens : il gonfle les comptages, tire les moyennes vers les observations répétées et fait croire qu'un événement s'est produit plus souvent qu'en réalité. Une commande enregistrée deux fois fait douter de tout le chiffre d'affaires. Pourtant, la détection demande une précaution capitale : un doublon se juge par rapport à une clé, et la clé dépend de la granularité. Deux lignes identiques sont suspectes à l'échelle d'une transaction, parfaitement normales si l'on compte des relevés répétés d'un capteur toutes les minutes.
+
+La détection la plus robuste consiste à construire pour chaque ligne une empreinte, c'est-à-dire une chaîne de caractères obtenue en concaténant les valeurs de toutes les colonnes normalisées, puis à compter les répétitions de cette empreinte avec un dictionnaire. Cette méthode ne demande que la bibliothèque standard, elle fonctionne quel que soit le nombre de colonnes, et elle fournit au passage les effectifs de chaque doublon, ce qui est souvent plus parlant qu'une simple réponse binaire.
+
+```python
+from collections import Counter
+
+def detecter_doublons(lignes, colonnes):
+    traces = Counter()
+    for ligne in lignes:
+        cles = [str(ligne.get(c, "")).strip() for c in colonnes]
+        traces["|".join(cles)] += 1
+    repetees = {t: n for t, n in traces.items() if n > 1}
+    return repetees
+
+colonnes = list(lignes[0].keys())
+print(detecter_doublons(lignes, colonnes))
+```
+
+Une fois les doublons comptés, il faut décider, et la décision est rarement technique. Trois cas de figure se présentent. Si la clé métier identifie réellement l'objet — numéro de commande, identifiant de relevé — alors les répétitions sont un bug d'alimentation et on ne garde que la première occurrence. Si la clé est ambiguë, deux lignes peuvent être deux ventes distinctes portant les mêmes valeurs, et supprimer l'une des deux détruit du chiffre d'affaires. Si les lignes diffèrent seulement par un détail, comme une date de mise à jour, il faut choisir quelle version fait foi : la plus récente, la plus complète, ou la somme des deux. Ce choix appartient à la personne qui connaît le métier, pas au script.
+
+Le nettoyage lui-même est ensuite d'une simplicité extrême : on parcourt les lignes dans l'ordre, on construit l'empreinte, on ne conserve que les lignes dont l'empreinte n'a pas encore été vue. L'ensemble Python sert exactement à cela, et la première occurrence est préservée parce qu'on l'ajoute à l'ensemble avant toute ligne suivante. Il faut absolument éviter de supprimer tous les doublons sans garder d'occurrence : plusieurs outils le font, et le résultat est un fichier vide ou un fichier qui a perdu ses lignes d'origine.
+
+```python
+def dedupliquer(lignes, colonnes):
+    vus = set()
+    conservees = []
+    ecartees = 0
+    for ligne in lignes:
+        empreinte = "|".join(str(ligne.get(c, "")).strip() for c in colonnes)
+        if empreinte in vus:
+            ecartees += 1
+            continue
+        vus.add(empreinte)
+        conservees.append(ligne)
+    return conservees, ecartees
+
+propres, nb = dedupliquer(lignes, list(lignes[0].keys()))
+print("doublons écartés :", nb)
+```
+
+Pensez aux doublons sémantiques, qui passent inaperçus si l'on ne compare que les chaînes exactes. « Paris », « paris » et « PARIS » ne sont pas des doublons de lignes, mais trois écritures d'une même ville qui vont produire trois groupes au lieu d'un. Le même phénomène survient avec les espaces parasites en début et en fin de champ, les dates écrites tantôt en format jour-mois-année tantôt en format inverse, ou les nombres avec virgule et avec point. La dédupliquer rigoureuse commence donc par une harmonisation des valeurs, sinon on ne détecte que les doublons parfaits et on laisse filer tous les autres.
+$lesson$),
+  ('ia-c1-p7', 'ia-c1', 7, $lesson$Contrôles de cohérence : quand les données se contredisent$lesson$, $lesson$
+Au-delà des quatre défauts classiques, il existe une famille de problèmes que l'on repère en posant des questions simples à des colonnes apparemment saines. Une quantité ne peut pas être négative. Une date de fin ne peut pas précéder sa date de début. Un prix ne peut pas être nul pour une vente réalisée. Un âge ne peut pas dépasser 130. Aucun de ces tests ne nécessite de statistique : il suffit d'une comparaison et d'un comptage. Ces contrôles s'appellent des règles de validation ou des assertions de données, et leur habitude distingue rapidement l'analyste débutant de l'analyste expérimenté.
+
+L'erreur classique consiste à exécuter ces vérifications une par une, à l'aveugle, puis à corriger au fur et à mesure. La meilleure pratique est l'inverse : écrire une petite batterie de contrôles qui renvoie un rapport, corriger d'un seul trait, puis relancer la batterie jusqu'à obtention d'un rapport vierge. Le programme ci-dessous illustre cette démarche avec quatre règles élémentaires sur un fichier de ventes.
+
+```python
+def controles(lignes):
+    anomalies = {"quantite_negative": 0, "prix_nul": 0, "ville_inconnue": 0, "date_invalide": 0}
+    villes_valides = {"Paris", "Lyon", "Marseille", "Toulouse", "Nantes"}
+    for ligne in lignes:
+        q = (ligne.get("quantite") or "").strip()
+        p = (ligne.get("prix_unitaire") or "").replace(",", ".").strip()
+        v = (ligne.get("ville") or "").strip()
+        d = (ligne.get("date") or "").strip()
+        try:
+            if int(q) < 0:
+                anomalies["quantite_negative"] += 1
+        except ValueError:
+            anomalies["quantite_negative"] += 1
+        try:
+            if float(p) <= 0:
+                anomalies["prix_nul"] += 1
+        except ValueError:
+            anomalies["prix_nul"] += 1
+        if v not in villes_valides:
+            anomalies["ville_inconnue"] += 1
+        if len(d) != 10 or d[4] != "-":
+            anomalies["date_invalide"] += 1
+    return anomalies
+
+print(controles(lignes))
+```
+
+Remarquez la structure : chaque test est indépendant, chaque échec est compté dans une clé dédiée, et la fonction renvoie un dictionnaire plutôt que d'imprimer au fil de l'eau. Cette séparation entre calcul et affichage vous permet de réutiliser les mêmes contrôles dans un script de surveillance qui relira le fichier chaque nuit et signalera la première anomalie. C'est ainsi que fonctionnent les pipelines de données professionnels : des contrôles automatisés qui bloquent l'entraînement d'un modèle quand les données dégradées, bien avant qu'un analyste ne s'en aperçoive.
+
+La dernière catégorie de contrôles est relationnelle : elle compare deux colonnes entre elles plutôt que chacune séparément. Le total d'une ligne concorde-t-il avec le prix unitaire multiplié par la quantité ? La somme par ville est-elle égale au total général ? Un produit apparaît-il dans une commande sans prix ? Ces vérifications croisées détectent des erreurs qu'aucun contrôle univarié ne voit, car chaque colonne prise isolément paraît parfaitement valide. Elles demandent une phrase de logique métier de plus, et rapportent souvent le défaut le plus coûteux de tous : celui qui n'apparaît nulle part dans les statistiques descriptives.
+$lesson$),
+  ('ia-c1-p8', 'ia-c1', 8, $lesson$Valeurs aberrantes : repérer sans se laisser abuser$lesson$, $lesson$
+Une valeur aberrante est une observation qui se distingue massivement du reste de l'échantillon. Le mot est trompeur : elle n'est pas nécessairement fausse. Une vente à 40 000 euros dans un fichier de commandes à 50 euros peut être une erreur de frappe, un achat professionnel légitime ou un montant exprimé en centimes. Le seul fait établi est qu'elle est inhabituelle, et que sa présence change les statistiques calculées sur la colonne. Moyenne et écart-type se déplacent dès qu'un point extrême apparaît, alors que médiane et quartiles restent qu'ils étaient. C'est cette sensibilité différente qui doit guider votre lecture.
+
+Pour repérer ces points sans tableur, trois familles de méthodes suffisent. La première repose sur l'intervalle interquartile : on calcule le premier quartile, la valeur sous laquelle se situent le quart des observations, et le troisième, celui de la fraction supérieure ; l'écart entre les deux s'appelle l'IQR ; tout point situé à plus de une fois et demie de l'IQR au-delà des quartiles est considéré comme atypique. La méthode est entièrement syntaxique, elle ne suppose aucune distribution, et elle est robuste : quelques points extrêmes ne déplacent presque pas les quartiles, donc le seuil reste stable.
+
+La seconde méthode utilise l'écart-type : on écarte tout point situé à plus de trois écarts-types de la moyenne. Elle est plus rapide à expliquer, mais suppose une distribution à peu près symétrique. Appliquée à un revenu, qui est presque toujours fortement asymétrique, elle dérive elle-même avec la moyenne et finit par valider comme normaux des points qui ne le sont pas. La troisième approche, la plus humble et souvent la plus fiable, consiste à ordonner les valeurs et à regarder les dernières de chaque côté : le tableau des valeurs extrêmes, aussi appelé extrêmes par valeurs absolues, se lit en dix secondes et révèle immédiatement les fautes de frappe classiques — un zéro de trop, un signe inversé, une virgule mal placée.
+
+```python
+import statistics
+
+def quartiles(valeurs):
+    tri = sorted(valeurs)
+    n = len(tri)
+    def q(p):
+        i = p * (n - 1)
+        bas, haut = int(i), min(int(i) + 1, n - 1)
+        return tri[bas] + (tri[haut] - tri[bas]) * (i - bas)
+    return q(0.25), q(0.5), q(0.75)
+
+def aberrantes(valeurs):
+    q1, _, q3 = quartiles(valeurs)
+    iqr = q3 - q1
+    bas, haut = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+    return [v for v in valeurs if v < bas or v > haut]
+
+nombres = []
+for ligne in lignes:
+    brut = (ligne.get("prix_unitaire") or "").replace(",", ".").strip()
+    try:
+        nombres.append(float(brut))
+    except ValueError:
+        continue
+q1, q2, q3 = quartiles(nombres)
+print("quartiles :", round(q1, 2), round(q2, 2), round(q3, 2))
+print("écart interquartile :", round(q3 - q1, 2))
+print("moyenne :", round(statistics.mean(nombres), 2))
+print("aberrantes :", sorted(aberrantes(nombres)))
+```
+
+Comparez attentivement les deux dernières lignes de la moyenne et de la médiane affichées par ce script. Quand une seule valeur extrême est présente, la moyenne s'en écarte visiblement tandis que la médiane bouge à peine. Ce n'est pas un détail de calcul : c'est le motif pour lequel les rapports professionnels annoncent la médiane et l'IQR dès qu'une variable est asymétrique, et la moyenne avec l'écart-type seulement quand la distribution le permet. Choisir la bonne statistique, c'est déjà nettoyer, car cela évite de conclure à partir d'une mesure que la donnée ne supporte pas.
+
+Reste la décision : que faire du point extrême ? Quatre réponses existent, dans l'ordre du bon sens. D'abord vérifier : la plupart des valeurs aberrantes sont des fautes de saisie, et une fois corrigées elles cessent d'être aberrantes. Ensuite comprendre : si le point est exact, il appartient peut-être à une population différente qu'il faut segmenter plutôt que mélanger. Puis imputer, en remplaçant par la borne d'un quartile ou par la médiane, quand le point est manifestement une erreur sans possibilité de correction. Enfin conserver, quand le point est réel : l'exclure pour faire joli revient à se mentir sur la réalité du phénomène. Dans tous les cas, notez le nombre de points traités : un rapport qui dit « nous avons retiré 4 observations » est honnête, un rapport qui ne le dit pas est suspect.
+$lesson$),
+  ('ia-c1-p9', 'ia-c1', 9, $lesson$Incohérences de format et typage$lesson$, $lesson$
+Le défaut le plus fréquent n'est pas la valeur absente, c'est la valeur mal écrite. Une colonne de prix où certains nombres utilisent la virgule et d'autres le point ; des dates en format jour-mois-année à côté de dates en format année-mois-jour ; des nombres stockés avec des espaces insécables, des espaces de groupement de milliers ou une unité collée au chiffre ; des booléens écrits « oui », « non », « True », « 1 » et vide. Chaque variante passe inaperçue à l'œil humain, et chacune fait échouer un calcul. Le module csv renvoie tout en texte, donc ces problèmes ne se révèlent qu'au moment précis où l'on tente une conversion.
+
+Le réflexe à installer est celui du typage explicite : pour chaque colonne prétendument numérique, tenter la conversion sur toutes les lignes et compter les échecs. Si le compteur est nul, la colonne est numérique et peut être convertie d'un bloc. S'il est strictement positif, il faut lister les valeurs refusées, comprendre leur forme, écrire une règle de réparation, puis relancer. Ce cycle — convertir, compter les échecs, réparer, reconvertir — est le cœur opérationnel du nettoyage, et il se scripte entièrement avec try et except.
+
+```python
+def typer(lignes, colonne, convertisseur):
+    valides = []
+    refus = []
+    for ligne in lignes:
+        brut = (ligne.get(colonne) or "").strip()
+        if not brut:
+            continue
+        try:
+            valides.append(convertisseur(brut))
+        except ValueError:
+            refus.append(brut)
+    return valides, refus
+
+def nombre(texte):
+    return float(texte.replace(" ", "").replace("\u202f", "").replace(",", "."))
+
+montants, refus = typer(lignes, "prix_unitaire", nombre)
+print("montants lus :", len(montants), "| refus :", refus)
+```
+
+Les dates méritent une section à part tant elles reviennent dans tous les projets. Leur première difficulté est le format, leur deuxième la zone horaire, leur troisième la granularité. Une date robuste se reconnaît à sa forme fixe : quatre chiffres, un tiret, deux chiffres, un tiret, deux chiffres. Tout ce qui s'en écarte doit être rejeté ou converti avant d'être accepté. Une fois la chaîne validée, la bibliothèque standard offre le module datetime, capable de convertir en objet date puis d'extraire l'année, le mois, le jour de la semaine et bien d'autres attributs dont chaque valeur a un sens analytique.
+
+```python
+from datetime import datetime
+
+def lire_date(texte):
+    texte = (texte or "").strip()
+    for format_attendu in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(texte, format_attendu).date()
+        except ValueError:
+            continue
+    return None
+
+for ligne in lignes[:5]:
+    d = lire_date(ligne.get("date"))
+    if d is None:
+        print("date illisible :", ligne.get("date"))
+    else:
+        print(d, "semaine", d.isoweekday(), "jour", d.strftime("%A"))
+```
+
+Une fois les dates typées, une nouvelle famille de dérives apparaît : les incohérences temporelles. Une commande datée de demain, un relevé antérieur à la création du fichier, une période couvrant treize mois pour un rapport annoncé sur douze. Aucune de ces anomalies ne se voit dans un histogramme de valeurs numériques ; elles se voient quand on affiche la plage de dates minimale et maximale, ce qui devrait faire partie de votre inspection initiale systématique. Ajoutez-y le contrôle des doublons de dates avec des clés différentes, souvent le signe d'une exportation relancée à moitié.
+
+Enfin, les incohérences de casse et d'orthographe touchent toutes les colonnes textuelles. Elles sont faciles à quantifier avec un compteur de fréquences et faciles à corriger par une normalisation en minuscules avec suppression des espaces superflus. Attention toutefois : harmoniser « rue de la Paix » et « rue de la paix » est un gain ; fusionner « Saint-Denis » et « Saint Denis » exige une décision métier, car ces deux chaînes peuvent désigner deux entités distinctes. La normalisation automatique va loin, jamais plus loin que la vérification.
+$lesson$),
+  ('ia-c1-p10', 'ia-c1', 10, $lesson$Normaliser sans dénaturer$lesson$, $lesson$
+Normaliser, c'est rendre comparable ce qui ne l'était pas encore. Le mot recouvre trois opérations très différentes, qu'il ne faut jamais confondre. Rééchelonner consiste à ramener des valeurs dans une fourchette commune, par exemple entre zéro et un, sans changer leur ordre ni leur forme. Remplacer consiste à substituer une valeur estimée à une valeur absente. Harmoniser consiste à réduire plusieurs écritures d'une même réalité à une seule. Chacune se justifie par un motif précis, et chacune introduit un risque qu'il faut écrire noir sur blanc.
+
+Le rééchelonnement est indispensable quand on compare des variables de natures différentes : des montants en milliers et des pourcentages entre zéro et cent ne peuvent pas être confrontés tels quels dans la moindre formule de distance. La transformation la plus courante divise l'écart à la moyenne par l'écart-type, ce qui donne une variable centrée réduite de moyenne nulle et d'écart-type un. La version min-max, elle, écrase tout dans l'intervalle demandé. La première est sensible aux valeurs extrêmes, la deuxième l'est encore plus, car une seule observation détermine les bornes : c'est un argument de plus pour traiter les valeurs aberrantes avant de normaliser.
+
+```python
+def centrer_reduire(valeurs):
+    n = len(valeurs)
+    moyenne = sum(valeurs) / n
+    variance = sum((v - moyenne) ** 2 for v in valeurs) / (n - 1)
+    ecart = variance ** 0.5
+    if ecart == 0:
+        return [0.0 for _ in valeurs]
+    return [(v - moyenne) / ecart for v in valeurs]
+
+def minmax(valeurs):
+    bas, haut = min(valeurs), max(valeurs)
+    amplitude = haut - bas
+    if amplitude == 0:
+        return [0.0 for _ in valeurs]
+    return [(v - bas) / amplitude for v in valeurs]
+```
+
+Remarquez la précaution des deux fonctions : quand l'amplitude est nulle, toutes les valeurs sont identiques et la division n'a aucun sens. Le code renvoie alors une liste de zéros plutôt que de planter ou de produire des infinis. Ces cas limites sont fréquents dans les colonnes presque constantes, comme un champ rempli à 99 % par la même valeur, et c'est précisément lorsqu'on les oublie qu'un pipeline s'arrête à trois heures du matin avec une erreur obscure.
+
+Le point le plus important de cette section est d'ordre méthodologique : les statistiques de normalisation doivent être calculées sur les données d'entraînement uniquement, puis réappliquées telles quelles aux données de test. Si l'on calcule moyenne et écart-type sur l'ensemble du fichier avant de le découper, une infime part de l'information du jeu de test s'infiltre dans le jeu d'entraînement. Ce phénomène porte un nom, la fuite de données, et il produit des évaluations systématiquement trop optimistes. La règle se retient en une phrase : on apprend sur l'entraînement, on applique sur le reste, jamais l'inverse.
+
+Enfin, toutes les colonnes ne se normalisent pas. Les identifiants ne se normalisent pas, ils se conservent ou s'abandonnent. Les variables catégorielles à faible cardinalité se transforment en indicateurs binaires, une colonne par modalité, tandis qu'une variable à cardinalité très élevée comme un code postal se regroupe en catégories métier avant d'être transformée. Choisir la transformation, c'est choisir ce que le modèle aura le droit de voir : voir trop, c'est surapprendre ; voir trop peu, c'est sous-apprendre. Le nettoyage n'est pas une tâche mécanique, c'est une suite de décisions argumentées.
+$lesson$),
+  ('ia-c1-p11', 'ia-c1', 11, $lesson$Visualiser pour comprendre : l'œil avant l'algorithme$lesson$, $lesson$
+Un tableau de mille nombres ne parle presque jamais à l'œil. Un graphique de ces mêmes nombres parle immédiatement. L'analyse visuelle n'est pas un ornement destiné à la présentation : c'est un instrument de détection, souvent le seul capable de révéler une deuxième grappe cachée, une coupure artificielle ou une colonne discretisée à tort. Tukey le disait déjà : l'œil est le meilleur test statistique disponible, à condition de savoir ce qu'il regarde. Avant tout modèle, dessinez. Après tout nettoyage, redessinez pour vérifier ce que le traitement a changé.
+
+Le premier graphique est l'histogramme : on découpe l'axe des valeurs en intervalles de largeur comparable, on compte les observations dans chaque intervalle, on dessine des barres dont la hauteur vaut ce compte. Sa lecture se fait en trois questions. La distribution est-elle symétrique ou étirée d'un seul côté ? Existe-t-il un ou plusieurs pics, chacun pouvant correspondre à un sous-groupe ? Y a-t-il des barres isolées très loin à droite, signe de valeurs extrêmes ? Un schéma typique se présente ainsi, avec une masse principale à gauche et une queue longue à droite.
+
+```text
+Répartition d'un prix unitaire (120 ventes)
+
+  50 |###
+     |####
+   40 |#####
+     |#######            sens de la lecture :
+   30 |########          chaque # = 1 observation
+     |##########
+   20 |############
+     |#################
+   10 |#########################      |####*#
+      +------------------------------
+        0    10    20    30    40    50   80
+        borne gauche -> queue longue -> valeur extrême
+```
+
+Le second instrument est la boîte à moustaches, née chez Tukey. Elle résume une distribution en cinq nombres — minimum, premier quartile, médiane, troisième quartile, maximum — plus les points considérés comme atypiques. Sa force est de rendre visibles simultanément la position centrale, la dispersion et les valeurs aberrantes, en un signe très compact. Pour comparer plusieurs groupes, on aligne plusieurs boîtes sur le même axe : les médianes se comparent d'un coup d'œil et les groupes à variance inégale sautent aux yeux.
+
+```text
+Boîtes à moustaches : durée de session selon deux parcours
+
+  Parcours A  |----[===|====]----|.....
+  Parcours B  |========[==|==]========|..
+              +--------------------------
+                0      15      30      45 minutes
+
+  [ = boîte (Q1 à Q3)   | = médiane   - = moustaches   . = aberrant
+```
+
+Le troisième instrument porte sur les relations entre variables : le nuage de points. Chaque observation devient un repère dont l'abscisse vaut la première variable et l'ordonnée la seconde. Trois formes à connaître : un amas sans direction, qui indique l'absence de relation ; une pente claire, relation positive quand l'une monte avec l'autre ; un éventail qui s'élargit, signe d'une hétéroscédasticité qui compliquera tout modèle linéaire. Une seule colonne de points isolés en haut à droite suffit à ruiner un coefficient de corrélation calculé sur l'ensemble.
+
+```python
+import math
+
+def histogramme(valeurs, intervalles=10):
+    bas, haut = min(valeurs), max(valeurs)
+    largeur = (haut - bas) / intervalles or 1
+    compteurs = [0] * intervalles
+    for v in valeurs:
+        i = min(int((v - bas) / largeur), intervalles - 1)
+        compteurs[i] += 1
+    echelle = max(compteurs) or 1
+    for i, n in enumerate(compteurs):
+        debut = round(bas + i * largeur, 2)
+        barre = "#" * math.ceil(20 * n / echelle)
+        print(f"{debut:>7} |{barre} {n}")
+
+histogramme(nombres, intervalles=8)
+```
+
+Un dernier conseil pratique sur la lecture des graphiques. Touchez d'abord les axes : une unité oubliée ou une échelle logarithmique non signalée change complètement l'histoire. Vérifiez ensuite l'effectif affiché, car un graphique construit sur quarante observations suggère des tendances que quarante points ne permettent pas d'établir. Et gardez en tête que la visualisation ne prouve rien : elle formule des hypothèses que les comptages, les tests et le contexte métier devront confirmer ou infirmer. Elle ouvre la discussion, elle ne la clôt pas.
+$lesson$),
+  ('ia-c1-p12', 'ia-c1', 12, $lesson$Exemple guidé : nettoyer un jeu de ventes$lesson$, $lesson$
+Il est temps d'assembler tout ce que vous avez lu. Le fichier ventes.csv d'une petite boutique contient douze lignes et cinq colonnes : date, produit, quantite, prix_unitaire, ville. Il a été saisi à la main, il est donc blessé aux quatre endroits que nous venons d'étudier : deux quantités manquent, une ville n'a pas été renseignée, une quantité est négative, un prix est écrit avec une virgule, une ligne entière est répétée, et une date pourrait être mal formée. Notre objectif n'est pas de produire un tableau joli, mais un rapport honnête qui indique combien de lignes ont été lues, combien ont été conservées, pourquoi les autres ont été écartées, et quels indicateurs restent fiables après traitement.
+
+Commençons par le chargement et l'inventaire. La fonction suivante accepte soit un chemin de fichier, soit un texte CSV déjà présent dans le programme, ce qui nous permet de travailler sur un échantillon embarqué quand le fichier réel n'existe pas encore. Cette double entrée est une habitude pratique : elle rend le script exécutable dans n'importe quel environnement, y compris celui de l'exercice, sans dépendre d'un disque ou d'un dossier précis.
+
+```python
+import csv
+import io
+import statistics
+from collections import Counter
+
+ECHANTILLON = """date,produit,quantite,prix_unitaire,ville
+2024-01-05,cafe,4,12.50,Paris
+2024-01-05,cafe,4,12.50,Paris
+2024-01-06,the,,8.90,Lyon
+2024-01-07,chocolat,-2,3.50,Paris
+2024-01-08,cafe,2,"12,50",Marseille
+2024-01-09,biscuits,6,4.20,
+2024-01-10,the,3,8.90,Lyon
+2024-01-11,cafe,5,12.50,Paris
+2024-01-12,chocolat,3,3.50,Marseille
+2024-01-13,biscuits,,4.20,Lyon
+2024-01-14,the,1,8.90,Paris
+2024-01-15,cafe,7,12.50,Lyon
+"""
+
+def charger(source):
+    if "\n" in source:
+        texte = source
+    else:
+        with open(source, encoding="utf-8") as fichier:
+            texte = fichier.read()
+    return list(csv.DictReader(io.StringIO(texte)))
+```
+
+Observez ce qui se passe quand on appelle cette fonction sur l'échantillon. Le premier indice que source contient un retour à la ligne nous sert à distinguer un chemin d'un contenu, ce qui évite de prévoir deux fonctions différentes. Le module csv, lui, renvoie douze dictionnaires, tous avec les mêmes cinq clés, et toutes les valeurs sous forme de chaînes de caractères. C'est le moment d'appliquer la règle absolue du typage : rien n'est encore un nombre, tout doit être converti, et chaque conversion doit être vérifiée.
+
+La deuxième étape est l'inventaire des manquants. On reprend la fonction de comptage vue plus tôt, on l'applique aux douze lignes, et on obtient deux quantités vides pour la colonne quantite et une ville vide pour la colonne ville. Le taux est élevé : sur douze lignes, un quart des quantités manque. Il serait déraisonnable de remplir ces cellules à la moyenne, car la quantité d'une vente n'est pas une grandeur continue qui varie doucement ; ce sont des nombres entiers liés à un événement précis. La décision honnête est donc d'écarter ces lignes du calcul des montants, tout en les comptant séparément dans le rapport.
+
+La troisième étape traite les doublons. Une empreinte construite sur les cinq colonnes normalisées révèle que la première ligne apparaît deux fois : la vente du 5 janvier a été enregistrée deux fois. On ne garde que la première occurrence, on compte l'autre, et on continue. Notez que cette détection a lieu avant la conversion des prix : à ce stade, les deux lignes sont rigoureusement identiques en texte, donc la comparaison est fiable. Si les doublons n'apparaissent qu'après conversion, c'est le signe qu'un prix était écrit différemment entre les deux copies, et il faut alors comparer sur des valeurs converties.
+
+La quatrième étape valide les quantités et les prix. Deux lignes portent une quantité vide, une porte la valeur moins deux qui n'a aucun sens métier, et un prix est écrit avec une virgule. La règle est mécanique : champ vide, échec de conversion ou valeur non strictement positive entraînent l'écartement de la ligne, avec un compteur par motif. Le prix, lui, se répare au passage par une substitution du séparateur décimal avant la conversion. Le rapport final doit distinguer clairement une ligne écartée parce qu'elle était incomplète d'une ligne écartée parce qu'elle était invalide : les deux situations n'appellent pas la même correction en amont du système de saisie.
+
+```python
+def nettoyer(lignes):
+    conservees = []
+    vues = set()
+    ignorees = 0
+    for ligne in lignes:
+        produit = (ligne.get("produit") or "").strip()
+        ville = (ligne.get("ville") or "").strip()
+        quantite = (ligne.get("quantite") or "").strip()
+        prix = (ligne.get("prix_unitaire") or "").strip().replace(",", ".")
+        if not produit or not ville or not quantite or not prix:
+            ignorees += 1
+            continue
+        try:
+            quantite = int(quantite)
+            prix = float(prix)
+        except ValueError:
+            ignorees += 1
+            continue
+        if quantite <= 0:
+            ignorees += 1
+            continue
+        cle = (ligne.get("date"), produit, quantite, prix, ville)
+        if cle in vues:
+            continue
+        vues.add(cle)
+        conservees.append(
+            {
+                "date": ligne.get("date"),
+                "produit": produit,
+                "quantite": quantite,
+                "prix_unitaire": prix,
+                "ville": ville,
+            }
+        )
+    return conservees, ignorees
+```
+
+La cinquième étape produit les indicateurs. Le montant d'une ligne vaut quantité multipliée par prix unitaire ; la somme de ces montants donne le chiffre d'affaires reconstitué ; la médiane des montants décrit le panier typique bien mieux que la moyenne, qui serait tirée par la vente la plus élevée. On regroupe ensuite par ville avec un compteur, puis on compte les quantités vendues par produit pour en extraire le podium. Toutes ces opérations sont natives : sum pour la somme, le module statistics pour la médiane, le module collections pour les regroupements.
+
+```python
+def resume(lignes, ignorees):
+    montants = [ligne["quantite"] * ligne["prix_unitaire"] for ligne in lignes]
+    print("lignes conservees :", len(lignes), "| ignorees :", ignorees)
+    print("total :", round(sum(montants), 2))
+    print("mediane :", round(statistics.median(montants), 2))
+    par_ville = Counter()
+    quantites = Counter()
+    for ligne, montant in zip(lignes, montants):
+        par_ville[ligne["ville"]] += montant
+        quantites[ligne["produit"]] += ligne["quantite"]
+    print("par ville :", {v: round(m, 2) for v, m in par_ville.items()})
+    print("top 3 produits :", quantites.most_common(3))
+```
+
+L'exécution complète, échantillon embarqué à l'appui, affiche douze lignes lues, huit cellules manquantes réparties sur deux colonnes, quatre lignes écartées et une ligne en double détectée. Le rapport mentionne un total, une médiane, un regroupement par ville et un podium de produits. Chaque chiffre est désormais traçable : on sait d'où il vient, ce qui a été retiré pour l'obtenir et en quelle proportion. Voilà ce que signifie, en pratique, l'expression analyse exploratoire : non pas une collection de graphiques, mais une chaîne de décisions que n'importe quel lecteur peut revérifier ligne à ligne.
+
+La comparaison avec pandas se fait en deux lignes, et son intérêt est pédagogique plus que pratique ici. La méthode isna() suivie de sum() donne exactement le même tableau de manquants que notre boucle ; drop_duplicates() reproduit notre déduplication en conservant la première occurrence ; describe() fournit min, quartiles et max que nous avons calculés à la main. Les noms changent, la logique reste identique. C'est pourquoi la maîtrise de la bibliothèque standard n'est jamais du temps perdu : elle vous apprend ce que la bibliothèque fait pour vous, et vous rend capable de débuguer le jour où la bibliothèque vous surprend.
+
+Un rapport de nettoyage digne de confiance a une structure fixe que vous pouvez adopter dès maintenant. Il commence par l'identité du fichier analysé : nom, date de lecture, nombre de lignes et de colonnes à l'arrivée. Il enchaîne avec la qualité mesurée : taux de manquants par colonne, nombre de doublons exacts, nombre de conversions échouées, nombre de règles de validation déclenchées. Il expose ensuite les décisions prises, une par ligne, avec le volume concerné par chacune. Il se termine par les indicateurs calculés sur le périmètre final et par les limites assumées, c'est-à-dire ce que ce rapport ne permet pas de conclure. Ce dernier point est le plus rare et le plus précieux : dire que douze lignes ne suffisent pas à établir une tendance saisonnière coûte une phrase et évite une décision fausse.
+
+Le deuxième principe est la traçabilité des chiffres. Chaque valeur affichée doit pouvoir être reliée à une requête précise sur le fichier. Si le rapport annonce quatre lignes écartées, le code doit être capable de dire lesquelles et pourquoi, par un compteur par motif d'écartement et, idéalement, une liste des lignes concernées. Cette discipline transforme un rapport opaque en instrument de diagnostic : quand le chiffre du mois suivant change brutalement, vous ouvrez la liste, vous regardez les lignes, et vous découvrez qu'un champ obligataire est devenu facultatif côté fournisseur. Sans traçabilité, vous constatez seulement que le total a bougé et vous cherchez pendant des heures.
+
+Le troisième principe est la rejeuabilité. Un fichier de ventes arrive chaque semaine avec la même structure et les défauts variés : certaines semaines il manque une colonne, d'autres il y a un doublon d'export. Le script de nettoyage doit donc être capable de s'exécuter sans intervention humaine, de produire son rapport à chaque exécution et de signaler clairement quand quelque chose change. Un simple dictionnaire de compteurs comparé à celui de la semaine précédente suffit : si le taux de manquants saute de deux pour cent à dix-huit pour cent, c'est le signal d'alarme, et il sonne bien avant qu'un modèle entraîné sur ces données ne rende une prévision absurde.
+
+Le quatrième principe est l'humilité sur ce que le rapport ne dit pas. Un fichier nettoyé n'est pas un fichier vrai : c'est un fichier dont on a corrigé les défauts visibles selon des règles choisies par une personne. Les biais d'échantillonnage, les populations absentes de la collecte, les erreurs systématiques qui se ressemblent toutes restent en place, puisqu'ils ne se voient pas dans un compteur. La documentation des limites n'est donc pas une formalité : c'est ce qui permettra à la personne qui reprendra votre travail dans plusieurs mois de savoir ce qu'elle a le droit d'en conclure, et ce qu'elle doit d'abord vérifier.
+$lesson$),
+  ('ia-c1-p13', 'ia-c1', 13, $lesson$Une méthode de travail en sept étapes$lesson$, $lesson$
+Les exemples de cette leçon peuvent être résumés en une procédure que vous pourrez appliquer à tout nouveau fichier, quel que soit son domaine. Elle tient en sept étapes, dans un ordre qui n'est pas arbitraire : chaque étape prépare la suivante, et sauter l'une d'elles revient à construire sur du sable.
+
+- Étape un : inventorier. Lire les dix premières lignes, lister les colonnes, noter le rôle de chacune, afficher le nombre de lignes.
+- Étape deux : mesurer la qualité. Taux de manquants par colonne, nombre de doublons exacts, nombre de conversions échouées.
+- Étape trois : décider. Pour chaque défaut, choisir une stratégie et l'écrire en une phrase avant de coder quoi que ce soit.
+- Étape quatre : traiter. Appliquer les décisions dans un ordre stable : formats, manquants, doublons, valeurs invalides.
+- Étape cinq : contrôler. Relancer les mesures de l'étape deux et vérifier que les chiffres sont passés aux valeurs attendues.
+- Étape six : visualiser. Dessiner les distributions et les relations pour confirmer que le traitement n'a pas déformé le signal.
+- Étape sept : documenter. Consigner volume d'origine, volume final, règles appliquées et limites connues du jeu.
+
+La sixième étape mérite une insistance particulière : le nettoyage change des données, et tout changement peut cacher une découverte. Supprimer les valeurs extrêmes peut effacer un segment de clientèle rentable. Remplacer les manquants par la médiane peut aplanir une saisonnalité réelle. C'est pourquoi l'on compare avant-après : deux histogrammes côte à côte, ou deux tableaux de quartiles, suffisent à révéler si le traitement a conservé la forme du phénomène ou s'il l'a émoussée. Un nettoyage trop zélé est un vrai danger, souvent plus difficile à repérer qu'un fichier resté sale.
+
+Une remarque finale sur la répétabilité. Un nettoyage effectué à la main dans un tableur ne peut pas être rejoué quand le fichier suivant arrive, et personne ne peut vérifier ce que vous avez fait. Le même nettoyage scripté, en revanche, se relance en une seconde, s'applique au nouveau fichier, produit le même rapport et se versionne avec votre code. C'est la raison pour laquelle ce cours vous a demandé d'écrire des fonctions plutôt que des clics : une décision de nettoyage doit pouvoir être lue, testée et discutée, et cela n'est possible que si elle vit dans un fichier de programme.
+
+Cette méthode n'est pas spécifique aux ventes. Dans un fichier de relevés capteurs, la granularité sera un instant de mesure et les défauts se manifestent par des trous de collecte, des valeurs figées qui signalent un capteur bloqué, ou des sauts brutaux dus à une remise à zéro. Dans un fichier de dossiers clients, la colonne cible sera probablement un statut, et les manquants apparaîtront surtout sur les dossiers récents, jamais au hasard. Dans un fichier médical ou bancaire, s'ajoute une contrainte qui n'existe pas dans l'exemple des ventes : certaines colonnes sont sensibles et doivent être masquées avant toute analyse partagée. Le squelette reste identique — inventorier, mesurer, décider, traiter, contrôler, visualiser, documenter — seuls les contrôles et les décisions changent.
+
+L'ordre des traitements, lui aussi, n'est pas neutre. Réparer le format des prix avant de détecter les doublons peut faire disparaître des répétitions qui n'étaient visibles qu'en texte ; l'inverse vous laisse comparer des chaînes hétérogènes. Supprimer les lignes incomplètes avant d'avoir compté les manquants vous prive du diagnostic ; convertir les types avant d'avoir traité les valeurs aberrantes vous fait échouer sur des chaînes que la conversion ne peut pas lire. La séquence que nous avons suivie — formats, manquants, doublons, valeurs invalides, contrôles — n'est donc pas une habitude parmi d'autres : c'est la seule qui garantit que chaque étape travaille sur des données que la précédente a effectivement préparées.
+
+Un bon réflexe consiste aussi à séparer strictement ce qui est lecture de ce qui est décision. Une fonction qui compte des manquants ne décide de rien : elle renvoie un nombre, et ce nombre sera le même quels que soient vos avis sur la marche à suivre. Une fonction qui impute, en revanche, applique une politique, et cette politique doit être nommée, paramétrée et documentée. En gardant les deux dans des blocs distincts, vous pouvez rejouer le diagnostic sans jamais rejouer la décision, comparer plusieurs stratégies sur le même diagnostic et montrer à un collègue l'effet exact d'un choix sans détourner le reste du pipeline. C'est cette séparation qui rend un nettoyage auditable, et un nettoyage auditable est un nettoyage défendable.
+
+La question du volume mérite enfin d'être évoquée, car elle change la mise en œuvre sans changer la logique. Sur douze lignes, tout tient en mémoire et une boucle suffit. Sur plusieurs millions de lignes, on passe à des traitements ligne par ligne, on écrit les résultats au fur et à mesure dans un fichier de sortie, et on accepte de faire plusieurs passes plutôt qu'une seule. Les bibliothèques de traitement tabulaire tirent précisément leur efficacité de cette contrainte, mais elles n'inventent aucune règle : elles appliquent exactement les vôtres, plus vite. Comprendre le standard vous rend donc capable de dimensionner le traitement autant que de l'écrire, et de savoir quand un simple script arrivera à ses fins.
+
+Il reste une question, apparemment technique mais en réalité éthique : jusqu'où nettoyer ? Chaque suppression retire une observation réelle, et si les observations supprimées se ressemblent, votre jeu de données finit par décrire un public plus restreint que le public d'origine. Chaque imputation remplace un fait par une estimation, et cette estimation porte les hypothèses de celui qui l'a choisie. Le nettoyage n'est donc jamais une simple mise en forme : c'est un acte d'interprétation, qui se justifie par des arguments écrits et se révise quand les arguments changent. C'est aussi la raison pour laquelle les meilleurs rapports de données sont courts, chiffrés et honnêtes sur leurs limites, plutôt que longs et assurés.
+$lesson$),
+  ('ia-c1-p14', 'ia-c1', 14, $lesson$À retenir$lesson$, $lesson$
+- L'exploration précède toujours la modélisation : une donnée mal comprise produit une conclusion mal fondée.
+- Un jeu de données est un tableau de lignes d'observation et de colonnes de variables, chacune avec un rôle précis.
+- Les variables se classent en identifiant, qualitative nominale ou ordinale, quantitative discrète ou continue, temporelle.
+- La granularité définit ce qu'une ligne représente ; sans elle, aucun comptage n'est interprétable.
+- Toutes les valeurs arrivent en texte depuis un CSV : le typage explicite est obligatoire et doit être contrôlé.
+- Un manquant se compte d'abord, se décide ensuite : suppression, imputation par la médiane, ou indicateur de disponibilité.
+- La médiane et l'IQR résistent aux valeurs extrêmes ; la moyenne et l'écart-type ne le font pas.
+- Un doublon se juge par rapport à une clé métier, jamais par rapport au seul aspect visuel des lignes.
+- Une valeur aberrante n'est pas forcément une erreur : on vérifie, on comprend, puis on décide.
+- Normaliser, imputer et harmoniser sont trois opérations différentes avec trois justifications différentes.
+- Les statistiques de normalisation s'apprennent sur l'entraînement et s'appliquent ailleurs : sinon, fuite de données.
+- L'histogramme révèle la forme, la boîte à moustaches la position et les points extrêmes, le nuage de points les relations.
+- Un nettoyage vaut ce que vaut son rapport : volumes d'origine et de fin, règles appliquées, limites assumées.
+$lesson$),
+  ('ia-c1-p15', 'ia-c1', 15, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Supprimer les lignes incomplètes sans les compter. Le fichier semble propre, l'échantillon a changé, et plus personne ne sait quoi. Comptez toujours avant, comptez toujours après.
+- Remplacer tous les manquants par la moyenne par réflexe. Pour une variable asymétrique, ce choix déplace la tendance centrale vers la queue de distribution ; préférez la médiane ou l'indicateur de disponibilité.
+- Calculer moyenne et écart-type sur un fichier contenant une faute de frappe. Une valeur à dix mille euros dans des prix à douze euros suffit à rendre la moyenne inutile.
+- Confondre identifiant et variable prédictive. Un numéro de dossier est unique par ligne : le modèle apprendrait par cœur des réponses qu'on lui demande de deviner.
+- Normaliser avant de découper en entraînement et test. Les informations du test s'infiltrent, les scores gonflent, la fiabilité s'effondre.
+- Dédupliquer sans savoir quelle occurrence garder. Si la première version n'est pas la bonne, vous avez conservé l'erreur et supprimé la vérité.
+- Oublier les espaces en début et en fin de champ. Paris et « Paris » deviennent deux villes, deux groupes, deux conclusions opposées.
+- Traiter la virgule décimale après la conversion plutôt qu'avant. La conversion échoue, la ligne part à la poubelle alors qu'elle était parfaitement exploitable.
+- Se fier à un graphique sans vérifier les effectifs. Quarante points ne dessinent pas une tendance, ils dessinent une hypothèse.
+- Nettoyer une fois puis ne plus jamais. Les fichiers arrivent au fil des mois : le script de contrôle doit être relancé à chaque import.
+$lesson$),
+  ('ia-c1-p16', 'ia-c1', 16, $lesson$Pour aller plus loin$lesson$, $lesson$
+La documentation officielle de pandas reste la référence pour découvrir comment les opérations de cette leçon s'écrivent avec des bibliothèques dédiées : sections de gestion des données manquantes et de manipulation des formes de tableaux. Elle se lit utilement après avoir codé les mêmes traitements en standard, car vous reconnaîtrez chaque geste et vous comprendrez ce que la bibliothèque automatise. Adresse : https://pandas.pydata.org/docs/user_guide/missing_data.html
+
+Le guide de scikit-learn sur l'imputation détaille les stratégies avancées de remplacement des valeurs manquantes, y compris les méthodes qui s'appuient sur les autres variables de la ligne pour estimer la valeur absente. Il constitue la suite naturelle de la section Valeurs manquantes, à aborder une fois le calcul manuel maîtrisé. Adresse : https://scikit-learn.org/stable/modules/impute.html
+
+Enfin, le dépôt de l'UCI Machine Learning Repository rassemble des dizaines de jeux de données classiques, accompagnés de leurs descriptions, parfaits pour vous entraîner à l'inventaire et au nettoyage sur des fichiers que vous n'avez jamais vus. Commencez par un jeu tabulaire simple, appliquez les sept étapes, et comparez votre rapport avec la documentation du jeu. Adresse : https://archive.ics.uci.edu/
+$lesson$),
+  ('ia-c1-p17', 'ia-c1', 17, $lesson$Et maintenant : l'exercice du chapitre$lesson$, $lesson$
+Vous avez vu la théorie, suivi l'exemple guidé et possédez une méthode réutilisable. Il reste à écrire seul, sans copier, le programme de rapport de nettoyage du chapitre : charger un CSV de ventes, compter les manquants, dédupliquer, valider quantités et prix, calculer total et médiane, regrouper par ville et afficher le podium des produits. Travaillez par fonctions, une par décision, et testez-les au fur et à mesure sur l'échantillon avant de viser le fichier complet.
+
+Relisez la liste des erreurs fréquentes avant de rendre votre code : elle contient presque toutes les régressions que vous êtes susceptible de commettre à ce stade. Une fois votre rapport affiché, formulez en une phrase ce que vous avez retiré et pourquoi. Si vous pouvez le faire, vous avez atteint l'objectif du chapitre : vos données sont maintenant explorées, nettoyées et défendables. Le chapitre suivant construira dessus pour transformer ces tableaux rangés en modèles capables de prédire.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c2-p1', 'ia-c2', 1, $lesson$Pourquoi la statistique précède le modèle$lesson$, $lesson$
+Bienvenue dans ce chapitre consacré à la statistique pour l'apprentissage automatique. Si vous avez déjà entraîné un modèle et obtenu un score dont vous ne saviez pas trop que faire, vous êtes exactement au bon endroit. Ce chapitre ne vous apprendra pas à coder un réseau de neurones : il vous apprendra quelque chose de plus utile et de plus rare, à savoir lire un jeu de données avant de le confier à un algorithme, comprendre ce que ses chiffres racontent réellement, repérer ceux qui mentent et construire une chaîne d'évaluation à l'épreuve de la production. Nous le ferons sans aucune bibliothèque externe : uniquement les modules statistics, math, csv, json et random de la bibliothèque standard Python, si bien que chaque exemple s'exécute tel quel dans un navigateur, dans un carnet ou sur votre machine, sans la moindre installation. Les quatre grandes questions que nous allons traiter sont les distributions, la corrélation, les pièges de mesure et les fuites de données.
+
+À la fin de cette leçon, vous saurez faire six choses concrètes, et vous les aurez déjà écrites en code. Premièrement, vous calculerez et interpréterez les mesures qui résument un échantillon : moyenne, médiane, écart-type, quartiles et amplitude interquartile. Deuxièmement, vous lirez la forme d'une distribution et vous saurez dire pourquoi une moyenne peut être un mauvais résumé d'un revenu, d'une durée de session ou d'un nombre de clics. Troisièmement, vous mesurerez l'association entre deux variables avec la corrélation de Pearson et celle de Spearman, et vous saurez pourquoi un coefficient proche de zéro ne prouve pas l'absence de relation. Quatrièmement, vous identifierez les pièges de mesure classiques : biais de sélection, échantillon trop petit, variables tronquées, valeurs manquantes non neutres et agrégats qui comparent ce qui n'est pas comparable. Cinquièmement, vous reconnaîtrez les quatre familles de fuites de données qui gonflent artificiellement les scores en validation. Sixièmement, vous enchaînerez le tout dans une procédure honnête : découper d'abord, ajuster les transformations sur l'entraînement seulement, puis évaluer.
+
+Un mot sur la manière d'aborder ce cours. La statistique s'apprend comme la cuisine : en goûtant à chaque étape. Chaque bloc de code de cette leçon est court, autonome et volontairement dépourvu de dépendance : vous pouvez le copier dans un fichier .py, le lancer, puis changer une valeur pour observer ce que deviennent les chiffres affichés. Faites-le systématiquement. Une moyenne qu'on a calculée soi-même sur dix nombres retenu ne ressemble plus jamais, ensuite, à un chiffre abstrait lu dans un rapport. Alternez donc lecture attentive et expérimentation, gardez à portée de main un petit jeu de données personnel, et n'avancez pas à la section suivante tant que vous n'avez pas reproduit le calcul du bloc précédent. Le fil rouge de la leçon sera un fichier de mesures de sessions clients, avec une colonne cible de désabonnement, sur lequel nous reviendrons régulièrement comme sur un cas d'école.
+
+
+
+Un modèle d'apprentissage automatique ne fait qu'une seule chose : comprimer des données en une règle compacte qu'il pourra rejeter sur des exemples inédits. Cette compression est fidèle à ce qu'on lui a donné, ni plus ni moins. Si les données sont biaisées, le modèle apprendra le biais ; si une colonne contient une information qui ne sera pas disponible au moment de la prédiction, le modèle apprendra à tricher ; si l'échantillon est trop petit, le modèle mémorisera du bruit. La conséquence pratique est simple et souvent dérangeante : la quasi-totalité de la valeur d'un projet de modélisation se joue avant la première ligne d'entraînement, dans le choix des variables, la compréhension de leur mesure et la vérification de leur provenance. C'est précisément le travail que décrit ce chapitre, et c'est un travail que l'on peut faire avec un tableur, un crayon et un interpréteur Python.
+
+Prenons un exemple qui reviendra tout au long de la leçon. Vous disposez de dix mille lignes de clients, dont quatre-vingt-dix-neuf pour cent n'ont pas résilié. Vous entraînez un classifieur qui prédit toujours la classe majoritaire, sans regarder une seule variable, et vous obtenez quatre-vingt-dix-neuf pour cent de bonnes prédictions. Le chiffre est trompeur : le modèle n'a rien appris, il a seulement reproduit la fréquence de la classe. Pour savoir s'il a appris quelque chose, il faut changer de mesure, regarder le rappel et la précision sur la classe rare, et construire une matrice de confusion. Ce détour statistique n'est pas un raffinement : sans lui, vous valideriez un modèle inutilisable. Le même raisonnement vaut pour la corrélation, pour la comparaison de deux périodes et pour toute décision fondée sur un résumé chiffré.
+
+La statistique descriptive remplit donc trois rôles distincts dans un projet, et il est utile de les distinguer pour ne pas les confondre. Le premier rôle est décrire : résumer chaque colonne par quelques nombres qui donnent une idée de son niveau et de sa dispersion, afin de savoir si vos variables ressemblent à ce que vous croyiez. Le deuxième rôle est comparer : confronter deux groupes, deux périodes ou deux segments pour décider si la différence observée mérite qu'on s'y intéresse. Le troisième rôle, le plus important et le plus souvent négligé, est valider : vérifier que la donnée mesurée correspond bien à la réalité que l'on prétend décrire, que la colonne est remplie avant l'événement à prédire et que la méthode d'échantillonnage ne fabrique pas l'effet que l'on cherche à mesurer. Un projet qui se contente du premier rôle produit un beau rapport ; un projet qui maîtrise les trois produit un modèle déployable.
+
+- Décrire : moyenne, médiane, dispersion, forme pour chaque colonne.
+- Comparer : groupes, périodes, segments, avec une mesure d'écart explicite.
+- Valider : chronologie de la mesure, méthode d'échantillonnage, cohérence des unités.
+- Documenter : d'où vient la donnée, qui l'a produite, à quel moment.
+- Découper : séparer entraînement et évaluation avant tout calcul ajusté sur les données.
+- Se méfier : d'un chiffre trop beau, d'une corrélation trop forte et d'un échantillon trop petit.
+$lesson$),
+  ('ia-c2-p2', 'ia-c2', 2, $lesson$Les mesures qui résument un échantillon$lesson$, $lesson$
+La moyenne arithmétique est la plus connue des statistiques et la plus surestimée. Elle s'obtient en additionnant toutes les valeurs puis en divisant par leur nombre, ce qui en fait un résumé complet au sens où chaque observation y participe. Sa contrepartie est bien connue : une seule valeur extrême peut la déplacer considérablement. Imaginez dix salariés dont les revenus vont de mille huitille à trois mille euros, et un onzezième propriétaire de l'entreprise qui en gagne quatre-vingt-mille : la moyenne du groupe dépasse huit mille euros alors que personne, hormis le onzième, ne s'en approche. La médiane, elle, ignore les valeurs extrêmes : elle ne dépend que de l'ordre des observations. Elle se place au milieu de la série triée, si bien qu'une valeur hors norme, aussi lointaine soit-elle, ne peut pas la faire basculer. Dans une distribution fortement asymétrique, revenus, durées, prix, tailles d'événements, la médiane décrit donc mieux la valeur typique.
+
+L'écart-type mesure ce que la moyenne ne dit pas : à quel point les valeurs s'écartent les unes des autres. On calcule d'abord la variance, moyenne des carrés des écarts à la moyenne, puis on en tire la racine carrée pour revenir à l'unité d'origine. Un écart-type de zéro signifie que toutes les valeurs sont identiques ; un écart-type grand par rapport à la moyenne signifie un échantillon très hétérogène. Un détail qui revient souvent en pratique : la division se fait par le nombre d'observations moins un quand on résume un échantillon, car cette correction, dite non biaisée, compense le fait que la moyenne utilisée dans le calcul est elle-même estimée sur le même échantillon. Avec dix valeurs, la différence est minime ; avec trois, elle devient sensible. La bibliothèque standard applique cette règle pour vous, à condition de ne pas confondre les fonctions prévues pour un échantillon et celles prévues pour une population entière.
+
+Les quartiles prolongent la médiane en découpant la série triée en quatre parts égales. Le premier quartile marque le point sous lequel tombent un quart des observations, le troisième le point sous lequel en tombent trois quarts, et l'amplitude interquartile, notée IQR, est la distance entre les deux. L'IQR a une propriété précieuse : il ne dépend que de la moitié centrale des données, il ignore donc complètement les extrêmes, ce qui en fait l'outil de référence pour repérer les valeurs aberrantes. La règle usuelle consiste à déclarer suspecte toute valeur située plus d'une fois et demie l'IQR sous le premier quartile ou au-dessus du troisième. Cette convention n'a rien de magique, mais elle fournit un seuil reproductible et discutable d'un projet à l'autre, ce qu'un œil exercé ne garantit jamais.
+
+Le choix entre ces mesures n'est pas une question de goût, il se décide à partir de la forme de la distribution. Lorsque la série est à peu près symétrique, moyenne et médiane se confondent et l'on peut sans risque présenter la moyenne, accompagnée de l'écart-type. Lorsque la série est étirée vers la droite, ce qui arrive dès qu'une colonne contient des durées, des montants ou des nombres de clics, la moyenne dépasse la médiane et il devient trompeur de l'utiliser seule : on présente alors la médiane et l'IQR. Le tableau suivant résume ces arbitrages pour les quatre situations que vous rencontrerez le plus souvent.
+
+| Situation typique | Mesure de tendance centrale | Mesure de dispersion | Pourquoi |
+| --- | --- | --- | --- |
+| Distribution symétrique, sans extrême | Moyenne | Écart-type | Exploite toutes les valeurs et se prête aux calculs |
+| Distribution étirée à droite | Médiane | IQR | Insensible aux valeurs extrêmes de la queue |
+| Variable à deux valeurs possibles | Proportion | Intervalle de confiance | La moyenne d'un oui/non est déjà une probabilité |
+| Échantillon très petit | Médiane et valeurs brutes | Étendue complète | Aucun résumé n'est fiable, mieux vaut montrer tout |
+
+La bibliothèque statistics concentre l'essentiel de ces calculs en quelques fonctions d'un nom explicite. L'exemple suivant les utilise sur une colonne de durées de session, puis affiche les quartiles et l'IQR calculés avec la fonction dédiée. Tapez-le et modifiez une valeur de la liste pour observer lequel des résumés bouge, et de combien : c'est la meilleure façon de sentir la différence de robustesse entre moyenne et médiane.
+
+```python
+import statistics as st
+
+durees = [4.5, 6.0, 5.2, 7.1, 4.9, 5.5, 42.0, 6.3, 5.8, 5.1]
+
+print("moyenne      ", round(st.mean(durees), 2))
+print("mediane      ", round(st.median(durees), 2))
+print("ecart-type   ", round(st.stdev(durees), 2))
+print("amplitude    ", max(durees) - min(durees))
+print("Q1, Q2, Q3   ", st.quantiles(durees, n=4))
+```
+
+Le résultat mérite d'être commenté plutôt que seulement lu. La moyenne avale la valeur quarante-deux et grimpe au-dessus de neuf, alors que la médiane reste collée à environ cinq virgule cinq, c'est-à-dire au cœur de ce que font réellement les usagers. L'écart-type, lui, explose et devient plus grand que la moyenne, signe qu'un résumé par moyenne et écart-type raconte une histoire absurde sur ce jeu. Si vous supprimez la valeur quarante-deux, la moyenne retombe près de la médiane et l'écart-type devient modeste : la conclusion n'était donc pas fausse, elle dépendait entièrement d'une observation. Ce petit exercice illustre la discipline mentale à acquérir : jamais interpréter un résumé chiffré sans avoir regardé au moins une fois les données brutes qui le produisent.
+
+Une remarque sur la dispersion relative. L'écart-type s'exprime dans l'unité de la variable, ce qui le rend impossible à comparer entre une colonne de durée en minutes et une colonne de montant en euros. Le coefficient de variation, rapport de l'écart-type à la moyenne, permet cette comparaison puisqu'il devient sans dimension. Un coefficient de vingt pour cent signifie que l'écart-type vaut un cinquième de la moyenne, que l'on mesure des euros ou des secondes. Attention toutefois à ne pas l'appliquer à une variable dont la moyenne est proche de zéro ou de signe variable : le rapport devient alors instable et peut dépasser tout sens. Pour détecter des valeurs aberrantes, on préfère travailler directement avec l'IQR, qui reste dans l'unité d'origine et ne dépend pas du centre de la distribution.
+
+```python
+import math
+import statistics as st
+
+
+def quartile(valeurs, position):
+    tri = sorted(valeurs)
+    index = (len(tri) - 1) * position
+    bas, haut = math.floor(index), math.ceil(index)
+    if bas == haut:
+        return tri[bas]
+    return tri[bas] + (tri[haut] - tri[bas]) * (index - bas)
+
+
+def aberrantes(valeurs):
+    q1 = quartile(valeurs, 0.25)
+    q3 = quartile(valeurs, 0.75)
+    iqr = q3 - q1
+    borne_basse = q1 - 1.5 * iqr
+    borne_haute = q3 + 1.5 * iqr
+    return [v for v in valeurs if v < borne_basse or v > borne_haute]
+
+
+clics = [3, 5, 4, 6, 4, 5, 3, 44, 5, 6, 4, 5]
+print("aberrantes :", aberrantes(clics))
+```
+
+Les valeurs manquantes méritent une attention particulière parce qu'elles orientent directement le choix entre moyenne et médiane. Lorsqu'une colonne est incomplète, la moyenne calculée sur les seules valeurs présentes suppose implicitement que les valeurs manquantes ressemblent à celles qu'on observe : cette hypothèse est rarement vérifiée et presque jamais énoncée. La médiane souffre moins de ce problème, mais elle ne le résout pas. Avant de remplir quoi que ce soit, la question à poser est pourquoi la donnée manque : a-t-elle été omise au hasard, dépend-elle d'une autre colonne, ou résulte-t-elle d'un comportement, par exemple un utilisateur qui n'a jamais ouvert la fonction qui génère la mesure ? La troisième situation est la plus fréquente et la plus dangereuse, car l'absence porte alors une information que l'imputation effacerait. Un indicateur de valeur manquante, ajouté à côté de la colonne, conserve souvent cette information à faible coût.
+
+Un dernier conseil sur les valeurs aberrantes, que l'on a trop tendance à supprimer par réflexe. Une valeur extrême n'est pas nécessairement une erreur : elle peut être un client de très grande taille, une panne rare ou un événement légitime dont la rareté fait justement toute l'importance. Le réflexe correct se décompose en trois temps. On identifie l'observation avec la règle des quartiles, on regarde sa source pour comprendre ce qu'elle représente, puis on décide en connaissance de cause : correction s'il s'agit d'une faute de saisie, conservation avec transformation si la valeur est réelle mais dominante, suppression seulement si elle sort du périmètre étudié. La règle détecte, elle ne condamne pas.
+
+- Vérifier d'abord l'unité et le sens de chaque colonne avant tout calcul.
+- Afficher les quelques valeurs extrêmes et remonter à leur origine.
+- Présenter la médiane et l'IQR dès que la distribution est étirée.
+- Accompagner toujours la tendance centrale d'une mesure de dispersion.
+- Traiter la valeur manquante comme une information à comprendre, pas comme un trou à boucher.
+- Noter le nombre d'observations : un résumé sur quatre lignes n'a aucune autorité.
+
+Ces mesures décrivent une colonne isolée. Or un modèle ne vit pas de colonnes isolées : il vit de relations entre elles, et c'est la forme de la distribution qui détermine si ces relations seront bien décrites ou travesties. La section suivante vous apprendra à reconnaître les grandes familles de distributions, à distinguer une queue lourde d'une simple valeur atypique, et à préparer le terrain à la corrélation.
+$lesson$),
+  ('ia-c2-p3', 'ia-c2', 3, $lesson$Lire une distribution : formes, queues et lois$lesson$, $lesson$
+Une distribution, c'est la manière dont les valeurs d'une variable se répartissent. La décrire revient à répondre à trois questions : où se trouve le centre, à quel point les valeurs s'étalent, et quelle forme prend l'ensemble. La première question appelle la moyenne ou la médiane, la seconde l'écart-type ou l'IQR, la troisième une description qualitative que vous devez apprendre à nommer, car c'est elle qui décide des calculs autorisés par la suite. Un histogramme est l'outil le plus direct pour poser cette troisième question : on découpe l'axe des valeurs en intervalles réguliers, dits classes ou bacs, puis on compte les observations qui tombent dans chacun. Le résultat ressemble à une ville vue de loin, avec son centre, ses quartiers discrets et ses tours isolées. Le schéma suivant montre les deux profils que vous rencontrerez le plus souvent.
+
+```text
+symetrique (durees de session)          etire a droite (revenus)
+
+     *                                       *
+    ***                                     ***
+   *****                                   *****
+  *******                                 *******
+ *********                              ***********
+*************                        *****************
+--------------------------------    --------------------
+      0    5   10   15   20             0   10   20   30+
+```
+
+La distribution symétrique en cloche, dite gaussienne, a une propriété commode : son centre correspond à la fois à la moyenne et à la médiane, et la moitié des observations se trouve à moins d'un écart-type du centre. C'est la situation où résumer par moyenne et écart-type est parfaitement honnête, et c'est aussi la situation que beaucoup de variables ne respectent pas. La distribution étirée à droite, dite asymétrique positive, se reconnaît à sa longue queue : quelques observations très grandes tirent la moyenne vers elle, si bien qu'elle dépasse la médiane. La lecture pratique est simple : dès que la moyenne est nettement supérieure à la médiane, vous avez affaire à une queue à droite, et tout résumé fondé sur la moyenne surévaluera le niveau typique. L'inverse, queue à gauche, se rencontre sur des variables plafonnées par nature, comme un score de satisfaction que personne ne met au-dessus de quatre sur cinq.
+
+Le mot queue renvoie à une notion plus grave que l'asymétrie : les données lourdes. Certaines variables admettent des extrêmes si lointains qu'ils ne sont pas des accidents mais une caractéristique du phénomène. Les durées d'attente, les montants de transaction, les tailles de fichiers et le nombre de followers suivent ce régime, où un cas sur mille peut valoir cent fois la médiane. Dans ces distributions, l'écart-type devient lui-même instable puisqu'il dépend de carrés, et la moyenne change de valeur de manière significative dès qu'on ajoute ou retire un gros cas. La conséquence méthodologique est directe : on travaille en médiane et IQR, on présente des quantiles plutôt que des moyennes, et l'on se méfie des scores agrégés qui supposent implicitement des écarts bornés. Pour trancher, calculez les deux écarts à la moyenne et à la médiane : un écart important signale une queue qui domine le résumé.
+
+La forme se décrit aussi par des nombres, dits moments. Le premier moment est la moyenne, le second l'écart-type, le troisième l'asymétrie et le quatrième l'aplatissement. L'asymétrie vaut zéro pour une distribution symétrique, est positive quand la queue est à droite et négative quand elle est à gauche. Son interprétation par paliers est plus prudente que les seuils rigides qu'on lit parfois : ce qui compte, c'est le signe et l'ordre de grandeur par rapport à un. L'aplatissement compare la lourdeur des queues à celle d'une gaussienne. Ces deux mesures se calculent sans difficulté avec les modules statistics et math, et l'exemple ci-dessous les produit pour trois colonnes d'un même fichier, ce qui vous donne immédiatement un verdict sur la mesure appropriée à chacune.
+
+```python
+import math
+import statistics as st
+
+
+def forme(valeurs):
+    n = len(valeurs)
+    moyenne = st.mean(valeurs)
+    ecart = st.pstdev(valeurs) or 1e-9
+    asymetrie = sum(((v - moyenne) / ecart) ** 3 for v in valeurs) / n
+    aplatissement = sum(((v - moyenne) / ecart) ** 4 for v in valeurs) / n - 3
+    ecart_moyenne = moyenne - st.median(valeurs)
+    mesure = "mediane" if abs(ecart_moyenne) > 0.1 * ecart else "moyenne"
+    return {
+        "moyenne": round(moyenne, 2),
+        "mediane": round(st.median(valeurs), 2),
+        "ecart_type": round(ecart, 2),
+        "asymetrie": round(asymetrie, 2),
+        "aplatissement": round(aplatissement, 2),
+        "mesure_retenue": mesure,
+    }
+
+
+durees = [4, 5, 6, 5, 7, 6, 8, 5, 44, 6]
+clics = [2, 3, 5, 4, 3, 6, 4, 5, 3, 4]
+revenus = [1800, 1950, 2100, 2400, 2600, 3100, 4200, 9800]
+
+for nom, serie in [("durees", durees), ("clics", clics), ("revenus", revenus)]:
+    print(nom, forme(serie))
+```
+
+Exécuté, ce bloc vous montre que les trois colonnes n'obéissent pas aux mêmes règles. Les clics, bornés entre deux et six, donnent une asymétrie proche de zéro et autorisent la moyenne. Les durées, dominées par une unique session anormalement longue, affichent une asymétrie forte et imposent la médiane. Les revenus, avec un cas à neuf mille huit cents, produisent un aplatissement élevé : dans cette colonne, la moyenne ne dira rien de l'usuel, et une comparaison de moyennes entre deux périodes sera déterminée par un seul client. Retirez mentalement l'observation extrême et observez comme le verdict s'inverse : la forme n'est pas une propriété abstraite de la variable, elle dépend des observations que vous avez collectées.
+
+La normalisation est l'autre opération que l'on effectue souvent sur une distribution, et elle recèle un piège d'échantillonnage. Le score en écarts-types, dit score z, remplace chaque valeur par le nombre d'écart-types qui la sépare du centre ; il remet toutes les variables sur une échelle comparable et facilite la détection des extrêmes. La transformation min-max, elle, ramène tout entre zéro et un. Le piège tient à un point unique : les paramètres de la transformation, moyenne et écart-type d'un côté, minimum et maximum de l'autre, sont estimés sur des données. Si vous les calculez sur l'ensemble du fichier avant de découper entraînement et test, la partie test a déjà influencé la forme de la partie entraînement. L'ajustement doit donc se faire sur l'entraînement seulement, puis s'appliquer tel quel à tout le reste. Cette règle reviendra dans la section sur les fuites, mais elle se découvre ici naturellement.
+
+```python
+import math
+import random
+import statistics as st
+
+
+def normaliser(valeurs):
+    moyenne = st.mean(valeurs)
+    ecart = st.stdev(valeurs)
+    return [(v - moyenne) / ecart for v in valeurs]
+
+
+def intervalle_confiance(valeurs, confiance=0.95):
+    n = len(valeurs)
+    moyenne = st.mean(valeurs)
+    erreur = 1.96 * st.stdev(valeurs) / math.sqrt(n)
+    return moyenne - erreur, moyenne + erreur
+
+
+def bootstrap(valeurs, tirages=1000):
+    random.seed(0)
+    tailles = []
+    for _ in range(tirages):
+        echantillon = random.choices(valeurs, k=len(valeurs))
+        tailles.append(st.mean(echantillon))
+    tailles.sort()
+    return tailles[len(tailles) // 20], tailles[-len(tailles) // 20]
+
+
+mesures = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5, 12.1, 15.0, 12.7, 13.3]
+print("z-scores    ", [round(v, 2) for v in normaliser(mesures)])
+print("IC 95%      ", [round(v, 2) for v in intervalle_confiance(mesures)])
+print("bootstrap   ", [round(v, 2) for v in bootstrap(mesures)])
+```
+
+L'intervalle de confiance et le tirage par remise, dit bootstrap, répondent à la même question sous deux angles : à quel point mon résumé changerait si j'avais eu un autre échantillon. L'approche analytique suppose une forme proche de la gaussienne et divise l'écart-type par la racine carrée de l'effectif ; l'approche par bootstrap ne suppose rien et rejoue mécaniquement le tirage avec vos propres observations. Toutes deux partagent une leçon essentielle : l'incertitude décroît avec la racine carrée de l'effectif, si bien que doubler le nombre de mesures ne diminue l'erreur que d'environ trente pour cent. Quand un échantillon compte quatre observations, aucun intervalle ne le sauvera ; il faut mesurer davantage, et c'est souvent le vrai correctif à apporter à un résultat fiable.
+
+Passons à la deuxième grande famille de formes, celle des variables discrètes et de proportions. Une variable binaire, dont deux issues seulement sont possibles, se résume par une proportion et non par une moyenne au sens usuel, même si le calcul est identique : compter les succès puis diviser par l'effectif. La dispersion d'une telle variable est liée à la proportion elle-même, ce qui explique qu'un taux proche de cinquante pour cent soit bien plus volatile qu'un taux proche de un pour cent. Lorsque les événements sont rares et indépendants, le nombre d'occurrences suit une loi de Poisson ; lorsqu'on répète un essai binaire un certain nombre de fois, c'est une loi binomiale. Ces lois ne sont pas de la théorie décorative : elles vous donnent le nombre d'observations minimal pour qu'un taux soit parlant, et elles vous évitent de conclure à une tendance à partir de trois événements sur dix.
+
+| Type de distribution | Exemple concret | Résumé honnête | Erreur classique |
+| --- | --- | --- | --- |
+| Symétrique | Taille, mesures répétées, erreurs | Moyenne et écart-type | Chercher des extrêmes inexistants |
+| Asymétrique à droite | Revenus, durées, prix | Médiane et IQR | Comparer deux moyennes |
+| Binaire | Churn, clic, ouverture | Proportion et intervalle | Parler d'écart-type |
+| Multimodale | Deux populations mélangées | Médiane par sous-groupe | Un seul résumé pour tout |
+
+La distribution multimodale mérite une mention particulière car elle signale presque toujours un mélange. Deux pics dans un histogramme de durée de session indiquent généralement deux usages distincts, par exemple une consultation rapide et une session de travail prolongée. Résumer l'ensemble par une seule moyenne revient à décrire un animal imaginaire mi-chat mi-chien : le chiffre est correct mais ne désigne aucun cas réel. La parade consiste à retrouver la variable qui sépare les sous-populations, souvent une catégorie d'utilisateur, un appareil ou une période, puis à résumer chaque groupe séparément. Dans un projet de modélisation, une telle découverte est une information précieuse : elle suggère une variable d'interaction ou un modèle par segment, là où un résumé global aurait seulement produit une moyenne illisible.
+$lesson$),
+  ('ia-c2-p4', 'ia-c2', 4, $lesson$Corrélation : mesurer un lien sans conclure trop vite$lesson$, $lesson$
+La corrélation répond à une question précise : lorsque l'une des deux variables augmente, que fait l'autre ? La mesure la plus répandue est le coefficient de corrélation de Pearson, qui combine la covariance, c'est-à-dire la mesure conjointe des écarts à la moyenne, et les écarts-types des deux séries. Sa valeur se situe entre moins un et un. Un coefficient positif signifie que les variables tendent à augmenter ensemble, un coefficient négatif que l'une monte quand l'autre descend, et un coefficient proche de zéro indique l'absence de lien linéaire. Sa construction explique sa principale limite : elle suppose que la relation est à peu près droite et que les écarts sont comparables d'un point à l'autre.
+
+Le tableau ci-dessous vous donne des ordres de grandeur de lecture, sans jamais transformer ces paliers en vérité. Une corrélation de zéro virgule deux peut être absolument décisive sur dix millions d'observations et parfaitement insignifiante sur vingt ; une corrélation de zéro virgule neuf peut n'être qu'un reflet d'une troisième variable commune. Retenez plutôt la question à poser devant chaque coefficient : quelle est la taille de l'échantillon, quelle est la nature supposée de la relation, et que se passerait-il si je retirais les quelques points extrêmes qui tirent la droite ?
+
+| Valeur absolue de r | Lecture usuelle | Ce qu'il faut vérifier |
+| --- | --- | --- |
+| Inférieur à 0.2 | Lien linéaire négligeable | Une relation non linéaire est-elle cachée ? |
+| De 0.2 à 0.5 | Lien faible mais réel | Suffisamment d'observations pour en parler ? |
+| De 0.5 à 0.8 | Lien net | Une variable commune explique-t-elle tout ? |
+| Supérieur à 0.8 | Lien très fort | Fuite de données ou doublon de mesure ? |
+
+Le danger le plus fréquent consiste à interpréter un coefficient proche de zéro comme une absence de relation. Or seules les relations droites sont concernées. Une parfaite relation en cloche, où la variable dépendante croît puis décroît, donne exactement un coefficient nul : la droite de régression la plus idéale est horizontale, et pourtant chaque point est parfaitement déterminé. Le schéma suivant rappelle ces deux situations, que la valeur seule ne distingue pas.
+
+```text
+r proche de +1                r proche de 0 mais relation parfaite
+
+    *                               *                 *
+   * *                             *   *           *   *
+  *   *                           *     *       *       *
+ *     *                         *       *   *           *
+*       *                       *         *               *
+---------------------------------    --------------------------------
+  relation lineaire                   relation en cloche
+```
+
+La parade standard consiste à regarder le nuage de points avant tout calcul, puis à compléter Pearson par une seconde mesure, le coefficient de corrélation de Spearman. Celui-ci remplace chaque valeur par son rang dans la série triée, puis calcule Pearson sur ces rangs. Il détecte donc toute relation monotone, croissante ou décroissante sans être droite, et il est beaucoup moins sensible aux valeurs extrêmes puisque les rangs d'un extrême restent des rangs. En pratique, un écart important entre les deux coefficients est un signal : relation non linéaire, valeur aberrante dominante, ou codage particulier de l'une des variables.
+
+```python
+import statistics as st
+
+
+def pearson(xs, ys):
+    n = len(xs)
+    moy_x, moy_y = st.mean(xs), st.mean(ys)
+    covariance = sum((x - moy_x) * (y - moy_y) for x, y in zip(xs, ys)) / n
+    ecart_x = (sum((x - moy_x) ** 2 for x in xs) / n) ** 0.5
+    ecart_y = (sum((y - moy_y) ** 2 for y in ys) / n) ** 0.5
+    if ecart_x == 0 or ecart_y == 0:
+        return 0.0
+    return covariance / (ecart_x * ecart_y)
+
+
+def rangs(valeurs):
+    tries = sorted((v, i) for i, v in enumerate(valeurs))
+    positions = [0] * len(valeurs)
+    for rang, (_, index) in enumerate(tries, start=1):
+        positions[index] = rang
+    return positions
+
+
+def spearman(xs, ys):
+    return pearson(rangs(xs), rangs(ys))
+
+
+clics = [2, 5, 3, 8, 4, 9, 6, 7, 1, 10]
+duree = [3, 12, 5, 40, 7, 45, 15, 30, 2, 50]
+aberrant = [2, 5, 3, 8, 4, 9, 6, 7, 1, 400]
+
+print("pearson     ", round(pearson(clics, duree), 3))
+print("spearman    ", round(spearman(clics, duree), 3))
+print("pearson ext ", round(pearson(clics, aberrant), 3))
+print("spearman ext", round(spearman(clics, aberrant), 3))
+```
+
+L'exécution montre trois comportements typiques. Sur des données propres et monotones, les deux coefficients sont voisins et vous pouvez citer l'un ou l'autre avec confiance. Quand la relation est fortement régulière sans être strictement droite, Spearman dépasse Pearson et signale ainsi un lien que la droite sous-estime. Quand une seule observation vaut quatre cents, Pearson s'effondre ou s'envole selon les cas, tandis que Spearman ne bouge presque pas puisque cette observation ne modifie qu'un rang. Voilà pourquoi les deux valeurs se rapportent systématiquement : l'une vous dit si la droite est juste, l'autre si l'ordre est conservé.
+
+Corrélation ne rime pas toujours avec causalité, et l'adage mérite d'être compris plutôt que répété. Pour qu'une corrélation traduise un effet direct, il faut exclure au moins trois explications alternatives. La première est le hasard, surtout sur un petit échantillon, où n'importe quelle paire peut paraître liée. La deuxième est l'inverse de la causalité : c'est parce que les clients restent longtemps qu'ils achètent davantage, ou l'inverse, et la corrélation seule ne tranche pas. La troisième, la plus fréquente en données réelles, est la variable commune : la saisonnalité fait monter ensemble la température et les ventes de glace sans que l'une n'explique l'autre, et un facteur tiers, ici la saison, produit les deux. Le schéma ASCII suivant résume les trois configurations à distinguer.
+
+```text
+hasard              variable commune            effet direct
+
+ A   ?               S ------> A                 A ------> B
+    x                    \                          ^
+                          v                          |
+                       B                             ?
+
+ A et B bougent          A et B bougent             changer A
+ sans raison             ensemble via S             change B
+```
+
+Dans la pratique, la variable commune se cherche avec méthode plutôt qu'avec intuition. On liste les éléments qui pourraient influencer les deux colonnes observées, souvent le temps, la taille de l'utilisateur ou la période de l'année, puis on recalcule la corrélation au sein de chaque strate. Si le coefficient s'effondre une fois la saison contrôlée, le lien initial était un artefact. Cette technique, dite contrôle par stratification, se fait sans bibliothèque : on découpe les données en groupes, on calcule un coefficient par groupe, puis on compare. Un coefficient qui disparaît en strate mais qui reste fort en global vous dit précisément où se trouve l'explication, et évite de déployer un modèle qui ne reproduirait qu'un effet de calendrier.
+
+La corrélation joue aussi un rôle défensif : détecter deux colonnes qui portent la même information. Lorsque deux variables dépassent un coefficient absolu de zéro virgule neuf, elles sont le plus souvent deux mesures d'une même réalité, par exemple un montant en euros et le même montant converti. Les garder toutes les deux n'apporte rien, alourdit le modèle et, pour les méthodes fondées sur des distances ou des gradients, déforme la géométrie de l'espace des variables. La règle d'usage consiste à repérer les paires suspectes dans une matrice complète, à en conserver une par paire et à documenter le choix. Notez enfin que la multicolinéarité parfaite rend certains modèles tout simplement impossible à estimer : quand une colonne se déduit exactement d'une combinaison des autres, l'information devient redondante au point de rendre l'inversion numérique instable.
+
+- Regarder le nuage de points avant de citer un coefficient.
+- Rapporter Pearson et Spearman ensemble dès que la relation est douteuse.
+- Se demander si une troisième variable explique les deux colonnes.
+- Recalculer en strate pour voir si le lien survit au contrôle.
+- Retirer un à un les extrêmes et observer la sensibilité du coefficient.
+- Ne jamais transformer une corrélation forte en justification de cause.
+
+Vous savez désormais résumer une colonne et décrire le lien entre deux colonnes. Il reste une catégorie de problèmes plus insidieuse, puisque les chiffres restent exacts alors qu'ils décrivent mal la réalité : les pièges de mesure. C'est le sujet de la section suivante, où nous verrons comment un échantillon mal choisi, une colonne tronquée ou un agrégat mal construit peuvent produire des conclusions justes en apparence et fausses en pratique.
+$lesson$),
+  ('ia-c2-p5', 'ia-c2', 5, $lesson$Pièges de mesure : quand les chiffres décrivent mal la réalité$lesson$, $lesson$
+Toutes les difficultés précédentes portaient sur la façon de résumer des données correctement mesurées. Cette section traite d'un problème antérieur et plus grave : la donnée elle-même peut ne pas dire ce que l'on croit qu'elle dit. Les nombres restent exacts au sens arithmétique, les moyennes sont bien calculées, les tableaux se tiennent, et pourtant la conclusion est fausse parce que la mesure a été produite dans des conditions qui biaisent la représentation. C'est la situation la plus coûteuse en projet, précisément parce qu'elle ne se voit pas dans un contrôle de cohérence : il faut comprendre comment la donnée a été fabriquée. Nous parcourons ici les sept familles de pièges que l'on rencontre le plus souvent : l'échantillon mal choisi, l'effectif insuffisant, la fenêtre d'observation variable, la troncature, l'échelle inadaptée, l'agrégat trompeur et l'étiquette bruitée.
+
+Le premier piège est le biais d'échantillonnage, et il prend des formes très concrètes. Si vous recueillez des avis de clients par formulaire ouvert, seuls ceux qui ont un avis très positif ou très négatif répondent : la moyenne obtenue décrit les gens qui ont choisi de parler, pas la clientèle. Si vous collectez des données uniquement sur les utilisateurs de l'application mobile, vous ignorez ceux qui n'ont jamais installé l'application mais comptent peut-être davantage pour le chiffre d'affaires. Ce type de sélection, dite non aléatoire, ne se corrige pas par un meilleur calcul : elle se corrige en comprenant le mécanisme de sélection, puis en pondérant ou en restreignant explicitement le périmètre. La question à poser avant tout résumé est la suivante : qui a pu apparaître dans ce fichier, et qui en a été structurellement exclu ?
+
+Le biais de sélection existe aussi à l'intérieur d'un fichier apparemment complet, et c'est ainsi qu'il trompe le plus souvent. Un historique de commandes ne contient que les clients qui ont commandé ; un journal de satisfaction ne contient que les parcours arrivés à leur terme ; un jeu de données de recrutement ne contient que les candidatures reçues, pas les postes jamais pourvus. Le modèle apprend alors sur la population observée et déploie sur la population cible, qui diffère. Dans le jargon, cela s'appelle un biais de déploiement : la performance en validation reflète le passé du produit, pas son avenir. Le remède tient en deux gestes, modestes mais décisifs : documenter la population réellement représentée dans le fichier, puis comparer ses caractéristiques, quand c'est possible, à celles de la population sur laquelle le modèle sera utilisé.
+
+Une variante bien connue de ce biais porte un nom évocateur : le biais du survivant. Il se produit chaque fois que le fichier ne contient que les cas qui ont réussi un filtre invisible. Si vous analysez les projets qui ont abouti pour en dégager les facteurs de réussite, vous ignorez tous ceux qui ont suivi exactement la même méthode et ont échoué ; vos conclusions attribuent alors au hasard le mérite des survivants. Le même mécanisme agit sur les comptes qui résilient, les joueurs qui restent, les articles qui sont cités. La détection tient à une question simple : ai-je aussi les cas qui ont disparu ? Lorsque la réponse est non, il faut formuler explicitement la limite dans le rapport, plutôt que de laisser le lecteur croire à une régularité du monde.
+
+L'effectif insuffisant est le deuxième piège, et il se déguise en résultat solide. L'intuition clé tient en une formule sans symbole : l'erreur sur une moyenne diminue comme la racine carrée de l'effectif. Passer de cent à quatre cents observations ne réduit l'erreur que de moitié ; pour diviser l'erreur par dix, il faut multiplier l'effectif par cent. Sur un échantillon de vingt mesures, une différence de quelques pour cent entre deux groupes relève ordinairement du bruit, si bien que conclure à une amélioration sur ce fond revient à deviner en regardant les nuages. Le code suivant calcule l'intervalle de confiance d'une moyenne et le nombre d'observations nécessaires pour réduire l'erreur à un niveau donné, ce qui transforme une intuition en décision chiffrée.
+
+```python
+import math
+import statistics as st
+
+
+def erreur_moyenne(valeurs):
+    return 1.96 * st.stdev(valeurs) / math.sqrt(len(valeurs))
+
+
+def observations_pour(precision, ecart_type):
+    return math.ceil((1.96 * ecart_type / precision) ** 2)
+
+
+mesures_a = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5]
+mesures_b = [12.4, 13.1, 11.8, 14.2, 12.9, 13.5, 12.1, 15.0, 12.7, 13.3,
+             12.8, 14.1, 11.9, 13.7, 12.2, 13.9, 12.5, 14.4, 13.0, 12.6]
+
+for nom, serie in [("petit", mesures_a), ("grand", mesures_b)]:
+    marge = erreur_moyenne(serie)
+    print(nom, "moyenne", round(st.mean(serie), 2),
+          "+/-", round(marge, 2))
+print("obs pour +/- 0.5 :", observations_pour(0.5, 2.0))
+```
+
+La leçon est d'une portée pratique immédiate : une marge qui recouvre l'autre groupe ne justifie aucune décision, et la collecte supplémentaire a un coût qu'il faut comparer au gain de précision. Une erreur fréquente consiste d'ailleurs à confondre significance statistique et utilité pratique. Deux moyennes très proches peuvent différer de manière statistiquement nette sur un très grand échantillon, sans que la différence vaille la peine d'un changement de produit ; à l'inverse, un écart substantiel sur peu d'observations peut être réel mais indémontrable. La bonne formulation combine les trois éléments : l'ampleur de l'écart, l'incertitude qui l'entoure et le seuil à partir duquel l'écart changerait une décision. Rapporter un écart sans incertitude, c'est rapporter une vitesse sans distance.
+
+La fenêtre d'observation variable constitue le troisième piège, et il est endémique dans les données comportementales. Une colonne comptant les clics d'un utilisateur n'a de sens que rapportée à la durée pendant laquelle on l'a observé : un compte dont la session a duré deux minutes et un compte suivi pendant trois mois ne sont pas comparables, alors que la colonne le laisse croire. Le même défaut touche le nombre de tickets, de commandes ou d'erreurs. Le correctif est mécanique : diviser le compteur par la fenêtre, ou n'inclure que les comptes dont la fenêtre est complète. Ce point mérite d'être tranché avant toute analyse, car il change l'ordre de grandeur des colonnes et donc toutes les comparaisons qui suivent.
+
+```python
+import statistics as st
+
+
+def taux_par_minute(comptes, durees):
+    if any(d <= 0 for d in durees):
+        raise ValueError("duree nulle ou negative")
+    return [c / d for c, d in zip(comptes, durees)]
+
+
+comptes = [4, 18, 6, 30, 9]
+durees = [2.0, 30.0, 5.0, 120.0, 4.0]
+
+brut = st.mean(comptes)
+ajuste = st.mean(taux_par_minute(comptes, durees))
+print("moyenne des compteurs   :", round(brut, 2))
+print("moyenne des taux/minute :", round(ajuste, 2))
+print("compteurs correles aux durees :",
+      round(st.correlation(comptes, durees), 3))
+```
+
+Le résultat montre le mécanisme dans sa forme la plus pure : la corrélation entre les compteurs et les durées d'observation est presque parfaite, ce qui signifie que la colonne mesure d'abord la durée de suivi et seulement ensuite le comportement. Un modèle qui utiliserait le compteur brut apprendrait à prédire l'ancienneté du compte, pas son activité. En transformant le compteur en taux, on retire le facteur de nuisance et on rapproche la variable de ce qu'elle prétend mesurer. Ce réflexe, appliqué dès la phase d'exploration, vous fera gagner les erreurs les plus coûteuses, celles qui ne se révèlent qu'une fois le modèle en production.
+
+Le quatrième piège est la troncature, qui intervient quand la mesure ne peut pas dépasser un seuil. Une colonne de durée plafonnée à soixante signale probablement un enregistrement qui s'arrête à l'heure pleine ; une colonne de montant à quatre chiffres tronque les grosses transactions ; un score arrondi à dix ne permet plus de distinguer les valeurs fines. La troncature se repère mécaniquement : si une proportion anormale de valeurs vaut exactement le maximum ou le minimum possible, la mesure est butée. Contrairement à la valeur aberrante, qui est une observation rare, la troncature est une propriété du dispositif de mesure, et elle fausse la moyenne, l'écart-type et la corrélation dans le même sens. Il faut alors soit corriger la collecte, soit analyser en connaissant la limite, soit exclure la colonne des comparaisons sensibles.
+
+```python
+import statistics as st
+
+
+def detecter_troncature(valeurs, plancher=None, plafond=None):
+    n = len(valeurs)
+    bas = sum(1 for v in valeurs if plancher is not None and v == plancher)
+    haut = sum(1 for v in valeurs if plafond is not None and v == plafond)
+    return {
+        "au_plancher": round(bas / n, 3),
+        "au_plafond": round(haut / n, 3),
+        "dans_la_limites": bas / n + haut / n > 0.15,
+    }
+
+
+durees = [12, 30, 60, 60, 45, 60, 60, 20, 60, 35]
+print(detecter_troncature(durees, plancher=0, plafond=60))
+print("mediane", st.median(durees), "moyenne", round(st.mean(durees), 2))
+```
+
+Le cinquième piège concerne les échelles et les codages. Traiter une échelle d'ordre comme une échelle de mesure introduit une arithmétique discutable : la distance entre les niveaux un et deux d'une satisfaction en cinq points n'est pas nécessairement égale à celle entre trois et quatre, et additionner ces niveaux suppose implicitement qu'elle l'est. De même, comparer des moyennes exprimées dans des unités différentes, euros et pourcentages, revient à comparer des longueurs en mètres et en pieds sans conversion. Un cas subtil mérite d'être signalé, celui de deux colonnes parfaitement liées par une transformation linéaire : elles ont alors une corrélation de un, mais l'une ne contient aucune information que l'autre n'ait déjà. Le choix d'échelle n'est donc jamais cosmétique : il détermine les calculs admissibles, les écarts interprétables et la pondération des variables dans un modèle.
+
+Le sixième piège est l'agrégat trompeur, et son exemple le plus célèbre s'appelle le paradoxe de Simpson. Il se produit lorsqu'une tendance observée dans chaque sous-groupe s'inverse quand on mélange les groupes, ou l'inverse. Une différence de moyennes globales peut alors raconter exactement l'opposé de ce que fait chaque groupe pris séparément. Le phénomène n'a rien d'exotique : il apparaît dès que les groupes ont des tailles inégales et des niveaux différents. Le remède consiste à toujours calculer l'agrégat global et les agrégats par groupe, puis à vérifier qu'ils racontent la même histoire avant de publier l'un ou l'autre.
+
+Un autre piège d'agrégation, très fréquent en reporting, consiste à comparer des périodes qui ne se ressemblent pas. Une semaine complète se compare à une semaine, pas à cinq jours ouvrés ; un mois de décembre se compare à un décembre, pas à la moyenne de l'année, quand l'activité est marquée par le calendrier. Comparer un mois à un mois précédent sans tenir compte du nombre de jours ouvrés produit un surcroît artificiel que le lecteur interprétera comme une croissance. La correction est à la portée de tous : rapporter chaque total au nombre de jours, d'utilisateurs ou de transactions disponibles, puis comparer des taux plutôt que des volumes. Gardez en tête que l'inverse existe aussi, et qu'un taux peut devenir instable quand son dénominateur est petit : trois ventes sur quatre donnent soixante-quinze pour cent, ce qui ne promet rien pour la suite. Présentez toujours le taux avec son effectif de départ.
+
+```python
+import statistics as st
+
+
+def moyenne_groupe(lignes, cle_groupe, valeur):
+    groupes = {}
+    for ligne in lignes:
+        groupes.setdefault(ligne[cle_groupe], []).append(ligne[valeur])
+    return {g: round(st.mean(v), 2) for g, v in groupes.items()}
+
+
+lignes = []
+lignes += [{"groupe": "A", "score": s} for s in [70, 72, 68, 74, 71, 69]]
+lignes += [{"groupe": "B", "score": s} for s in [95, 92, 96, 94, 93, 97]]
+lignes += [{"groupe": "C", "score": s} for s in [55, 58, 52, 57, 54, 56]]
+lignes += [{"groupe": "D", "score": s} for s in [80, 78, 82, 79, 81, 77]]
+
+print("par groupe   :", moyenne_groupe(lignes, "groupe", "score"))
+print("global       :", round(st.mean([l["score"] for l in lignes]), 2))
+traitement = [l for l in lignes if l["groupe"] in ("A", "B")]
+print("AB sans trait:", round(st.mean([l["score"] for l in traitement]), 2))
+```
+
+Les valeurs manquantes forment le septième piège, et elles se classent selon leur origine. L'absence est dite aléatoire quand elle ne dépend de rien, dépendante quand elle s'explique par une autre colonne observée, et informative quand elle dépend de la valeur manquante elle-même : un utilisateur qui ne renseigne pas son revenu n'en a probablement pas le même rapport qu'un autre. Le troisième cas est le plus fréquent et le plus dangereux, car remplir la valeur à la médiane efface exactement le signal porté par l'absence. La correction raisonnable consiste à conserver un indicateur de disponibilité à côté de la colonne remplie, à documenter la méthode retenue et à appliquer le même traitement, paramètres compris, aux données d'entraînement et de future production. Notez que l'imputation ajustée sur l'ensemble du fichier constitue déjà une fuite légère, au sens de la section suivante.
+
+Un huitième point, à la frontière entre mesure et qualité, concerne les étiquettes elles-mêmes. Une cible construite par annotation humaine porte du bruit : deux annotateurs désaccordent, les règles changent avec le temps, les cas limites sont tranchés au fil de l'eau. Mesurer cet accord n'a rien de décoratif, puisque un modèle ne peut pas dépasser la cohérence de ceux qui ont produit les étiquettes. Un accord brut, proportion des cas où deux avis coïncident, suffit pour commencer ; lorsqu'une classe est très fréquente, il faut le comparer à l'accord attendu au hasard, sinon deux annotateurs qui disent tous oui à tout paraissent d'un accord remarquable. Si l'accord est faible, améliorez les consignes d'annotation avant d'améliorer le modèle.
+
+| Piège de mesure | Symptôme observable | Correction possible |
+| --- | --- | --- |
+| Échantillon biaisé | Population du fichier différente de la cible | Restreindre le périmètre ou pondérer |
+| Effectif trop faible | Résultats qui disparaissent à l'ajout de données | Collecter davantage, borner la conclusion |
+| Fenêtre variable | Compteur corrélé à la durée de suivi | Diviser par la fenêtre observée |
+| Troncature | Pic exact au maximum ou minimum | Corriger la collecte ou exclure la colonne |
+| Échelle inadaptée | Écarts sans unité interprétable | Convertir, ordonner ou dichotomiser |
+| Agrégat trompeur | Tendance globale inverse aux groupes | Calculer par groupe et comparer |
+| Manquement informatif | Valeurs absentes concentrées ailleurs | Indicateur de disponibilité plus imputation |
+| Étiquette bruitée | Désaccord des annotateurs | Réécrire les consignes, mesurer l'accord |
+
+Avant de confier une colonne à un modèle, une courte vérification suffit à écarter l'essentiel de ces risques. Elle tient en six questions, à poser dans cet ordre : quelle population ce fichier représente-t-il, quelle est l'unité de chaque colonne, quelle fenêtre de temps couvre-t-elle, existe-t-il un plafond ou un plancher artificiel, quelle proportion de valeurs manque et pourquoi, et enfin la colonne était-elle disponible au moment exact où l'on prédit ? Cette dernière question n'a l'air que d'un détail chronologique, mais c'est la plus importante de toute la leçon : elle ouvre directement sur les fuites de données, où un modèle apprend à répondre avant même d'avoir posé la question.
+
+- Vérifier l'unité, la fenêtre et le sens avant le premier calcul.
+- Compter les valeurs exactement au plafond et au plancher.
+- Comparer la population du fichier à la population cible.
+- Calculer l'intervalle de confiance avant d'affirmer une différence.
+- Produire les moyennes par groupe et globales, puis les confronter.
+- Conserver un indicateur de valeur manquante plutôt que de l'effacer.
+- Mesurer l'accord entre annotateurs avant de conclure à la qualité des étiquettes.
+$lesson$),
+  ('ia-c2-p6', 'ia-c2', 6, $lesson$Fuites de données : le modèle qui triche sans le savoir$lesson$, $lesson$
+Une fuite de données, en anglais data leakage, se produit quand une information que le modèle ne devrait pas posséder au moment de la prédiction influence l'entraînement ou l'évaluation. Le modèle n'apprend alors plus à prévoir : il apprend à déchiffrer un indice laissé sur la table. Les conséquences sont toujours les mêmes et toujours déroutantes : des scores de validation remarquables, une fierté passagère, puis un effondrement une fois le système branché sur des données réelles, sans que la phase d'entraînement n'ait changé d'une ligne. Cette section décrit les quatre grandes familles de fuites, puis les méthodes simples pour les repérer. Toutes se décrivent en une phrase : la frontière entre ce qui est connu et ce qui doit être prédit a été franchie dans le mauvais sens.
+
+La première famille, la plus spectaculaire, est la fuite de cible. Elle concerne une colonne qui contient, directement ou indirectement, l'issue que l'on cherche à prédire. L'exemple canonique est une variable mesurée après l'événement : pour prédire un désabonnement, vous disposez d'un champ indiquant le motif de résiliation saisi par le client, ou d'un score calculé à partir des données de clôture du compte. La corrélation avec la cible approche alors un, le modèle atteint une performance extraordinaire, et le déploiement échoue puisque cette donnée n'existe tout simplement pas avant le désabonnement. Les fuites de cible passent aussi par des dérivés plus discrets : un identifiant attribué à la suite du churn, un compteur d'événements qui inclut lui-même l'événement à prédire, ou une agrégation temporelle calculée sur la période entière alors que la prédiction porte sur son début.
+
+La deuxième famille est la fuite entre entraînement et évaluation. Elle intervient lorsqu'un calcul utilise l'ensemble du fichier avant le découpage : normalisation, remplacement des valeurs manquantes, réduction de dimension, sélection de variables. La conséquence est subtile mais réelle : les données de test ont participé à la définition des paramètres appliqués aux données d'entraînement, si bien que le test n'est plus indépendant. Le score mesure alors un modèle qui a vu un peu de l'avenir. La règle à mémoriser tient en trois mots : découper d'abord. Une fois le découpage effectué, chaque paramètre estimé, moyenne, écart-type, minimum, maximum, fréquence de catégorie, se calcule sur l'entraînement uniquement, puis s'applique tel quel aux données de validation et de test. L'exemple ci-dessous montre le calcul fautif et sa correction, tous deux écrits sans bibliothèque externe.
+
+```python
+import statistics as st
+
+
+def normalisation_faute(valeurs):
+    moyenne = st.mean(valeurs)
+    ecart = st.stdev(valeurs)
+    return [(v - moyenne) / ecart for v in valeurs]
+
+
+def normalisation_honnête(entrainement, a_evaluer):
+    moyenne = st.mean(entrainement)
+    ecart = st.stdev(entrainement)
+    ajuster = lambda v: (v - moyenne) / ecart
+    return [ajuster(v) for v in entrainement], [ajuster(v) for v in a_evaluer]
+
+
+durees = [4, 5, 6, 5, 7, 6, 8, 5, 44, 6]
+appariement = durees[:7], durees[7:]
+
+faux = normalisation_faute(durees)
+bon_train, bon_test = normalisation_honnête(*appariement)
+print("faute  ", [round(v, 2) for v in faux])
+print("train  ", [round(v, 2) for v in bon_train])
+print("test   ", [round(v, 2) for v in bon_test])
+```
+
+Le détail qui fait toute la différence tient à l'origine des paramètres. Dans la version fautive, la moyenne et l'écart-type sont calculés sur les dix valeurs, y compris celles réservées à l'évaluation : le test a donc influencé la transformation. Dans la version honnête, les paramètres proviennent des sept seules valeurs d'entraînement et sont réutilisés à l'identique pour le reste. Sur ce petit exemple l'écart paraît ténu, mais il grandit avec le nombre de colonnes et se cumule : à mesure que le jeu de données grossit, le test finit par définir à lui seul la position du zéro et l'unité de dispersion, et le score observé devient une mesure de confort plutôt qu'une estimation.
+
+La troisième famille rassemble les fuites de préparation, où l'information circule par des canaux moins visibles. Remplacer les valeurs manquantes par la médiane calculée sur tout le jeu en est une, tout comme compter la fréquence d'une catégorie sur l'ensemble des lignes avant le découpage. L'exemple le plus rusé est l'encodage de la cible : remplacer chaque catégorie par le taux de cible correspondant impose de connaître la cible de toutes les lignes, y compris celles du test. La parade consiste à calculer ces statistiques à l'intérieur de chaque pli d'entraînement, puis à les appliquer aux plis voisins. Une autre source de fuite, très répandue, vient des opérations réalisées avant le découpage par commodité : un dédoublonnage, un filtrage des colonnes ou un agrégat calculé une fois pour toutes peut faire communiquer les deux côtés de la frontière.
+
+La quatrième famille est la fuite temporelle, celle qui ruine les prévisions. Si vos données sont datées et que vous découpez au hasard, une observation de lundi se retrouve en entraînement et son lendemain en test : le modèle dispose d'informations postérieures à celles qu'il doit prédire. Le score obtenu mesure la capacité à interpoler entre des dates déjà vues, non à extrapoler vers un futur inconnu. Le correctif est structurel plutôt que statistique : découper sur le temps, en conservant les dates les plus anciennes pour l'entraînement et les plus récentes pour l'évaluation. La même logique s'étend au découpage par groupe. Lorsqu'un même client, site ou patient apparaît des centaines de fois, un tirage aléatoire disperse ses lignes des deux côtés et le modèle mémorise des profils plutôt qu'il n'apprend des régularités.
+
+```python
+import random
+
+
+def split_temporel(lignes, part_entrainement=0.8):
+    tries = sorted(lignes, key=lambda ligne: ligne["date"])
+    coupe = int(len(tries) * part_entrainement)
+    return tries[:coupe], tries[coupe:]
+
+
+def split_par_groupe(lignes, cle_groupe, part_entrainement=0.8, graine=0):
+    random.seed(graine)
+    groupes = sorted({ligne[cle_groupe] for ligne in lignes})
+    random.shuffle(groupes)
+    coupe = int(len(groupes) * part_entrainement)
+    conserves = set(groupes[:coupe])
+    entrainement = [l for l in lignes if l[cle_groupe] in conserves]
+    test = [l for l in lignes if l[cle_groupe] not in conserves]
+    return entrainement, test
+
+
+lignes = [{"date": f"2024-01-{jour:02d}", "utilisateur": f"u{jour % 3}",
+           "valeur": jour * 3.5} for jour in range(1, 21)]
+
+avant, apres = split_temporel(lignes)
+print("temporel  entrainement", len(avant), "test", len(apres))
+print("dates test", [l["date"] for l in apres[:3]])
+
+par_train, par_test = split_par_groupe(lignes, "utilisateur")
+ids_train = {l["utilisateur"] for l in par_train}
+ids_test = {l["utilisateur"] for l in par_test}
+print("groupes partages :", sorted(ids_train & ids_test))
+```
+
+La sortie confirme les deux propriétés recherchées. Le découpage temporel place entièrement la fin de la période côté test, sans aucun recouvrement de dates ; le découpage par groupe garantit qu'aucun identifiant n'apparaît des deux côtés, ce que la ligne des groupes partagés affiche vide. Ces deux routines suffisent pour sécuriser la très grande majorité des projets, et elles s'écrivent en quelques lignes parce qu'elles ne font que respecter une frontière. Le coût est un score souvent moins flatteur, ce qui doit être lu comme une amélioration : un chiffre plus bas mais honnête vaut infiniment mieux qu'un chiffre élevé construit sur une information interdite.
+
+Repérer une fuite relève d'une démarche systématique plutôt que d'un coup de flair. Cinq tests couvrent l'essentiel. Le premier est chronologique : pour chaque colonne, demandez à quel moment précis la valeur existe dans le monde réel, et éliminez toute colonne postérieure à l'instant de prédiction. Le deuxième est statistique : une corrélation supérieure à zéro virgule neuf avec la cible, sur une variable qui devrait être indépendante, signale presque toujours un dérivé de la cible. Le troisième est un test d'ablation : réentraînez le modèle sans la colonne suspecte et comparez les scores ; un effondrement brutal révèle une information indûment obtenue. Le quatrième est un contrôle d'impossibilité : un modèle linéaire très simple qui atteint des sommets signale souvent une colonne qui répond à la place du modèle. Le cinquième est documentaire : retrouvez le code qui produit la colonne et lisez sa date de calcul.
+
+| Type de fuite | Symptôme typique | Correction |
+| --- | --- | --- |
+| Fuite de cible | Corrélation quasi parfaite avec l'étiquette | Supprimer la colonne et ses dérivés |
+| Entraînement et test mélangés | Score qui chute après retrait d'une étape | Découper avant toute estimation de paramètres |
+| Préparation ajustée partout | Écart entre prototype et production | Ajuster sur l'entraînement, appliquer ailleurs |
+| Fuite temporelle | Excellente validation, échec en production | Découper sur le temps, jamais au hasard |
+| Fuite de groupe | Mêmes entités des deux côtés | Découper par identifiant |
+| Fuite par sélection | Colonne apparue après filtrage du jeu | Reproduire la chaîne complète dans l'ordre |
+
+Un test d'ablation complet mérite d'être écrit une fois pour toutes, car il transforme une intuition en mesure. Le principe est rudimentaire : vous évaluez le modèle avec toutes les colonnes, puis vous le réévaluez après en avoir retiré une, et vous observez l'écart. Sur des données honnêtes, l'écart reste modeste et progressif ; sur des données contaminées, il est brutal, et la colonne incriminée se dévoile d'elle-même. Appliquez-le d'abord aux variables les plus rassurantes, celles dont la corrélation avec la cible vous semble trop belle.
+
+```python
+import statistics as st
+
+
+def evaluation(lignes, colonnes):
+    score = 0.0
+    for colonne in colonnes:
+        avec = [l["cible"] for l in lignes if l[colonne] >= 0]
+        sans = [l["cible"] for l in lignes if l[colonne] < 0]
+        if not avec or not sans:
+            continue
+        ecart = abs(st.mean(avec) - st.mean(sans))
+        score += ecart
+    return round(score / max(len(colonnes), 1), 3)
+
+
+lignes = [
+    {"cible": 1, "anciennete": 3, "motif_resiliation": 5},
+    {"cible": 1, "anciennete": 4, "motif_resiliation": 4},
+    {"cible": 0, "anciennete": 40, "motif_resiliation": -1},
+    {"cible": 0, "anciennete": 52, "motif_resiliation": -1},
+    {"cible": 1, "anciennete": 2, "motif_resiliation": 5},
+    {"cible": 0, "anciennete": 35, "motif_resiliation": -1},
+]
+
+toutes = ["anciennete", "motif_resiliation"]
+print("avec les deux  :", evaluation(lignes, toutes))
+print("sans le motif   :", evaluation(lignes, ["anciennete"]))
+```
+
+L'écart obtenu entre les deux colonnes dit tout : l'ancienneté sépare les groupes de façon modérée, le motif de résiliation les sépare de façon nette parce qu'il n'existe que chez ceux qui ont déjà résilié. La colonne n'est pas fausse, elle est simplement postérieure à la décision, et c'est exactement ce que doit apprendre à voir un œil exercé. Rappelez-vous que la fuite ne triche pas sur les calculs : elle triche sur le calendrier, et c'est pourquoi aucun contrôle de types, aucune vérification de valeurs négatives et aucun test de cohérence ne la détecteraient.
+$lesson$),
+  ('ia-c2-p7', 'ia-c2', 7, $lesson$Une chaîne de traitement honnête$lesson$, $lesson$
+Toutes les précautions de cette leçon se rangent dans un ordre unique, et cet ordre constitue à lui seul la moitié de la méthode. On découpe d'abord les données en ensembles distincts ; on choisit ensuite les colonnes en s'interdisant tout regard sur la part réservée à l'évaluation ; on ajuste les transformations sur l'entraînement, moyennes, écarts, seuils, fréquences, encodages ; on entraîne le modèle ; on évalue une seule fois sur le jeu tenu à l'écart ; on documente enfin les choix, les dates et les hypothèses. Inversez deux étapes, même innocemment, et le découpage ne sert plus à rien. Cette discipline a un avantage supplémentaire : elle rend le travail reproductible, puisque n'importe qui relançant la chaîne dans le même ordre obtient les mêmes chiffres.
+
+```text
+1. verrouiller le jeu de test      4. ajuster les transformations
+2. choisir les colonnes            5. entrainer le modele
+   sans voir le test               6. evaluer une seule fois
+3. imputer sur l'entrainement      7. documenter dates et choix
+
+   frontiere : rien n'est estimate sur le jeu de test
+```
+
+La validation croisée prolonge ce raisonnement lorsque les données sont rares. Le principe consiste à répartir l'entraînement en plusieurs plis, à entraîner sur les plis réunis et à évaluer sur le pli laissé de côté, en tournant jusqu'à ce que chaque pli ait servi d'évaluation. La moyenne des scores donne une estimation plus stable qu'un unique découpage, et l'écart entre les plis mesure la sensibilité du résultat. Deux variantes sont indispensables dès que les données sont datées ou regroupées : la validation croisée temporelle, où chaque pli est strictement postérieur au précédent, et la validation croisée par groupe, où aucun identifiant n'apparaît dans deux plis différents. Appliquer la forme ordinaire à des données temporelles reproduit la fuite au sein même de l'évaluation.
+
+La documentation n'est pas un supplément décoratif, c'est le dernier maillon de la chaîne. Notez pour chaque colonne sa source, son unité, sa fenêtre de temps et le moment exact où elle devient disponible ; notez pour chaque décision de traitement le seuil retenu et sa justification ; notez enfin la date du découpage, car les données changent avec le temps et une évaluation refaite six mois plus tard ne doit pas intégrer par accident des informations nouvelles. Un fichier de quelques lignes suffit. Cette habitude vous sauvera lorsque la question reviendra, presque toujours à la mauvaise occasion : sur quoi ce score s'appuyait-il exactement ?
+
+- Découper avant la moindre estimation de paramètre.
+- Ajuster imputation, normalisation et encodage sur l'entraînement.
+- Séparer les calculs datés et interdire tout aperçu du jeu de test.
+- Découper sur le temps pour toute donnée historique.
+- Découper par identifiant quand une entité apparaît plusieurs fois.
+- Tester chaque colonne suspecte par corrélation et par ablation.
+- Documenter la chaîne complète avant de publier un score.
+$lesson$),
+  ('ia-c2-p8', 'ia-c2', 8, $lesson$À retenir$lesson$, $lesson$
+- Résumer un échantillon, c'est choisir entre moyenne et médiane selon la forme, puis toujours annoncer une dispersion à côté.
+- La médiane et l'IQR résistent aux queues longues ; l'écart-type et la moyenne ne les résistent pas.
+- Un histogramme se lit avant tout calcul : symétrie, queue à droite, pic unique ou deux populations mélangées.
+- Pearson mesure un lien droite, Spearman un lien monotone ; un coefficient proche de zéro n'exclut aucune relation en cloche.
+- Une corrélation forte impose de chercher la variable commune, l'inverse de causalité et la possible fuite de cible.
+- Les pièges de mesure, échantillon biaisé, effectif faible, fenêtre variable, troncature et agrégat trompeur, faussent des chiffres pourtant exacts.
+- Une fuite de données triche sur le calendrier : la valeur n'existe pas encore au moment où l'on prétend prédire.
+- L'ordre des opérations fait la moitié de la méthode : découper, ajuster sur l'entraînement, entraîner, évaluer une fois, documenter.
+- Un score plus bas mais obtenu sans fuite vaut mieux qu'un score flatteur construit sur une information interdite.
+$lesson$),
+  ('ia-c2-p9', 'ia-c2', 9, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Présenter une moyenne seule sur une colonne visiblement étirée à droite.
+- Conclure à l'absence de relation parce que le coefficient de Pearson est proche de zéro.
+- Transformer une corrélation forte en certitude causale sans contrôle de strate ni hypothèse explicite.
+- Calculer normalisation et imputation sur l'ensemble du fichier avant de découper entraînement et test.
+- Découper au hasard des données datées, ce qui place le futur dans l'entraînement.
+- Laisser un même client apparaître des deux côtés du découpage.
+- Comparer deux périodes de longueur différente sans rapporter les totaux à un dénominateur.
+- Supprimer une valeur extrême parce qu'elle dérange, sans être allé vérifier sa source.
+- Publier un score sans indiquer l'effectif, la méthode de découpage et la date des données.
+- Chercher à améliorer un modèle alors que le problème vient d'une colonne qui ne devrait pas exister.
+$lesson$),
+  ('ia-c2-p10', 'ia-c2', 10, $lesson$Pour aller plus loin$lesson$, $lesson$
+La référence du module statistics de la bibliothèque standard reste le premier arrêt : elle détaille chaque fonction de résumé, distingue explicitement les versions pour échantillon et pour population, et documente les quantiles. Adressez-vous à : https://docs.python.org/fr/3/library/statistics.html
+
+Le guide des pièges courants du projet scikit-learn est la lecture la plus directe pour approfondir la partie fuites : il passe en revue la contamination du test, l'ajustement précoce des transformateurs, la fuite de cible et les biais d'échantillonnage, avec des exemples concrets de code à ne pas écrire. Adressez-vous à : https://scikit-learn.org/stable/common_pitfalls.html
+
+La documentation de scipy.stats rassemble les lois de probabilité, les tests d'hypothèse et les mesures d'association, avec les hypothèses attachées à chacune : elle servira de référence dès que vous sortirez des seuls résumés descriptifs. Adressez-vous à : https://docs.scipy.org/doc/scipy/reference/stats.html
+
+Enfin, la documentation du module csv et celle du module random de Python complètent la boîte à outils pour manipuler des fichiers et reproduire des tirages contrôlés. Adressez-vous à : https://docs.python.org/fr/3/library/csv.html et https://docs.python.org/fr/3/library/random.html
+$lesson$),
+  ('ia-c2-p11', 'ia-c2', 11, $lesson$Et maintenant : passez à l'exercice pratique$lesson$, $lesson$
+L'exercice qui suit cette leçon reprend exactement la chaîne que vous venez d'étudier, sur un fichier de mesures de sessions clients avec une colonne de désabonnement. Vous calculerez les résumés de chaque colonne et choisirez la mesure adaptée à sa forme, vous produirez une matrice de corrélation en vous demandant lequel des coefficients raconte l'histoire, vous listerez les colonnes tronquées, mal normalisées ou disponibles trop tard, puis vous écrirez le découpage temporel et le rapport des fuites potentielles. Tout se fera avec les seuls modules statistics, math, csv, json et random, si bien que vous pourrez exécuter votre travail partout. C'est au moment d'écrire le rang de chaque colonne, ligne à ligne, que les notions de distribution, de corrélation et de fuite cesseront d'être des définitions pour devenir des réflexes de lecture.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c3-p1', 'ia-c3', 1, $lesson$Pourquoi prédire une valeur continue$lesson$, $lesson$
+Bienvenue dans ce troisième chapitre du parcours data science, entièrement consacré à la régression, l'une des tâches les plus utilisées de toute la discipline. Jusqu'ici, vous avez peut-être appris à décrire des données, à les résumer, à les visualiser ou à les répartir en catégories ; avec ce chapitre, vous allez faire quelque chose de différent et de remarquable : prédire une valeur numérique que personne ne vous a encore donnée. Combien coûtera cet appartement ? Quelle note obtiendra un élève qui révise quatre heures ? Quel sera le délai de livraison demain ? À chaque fois, la réponse attendue n'est pas une étiquette parmi plusieurs, ni un classement, ni un oui ou un non : c'est un nombre, avec ses décimales, ses unités et son ordre de grandeur. C'est exactement ce que modélise une régression, et ce chapitre vous apprendra à en construire une, à en comprendre les rouages et à en juger la qualité sans vous laisser impressionner par un chiffre unique sorti d'un logiciel.
+
+La régression est aussi la porte d'entrée naturelle de la modélisation statistique, parce qu'elle repose sur des idées que l'on peut toutes démontrer à la main. À la fin de cette leçon, vous saurez faire cinq choses concrètes. Premièrement, vous écrirez une droite de régression vous-même : calcul de moyennes, de covariance, de variance, puis déduction de la pente et de l'ordonnée à l'origine, uniquement avec le module standard Python. Deuxièmement, vous saurez lire une équation ajustée et la traduire en phrases compréhensibles par un non-spécialiste, en indiquant le sens, le signe et l'ordre de grandeur de chaque coefficient. Troisièmement, vous calculerez et interprèterez les trois métriques de référence : le coefficient de détermination R², l'erreur quadratique moyenne RMSE et l'erreur absolue moyenne MAE. Quatrièmement, vous comprendrez ce que font réellement des fonctions telles que LinearRegression, fit et predict dans scikit-learn, illustrées ici en prose et en exemples commentés. Cinquièmement, vous dépisterez les travers classiques d'un modèle : surajustement, fuite de données, multicolinéarité, résidus qui ne se comportent pas comme prévu.
+
+Un mot sur la manière d'aborder ce chapitre, parce qu'il tranche légèrement sur ce que vous avez vu jusqu'ici. Les démonstrations numériques de cette leçon n'utilisent que la bibliothèque standard de Python, à savoir les modules math et statistics : aucune installation n'est nécessaire, aucun téléchargement n'est requis, et chaque bloc de code est suffisamment court pour être lu d'un seul regard. Les calculs sont volontairement effectués à la main plutôt que délégués à une bibliothèque, car comprendre une formule consiste précisément à l'avoir une fois écrite, exécutée et vérifiée. La bibliothèque NumPy et le framework scikit-learn apparaissent néanmoins au fil du chapitre, mais en guise d'illustration : vous y verrez l'appel exact que vous utiliserez plus tard dans un vrai projet, tandis que la logique sous-jacente restera celle que vous venez de calculer vous-même. Le fil rouge sera un petit jeu de données de douze lignes, heures de révision et notes obtenues, que nous emporterons d'une section à l'autre.
+
+
+
+Distinguer d'abord la régression de ses cousines est la meilleure façon de savoir quand l'utiliser. Une tâche de classification répond à une question de nature : à qui ce message appartient-il, ce client résiliera-t-il, cette image contient-elle un chat. Une tâche de régression répond à une question de quantité : combien, à quel point, combien de temps. La frontière tient en un détail décisif, lequel commande toute la suite du chapitre : dans une régression, la sortie est ordonnée. Deux prédictions de 10 et de 12 sont proches, tandis que deux prédictions de classes rouge et bleue n'ont aucune proximité intrinsèque. Cet ordre permet de parler d'erreur en continu, de mesurer de combien on se trompe, de savoir si une prédiction est acceptable ou scandaleuse. Il explique aussi pourquoi les métriques d'évaluation ne seront pas la précision ou le rappel, mais des distances numériques entre valeurs.
+
+Les applications sont partout, et il est utile de les avoir en tête avant de plonger dans les formules. En immobilier, la variable cible est le prix de vente, et les variables explicatives sont la surface, le nombre de pièces, l'adresse ou l'année de construction. En santé, on peut régresser la durée de séjour à l'hôpital sur l'âge et la sévérité des symptômes. Dans l'industrie, on prédit la température de sortie d'un four en fonction des réglages de consigne. En logistique, on estime le délai d'acheminement selon la distance et la charge du réseau. Dans tous ces cas, la quantité prédite possède une unité, une borne basse parfois naturelle, un ordre de grandeur que le métier connaît bien. Le modèle n'est donc jamais une boîte noire abstraite : il produit un nombre que l'on peut confronter à l'expérience, contester, corriger, ce qui rend la régression particulièrement pédagogique.
+
+La question de la qualité se pose immédiatement après celle de la construction. Une droite, on en fait toujours passer une par un nuage de points : le calcul est toujours possible, le résultat est toujours un couple de coefficients. La vraie interrogation est donc de savoir si cette droite mérite qu'on s'y fie. Trois familles de réponses structurent le chapitre. La première est interne : le R² mesure la part de variabilité des observations que le modèle parvient à reproduire. La seconde est anglophone et pratique : RMSE et MAE expriment l'erreur dans l'unité même de la variable cible, ce qui se discute avec un responsable métier beaucoup plus aisément qu'un ratio sans dimension. La troisième est externe et comparative : un modèle n'a d'intérêt que rapporté à un autre, à un modèle naïf qui prédirait toujours la moyenne, ou à une version de lui-même évaluée sur des données qu'il n'a pas vues.
+
+Il faut enfin accepter une idée qui déroute souvent au début : prédire, ce n'est pas expliquer. Une régression peut produire d'excellentes prédictions tout en attribuant un rôle causal discutable à l'une de ses variables, et l'inverse est possible. Corréler le nombre de boucheries d'une ville à son taux de mortalité fournit souvent une droite splendide qui ne dit rien de la causalité. Le chapitre suivra donc une règle méthodologique constante : on construit, on mesure, on diagnostique, on interprète avec prudence, et l'on ne conclut jamais qu'une variable fait augmenter une autre sur la seule foi d'un coefficient. Cette distinction, présente dans chacune des sections qui suivent, est ce qui sépare une analyse rigoureuse d'un tableur enthousiaste.
+$lesson$),
+  ('ia-c3-p2', 'ia-c3', 2, $lesson$Le modèle linéaire simple$lesson$, $lesson$
+Le modèle linéaire simple s'écrit avec deux paramètres seulement, et toute la théorie du chapitre tient dans cette phrase : on cherche une droite telle que la valeur prédite soit égale à un coefficient multiplicateur appliqué à la variable explicative, plus un décalage constant. En notation, la valeur prédite vaut a fois x plus b, où a est la pente, b l'ordonnée à l'origine, et où l'on ajoute toujours un terme d'erreur pour reconnaître que la droite ne passera jamais exactement par tous les points. La pente se lit comme une variation : lorsque x augmente d'une unité, la prédiction augmente de a unités. L'ordonnée à l'origine se lit comme un niveau de base : c'est la valeur prédue lorsque x vaut zéro, ce qui n'a parfois aucun sens physique et doit alors être interprété avec précaution.
+
+Le schéma suivant résume ce que le modèle cherche à faire dans le plan. Les points représentent les observations, la ligne continue représente la prédiction du modèle, et les déviations verticales entre un point et la ligne sont les résidus, c'est-à-dire les erreurs que la méthode des moindres carrés cherchera à rendre collectivement aussi petites que possible.
+
+```
+  note
+   ^
+   |                       .   .
+   |                  .  .   .
+   |              .  .   .                droite : y = a x + b
+   |          .  .   .
+   |      .  .   .   .
+   |   .  .   .
+   | .  .  .
+   +---------------------------------> heures
+        ^                    ^
+     residus (ecart vertical entre un point et la droite)
+```
+
+Avant même de chercher les meilleurs coefficients, il est bon de sentir ce que fait une droite donnée. L'exemple ci-dessous prend un couple de paramètres fixé d'avance, calcule la prédiction pour chaque observation, puis affiche l'écart observé. Le but n'est pas d'être juste, mais de voir apparaître les objets du chapitre : prédiction, résidu, somme des écarts.
+
+```python
+donnees = [(1.0, 52.0), (3.0, 60.0), (5.0, 66.0), (8.0, 76.0)]
+
+a, b = 4.0, 48.0
+
+for x, y in donnees:
+    predite = a * x + b
+    residu = y - predite
+    print("x =", x, "observe =", y, "predite =", predite, "residu =", residu)
+
+total = sum(y - (a * x + b) for x, y in donnees)
+print("somme des residus =", total)
+```
+
+On constate deux choses. D'abord, chaque ligne de sortie associe une observation à sa prédition et à l'écart qui les sépare : cet écart, signé, est le résidu, et il portera une part essentielle de notre évaluation. Ensuite, la somme des résidus n'est manifestement pas nulle pour ce couple de paramètres choisi au hasard, ce qui indique que la droite passe trop haut ou trop bas en moyenne. C'est précisément ce défaut que la méthode des moindres carrés corrigera : elle fixera d'abord l'intercept pour annuler ce biais systématique, puis la pente pour réduire au maximum la somme des carrés des écarts restants.
+
+Un point de vocabulaire s'impose avant d'aller plus loin, car les termes techniques reviendront dans chaque section. Le tableau suivant rassemble les objets que vous manipulerez du premier au dernier paragraphe du chapitre, avec la manière de les reconnaître dans un code ou dans un rapport d'outil.
+
+| Terme | Rôle | Signe ou unité |
+| --- | --- | --- |
+| Variable explicative | Ce qui sert à prédire, souvent noté x | Son unité d'origine |
+| Variable cible | Ce qu'on cherche à prédire, noté y | Son unité d'origine |
+| Pente | Variation de y quand x avance d'une unité | Signe libre, même unité que y par unité de x |
+| Intercept | Niveau de base prédit pour x égal à zéro | Même unité que y |
+| Résidu | Observation moins prédiction | Même unité que y |
+| R² | Part de variance expliquée | Sans dimension, entre 0 et 1 |
+$lesson$),
+  ('ia-c3-p3', 'ia-c3', 3, $lesson$Premiers calculs : moyennes, covariance, variance$lesson$, $lesson$
+Toute l'architecture de l'ajustement repose sur trois quantités très simples que l'on calcule en une ligne chacune. La première est la moyenne : on additionne toutes les valeurs et l'on divise par leur nombre. La moyenne des x, notée ici mx, donne le centre de gravité horizontal du nuage de points ; la moyenne des y, notée my, donne son centre vertical. Ces deux nombres sont essentiels parce que la droite de régression passe obligatoirement par le point constitué de ces deux moyennes : c'est une propriété gratuite mais précieuse, qui fournit toujours un contrôle de cohérence après coup.
+
+La deuxième quantité est la variance, qui mesure l'étalement d'une variable autour de sa moyenne. On prend chaque écart à la moyenne, on l'élève au carré pour supprimer les signes et pénaliser davantage les écarts importants, puis on moyenne ces carrés. Une variance faible signale des valeurs serrées autour du centre, une variance forte des valeurs très dispersées. Dans le calcul de la pente, la variance de x jouera le rôle de dénominateur : plus les valeurs de x sont étalées, plus la pente est déterminée avec précision, ce qui intuitivement explique pourquoi il est difficile d'estimer une tendance quand toutes vos mesures sont prises dans un intervalle minuscule.
+
+La troisième quantité est la covariance, la plus instructive des trois. Pour chaque couple, on multiplie l'écart de x à sa moyenne par l'écart de y à la sienne, puis on moyenne ces produits. Si les deux variables grandissent ensemble, les deux écarts ont le même signe, leur produit est positif et la covariance l'est aussi. Si elles varient en sens inverse, la covariance est négative. Si aucun lien n'existe, les signes s'annulent et la covariance s'approche de zéro. La covariance n'a malheureusement pas d'unité interprétable, ce qui est pourquoi on la divisera par la variance de x pour en faire une pente, qui elle se lit immédiatement.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+mx = statistics.mean(x)
+my = statistics.mean(y)
+
+var_x = sum((v - mx) ** 2 for v in x) / len(x)
+cov_xy = sum((a - mx) * (b - my) for a, b in zip(x, y)) / len(x)
+
+print("moyenne x =", round(mx, 3), "moyenne y =", round(my, 3))
+print("variance x =", round(var_x, 3), "covariance xy =", round(cov_xy, 3))
+```
+
+L'exécution donne un centre de gravité situé aux alentours de six heures et demie pour x et de soixante-douze points pour y, une variance de x d'environ treize, et une covariance fortement positive. Déjà, deux conclusions se dessinent sans aucune bibliothèque spécialisée : la covariance positive annonce une relation croissante, plus on révise et plus la note augmente, et la magnitude de la covariance, comparée à celle de la variance de x, suggère une pente de l'ordre de trois à quatre notes par heure. Le prochain bloc de leçon va transformer cette intuition en formule exacte, puis en procédure d'optimisation.
+$lesson$),
+  ('ia-c3-p4', 'ia-c3', 4, $lesson$La méthode des moindres carrés$lesson$, $lesson$
+La question est maintenant parfaitement posée : parmi toutes les droites possibles, laquelle choisir ? L'approche des moindres carrés répond d'une phrase, que l'on peut comprendre avant toute démonstration. On retient la droite qui minimise la somme des carrés des résidus, c'est-à-dire la somme des écarts verticaux entre les observations et les prédictions, une fois chaque écart élevé au carré. Trois mots de cette définition méritent d'être justifiés, car ils ne sont pas décoratifs et que l'on les remplace pas par d'autres sans changer de méthode.
+
+Le mot somme indique qu'on juge le modèle collectivement et non observation par observation : aucune ligne ne peut être parfaite, mais l'ensemble doit être aussi fidèle que possible. Le mot carré a deux vertus. La première est de supprimer les signes : sans carré, un point au-dessus de la droite compenserait exactement un point en dessous, et une droite horizontale passant par la moyenne obtiendrait un score de zéro, ce qui serait ridicule. La seconde vertu est de pénaliser fortement les grands écarts : un écart de dix contribue pour cent, là où un écart de un ne contribue que pour un. On accepte ainsi que quelques erreurs importantes comptent davantage que beaucoup d'erreurs minimes, ce qui produit des modèles vigilants sur les cas extrêmes. Le mot résidu, enfin, désigne l'écart signé observé moins prédit, que nous avons déjà calculé à la main dans la section précédente.
+
+La démonstration complète utilise un peu de calcul différentiel, mais son résultat tient en deux formules que l'on peut retenir comme des objets mécaniques. Pour obtenir la pente, on dérive la somme des carrés par rapport à cette pente, on égale la dérivée à zéro, et l'on reconnaît que le numérateur n'est autre que la covariance tandis que le dénominateur n'est autre que la variance de x. Pour l'ordonnée à l'origine, on utilise ensuite le fait que la droite passe par le point des moyennes, ce qui donne immédiatement le décalage nécessaire. Autrement dit, la pente vaut la covariance divisée par la variance de x, et l'ordonnée à l'origine vaut la moyenne de y moins la pente multipliée par la moyenne de x. Aucun itératif, aucun réglage, aucune boucle : la solution est fermée, calculable en une passe sur les données.
+
+Cette solution possède deux propriétés de contrôle que votre code devrait toujours vérifier. La première est que la somme des résidus obtenue est rigoureusement nulle, à l'arrondi près : si elle ne l'est pas, c'est que l'intercept a été mal calculé. La deuxième est que la droite traverse le point des moyennes, ce qui fournit un second contrôle indépendant. Le bloc suivant réalise l'ajustement complet à la main, affiche les coefficients, puis exécute ces deux contrôles. Il ne contient aucune dépendance externe : tout provient de la liste de données et de quelques opérations arithmétiques.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+mx = statistics.mean(x)
+my = statistics.mean(y)
+
+cov = sum((a - mx) * (b - my) for a, b in zip(x, y)) / len(x)
+var_x = sum((a - mx) ** 2 for a in x) / len(x)
+
+pente = cov / var_x
+intercept = my - pente * mx
+
+print("pente =", round(pente, 4))
+print("intercept =", round(intercept, 4))
+print("droite : y =", round(pente, 3), "* x +", round(intercept, 3))
+
+residus = [obs - (pente * xi + intercept) for xi, obs in zip(x, y)]
+print("somme des residus =", round(sum(residus), 12))
+print("droite passe par les moyennes :",
+      round(pente * mx + intercept, 12), "==", round(my, 12))
+```
+
+Les deux commandes de contrôle renvoient bien zéro et la moyenne de y, ce qui confirme l'ajustement. Une remarque de méthode s'impose ici, utile bien au-delà de ce chapitre : un calcul important se vérifie toujours par une propriété indépendante plutôt que par la seule inspection du résultat. Le logiciel qui affiche une équation n'est d'aucun secours si vous ne savez pas quel invariant attendre ; le savoir, en revanche, vous permet de détecter une inversion de listes, un zip mal aligné ou une division par zéro en une seconde.
+$lesson$),
+  ('ia-c3-p5', 'ia-c3', 5, $lesson$Interpréter la pente et l'ordonnée à l'origine$lesson$, $lesson$
+Les coefficients calculés ne prennent leur sens qu'une fois traduits en langage naturel, avec leurs unités. La pente se lit ainsi : lorsque le nombre d'heures de révision augmente d'une heure, la note prédite augmente de l'ordre de trois à quatre points, selon la valeur affichée par votre programme. Cette phrase contient trois éléments non négociables, le sens de la variation, son unité et son ordre de grandeur. La pente ne dit pas que réviser provoque une note plus élevée, elle dit que dans cet échantillon, les heures et les notes varient ensemble selon un rythme estimé. Présenter un coefficient sans son unité est la faute de restitution la plus fréquente en analyse, et elle rend le résultat incompréhensible dès que l'on change de contexte.
+
+Le signe de la pente constitue le premier diagnostic, presque gratuit. Une pente positive signifie que la variable cible tend à croître avec la variable explicative, une pente négative qu'elle tend à décroître, et une pente proche de zéro que la relation linéaire n'apporte presque rien. Attention toutefois à ne pas confondre importance statistique et importance pratique : une pente de 0,01 peut être parfaitement significative sur des dizaines de milliers d'observations tout en étant négligeable pour la décision métier. Inversement, une pente de 50 sur un échantillon de dix points peut n'être qu'un accident. Toujours rapporter la pente à la variation naturelle de la variable cible, par exemple en la comparant à l'écart-type de y, donne immédiatement une idée de son poids réel.
+
+L'ordonnée à l'origine, elle, se heurte souvent à un problème de bon sens. C'est la valeur prédue lorsque la variable explicative vaut zéro, mais zéro n'est pas toujours accessible : dans notre exemple, prédire la note d'un élève qui n'a révisé aucune minute reste cohérent avec le modèle, alors que régresser la durée de vie d'un composant sur sa température de fonctionnement donne une intercept qui décrirait le composant à zéro degré, situation peut-être hors domaine. L'intercept joue surtout le rôle de calage : il place la droite à la bonne hauteur pour que la moyenne des prédictions coïncide avec la moyenne des observations. On le conserve toujours dans le modèle, mais on le cite rarement comme finding, sauf à ce qu'il ait une signification métier claire.
+
+Le tableau suivant récapitule comment lire chaque résultat typique d'une régression simple, en indiquant la phrase à prononcer et le piège à éviter. Reprenez-le après le quiz comme une fiche de restitution : en pratique, l'analyse se juge à la qualité de ces phrases bien plus qu'à la sophistication du calcul.
+
+| Résultat | Phrase correcte à dire | Piège à éviter |
+| --- | --- | --- |
+| Pente positive et nette | La cible augmente en moyenne quand x augmente | Affirmer une causalité |
+| Pente proche de zéro | Pas de relation linéaire détectée | Conclure qu'aucune relation n'existe |
+| Intercept hors domaine | Valeur de calage, sans lecture directe | L'interpréter comme une prédiction réelle |
+| R² élevé | Le modèle reproduit bien les variations observées | En déduire que le modèle est juste ailleurs |
+| RMSE faible | Erreur typique faible dans l'unité de la cible | Le comparer à une autre unité |
+
+Il reste un réflexe d'interprétation à acquérir avant d'évaluer la qualité : toujours comparer la prédiction à un repère naïf. Le modèle le plus simple qui existe ne régressera rien du tout : il prédira la moyenne de y pour chaque observation. Ce modèle naïf possède un R² de zéro par construction, puisque ses résidus sont exactement les écarts à la moyenne. Toute valeur de R² supérieure à zéro signifie donc que la droite fait mieux que d'ignorer x, et c'est la seule comparaison qui donne un sens absolu à ce coefficient. Le bloc ci-dessous produit l'équation, quelques prédictions et ce repère naïf, afin que vous ayez toujours les deux sous les yeux.
+
+```python
+pente = 3.6903
+intercept = 47.6269
+
+for h in (2.0, 5.5, 12.0):
+    print("heures =", h, "note predite =", round(pente * h + intercept, 2))
+
+moyenne_cible = 72.5
+print("modele naif : toujours predire", moyenne_cible)
+
+erreur_naive = sum((v - moyenne_cible) ** 2 for v in
+                   [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0,
+                    76.0, 81.0, 85.0, 88.0, 93.0])
+print("somme des ecarts du modele naif =", round(erreur_naive, 3))
+```
+$lesson$),
+  ('ia-c3-p6', 'ia-c3', 6, $lesson$R² : la part de variance expliquée$lesson$, $lesson$
+Le coefficient de détermination répond à une question précise : quelle proportion de la variabilité observée dans la variable cible est reproduite par le modèle ? Pour y répondre, on décompose la variabilité totale en deux morceaux. La somme totale des carrés, notée SCT, additionne les écarts entre chaque observation et la moyenne de y : c'est la dispersion brute des données, celle qu'il faudrait expliquer si l'on ne savait rien du tout. La somme des carrés des résidus, notée SCE, additionne les écarts entre chaque observation et sa prédiction : c'est ce qu'il reste d'expliqué après le modèle. Le R² mesure alors la fraction de la première que le second parvient à éliminer.
+
+La formule tient en une ligne : R² vaut un moins le rapport de SCE sur SCT. Trois cas à retenir pour caler l'intuition. Si le modèle prédit chaque point exactement, SCE vaut zéro et le R² vaut un, score parfait. Si le modèle n'est pas meilleur que la moyenne, SCE vaut à peu près SCT et le R² vaut zéro. Entre les deux, chaque point de R² signifie qu'on a réduit d'autant la dispersion des erreurs par rapport à l'ignorance totale. Un R² négatif est théoriquement possible hors échantillon, lorsqu'un modèle s'avère pire que la moyenne sur des données nouvelles : c'est un signal d'alarme, jamais un résultat normal en ajustement sur les données utilisées pour l'apprentissage.
+
+Interpréter un R² de 0,83 revient à dire que 83 pour cent de la variabilité des notes s'explique par la relation linéaire avec les heures de révision, et que 17 pour cent provient d'autres facteurs et du bruit : fatigue, qualité du sommeil, difficulté intrinsèque du sujet. Cette lecture est remarquablement honnête, car elle admet d'emblée ce que le modèle ignore. Le mot expliqué doit cependant être manié avec soin : il signifie ici rendu prévisible, pas causé. Deux variables qui bougent pour une troisième raison produisent un R² élevé sans que l'une agisse sur l'autre. En régression simple, le R² est d'ailleurs exactement le carré du coefficient de corrélation linéaire, ce qui montre qu'il ne mesure qu'une association de type droite.
+
+```python
+import statistics
+
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+pentes = 3.6903
+intercepts = 47.6269
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+
+my = statistics.mean(y)
+sct = sum((v - my) ** 2 for v in y)
+sce = sum((obs - (pentes * xi + intercepts)) ** 2 for xi, obs in zip(x, y))
+r2 = 1.0 - sce / sct
+
+print("SCT =", round(sct, 3))
+print("SCE =", round(sce, 3))
+print("R2 =", round(r2, 4))
+```
+
+Le résultat affiché donne un R² supérieur à 0,99 : l'ajustement est excellent sur cet échantillon. Trois avertissements accompagnent invariablement un tel chiffre, et les trois seront illustrés dans les sections suivantes. D'abord, un R² élevé sur les données d'apprentissage ne préjuge en rien de sa valeur sur des données inconnues, ce qui impose une évaluation hors échantillon. Ensuite, le R² augmente ou au pire reste stable quand on ajoute des variables, même inutiles : il faut donc un critère de pénalisation pour comparer des modèles de taille différente. Enfin, le R² ne dit rien sur la forme de l'erreur : deux modèles peuvent expliquer la même part de variance tout en se trompant de façon très différente sur les cas concrets. C'est exactement le rôle que jouent les métriques suivantes.
+$lesson$),
+  ('ia-c3-p7', 'ia-c3', 7, $lesson$RMSE et MAE : deux lectures de l'erreur$lesson$, $lesson$
+Le R² mesure une proportion, sans unité, ce qui le rend commode pour un rapport et désastreux pour une décision opérationnelle. On ne présente jamais à un responsable la phrase « notre modèle explique 92 pour cent de la variance » sans y ajouter l'erreur commise dans l'unité du problème. C'est le rôle des deux métriques d'erreur : l'erreur absolue moyenne, ou MAE, additionne les valeurs absolues des résidus puis les divise par le nombre d'observations ; l'erreur quadratique moyenne, ou RMSE, additionne les carrés des résidus, les divise par le nombre d'observations puis prend la racine carrée. Toutes deux se lisent dans l'unité de la variable cible : si la note va de zéro à cent, l'erreur s'exprime en points de note.
+
+La différence entre elles tient à la façon dont elles traitent les écarts. Le MAE traite tous les écarts à proportion égale : se tromper de dix points coûte exactement dix fois plus que se tromper d'un point. Le RMSE pénalise disproportionnément les grosses erreurs, car le carré amplifie l'écart avant moyennage. Concrètement, un modèle qui se trompe de un point partout et un modèle qui se trompe de zéro parfois et de quatre souvent peuvent présenter un MAE semblable mais un RMSE très différent. La règle d'usage est donc double : le MAE décrit l'erreur typique que l'utilisateur rencontrera, le RMSE décrit le risque de catastrophe ponctuelle. Écart important entre les deux signale la présence de quelques prédictions très mauvaises.
+
+Le tableau suivant compare les deux métriques sur leurs propriétés usuelles, avec la question à laquelle chacune répond le mieux. Notez qu'aucune des deux ne se substitue à l'autre : un rapport sérieux les affiche toujours ensemble, avec le R² en troisième position.
+
+| Métrique | Unité | Sensibilité aux valeurs extrêmes | Question à laquelle elle répond |
+| --- | --- | --- | --- |
+| MAE | Unité de la cible | Faible, tous les écarts pèsent pareil | De combien se trompe-t-on en général |
+| RMSE | Unité de la cible | Forte, un gros écart domine la moyenne | Quel est le pire scénario d'erreur |
+| R² | Sans dimension | Forte, lié à la dispersion totale | Quelle part des variations est reproduite |
+
+Le calcul de ces métriques tient en quelques lignes, et l'exemple ci-dessous les produit à la fois pour le modèle de droite et pour le modèle naïf qui prédit toujours la moyenne. Comparer les deux colonnes est instructif : l'objectif n'est pas d'obtenir un RMSE petit dans l'absolu, mais de l'obtenir nettement plus petit que celui du repère naïf.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b = 3.6903, 47.6269
+predites = [a * xi + b for xi in x]
+
+residus = [obs - p for obs, p in zip(y, predites)]
+mae = sum(abs(r) for r in residus) / len(residus)
+rmse = math.sqrt(sum(r ** 2 for r in residus) / len(residus))
+
+moy = statistics.mean(y)
+naifs = [moy] * len(y)
+mae_naif = sum(abs(obs - p) for obs, p in zip(y, naifs)) / len(y)
+rmse_naif = math.sqrt(sum((obs - p) ** 2 for obs, p in zip(y, naifs)) / len(y))
+
+print("modele :  MAE =", round(mae, 3), "| RMSE =", round(rmse, 3))
+print("naif :    MAE =", round(mae_naif, 3), "| RMSE =", round(rmse_naif, 3))
+```
+
+Un troisième réflexe complète l'évaluation, celui de la répartition des erreurs. Une moyenne masque toujours sa propre hétérogénéité : afficher le résidu le plus grand, le résidu médian et la proportion d'observations dont l'erreur dépasse un seuil métier donne une image nettement plus honnête qu'un unique chiffre. Dans un vrai projet, on joint à chaque métrique un histogramme des résidus et un tableau des pires cas, car c'est en inspectant les pires cas que l'on découvre la variable manquante, la donnée saisie à l'envers ou la sous-population que le modèle ignore.
+$lesson$),
+  ('ia-c3-p8', 'ia-c3', 8, $lesson$Deux variables et plus : la régression multiple$lesson$, $lesson$
+Passer d'une seule variable à plusieurs ne change ni le principe ni l'objectif : on cherche toujours une droite, ou plutôt un hyperplan, qui minimise la somme des carrés des résidus. La différence est dimensionnelle. Au lieu d'une pente unique, chaque variable explicative reçoit la sienne, et l'équation devient une combinaison linéaire de toutes ces variables, augmentée d'un intercept. Chaque coefficient se lit alors de façon conditionnelle : c'est la variation de la cible liée à une augmentation d'une unité de cette variable, toutes les autres étant maintenues constantes. Cette clause toutes les autres restant constantes est ce qui rend l'interprétation plus délicate, mais aussi ce qui rend le modèle utile pour isoler l'effet propre de chaque facteur.
+
+La résolution s'obtient en généralisant les formules de la section précédente, et la forme la plus compacte fait intervenir des matrices : la solution s'écrit comme l'inverse d'une matrice de croisements multipliée par un vecteur. L'écriture est élégante mais ne doit pas masquer ce qui se passe réellement : derrière se cache un système d'équations linéaires que l'on peut résoudre à la main par élimination, exactement comme au collège avec deux inconnues. Le bloc ci-dessous implémente ce petit solveur avec la seule bibliothèque standard, ajuste un modèle à deux explicatives, heures de révision et heures de sommeil, puis affiche les trois coefficients obtenus.
+
+```python
+def resoudre(matrice, vecteur):
+    n = len(matrice)
+    aug = [list(matrice[i]) + [vecteur[i]] for i in range(n)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(aug[r][col]))
+        aug[col], aug[pivot] = aug[pivot], aug[col]
+        for r in range(col + 1, n):
+            facteur = aug[r][col] / aug[col][col]
+            for c in range(col, n + 1):
+                aug[r][c] -= facteur * aug[col][c]
+    sol = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        sol[r] = (aug[r][n] - sum(aug[r][c] * sol[c] for c in range(r + 1, n))) / aug[r][r]
+    return sol
+
+
+def ajuster_multiple(x1, x2, y):
+    n = len(y)
+    un = [1.0] * n
+    colonnes = [un, x1, x2]
+    matrice = [[sum(a * b for a, b in zip(ci, cj)) for cj in colonnes] for ci in colonnes]
+    vecteur = [sum(a * b for a, b in zip(ci, y)) for ci in colonnes]
+    return resoudre(matrice, vecteur)
+
+
+heures_rev = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+heures_sommeil = [8.5, 8.0, 7.5, 7.0, 7.5, 6.5, 7.0, 6.5, 6.0, 6.5, 6.0, 5.5]
+notes = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+intercept, pente_rev, pente_sommeil = ajuster_multiple(heures_rev, heures_sommeil, notes)
+print("intercept =", round(intercept, 3))
+print("pente heures de revision =", round(pente_rev, 3))
+print("pente heures de sommeil =", round(pente_sommeil, 3))
+```
+
+L'exécution montre un phénomène classique et riche d'enseignements : quand deux variables explicatives sont corrélées entre elles, leurs coefficients individuels deviennent sensibles, tandis que les prédictions restent stables. On appelle multicolinéarité cette situation, et ses symptômes sont connus : coefficients de signe inattendu, valeurs très grandes compensées par des valeurs très petites, résultats qui changent du tout au tout à l'ajout d'une observation. Le modèle continue de bien prédire, mais l'attribution d'un effet à l'une ou l'autre variable devient peu fiable. Le remède consiste soit à retirer une variable redondante, soit à accepter de ne raisonner qu'au niveau du bloc de variables corrélées.
+
+Une question se pose toujours en présence de plusieurs candidats : combien en garder ? Ajouter une variable ne peut jamais diminuer le R² sur les données d'apprentissage, puisqu'un nouveau degré de liberté offre toujours davantage de flexibilité. Ce mécanisme conduit inévitablement au surajustement si l'on pousse la logique jusqu'au bout : un modèle à dix paramètres pour douze observations reproduit le bruit. Deux familles de réponses existent. La première pondère le R² par le nombre de variables, ce qui produit le R² ajusté, qui chute dès qu'une variable apporte moins que le bruit qu'elle introduit. La seconde restreint l'amplitude des coefficients par une pénalité, ce qui donne les régularisations Ridge et Lasso, que vous retrouverez dans le parcours.
+$lesson$),
+  ('ia-c3-p9', 'ia-c3', 9, $lesson$Ce que fait scikit-learn pour vous$lesson$, $lesson$
+Tout ce que vous venez de calculer à la main existe sous forme de fonctions éprouvées, et savoir exactement ce qu'elles font est un avantage rare : la plupart des praticiens appellent ces fonctions sans pouvoir dire ce qu'elles calculent. Dans scikit-learn, l'apprentissage suit une procédure constante : on crée un estimateur en précisant ses éventuels paramètres, on l'entraîne avec la méthode fit sur une matrice de variables explicatives et un vecteur cible, puis on interroge le modèle avec predict. La matrice, notée en général X, contient une ligne par observation et une colonne par variable ; le vecteur y contient une seule valeur par observation. Ce format tabulaire, inchangé d'un algorithme à l'autre, est la Convention qui rend le framework si simple à parcourir.
+
+L'appel minimal de régression linéaire tient en quatre lignes, et chacune correspond à une étape que vous maîtrisez désormais. La première ligne importe l'estimateur, la deuxième le construit, la troisième l'entraîne sur les données, la quatrième interroge le modèle sur des valeurs nouvelles. Les attributs appris sont accessibles après l'entraînement : l'un contient les coefficients de chaque variable, l'autre l'intercept. Si vous affichez ces attributs après un entraînement sur notre petit jeu de données, vous retrouverez exactement les nombres produits par le bloc de la section précédente, à l'arrondi près.
+
+```python
+from sklearn.linear_model import LinearRegression
+
+x = [[1.0], [2.0], [3.0], [4.5], [5.0], [6.5],
+     [7.0], [8.0], [9.0], [10.0], [11.0], [12.0]]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+modele = LinearRegression()
+modele.fit(x, y)
+
+print("coefficient =", round(float(modele.coef_[0]), 4))
+print("intercept =", round(float(modele.intercept_), 4))
+print("prediction pour 6 heures =", round(float(modele.predict([[6.0]])[0]), 2))
+```
+
+Trois pratiques professionnelles accompagnent systématiquement ces trois lignes. La première est la séparation des données : on entraîne sur une partie et on évalue sur une partie que le modèle n'a jamais vue, opération réalisée par la fonction train_test_split. Sans cette précaution, toutes les métriques deviennent optimistes, parfois très fortement, et l'écart entre performance affichée et performance réelle se mesure en dizaines de points de pourcentage. La deuxième est le prétraitement : les variables de nature différente, surface en mètres carrés et nombre de pièces, doivent être mises à la même échelle pour que les régularisations et les algorithmes sensibles à la distance se comportent correctement, ce que fait le StandardScaler au sein d'un Pipeline. La troisième est la reproductibilité : fixer la graine aléatoire et conserver le pipeline complet permet de régénérer exactement les mêmes prédictions plus tard.
+
+Les métriques également existent en bibliothèque, et leur signature reflète ce que vous avez calculé à la main : on fournit les valeurs observées et les valeurs prédites, on reçoit un nombre. La fonction mean_squared_error accepte un paramètre racine qui retourne directement le RMSE, mean_absolute_error retourne le MAE, et r2_score fournit le R². Rien dans ces appels n'est magique : derrière se trouvent exactement les boucles de sommation que vous avez écrites. L'intérêt de la bibliothèque n'est donc pas la formule, largement à votre portée, mais la solidité de l'implémentation, ses performances en mémoire et son intégration avec tout l'écosystème d'évaluation, validation croisée comprise.
+$lesson$),
+  ('ia-c3-p10', 'ia-c3', 10, $lesson$Les résidus et les diagnostics$lesson$, $lesson$
+Un modèle se juge à ses résidus bien plus qu'à ses coefficients. Le résidu étant l'écart signé entre l'observation et la prédiction, la collection de tous les résidus contient l'intégralité de ce que le modèle n'a pas compris, et cette collection a des propriétés attendues dont l'écart révèle précisément le défaut du modèle. La première propriété, nous l'avons vue, est que leur somme vaut zéro par construction. La deuxième est que leur dispersion est homogène : l'amplitude des erreurs ne doit pas changer de niveau selon la valeur prédite. La troisième, plus subtile, est qu'ils doivent être décorrélés entre eux, c'est-à-dire que l'erreur commise sur une observation ne doit pas aider à prédire celle de la suivante.
+
+Le premier examen consiste à tracer les résidus en fonction des prédictions, et cet histogramme mental remplace avantageusement des pages de calculs. Trois figures se présentent. Une nuage en éventail, étroit à gauche et large à droite, signale une hétéroscédasticité : les petites valeurs sont bien estimées, les grandes très mal. Une structure en U ou en arc révèle une non-linéarité : la droite capte une tendance mais manque la courbure, et le correctif évident est d'ajouter une transformation de la variable ou un terme polynomial. Enfin, une série de résidus alternant par blocs indique une autocorrélation, fréquente dans les données chronologiques, où la régression a hérité d'une tendance temporelle non modélisée.
+
+Le second examen porte sur la normalité des résidus, qui n'est pas requise pour que l'ajustement soit valable mais qui l'est pour toute inférence : intervalles de confiance, tests de significativité, prévisions. L'intuition est celle de la moyenne de plusieurs causes indépendantes : si les écarts proviennent de nombreux petits facteurs qui s'additionnent, la théorie centrale limite conduit à une cloche. On vérifie cela avec un histogramme ou un quantile-quantile, et l'on complète éventuellement par un test formel. Une forte asymétrie, en revanche, doit faire réfléchir : elle suggère une variable manquante ou une cible que l'on gagnerait à transformer, par exemple en logarithme pour les prix qui suivent souvent une loi multiplicative.
+
+Le troisième examen repère les observations influentes, ces quelques points qui tirent la droite presque à eux seuls. On compare chaque observation à la même sans elle, et l'on mesure l'écart entre les deux droites ; l'outil classique est la distance de Cook. Un point éloigné sur l'axe des variables explicatives, ce que l'on appelle un levier, a mécaniquement plus d'influence qu'un point situé au centre du nuage. Rien n'oblige à supprimer ces points : dans la grande majorité des cas, ils signalent une sous-population légitime qu'il faut modéliser, mais ils doivent être cités dans le rapport, car le modèle en dépend.
+
+```python
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b = 3.6903, 47.6269
+residus = [obs - (a * xi + b) for xi, obs in zip(x, y)]
+
+moy_r = statistics.mean(residus)
+ecart = statistics.pstdev(residus)
+print("moyenne des residus =", round(moy_r, 12))
+print("ecart-type des residus =", round(ecart, 4))
+print("residu min =", round(min(residus), 3), "| max =", round(max(residus), 3))
+
+bornes = [-2.0, -1.0, 0.0, 1.0, 2.0]
+comptes = [sum(1 for r in residus if debut <= r < fin)
+           for debut, fin in zip(bornes, bornes[1:] + [99.0])]
+print("histogramme des residus :", comptes)
+```
+
+Ces trois diagnostics ne sont pas un luxe réservé aux analyses soignées : ils conditionnent la validité des phrases que vous prononcerez ensuite. Un R² élevé dont les résidus forment un éventail est un modèle qui rassure sur l'ensemble et se trompe sur les extrêmes, exactement les cas que l'on veut souvent prédire. Un modèle dont les résidus sont normalisés et homogènes permet d'annoncer un intervalle de prédiction, par exemple la note vraie aura 95 pour cent de chances de se trouver entre tant et tant, ce qui est infiniment plus utile en pratique qu'un point estimé seul.
+$lesson$),
+  ('ia-c3-p11', 'ia-c3', 11, $lesson$Pièges classiques : surajustement, fuite et multicolinéarité$lesson$, $lesson$
+Le premier piège, et de loin le plus fréquent, est le surajustement. Il se produit lorsque le modèle apprend le bruit en même temps que le signal : avec assez de paramètres, n'importe quel nuage de points se laisse décrire par une courbe parfaite, mais cette courbe s'effondre dès qu'on la confronte à de nouvelles observations. Les symptômes sont discrets et redoutables : un R² d'entraînement exceptionnel, des métriques nettement moins bonmes hors échantillon, des coefficients qui oscillent d'un entraînement à l'autre. La parade est structurelle : disposer de données de test que l'on ne consulte qu'une seule fois, préférer un modèle simple à un modèle complexe dont l'avantage n'est pas démontré, et recourir à la régularisation lorsque le nombre de variables devient important.
+
+Le deuxième piège porte un nom peu intuitif, la fuite de données, et désigne une situation où l'information sur la cible s'infiltre dans l'entraînement. Le cas le plus courant consiste à calculer une statistique, moyenne ou écart-type, sur l'intégralité du jeu de données avant de le scinder : le modèle a alors vu, même indirectement, la distribution future. D'autres fuites sont plus insidieuses : une variable qui n'existe qu'après l'événement prédit, un identifiant qui code la cible, un prétraitement ajusté à la main sur l'ensemble des données. La règle absolue est d'entraîner toute transformation sur la partie d'entraînement uniquement, puis de l'appliquer à la partie de test, à l'intérieur d'un Pipeline qui mécanise cette discipline.
+
+Le troisième piège est la multicolinéarité, déjà rencontrée en régression multiple. Elle ne dégrade pas les prédictions mais ruine l'interprétation, car les coefficients cessent de mesurer des effets individuels. Le diagnostic standard repose sur le facteur d'inflation de variance, qui mesure combien la variance d'un coefficient est gonflée par sa corrélation avec les autres : au-delà d'un seuil de l'ordre de cinq à dix, l'attribution devient douteuse. Les remèdes sont directs : retirer l'une des variables redondantes, les combiner, agréger, ou accepter d'interpréter uniquement l'effet global d'un groupe de variables fortement liées.
+
+```python
+def entraigner_tester(x, y, proportion=0.75):
+    coupe = int(len(y) * proportion)
+    xa, ya = x[:coupe], y[:coupe]
+    xb, yb = x[coupe:], y[coupe:]
+    mx = sum(xa) / len(xa)
+    my = sum(ya) / len(ya)
+    cov = sum((a - mx) * (b - my) for a, b in zip(xa, ya)) / len(xa)
+    var_x = sum((a - mx) ** 2 for a in xa) / len(xa)
+    a = cov / var_x
+    b = my - a * mx
+    err_test = (sum((obs - (a * xi + b)) ** 2 for xi, obs in zip(xb, yb))
+                / len(yb))
+    return a, b, err_test
+
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+a, b, err = entraigner_tester(x, y)
+print("pente =", round(a, 3), "intercept =", round(b, 3))
+print("erreur quadratique moyenne sur le test =", round(err, 3))
+```
+
+Une dernière famille de risques relève de la démarche plutôt que du calcul, et elle coûte plus cher que tous les autres réunis. Comparer cinq modèles sur la même donnée de test et reprendre le meilleur revient à ce que la donnée de test serve d'entraînement à la sélection : son score n'est plus honnête. Tester plusieurs transformations, plusieurs sous-ensembles de variables et plusieurs grilles d'hyperparamètres exige une validation croisée, si possible imbriquée. Et toute décision prise après observation des résultats de test doit être signalée dans le rapport, car elle modifie la portée du score annoncé.
+$lesson$),
+  ('ia-c3-p12', 'ia-c3', 12, $lesson$Exemple guidé : du fichier brut au rapport$lesson$, $lesson$
+Nous voici en mesure de traiter un petit problème de bout en bout. L'exemple suivant simule un petit jeu de données, scinde les données en entraînement et test,
+ ajuste la droite sur la première partie uniquement, puis produit l'ensemble des métriques et des diagnostics que la leçon a passés en revue. Chaque ligne correspond à une idée que vous avez lue : vous pouvez la commenter une à une et vérifier qu'aucune étape ne vous surprend.
+
+```python
+import math
+import statistics
+
+donnees = [
+    (1.0, 52.0), (2.0, 55.0), (3.0, 60.0), (4.5, 63.0),
+    (5.0, 66.0), (6.5, 70.0), (7.0, 74.0), (8.0, 76.0),
+    (9.0, 81.0), (10.0, 85.0), (11.0, 88.0), (12.0, 93.0),
+]
+
+apprentissage = donnees[:9]
+test = donnees[9:]
+
+
+def ajuster(paires):
+    xs = [p[0] for p in paires]
+    ys = [p[1] for p in paires]
+    mx = statistics.mean(xs)
+    my = statistics.mean(ys)
+    cov = sum((a - mx) * (b - my) for a, b in paires) / len(paires)
+    var_x = sum((a - mx) ** 2 for a in xs) / len(xs)
+    a = cov / var_x
+    return a, my - a * mx
+
+
+a, b = ajuster(apprentissage)
+print("equation : y =", round(a, 3), "* x +", round(b, 3))
+
+ys_test = [p[1] for p in test]
+pred_test = [a * p[0] + b for p in test]
+residus = [o - p for o, p in zip(ys_test, pred_test)]
+
+mae = sum(abs(r) for r in residus) / len(residus)
+rmse = math.sqrt(sum(r ** 2 for r in residus) / len(residus))
+my = statistics.mean(ys_test)
+sct = sum((o - my) ** 2 for o in ys_test)
+r2 = 1.0 - sum(r ** 2 for r in residus) / sct
+
+print("MAE =", round(mae, 3), "RMSE =", round(rmse, 3), "R2 =", round(r2, 4))
+print("moyenne des residus =", round(statistics.mean(residus), 4))
+for p, r in zip(test, residus):
+    print("x =", p[0], "observe =", p[1], "predite =",
+          round(a * p[0] + b, 2), "residu =", round(r, 2))
+```
+
+Le rapport se rédige alors en trois mouvements, que vous retrouverez à l'identique dans l'exercice pratique de ce chapitre. D'abord annoncer le résultat principal avec son unité : l'erreur typique est de l'ordre de quelques points de note, ce qui est acceptable pour un ordre de grandeur mais insuffisant pour décerner une mention. Ensuite documenter les hypothèses et les limites : l'échantillon est minuscule, une observation a été écartée, la relation supposée est purement linéaire. Enfin proposer la suite : ajouter une variable explicative, élargir l'échantillon, ou renoncer si l'incertitude restante dépasse ce que la décision autorise.
+
+Un dernier principe clôt cette démonstration et mérite d'être gravé : un modèle n'a de valeur que comparé à un repère. Le repère minimal est le modèle naïf qui prédit toujours la moyenne ; le repère suivant est une règle métier simple, par exemple annoncer la note médiane de la promotion ; le repère sérieux est le modèle précédent déjà en production. Battre le premier est facile, battre le troisième est l'objectif réel. Toute évaluation qui omet ces comparaisons produit un chiffre exact mais sans signification pratique, et c'est précisément la différence entre un notebook d'entraînement et une analyse qui décide de quelque chose.
+$lesson$),
+  ('ia-c3-p13', 'ia-c3', 13, $lesson$Validation croisée et comparaison honnête$lesson$, $lesson$
+La validation croisée est la réponse standard au problème posé à la fin de la section précédente : comment estimer la capacité d'un modèle sans gaspiller nos rares données de test. Le principe est simple et élégant. On découpe l'échantillon en plusieurs morceaux égaux, puis on répète l'entraînement autant de fois qu'il y a de morceaux, en utilisant à chaque tour un morceau différent comme ensemble de validation et tous les autres comme entraînement. On obtient ainsi une distribution de scores plutôt qu'un score unique, et c'est cette distribution qui renseigne : sa moyenne donne l'espérance de performance, son écart-type donne la stabilité, c'est-à-dire la sensibilité du résultat au hasard du découpage.
+
+Cette information d'instabilité est souvent plus précieuse que la moyenne elle-même. Un modèle qui obtient 0,87 puis 0,71 selon le découpage ne mérite pas qu'on l'annonce à 0,87 : son intervalle réel est large, et une décision forte prise sur ce chiffre serait téméraire. À l'inverse, deux modèles dont les moyennes diffèrent de peu mais dont les intervalles se chevauchent massivement ne sont pas démontrablement différents, et l'on préférera alors le plus simple ou le plus interprétable. La validation croisée enseigne donc une discipline intellectuelle : chaque performance affichée s'accompagne de sa variabilité, sans exception.
+
+Le bloc ci-dessous illustre cette idée en pur standard Python, avec un découpage en trois plis sur notre jeu de douze observations. Il réutilise la fonction d'ajustement que vous avez déjà écrite, ce qui montre qu'aucune de ces techniques n'exige de bibliothèque : elles demandent de la rigueur, pas des dépendances. En sortie, vous obtenez un RMSE par plis ainsi que la moyenne et l'écart-type agrégés.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.5, 5.0, 6.5, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+y = [52.0, 55.0, 60.0, 63.0, 66.0, 70.0, 74.0, 76.0, 81.0, 85.0, 88.0, 93.0]
+
+
+def ajuster(paires):
+    mx = statistics.mean([p[0] for p in paires])
+    my = statistics.mean([p[1] for p in paires])
+    cov = sum((a - mx) * (b - my) for a, b in paires) / len(paires)
+    var_x = sum((a - mx) ** 2 for a, _ in paires) / len(paires)
+    a = cov / var_x
+    return a, my - a * mx
+
+
+donnees = list(zip(x, y))
+taille = len(donnees) // 3
+scores = []
+
+for debut in range(0, len(donnees), taille):
+    valider = donnees[debut:debut + taille]
+    apprendre = donnees[:debut] + donnees[debut + taille:]
+    a, b = ajuster(apprendre)
+    erreurs = [obs - (a * xi + b) for xi, obs in valider]
+    scores.append(math.sqrt(sum(e ** 2 for e in erreurs) / len(erreurs)))
+
+print("RMSE par plis :", [round(s, 3) for s in scores])
+print("moyenne =", round(statistics.mean(scores), 3))
+print("ecart-type =", round(statistics.pstdev(scores), 3))
+```
+
+En pratique, le nombre de plis se choisit en fonction de la taille de l'échantillon : cinq plis constituent l'usage courant, dix quand les données sont rares et que l'on accepte un coût de calcul plus élevé. Une variante utile mélange aléatoirement les observations avant le découpage, ce qui évite qu'un ordre naturel dans le fichier, une tri par date par exemple, ne mette toute une période dans un seul plis. Quel que soit le schéma, une seule règle ne se négocie pas : toute transformation apprise, mise à l'échelle, sélection de variables, imputation, doit être réentraînée à l'intérieur de chaque pli, sinon l'information fuit à nouveau.
+$lesson$),
+  ('ia-c3-p14', 'ia-c3', 14, $lesson$Présenter un modèle de régression$lesson$, $lesson$
+La restitution est une compétence à part entière, et un modèle rarement déployé est un modèle mal présenté. Un rapport de régression efficace suit une structure stable que vous pourrez réutiliser telle quelle. On commence par la phrase métier, le problème traité, la cible visée, l'unité de réussite. On enchaîne sur le dispositif : taille de l'échantillon, période couverte, découpage entraînement et test, métriques retenues. On expose les résultats avec les trois nombres principaux, R², RMSE et MAE, en les comparant au repère naïf. On termine par les limites et les précautions d'usage, ce que le modèle ne sait pas faire et les conditions dans lesquelles il cesse d'être fiable.
+
+L'interprétation des coefficients mérite une sous-section à elle seule dans ce rapport. Pour chaque variable, on produit la phrase complète, coefficient, unité, intervalle de confiance éventuel, et l'on ordonne les variables par importance pratique plutôt que par ordre alphabétique. L'importance se mesure notamment par l'ampleur de la variation induite sur la plage réelle d'utilisation de la variable, ce qui évite de classer en tête une variable dont le coefficient est gros mais qui ne bouge jamais. Le signe doit être confronté au sens commun et à la littérature : un signe inattendu est soit une découverte, soit un artefact de multicolinéarité, et dans les deux cas il exige une vérification avant publication.
+
+Le tableau suivant propose une trame de restitution prête à l'emploi, avec la colonne des indicateurs et celle des phrases types. Vous remarquerez qu'aucune case ne demande un jargon : la qualité d'un rapport se mesure à sa lisibilité par une personne qui n'a jamais ouvert un notebook.
+
+| Étape du rapport | Ce qu'on affiche | Ce qu'on évite |
+| --- | --- | --- |
+| Contexte | Cible, unité, période, échantillon | L'historique du projet en trois pages |
+| Méthode | Découpage, modèle, prétraitement | La dérivée de la formule des moindres carrés |
+| Résultats | R², RMSE, MAE et repère naïf | Un seul chiffre isolé |
+| Interprétation | Coefficients en phrases avec unités | Les mots prouve et cause |
+| Limites | Incertitudes, cas hors domaine | La promesse de généralisation automatique |
+
+Un dernier point concerne le déploiement, souvent négligé dans les formations et décisif sur le terrain. Un modèle de régression se surveille : on compare en continu la distribution des variables explicatives à celle de l'entraînement, parce qu'une variable qui dérive impose au modèle des extrapolations dangereuses. On recalcule périodiquement les métriques sur les observations réalisées, et l'on déclenche un réentraînement lorsque l'erreur dépasse un seuil convenu avec le métier. On conserve enfin la version du modèle, les données et le code qui l'ont produit, car la reproductibilité d'une prédiction est une exigence légale dans de nombreux domaines. Une régression n'est pas un livrable ponctuel, c'est un actif à maintenir.
+$lesson$),
+  ('ia-c3-p15', 'ia-c3', 15, $lesson$Variables catégorielles et variables indicatrices$lesson$, $lesson$
+Toutes les variables explicatives ne sont pas numériques, et pourtant une régression ne sait manipuler que des nombres. La traduction la plus courante consiste à transformer chaque catégorie en une variable indicatrice, c'est-à-dire un nombre qui vaut un quand l'observation appartient à la catégorie et zéro sinon. Pour des données de relevé hebdomadaire, on peut ainsi créer une colonne valant un le week-end et zéro les autres jours, puis la régression se déroule exactement comme avant. Le coefficient associé à l'indicateur se lit alors sans ambiguïté : il mesure le décalage moyen entre la catégorie de référence et la catégorie représentée, toutes les autres variables étant maintenues constantes.
+
+Deux précautions rendent cette technique fiable. La première consiste à choisir explicitement une catégorie de référence, celle dont l'effet est absorbé par l'intercept : dès que l'on dispose de k catégories, on ne crée que k moins un indicateurs, car la dernière se déduit des autres. Omettre cette règle revient à reproduire exactement la multicolinéarité parfaite que nous redoutions plus haut, et selon les logiciels cela se traduit soit par la suppression silencieuse d'une colonne, soit par l'envoi de coefficients colossaux qui ne signifient plus rien. La deuxième précaution est de disposer d'assez d'observations dans chaque catégorie : un indicateur estimé sur deux points n'a aucune stabilité et son coefficient reflétera surtout le bruit de l'échantillon.
+
+Le lien avec ce que vous savez déjà faire est direct. L'exemple ci-dessous compare deux groupes avec les seules fonctions du module statistics, afin de montrer que l'écart entre les moyennes de groupe correspond exactement au coefficient de l'indicateur. Ce même nombre apparaîtrait si vous faisiez tourner sur cette table le solveur par élimination de la section précédente, la colonne supplémentaire ne changeant rien à la logique de la résolution.
+
+```python
+import statistics
+
+groupes = [
+    ("jour", 61.0), ("jour", 64.0), ("jour", 68.0), ("jour", 71.0),
+    ("week-end", 58.0), ("week-end", 63.0), ("week-end", 66.0),
+    ("week-end", 70.0),
+]
+
+reference = [v for g, v in groupes if g == "jour"]
+comparaison = [v for g, v in groupes if g == "week-end"]
+
+moy_ref = statistics.mean(reference)
+moy_cmp = statistics.mean(comparaison)
+
+print("categorie de reference : moyenne =", round(moy_ref, 3))
+print("categorie comparee : moyenne =", round(moy_cmp, 3))
+print("coefficient de l indicateur =", round(moy_cmp - moy_ref, 3))
+print("intercept =", round(moy_ref, 3))
+```
+
+La lecture de ce résultat mérite une phrase complète dans un rapport : à nombre d'heures égal, le week-end se situe en moyenne à tel écart de la semaine, intervalle de confiance à l'appui si l'échantillon le permet. Le même mécanisme s'applique à n'importe quel nombre de catégories, ville d'origine, type de contrat, segment client, à condition de garder à l'esprit que chaque indicateur consomme un degré de liberté et alourdit d'autant la demande en données.
+$lesson$),
+  ('ia-c3-p16', 'ia-c3', 16, $lesson$Quand la droite ne suffit pas : transformations$lesson$, $lesson$
+Avant de renoncer à une relation parce qu'elle n'est pas droite, il est presque toujours utile de la regarder sous un autre angle. Une transformation appliquée à la variable cible ou à la variable explicative suffit souvent à redresser le nuage de points, tout en conservant l'ensemble de l'appareil mathématique que nous maîtrisons. Le cas le plus fréquent est celui des phénomènes multiplicatifs : les prix, les volumes, les effectifs croissent rarement d'un montant fixe, ils croissent d'un pourcentage. Passer au logarithme transforme cette progression proportionnelle en variation additive, et la droite ajustée sur les logarithmes redevient parfaitement légitime.
+
+Une propriété essentielle justifie cette aisance : la régression des moindres carrés exige d'être linéaire en ses paramètres, pas linéaire en ses variables. Tant que l'on cherche une combinaison de coefficients inconnus multipliant des colonnes connues, la solution reste fermée. On peut donc ajouter une colonne qui contient le carré de x, une colonne qui contient son logarithme, ou l'une et l'autre, et continuer à résoudre le même système. C'est la définition même des modèles polynomiaux : l'équation peut serpenter dans le plan, mais elle reste linéaire du point de vue des inconnues que l'on estime.
+
+L'exemple ci-dessous illustre la transformation logarithmique sur des données de croissance, avec la particularité qu'une fois le modèle estimé sur les logarithmes, il faut revenir à l'échelle d'origine pour communiquer un résultat. Cette arrière-pensée, la correction d'échelle, est souvent oubliée et produit des prédictions systématiquement basses lorsqu'on raisonne en médianes plutôt qu'en moyennes.
+
+```python
+import math
+import statistics
+
+x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+volume = [120.0, 195.0, 310.0, 505.0, 820.0, 1330.0, 2160.0, 3510.0]
+log_y = [math.log(v) for v in volume]
+
+mx = statistics.mean(x)
+my = statistics.mean(log_y)
+cov = sum((a - mx) * (b - my) for a, b in zip(x, log_y)) / len(x)
+var_x = sum((a - mx) ** 2 for a in x) / len(x)
+a = cov / var_x
+b = my - a * mx
+
+print("pente en logarithme =", round(a, 4))
+print("croissance par unite de x =", round(math.exp(a), 3))
+print("prediction a x = 9 :", round(math.exp(a * 9.0 + b), 1))
+```
+
+La pente obtenue ne se lit plus en unités de la variable cible mais comme un taux : l'exponentielle de la pente donne le facteur de multiplication par unité de x. Communiquer ce taux, par exemple une augmentation d'un quart du volume pour chaque palier, est bien plus parlant pour un décideur que la valeur brute d'un coefficient en logarithme. Le même raisonnement vaut pour les racines carrées sur des comptages et pour l'inverse des variables, si bien qu'un nuage de points récalcitrant motive toujours une tentative de transformation avant l'abandon.
+
+Il existe enfin une frontière au-delà de laquelle aucune astuce ne suffit : la relation réelle change de sens, plafonne, présente des ruptures ou dépend d'interactions entre variables. Dans ces cas, la régression linéaire reste utile comme référence et comme instrument de diagnostic, mais elle doit céder la place à des modèles plus flexibles, arbres de décision, forêts aléatoires ou réseaux de neurones, qui seront étudiés dans les chapitres suivants du parcours. Savoir quand arrêter la régression fait partie de sa maîtrise : un modèle simple que l'on comprend, que l'on surveille et que l'on explique vaut souvent mieux qu'un modèle opaque dont personne ne saura dire pourquoi il a soudain cessé de fonctionner.
+$lesson$),
+  ('ia-c3-p17', 'ia-c3', 17, $lesson$À retenir$lesson$, $lesson$
+- Une régression prédit une valeur continue ordonnée, là où une classification prédit une étiquette.
+- Le modèle linéaire simple s'écrit prédiction égale à pente fois variable explicative plus intercept.
+- La droite de régression passe toujours par le point des moyennes des x et des y.
+- La pente vaut la covariance divisée par la variance de x, l'intercept vaut moyenne de y moins pente fois moyenne de x.
+- La somme des résidus vaut zéro : c'est votre premier contrôle après tout ajustement.
+- Le R² mesure la part de variance reproduite par le modèle, entre zéro et un en ajustement sur les données d'apprentissage.
+- Le RMSE et le MAE se lisent dans l'unité de la cible, le RMSE pénalisant bien davantage les grosses erreurs.
+- Un R² élevé ne garantit ni une bonne généralisation, ni une relation causale, ni une erreur faible.
+- Les résidus doivent être centrés, homogènes et décorrélés : leur structure révèle les défauts du modèle.
+- L'évaluation honnête exige un découpage entraînement et test, une validation croisée et un repère naïf.
+- La multicolinéarité ruine l'interprétation des coefficients sans dégrader les prédictions.
+- Une variable catégoriale se code en indicateurs, en conservant une catégorie de référence.
+- Une transformation du logarithme ou du carré conserve la linéarité en paramètres et redresse le modèle.
+- scikit-learn automatise le calcul, jamais la démarche : fit entraîne, predict interroge, le reste reste votre responsabilité.
+$lesson$),
+  ('ia-c3-p18', 'ia-c3', 18, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Annoncer un R² sans RMSE ni MAE, ce qui prive le résultat de toute unité compréhensible.
+- Évaluer le modèle sur les mêmes données que celles de l'entraînement, et conclure à une performance excellente.
+- Ajuster le prétraitement sur l'ensemble du jeu de données avant de le scinder, ce qui provoque une fuite d'information.
+- Interpréter le signe d'un coefficient comme une preuve de causalité.
+- Utiliser l'ordonnée à l'origine comme prédiction alors que zéro est hors domaine.
+- Comparer des RMSE calculés sur des échelles ou des unités différentes.
+- Ajouter des variables parce que le R² augmente, sans regarder le R² ajusté ni le score hors échantillon.
+- Créer autant d'indicateurs que de catégories, ce qui rend le système parfaitement multicolinéaire.
+- Oublier de revenir à l'échelle d'origine après une estimation menée sur des logarithmes.
+- Déployer un modèle sans suivi de dérive ni seuil de réentraînement.
+$lesson$),
+  ('ia-c3-p19', 'ia-c3', 19, $lesson$Pour aller plus loin$lesson$, $lesson$
+- https://scikit-learn.org/stable/modules/linear_model.html — la documentation officielle des modèles linéaires de scikit-learn, Ridge et Lasso compris.
+- https://docs.python.org/3/library/statistics.html — le module statistics de Python, qui contient tout ce dont les démonstrations de ce chapitre ont besoin.
+- https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.linregress.html — scipy.stats.linregress, la référence courte pour une régression simple.
+- https://www.statlearning.com — l'ouvrage Introduction to Statistical Learning, chapitres 2, 3 et 6, accessible gratuitement et écrit pour les praticiens.
+- https://scikit-learn.org/stable/modules/cross_validation.html — la documentation sur la validation croisée, indispensable avant tout comparatif de modèles.
+$lesson$),
+  ('ia-c3-p20', 'ia-c3', 20, $lesson$Et maintenant : implémentez la régression vous-même, de la formule au rapport$lesson$, $lesson$
+La régression linéaire est le premier modèle que l'on peut expliquer entièrement en une page : une pente, une intercept, un R² et une erreur moyenne. Dans l'exercice pratique, réimplémentez-la sans pandas ni scikit-learn : centrez et réduisez les variables, appliquez la formule des moindres carrés, puis comparez votre modèle à celui entraîné par la bibliothèque — les chiffres devraient coïncider à quelques décimales près. Cette comparaison vous donnera une intuition solide de ce que font réellement les bibliothèques que vous appellerez ensuite.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c4-p1', 'ia-c4', 1, $lesson$Prédire une catégorie : le vocabulaire de la classification$lesson$, $lesson$
+Jusqu'ici dans ce parcours, la variable à prédire était toujours un nombre : le prix d'un logement, la note d'un élève, le délai de livraison d'une commande. On parlait de régression, et l'objectif était d'estimer une valeur continue aussi précise que possible, quitte à se tromper de quelques unités. Or la très grande majorité des questions posées en entreprise ne demandent pas un nombre mais une étiquette : ce client va-t-il résilier ou non, cette transaction est-elle frauduleuse, ce message est-il un spam, ce patient présente-t-il la maladie, cette pièce sort-elle de l'usine conforme. La réponse attendue est une catégorie, parfois deux, parfois davantage. C'est exactement le champ de la classification supervisée, et c'est l'objet de ce chapitre. Vous y apprendrez deux familles de modèles, la régression logistique et l'arbre de décision, puis surtout — et c'est la partie la plus utile — la manière d'évaluer honnêtement un classifieur : matrice de confusion, choix du seuil de décision et métriques adaptées au déséquilibre des classes.
+
+Le plan du chapitre est volontairement ordonné comme le serait une vraie analyse. Nous commencerons par poser le vocabulaire : ce qu'est une cible catégorielle, la différence entre classification binaire et classification multiclasses, le découpage entraînement et test, et les deux types d'erreurs que l'on peut commettre. Nous construirons ensuite la régression logistique, modèle le plus utilisé en entreprise pour sa lisibilité : elle transforme une combinaison linéaire des variables en une probabilité, grâce à une fonction en S appelée sigmoïde. Nous verrons qu'un modèle ne se contente pas de produire une probabilité, il doit surtout décider, et qu'un seuil de 0,5 est une convention qu'on peut — et qu'on doit — questionner. À ce moment-là apparaîtra la matrice de confusion, comptage fondamental qui résume toutes les erreurs possibles. Puis viendront les arbres de décision, qui traitent des frontières que la régression logistique ne sait pas tracer, avant de revenir aux métriques : précision, rappel, F1, AUC-ROC et leur cousin AUC-PR.
+
+Un mot sur la manière de suivre cette leçon. Tout le code présenté est court, commenté et destiné à être tapé à la main : rien ne remplace le geste d'écrire une ligne, de l'exécuter, d'observer le résultat et parfois de provoquer une erreur. Les exemples en Python pur que vous verrez d'abord n'utilisent que la bibliothèque standard, afin de tourner sur n'importe quelle machine sans installation ; les exemples scikit-learn sont ensuite illustrés en prose, avec la syntaxe exacte des méthodes que vous appellerez, pour que vous compreniez ce que fait chaque appel avant de l'exécuter dans votre environnement de travail. Prévoyez un carnet à côté de vous : notez les formules, recalculez à la main les petits tableaux de confusion, et n'avancez pas tant que le comptage ne vous semble pas évident. Le quiz de quatre questions en fin de chapitre vérifiera précisément ces réflexes, et l'exercice pratique vous fera écrire seul un programme complet de seuil de décision.
+
+
+
+La classification supervisée consiste à apprendre, à partir d'exemples déjà étiquetés, une fonction qui associe une ligne de données à une catégorie. Le fonctionnement général est identique à celui de la régression : vous disposez d'un tableau dont les colonnes sont les variables, appelées features ou caractéristiques, et d'une colonne supplémentaire, la cible, qui contient l'étiquette attendue. L'algorithme ajuste ses paramètres sur le jeu d'entraînement, puis on l'interroge sur des données qu'il n'a jamais vues, le jeu de test, pour estimer sa capacité de généralisation. La seule différence tient à la nature de la cible : au lieu d'être continue, elle prend un nombre fini de valeurs discrètes. Si la cible n'en contient que deux, on parle de classification binaire, et par convention l'une des deux valeurs est notée 0, l'autre 1. Si elle en contient davantage, on parle de classification multiclasses : détecter le sujet d'un message parmi vingt, reconnaître une espèce de plante, identifier la catégorie d'un produit.
+
+Les exemples de classification binaire sont partout et ils ont tous la même structure cachée. En banque, on demande si une demande de crédit sera remboursée ou non ; la probabilité de remboursement sert à fixer le taux d'intérêt. En marketing, on demande si un client répondra à une campagne ; la probabilité sert à prioriser les appels. En cybersécurité, on demande si une connexion est malveillante ; la probabilité sert à déclencher un contrôle renforcé. Dans tous ces cas, l'entreprise ne veut pas seulement une prédiction, elle veut aussi une information de confiance, et c'est là que la classification se distingue réellement de ce que vous avez vu jusqu'ici : le modèle produit naturellement une probabilité entre 0 et 1, et la décision d'agir se prend séparément, en fonction du coût respectif des erreurs.
+
+La distinction entre classification binaire et multiclasses a des conséquences pratiques immédiates. Un modèle binaire renvoie une seule probabilité, celle de la classe positive, ce qui rend l'interprétation très simple. Un modèle multiclasses, lui, doit répartir une probabilité entre plusieurs issues ; les librairies le font soit en entraînant un classifieur par classe, une stratégie nommée un contre tous, soit en sortie directe avec une fonction d'activation qui normalise la somme des probabilités à exactement 1. Pour évaluer un tel modèle, la matrice de confusion devient un carré dont le nombre de lignes est égal au nombre de classes, et l'on généralise la précision et le rappel classe par classe, avant d'en calculer une moyenne pondérée. Nous resterons dans ce chapitre surtout sur le cas binaire, car il concentre toutes les difficultés conceptuelles ; une fois ceux-ci maîtrisés, le passage au multiclasses est mécanique.
+
+Le découpage des données mérite une attention particulière, plus que dans le cas d'une régression. Lorsque les classes sont déséquilibrées — ce qui est la norme, un churn représentant souvent 5 % des clients — un tirage aléatoire peut très bien placer presque tous les positifs dans l'entraînement et très peu dans le test. Votre évaluation devient alors unstable et trompeuse. On utilise pour cela un découpage stratifié, qui conserve dans chaque sous-jeu la proportion exacte de chaque classe. Concrètement, on demande au générateur de répartir les indices en respectant les fréquences de la cible, et l'on vérifie ensuite ces fréquences avant toute chose. Un autre réflexe à prendre : figer la graine aléatoire pour que vos résultats soient reproductibles, et ne jamais laisser de ligne de test influencer l'entraînement, y compris lors du prétraitement, car une normalisation calculée sur l'ensemble complet du fichier fuit déjà de l'information.
+
+L'évaluation d'un classifieur commence par une question que l'on oublie trop souvent : qu'aimeriez-vous en réalité éviter ? Une erreur n'est pas une erreur. Se tromper en prédisant frauduleuse une transaction honnête coûte un appel client et une frustration ; ne pas détecter une vraie fraude coûte de l'argent et parfois la confiance du client pour des années. Ces deux écarts ne se ressemblent pas, et pourtant un chiffre unique comme le taux de bonnes prédictions les additionne indifféremment. C'est pourquoi l'analyse d'un modèle de classification passe par un comptage détaillé des erreurs, réalisé dans la matrice de confusion que nous détaillerons plus loin. Avant même de choisir un algorithme, écrivez sur votre feuille ce qui vous coûte le plus cher : faux positifs ou faux négatifs. Cette décision de métier commande le seuil, et le seuil commande les métriques sur lesquelles vous comparerez vos modèles.
+
+Un tableau récapitulatif des métriques que vous rencontrerez dans la suite aide à se repérer, car leurs noms se ressemblent toutes et leurs définitions se confondent facilement. Elles seront reprises une à une, avec des exemples chiffrés, dans les sections consacrées au seuil et à l'imbalance.
+
+| Métrique | Ce qu'elle mesure | Question à laquelle elle répond | Sensible au déséquilibre |
+| --- | --- | --- | --- |
+| Accuracy | Part de toutes les prédictions correctes | Le modèle a-t-il globalement raison ? | Oui, très |
+| Précision | Part de vraies prédictions positives | Sur mes alertes, combien sont justes ? | Moyennement |
+| Rappel | Part de positifs effectivement trouvés | Sur les cas critiques, combien ai-je trouvés ? | Oui, fortement |
+| F1 | Moyenne harmonique de précision et rappel | L'équilibre des deux est-il bon ? | Oui |
+| AUC-ROC | Capacité à séparer les deux classes | Le classement par probabilité est-il bon ? | Peu en apparence |
+
+Enfin, un classifieur ne produit pas seulement une étiquette : il produit un score, souvent une probabilité, et c'est ce score qui permet de comparer deux modèles entre eux indépendamment du seuil choisi. Deux modèles peuvent attribuer la même étiquette à tout le monde et pourtant classer parfaitement ou horriblement les clients du plus au moins à risque. Les métriques fondées sur le rang, comme l'aire sous la courbe ROC, mesurent exactement cette qualité de classement, tandis que les métriques fondées sur le comptage, comme la précision ou le rappel, dépendent du seuil retenu. Garder cette distinction en tête vous évitera de comparer un modèle évalué à 0,5 avec un autre évalué à 0,3 en croyant comparer des choses identiques.
+$lesson$),
+  ('ia-c4-p2', 'ia-c4', 2, $lesson$La régression logistique : du score à la probabilité$lesson$, $lesson$
+Le nom est trompeur, et beaucoup de débutants le subissent un moment : la régression logistique est bien un modèle de classification, pas de régression. Elle s'appelle ainsi parce qu'elle régresse — c'est-à-dire ajuste — le logarithme des probabilités, et non la catégorie elle-même. Son principe est d'une élégance remarquable. On commence comme pour une régression linéaire classique : on calcule une somme pondérée des variables, appelée score ou logit, à laquelle on ajoute un terme constant. Ce score peut valoir n'importe quel nombre réel, de moins l'infini à plus l'infini, ce qui en fait un candidat parfait pour exprimer une opinion : un score très négatif signifie une conviction forte en faveur de la classe 0, un score très positif une conviction forte en faveur de la classe 1. Il ne reste qu'à compresser cet intervalle infini dans l'intervalle [0 ; 1] pour obtenir une probabilité.
+
+Cette compression est réalisée par la fonction sigmoïde, notée souvent sigma. Elle prend n'importe quel réel et renvoie une valeur strictement comprise entre 0 et 1, symétrique par rapport à 0,5 : sigmoïde de 0 vaut exactement 0,5, sigmoïde de -4 vaut environ 0,018, sigmoïde de 4 environ 0,982. La conséquence pratique est qu'un score positif déclenche une probabilité supérieure à la moitié, un score négatif une probabilité inférieure. On retrouve ainsi la règle de décision intuitive : prédire la classe 1 lorsque la probabilité dépasse 0,5 revient à prédire la classe 1 lorsque le score est strictement positif. L'exécutable ci-dessous construit une probabilité à la main, sans aucune librairie externe, afin que vous voyiez chaque étape du calcul.
+
+```python
+import math
+
+def sigmoid(z):
+    return 1.0 / (1.0 + math.exp(-z))
+
+# score lineaire : z = b0 + b1 * x1 + b2 * x2
+b0, b1, b2 = -2.4, 0.06, 1.1
+anciennete, encours = 24, 1.5
+
+z = b0 + b1 * anciennete + b2 * encours
+p = sigmoid(z)
+
+print("score =", round(z, 4))
+print("probabilite =", round(p, 4))
+print("classe predite =", 1 if p >= 0.5 else 0)
+```
+
+L'interprétation des coefficients est ce qu'il y a d'appréciable dans la régression logistique en milieu professionnel. Chaque coefficient indique l'effet d'une unité de plus de la variable correspondante sur le logarithme des cotes, c'est-à-dire sur le rapport entre probabilité de succès et probabilité d'échec. Pour rendre cette lecture plus concrète, on en déduit le rapport de cotes, qui s'obtient en élevant le nombre e à la puissance du coefficient. Un coefficient de 0,5 donne un rapport de cotes d'environ 1,65 : à caractéristiques inchangées, augmenter la variable d'une unité multiplie par 1,65 les chances du client de churner. Ce vocabulaire — rapport de cotes, ou odds ratio en anglais — est celui que vous entendrez dans les revues de modèles, et il permet d'exprimer l'influence d'une variable sans jamais parler de probabilité brute, ce qui évite bien des contresens lorsque la probabilité de départ est très faible.
+
+En pratique, les paramètres du modèle ne sont pas choisis à la main : la bibliothèque scikit-learn les estime par maximisation de la vraisemblance, une procédure qui cherche les coefficients rendant les étiquettes observées les plus probables. L'algorithme de minimisation utilisé est de type gradient, c'est-à-dire qu'il descend la pente de l'erreur par petites étapes jusqu'à un plancher. Trois conséquences découlent de cette procédure et valent d'être connues avant d'écrire la moindre ligne. D'abord, la régression logistique est sensible à l'échelle : si une variable va de 0 à 1 et une autre de 0 à 100 000, la descente de gradient peine à trouver un équilibre, et l'on centre-réduit les variables au préalable. Ensuite, elle suppose que les effets sont linéaires sur l'échelle du logit : pour intégrer une relation non linéaire, il faut ajouter des termes polynomiaux ou des interactions. Enfin, elle supporte mal la colinéarité stricte entre variables, car plusieurs combinaisons de coefficients expliquent alors aussi bien les données.
+
+Le vocabulaire de l'API scikit-learn mérite d'être décrit précisément, car il revient dans tous les pipelines. Le classifieur s'obtient en instanciant LogisticRegression avec éventuellement le paramètre de régularisation C, dont la valeur inverse mesure la force du lissage, et le paramètre de stratégie de classe pour traiter le déséquilibre. L'apprentissage se fait par la méthode fit qui reçoit le tableau des variables et le vecteur de cibles. La prédiction d'étiquette se fait avec predict, qui renvoie 0 ou 1 pour chaque ligne. La prédiction de probabilité se fait avec predict_proba, qui renvoie un tableau à deux colonnes : la probabilité d'appartenir à la classe 0 et celle d'appartenir à la classe 1, chaque ligne sommant exactement 1. Une erreur classique consiste à confondre les deux : predict applique déjà un seuil, predict_proba ne fait que fournir l'information.
+
+```python
+# Illustration scikit-learn (a executer dans votre environnement)
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y)
+
+scaler = StandardScaler().fit(X_train)
+X_train_s = scaler.transform(X_train)
+X_test_s = scaler.transform(X_test)
+
+modele = LogisticRegression(C=1.0, max_iter=1000)
+modele.fit(X_train_s, y_train)
+
+print(modele.classes_)          # ordre des classes : [0, 1]
+print(modele.coef_)             # coefficients de chaque variable
+print(modele.intercept_)        # terme constant
+```
+
+La différence entre la sortie de predict et celle de predict_proba est suffisamment importante pour justifier un exemple complet. Supposons que le modèle estime, pour six clients, les probabilités suivantes de churn : 0,12 ; 0,31 ; 0,48 ; 0,52 ; 0,71 ; 0,94. Avec le seuil par défaut de 0,5, les deux derniers seulement sont prédits positifs, les autres non. Si votre équipe commerciale peut appeler quatre personnes par jour, vous pouvez tout à fait abaisser le seuil à 0,31 et attaquer les quatre profils les plus à risque : la probabilité reste une information continue, la décision est votre arbitrage. Le code ci-dessous montre cette bascule explicitement, en calculant les prédictions à partir des seuils retenus plutôt qu'en faisant confiance à la méthode toute faite.
+
+```python
+probas = [0.12, 0.31, 0.48, 0.52, 0.71, 0.94]
+reels  = [0,    0,    1,    0,    1,    1   ]
+
+for seuil in (0.3, 0.5, 0.7):
+    preds = [1 if p >= seuil else 0 for p in probas]
+    vp = sum(1 for r, p in zip(reels, preds) if r == 1 and p == 1)
+    fp = sum(1 for r, p in zip(reels, preds) if r == 0 and p == 1)
+    fn = sum(1 for r, p in zip(reels, preds) if r == 1 and p == 0)
+    print("seuil", seuil, "-> preds", preds, "vp", vp, "fp", fp, "fn", fn)
+```
+
+Les limites de la régression logistique sont en fait ses forces retournées, et les connaître vous évitera de la sur- ou sous-employer. Elle trace une frontière de décision linéaire : une droite dans le plan, un hyperplan dans l'espace. Si les deux classes s'entremêlent selon une courbe — un anneau autour d'un cluster central, par exemple — aucun coefficient ne pourra séparer correctement les points, et l'accuracy plafonnera au niveau du modèle trivial. Elle suppose enfin que chaque ligne est indépendante des autres, ce qui se vérifie rarement dans des données longitudinales. Ces situations ne signifient pas qu'il faut abandonner : elles signalent qu'il faut ajouter des variables dérivées, ou changer de famille de modèles. C'est précisément le rôle des arbres de décision, que nous aborderons après avoir installé l'outil indispensable pour juger de tout ceci, la matrice de confusion.
+$lesson$),
+  ('ia-c4-p3', 'ia-c4', 3, $lesson$Le seuil de décision : transformer une probabilité en verdict$lesson$, $lesson$
+Un modèle de classification bien entraîné ne vous rend jamais un simple 0 ou 1 : il rend d'abord un nombre entre 0 et 1, une probabilité qui exprime à quel point la ligne étudiée ressemble à la classe positive. Ce nombre est une information continue, riche et nuancée ; la décision, elle, est binaire, nette, définitive : on agit ou on n'agit pas. Entre les deux se trouve le seuil, ce point de passage que vous choisissez et qui transforme une probabilité en verdict. Comprendre que le seuil est une décision humaine, et non une propriété du modèle, est le tournant de ce chapitre. Deux équipes peuvent disposer exactement du même classifieur, des mêmes données, des mêmes scores, et prendre des décisions opposées pour la simple raison qu'une équipe protège ses réserves et que l'autre cherche à ne rien laisser passer. Le modèle fournit la mesure ; c'est votre métier qui fixe la règle.
+
+La règle est d'une simplicité trompeuse : prédire la classe 1 si la probabilité est supérieure ou égale au seuil, sinon prédire la classe 0. Avec un seuil de 0,5, la frontière est au milieu de l'intervalle, et c'est la valeur que presque toutes les bibliothèques retiennent par défaut. Ce choix n'a rien de magique : il correspond au cas où se tromper d'un côté coûte exactement autant que de se tromper de l'autre, et où l'on fait confiance au modèle pour être correctement calibré, c'est-à-dire pour que ses 70 % de probabilité correspondent à 70 % de cas réels. En entreprise, ces deux hypothèses sont presque toujours fausses. Un faux positif coûte un appel téléphonique de deux minutes ; un faux négatif coûte le départ définitif d'un client. Un seuil de 0,5 revient donc à dire que ces deux événements se valent, ce que personne ne dirait à voix haute.
+
+Le comportement du seuil est mécanique et il faut le connaître par cœur, car toutes les métriques en découlent. Abaisser le seuil, c'est élargir la porte : davantage de lignes sont classées positives. Le nombre de vrais positifs augmente ou reste stable, donc le rappel augmente ; mais davantage de négatifs entrent aussi, donc les faux positifs augmentent et la précision baisse. Augmenter le seuil produit exactement l'inverse : on devient sélectif, la précision grimpe, le rappel recule, et l'on manque des cas intéressants. Aucun réglage ne peut améliorer les deux simultanément — cette borne est une propriété mathématique, pas un défaut d'implémentation. Le choix du seuil revient donc à décider quel type d'erreur l'on préfère commettre, et il se formule souvent comme un problème de coût à minimiser ou de capacité à satisfaire.
+
+Le schéma suivant résume la chaîne complète, de la donnée d'entrée jusqu'à la décision évaluée, en rappelant que la matrice de confusion n'intervient qu'après le seuil, jamais avant.
+
+```
+   donnee -> modele -> probabilite -> SEUIL -> predication -> comparaison au reel
+                                                 |               |
+                                                 +-- 0 ou 1 -----+--> matrice
+                                                                     de confusion
+```
+
+Un balayage de seuils est la façon la plus directe d'observer ce compromis. On prend les probabilités prédites sur un jeu de validation, on les trie, on coupe à plusieurs endroits et l'on recalcule les métriques à chaque fois. Le programme ci-dessous le fait sur un petit échantillon volontairement réduit : six clients, quatre seuils, et pour chacun le comptage des erreurs. Exécutez-le et regardez comment le rappel monte quand le seuil descend, tandis que la précision décroît. Vous verrez aussi qu'aucun seuil ne domine tous les autres : l'un excelle en précision, l'autre en rappel, un troisième compromet les deux. C'est exactement le moment où l'analyse technique doit s'arrêter et où la décision métier doit commencer, car le bon seuil ne se lit pas dans un tableau, il se déduit de ce que l'organisation est prête à payer.
+
+```python
+probas = [0.05, 0.22, 0.34, 0.47, 0.55, 0.61, 0.78, 0.93]
+reels  = [0,     0,    1,    0,    1,    0,    1,    1    ]
+
+def evaluer(seuil):
+    preds = [1 if p >= seuil else 0 for p in probas]
+    vp = sum(1 for r, q in zip(reels, preds) if r == 1 and q == 1)
+    fp = sum(1 for r, q in zip(reels, preds) if r == 0 and q == 1)
+    fn = sum(1 for r, q in zip(reels, preds) if r == 1 and q == 0)
+    precision = vp / (vp + fp) if (vp + fp) else 0.0
+    rappel = vp / (vp + fn) if (vp + fn) else 0.0
+    f1 = 2 * precision * rappel / (precision + rappel) if (precision + rappel) else 0.0
+    return precision, rappel, f1
+
+for seuil in (0.2, 0.4, 0.5, 0.6):
+    precision, rappel, f1 = evaluer(seuil)
+    print("seuil {:.2f} | precision {:.2f} | rappel {:.2f} | f1 {:.2f}".format(
+        seuil, precision, rappel, f1))
+```
+
+Une autre façon de fixer le seuil consiste à partir du coût métier chiffré. Si un faux positif vous coûte 10 euros et un faux négatif 500 euros, le seuil optimal pour un modèle parfaitement calibré n'est pas 0,5 mais un nombre bien plus bas, de l'ordre du ratio des coûts. On peut aussi raisonner en capacité : l'équipe de support traite 200 alerts par jour, on choisira donc le seuil qui produit exactement 200 alertes, ce qui revient à classer les clients par probabilité décroissante et à couper à la 200e ligne. Cette approche par quantile est fréquente dans la détection de fraude et ne nécessite même pas que les probabilités soient bien calibrées, seulement qu'elles soient ordonnées correctement. Quelle que soit la méthode, le seuil retenu doit être figé avant l'évaluation finale, sur des données d'entraînement ou de validation, jamais choisi après coup sur le jeu de test sous peine de fausser les résultats.
+$lesson$),
+  ('ia-c4-p4', 'ia-c4', 4, $lesson$La matrice de confusion : compter ses erreurs$lesson$, $lesson$
+La matrice de confusion est le comptage fondamental de la classification : un petit tableau à deux lignes et deux colonnes qui place côte à côte ce que le modèle a prédit et ce qui s'est réellement passé. Ses quatre cases contiennent l'intégralité de l'information nécessaire pour évaluer un classifieur binaire. On y trouve les vrais positifs, les cas où réalité et prédiction disent toutes deux 1 ; les vrais négatifs, où les deux disent 0 ; les faux positifs, où l'on a prédit 1 alors que la réalité était 0 ; et les faux négatifs, où l'on a prédit 0 alors que la réalité était 1. Les Anglais utilisent des initiales commodes, respectivement TP, TN, FP et FN, que vous retrouverez dans toute la documentation technique. Toutes les métriques du chapitre — précision, rappel, F1, exactitude, taux de faux positifs — ne sont que des ratios de ces quatre nombres.
+
+Le tableau ci-dessous donne la disposition conventionnelle, où les lignes représentent la vérité et les colonnes la prédiction. Cette orientation est celle retenue par scikit-learn, et la connaître évite les confusions les plus fréquentes lorsqu'on lit une sortie de programme.
+
+| | Réel 0 | Réel 1 |
+| --- | --- | --- |
+| Prédit 0 | Vrais négatifs (VN) | Faux négatifs (FN) |
+| Prédit 1 | Faux positifs (FP) | Vrais positifs (VP) |
+
+La construction de cette table à la main est un exercice que tout le monde devrait faire une fois, lentement, avec une dizaine d'exemples écrits au crayon. Le programme ci-dessous réalise ce comptage en Python pur, sans aucune dépendance, en parcourant une seule fois les paires formées d'une vérité et d'une prédiction. Notez la structure : quatre compteurs initialisés à zéro, une condition par cas, et une restitution sous forme de dictionnaire. C'est exactement ce que fait la fonction confusion_matrix de scikit-learn, à la différence que vous verrez ce qui se passe à l'intérieur.
+
+```python
+def matrice_confusion(reels, preds):
+    tp = fp = fn = tn = 0
+    for reel, pred in zip(reels, preds):
+        if reel == 1 and pred == 1:
+            tp += 1
+        elif reel == 0 and pred == 1:
+            fp += 1
+        elif reel == 1 and pred == 0:
+            fn += 1
+        else:
+            tn += 1
+    return {"vp": tp, "fp": fp, "fn": fn, "vn": tn}
+
+reels = [1, 0, 1, 1, 0, 0, 1, 0, 1, 0]
+preds = [1, 0, 1, 0, 1, 0, 1, 1, 1, 0]
+
+print(matrice_confusion(reels, preds))
+```
+
+Lire une matrice de confusion demande de se poser systématiquement la même question devant chaque case : quel est le coût de cette erreur pour mon activité ? Les faux positifs sont les alertes infondées, les recommandations inutiles, les contrôles qui embêtent un client honnête. Trop de faux positifs et l'outil perd sa crédibilité : les utilisateurs finissent par tout ignorer, c'est l'effet fatigue que connaissent les équipes de sécurité. Les faux négatifs sont les dangers qui passent, les fraudes payées, les tumeurs non signalées, les abonnements résiliés sans réaction. Ils sont souvent beaucoup plus coûteux, mais invisibles : personne ne vous remercie pour un incident que vous n'avez pas eu. C'est précisément pour cela qu'un taux de bonnes prédictions élevé ne suffit pas à rassurer : il peut masquer une colonne entière de faux négatifs que la moyenne dilue.
+
+Les quatre grandes métriques se déduisent immédiatement de ce comptage, et il vaut mieux les dériver soi-même une fois que de les apprendre par cœur. L'exactitude ajoute les deux cases correctes et divise par le total. La précision divise les vrais positifs par toutes les prédictions positives, elle répond à la question de la fiabilité de mes alertes. Le rappel divise les vrais positifs par tous les cas réels positifs, il répond à la question de ma couverture. Le F1 combine les deux par une moyenne harmonique, qui pénalise fortement les modèles très déséquilibrés entre précision et rappel : si l'un des deux est faible, le F1 s'effondre, ce que la moyenne arithmétique ne ferait pas. Le code ci-dessous calcule les quatre à partir du seul dictionnaire, en protégeant chaque division contre le cas où un dénominateur s'annule.
+
+```python
+def metriques(m):
+    total = m["vp"] + m["fp"] + m["fn"] + m["vn"]
+    exactitude = (m["vp"] + m["vn"]) / total if total else 0.0
+    precision = m["vp"] / (m["vp"] + m["fp"]) if (m["vp"] + m["fp"]) else 0.0
+    rappel = m["vp"] / (m["vp"] + m["fn"]) if (m["vp"] + m["fn"]) else 0.0
+    f1 = 2 * precision * rappel / (precision + rappel) if (precision + rappel) else 0.0
+    return {
+        "exactitude": exactitude,
+        "precision": precision,
+        "rappel": rappel,
+        "f1": f1,
+    }
+
+m = {"vp": 4, "fp": 1, "fn": 2, "vn": 5}
+print(metriques(m))
+```
+
+Prenons un chiffre pour ancrer tout cela. Sur 100 clients, votre modèle prédit 50 positifs : parmi eux, 40 sont réellement des churners et 10 ne le sont pas ; du côté des 50 prédits négatifs, 30 sont effectivement fidèles et 20 étaient en fait des churners. La matrice dit donc VP égale 40, FP égale 10, FN égale 20, VN égale 30. L'exactitude vaut 70 sur 100, soit 0,70. La précision vaut 40 sur 50, soit 0,80 : quatre de mes cinq alertes sont justes. Le rappel vaut 40 sur 60, soit 0,67 : je détecte deux churners sur trois, et j'en laisse un tiers filer. Le F1, entre les deux, vaut environ 0,73. Ces quatre chiffres se regardent ensemble ; en choisir un seul hors contexte, c'est raconter l'histoire que l'on souhaite entendre.
+
+On présente souvent la matrice normalisée, où chaque ligne est divisée par son total afin que les cases s'expriment en pourcentage. Le tableau devient alors immédiatement comparable d'un jeu de données à l'autre, quelle que soit sa taille. Lire une matrice normalisée revient à poser deux questions distinctes. Sur la ligne des réels 0, quelle part a été classée à tort comme positive : c'est le taux de faux positifs, le prix payé en incommodités inutiles. Sur la ligne des réels 1, quelle part a été correctement retrouvée : c'est le rappel, la couverture réelle du dispositif. Ces deux lectures se font ligne par ligne, indépendamment l'une de l'autre, et leur juxtaposition dit en un coup d'œil le tempérament d'un modèle : un outil prudent affiche une première ligne presque entièrement correcte et une seconde lacunaire, tandis qu'un outil agressif renverse le tableau.
+
+Trois pièges reviennent systématiquement dans les analyses de classification, et les éviter vous épargnera des conclusions erronées. Le premier consiste à évaluer le modèle sur les données qui ont servi à l'entraîner : les scores sont alors systématiquement optimistes, parfois de plusieurs dizaines de points, car le modèle a mémorisé les cas qu'on lui a montrés. Le deuxième consiste à choisir le seuil directement sur le jeu de test : on optimise bruyamment sur un échantillon trop petit, et la performance annoncée devient un artefact. On choisit le seuil sur une part de validation, puis on mesure une seule fois sur le test. Le troisième piège est de n'afficher que le rapport final sans la matrice : deux modèles ayant la même exactitude peuvent répartir leurs erreurs de façon radicalement différente, et c'est cette répartition qui décide de l'acceptation par les utilisateurs.
+
+En Python avec scikit-learn, la matrice s'obtient en appelant confusion_matrix avec le vecteur de vérités et celui des prédictions : la fonction renvoie un tableau à deux entrées dont la ligne correspond à la classe réelle et la colonne à la classe prédite. On peut rendre la sortie plus lisible en passant l'étiquette des classes, et l'afficher sous forme de tableau. La bibliothèque propose aussi un rapport complet qui assemble en un seul appel la précision, le rappel, le F1 et le nombre d'exemples par classe : dans un notebook, cette ligne remplace avantageusement un affichage manuel. L'essentiel, c'est de ne jamais vous contenter de ces chiffres sans ouvrir la matrice elle-même, car le rapport masque la répartition des erreurs.
+
+```python
+from sklearn.metrics import confusion_matrix, classification_report
+
+y_pred = modele.predict(X_test)
+matrice = confusion_matrix(y_test, y_pred, labels=[0, 1])
+print(matrice)
+print(classification_report(y_test, y_pred, digits=3))
+```
+
+La matrice de confusion a une limite qu'il faut connaître : elle dépend entièrement du seuil utilisé pour fabriquer les prédictions. Changer le seuil, c'est obtenir une autre matrice, donc d'autres métriques. Comparer deux modèles à seuils différents revient à comparer des situations réelles différentes, et il est plus honnête de les comparer d'abord sur une métrique indépendante du seuil, comme l'aire sous la courbe ROC que nous verrons plus loin. Pour un dernier modèle déployé, en revanche, une seule matrice compte : celle obtenue au seuil retenu pour la production, calculée sur des données que le modèle n'a jamais vues pendant son apprentissage. Cette exigence est la même que pour la régression : la performance annoncée doit être mesurée sur le jeu de test, une seule fois, à la toute fin.
+
+Lorsque les classes dépassent deux, la matrice devient un carré d'ordre égal au nombre de classes. Chaque case indique combien d'exemples d'une classe réelle ont été étiquetés comme appartenant à une autre classe, et la diagonale contient les réussites. On lit alors les confusions deux à deux : si votre modèle confond souvent le chiffre 4 avec le chiffre 9, la case correspondante le montrera, chose qu'aucun rapport de métriques agrégées ne dirait. Le principe reste identique, seuls les compteurs se multiplient ; les métriques deviennent des moyennes calculées classe par classe, ce que scikit-learn calcule automatiquement dans son rapport quand vous lui demandez l'option macro ou pondérée.
+$lesson$),
+  ('ia-c4-p5', 'ia-c4', 5, $lesson$Arbres de décision : séparer par questions successives$lesson$, $lesson$
+La régression logistique dessine une frontière droite : elle additionne des contributions pondérées et tranche. L'arbre de décision procède d'une toute autre manière, et beaucoup plus proche du raisonnement humain. Il pose une première question sur une variable — le revenu dépasse-t-il un certain montant, le client s'est-il connecté depuis plus de trente jours — puis sépare la population en deux branches, et recommence sur chacune d'elles avec une autre question, jusqu'à ce que chaque feuille finale contienne des exemples suffisamment homogènes. La prédiction se lit alors comme un parcours : on entre en haut de l'arbre, on suit les réponses, on sort en bas avec une étiquette. Ce schéma séduit naturellement les métiers, car il se raconte en langage naturel et se discute ligne à ligne, ce qu'aucun jeu de coefficients linéaires ne permet.
+
+Le point crucial est le choix des questions. Un arbre ne devine pas : à chaque étape, il évalue toutes les variables et tous les points de coupure possibles, puis retient le découpage qui rend les deux sous-ensembles les plus purs. La pureté se mesure par un indice d'impureté, le plus souvent l'indice de Gini ou l'entropie. L'indice de Gini vaut zéro lorsque tous les exemples d'un nœud appartiennent à la même classe, et il augmente à mesure que les classes se mélangent, atteignant sa valeur maximale pour un mélange parfaitement équilibré. L'entropie suit la même logique avec une autre courbe. Le découpage retenu est celui qui diminue le plus l'impureté moyenne des enfants, pondérée par leur taille : on ne veut pas qu'une petite branche devienne irréprochable au prix d'une grande branche confuse.
+
+Voici à quoi ressemble un tel arbre une fois appris, sous forme de schéma. Chaque nœud interne est une question, chaque branche une réponse, chaque feuille une prédiction avec, implicitement, la distribution des exemples qui y sont tombés. La profondeur compte le nombre de questions à poser avant de sortir une réponse, et c'est elle qui détermine à la fois la finesse du modèle et son coût en interprétabilité.
+
+```
+                      [ age <= 45 ? ]
+                      /             \
+                   oui               non
+                   /                   \
+      [ encours <= 800 ? ]         feuille : 1
+          /          \
+     feuille : 0    feuille : 1
+```
+
+Relire cet arbre à voix haute donne une phrase complète : si le client a moins de 45 ans et que son encours dépasse 800, alors il churne, sinon il reste. Toute la connaissance du modèle tient dans ces deux conditions. C'est cette transparence qui fait le succès des arbres dans les secteurs réglementés, où l'on doit justifier une décision individuelle, répondre à un client qui conteste et prouver qu'aucune variable interdite n'a été utilisée. Une régression logistique pourrait produire le même score, mais elle ne dirait jamais en une phrase pourquoi ce score a été obtenu plutôt qu'un autre.
+
+Le calcul ci-dessous montre une évaluation de découpage à la main, sans aucune bibliothèque. On imagine dix clients, une variable âge, et deux positions possibles pour la coupe. Pour chacune, on calcule le Gini de la branche gauche, celui de la branche droite, puis la moyenne pondérée par le nombre d'exemples. La meilleure coupe est celle dont le résultat est le plus faible.
+
+```python
+def gini(classes):
+    if not classes:
+        return 0.0
+    p = classes.count(1) / len(classes)
+    return 1.0 - p * p - (1.0 - p) * (1.0 - p)
+
+def impurete_split(valeurs, seuil, reels):
+    gauche = [r for v, r in zip(valeurs, reels) if v <= seuil]
+    droite = [r for v, r in zip(valeurs, reels) if v > seuil]
+    if not gauche or not droite:
+        return None
+    poids = len(gauche) / len(valeurs)
+    return poids * gini(gauche) + (1 - poids) * gini(droite)
+
+ages = [22, 25, 31, 38, 41, 47, 52, 58, 63, 71]
+reels = [0, 0, 1, 0, 1, 1, 1, 0, 1, 1]
+
+for seuil in (30, 40, 50, 60):
+    print("coupe a", seuil, "ans -> impurete", impurete_split(ages, seuil, reels))
+```
+
+La construction de l'arbre est dite gloutonne : à chaque nœud, on prend la meilleure décision locale sans jamais regarder plus loin, puis on recommence récursivement. Cette stratégie produit très vite des arbres profonds dont chaque feuille ne contient plus qu'un seul exemple. L'arbre a alors appris par cœur les bruits du jeu d'entraînement, atteint une exactitude de 100 % sur les données qu'il a vues et s'effondre sur celles qu'il n'a pas vues. Ce phénomène, présent dans tous les modèles mais particulièrement visible ici, se nomme le surapprentissage. Les paramètres de régularisation sont d'une efficacité directe : la profondeur maximale, le nombre minimal d'exemples pour autoriser une coupe, le nombre minimal d'exemples dans une feuille. En pratique, on commence par une profondeur modérée, on observe l'écart entre performance d'entraînement et performance de test, puis on ajuste en sens inverse si l'écart se creuse.
+
+```python
+from sklearn.tree import DecisionTreeClassifier, export_text
+
+arbre = DecisionTreeClassifier(
+    criterion="gini",
+    max_depth=3,
+    min_samples_leaf=10,
+    random_state=42,
+)
+arbre.fit(X_train, y_train)
+
+print("exactitude train :", arbre.score(X_train, y_train))
+print("exactitude test  :", arbre.score(X_test, y_test))
+
+print("profondeur :", arbre.get_depth())
+print("feuilles   :", arbre.get_n_leaves())
+print(arbre.predict_proba(X_test[:5]))
+```
+
+L'interprétation d'un arbre s'obtient directement depuis sa structure interne. Les tableaux d'attributs décrivent, nœud après nœud, la variable testée, la valeur de coupure, l'enfant gauche et l'enfant droit, ainsi que la répartition des classes dans le nœud. Pour un utilisateur métier, la lecture la plus simple reste l'export textuel, qui restitue l'arbre sous forme de règles imbriquées : si la condition est vraie, on descend à gauche, sinon à droite, jusqu'à une feuille qui porte une classe majoritaire et son score. S'y ajoutent les importances de variables, qui cumulent la diminution d'impureté apportée par chaque variable sur l'ensemble de l'arbre. Ces importances se lisent en pourcentage : une variable totalisant 0,54 a contribué à plus de la moitié des décisions de l'arbre, ce qui fournit un premier écran d'explicabilité avant de passer à des méthodes plus fines.
+
+```python
+print(export_text(arbre, feature_names=list(X.columns), max_depth=3))
+
+for nom, poids in sorted(
+    zip(X.columns, arbre.feature_importances_),
+    key=lambda paire: paire[1],
+    reverse=True,
+):
+    print("{:<24} {:.3f}".format(nom, poids))
+```
+
+Les forces et les faiblesses de l'arbre se compensent remarquablement avec celles de la régression logistique, et c'est pour cette raison que l'on compare presque toujours les deux. L'arbre ne demande aucun centrage-réduction, accepte des variables de natures différentes, détecte automatiquement les interactions entre variables puisqu'une branche n'est accessible que si la question précédente a reçu une réponse, et se lit sans calcul. En contrepartie, il est instable : déplacer quelques exemples d'entraînement peut changer complètement la racine et donc toute l'arborescence. Il ne fait pas d'extrapolation, car il ne produit que des valeurs déjà observées dans les feuilles, et ses probabilités sont des fréquences de feuilles, souvent extrêmes, de 0 ou de 1, donc mal calibrées. Un désavantage plus subtil encore : le critère de Gini favorise les variables à très nombreuses modalités, qui offrent artificiellement beaucoup de coupures possibles.
+
+De ces faiblesses naît l'idée qui domine aujourd'hui la pratique : multiplier les arbres. Si un arbre est sensible au hasard de l'échantillon, autant en entraîner beaucoup sur des sous-échantillons différents, avec des variables tirées au sort à chaque nœud, puis faire voter la majorité. On obtient la forêt aléatoire, nettement plus stable et plus robuste, au prix de la lisibilité — on perd la règle unique qu'un client peut suivre. La forêt conserve les importances de variables agrégées et les probabilités deviennent des moyennes de fréquences, donc mieux calibrées. La famille des méthodes d'accumulation pousse le principe plus loin en entraînant chaque nouvel arbre sur les erreurs du précédent. Ces techniques seront traitées à part dans le chapitre suivant : retenons ici que l'arbre individuel reste le briquet, et que comprendre son fonctionnement est indispensable pour comprendre ce que la forêt agrège.
+$lesson$),
+  ('ia-c4-p6', 'ia-c4', 6, $lesson$Déséquilibre des classes : quand l'exactitude ment$lesson$, $lesson$
+Dans presque tous les problèmes réels, les classes sont inégalement représentées. Une plateforme de vente constate quelques pour cent de commandes frauduleuses, un opérateur téléphonique quelques pour cent de résiliations, un service médical un nombre restreint de cas positifs. Ce déséquilibre n'est pas un défaut des données : il reflète la réalité, et il se creuse encore lorsqu'on remonte le temps ou que l'événement est rare. Le problème apparaît lors de l'évaluation. Si 5 % des clients churnent, un modèle stupide qui prédit partout ne churn pas obtient 95 % d'exactitude sans avoir appris quoi que ce soit. Ce chiffre flotte dans les rapports, rassure tout le monde, et coexiste avec un rappel de zéro : aucun churner n'est détecté. L'exactitude est devenue dans ce contexte une métrique presque inutile, et pourtant elle reste celle que présentent en premier les outils par défaut.
+
+Quatre familles de réponses existent au déséquilibre, et elles ne s'excluent pas. La première consiste à changer de métrique : on abandonne l'exactitude au profit de la précision, du rappel, du F1 et surtout de l'aire sous la courbe de précision-rappel, qui reste lisible quand la classe minoritaire est très rare, contrairement à l'aire sous la courbe ROC qui peut paraître optimiste. La deuxième consiste à rééquilibrer l'entraînement, en sous-échantillonnant la classe majoritaire ou en sur-échantillonnant la minoritaire, à condition de ne jamais toucher au jeu de test, qui doit rester fidèle à la distribution réelle. La troisième consiste à pondérer les erreurs : on indique au modèle que se tromper sur un positif coûte plus cher, et l'algorithme ajuste sa frontière en conséquence. La quatrième, la plus directe, consiste à conserver un modèle non modifié puis à baisser le seuil de décision.
+
+```python
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
+
+equilibre = LogisticRegression(max_iter=1000)
+equilibre.fit(X_train, y_train)
+print("sans pondération")
+print(classification_report(y_test, equilibre.predict(X_test), digits=3))
+
+pondere = LogisticRegression(class_weight="balanced", max_iter=1000)
+pondere.fit(X_train, y_train)
+print("avec pondération")
+print(classification_report(y_test, pondere.predict(X_test), digits=3))
+```
+
+Le paramètre de pondération automatique attribue à chaque classe un poids inversement proportionnel à sa fréquence : la classe rare pèse davantage dans la fonction de coût que l'algorithme minimise. Concrètement, la frontière de décision se déplace vers la classe majoritaire, ce qui augmente le rappel et diminue souvent la précision. On observe exactement le même effet qu'un abaissement de seuil, mais pour des raisons différentes : la pondération agit pendant l'apprentissage, le seuil agit après. Il est tout à fait possible de combiner les deux, et il est tout à fait possible aussi que cela nuise — d'où la nécessité de valider chaque variante sur un jeu de contrôle plutôt que de raisonner a priori. Aucune de ces techniques ne crée de l'information : si la classe minoritaire est représentée par quelques dizaines d'exemples, aucun artifice ne remplacera davantage de données.
+
+Le choix de la métrique de référence dépend du problème, et il est sain de l'écrire noir sur blanc avant de lancer une expérience. Pour une détection de fraude où chaque faux négatif coûte très cher, on optimise le rappel sous contrainte de précision minimale. Pour une campagne marketing où le budget impose un nombre limité d'actions, on optimise la précision ou l'on classe par probabilité et l'on prend les premiers. Pour un classement de candidatures où l'ordre compte plus que la coupure, on utilise l'aire sous la courbe ROC. Pour un screening médical, on regarde souvent le rappel à précision fixée, ou l'on utilise le score F-beta qui pondère le rappel plus fortement que la précision lorsque le coefficient de pondération bêta est supérieur à 1. Dire je cherche à maximiser le F1 sans savoir pourquoi revient à choisir la médiane de ses propres incertitudes.
+
+Le rééquilibrage par échantillonnage mérite une mise en garde concrète. Sous-échantillonner la classe majoritaire fait gagner du temps de calcul et réduit le bruit, mais on jette des informations qui ne reviendront pas ; sur-échantillonner la classe minoritaire en dupliquant ses exemples crée un modèle qui mémorise ces quelques cas et les reconnaît plutôt que les généraliser. Les méthodes de synthèse comblent la différence en générant des exemplaires interpolés entre voisins proches, ce qui produit de meilleurs résultats tant que l'on ne mélange pas deux classes à l'intersection. Quelle que soit la technique, une règle demeure : on rééquilibre sur le jeu d'entraînement seulement. Le jeu de test doit conserver la proportion réelle du terrain, sinon vous mesurez la performance du modèle sur une population qui n'existe pas.
+
+La courbe de précision-rappel mérite d'être distinguée de la courbe ROC, car leur comportement diverge nettement dès que la classe positive devient rare. La courbe ROC trace le taux de vrais positifs en fonction du taux de faux positifs ; or ce dernier se calcule sur la classe négative, très nombreuse ici, et reste donc petit même quand le modèle produit beaucoup d'alertes infondées. La courbe ROC a alors l'air excellente alors que le système envoie des milliers de fausses alarmes. La courbe de précision-rappel ne souffre pas de cet artifice : elle relie directement la qualité des alertes envoyées à la proportion des cas réels retrouvés, et son aire s'effondre visiblement dès que le modèle décroche. Pour des événements rares, on présente donc l'aire sous la courbe de précision-rappel en premier, et l'on garde l'aire ROC pour les comparaisons entre modèles sur des bases équilibrées.
+
+Enfin, le déséquilibre n'est pas figé : il évolue avec la saison, les campagnes, la politique tarifaire et les comportements des fraudeurs, qui s'adaptent eux aussi au modèle déployé. Un système de détection conçu sur une base à 2 % d'anomalies peut se retrouver face à 8 % six mois plus tard, sans que la qualité du modèle ait changé. C'est pourquoi l'on surveille la distribution des probabilités prédites, la part des alertes émises et, lorsque les étiquettes arrivent avec retard, la valeur réelle des métriques. Une dérive suffit à déclencher la réévaluation du seuil, puis l'entraînement d'une nouvelle version. Le déséquilibre des classes est ainsi moins un problème ponctuel à résoudre qu'une propriété du système à suivre dans la durée.
+
+```python
+from sklearn.model_selection import StratifiedKFold
+
+def validation_stratifiee(X, y, modele, n_splits=5):
+    croise = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    scores = []
+    for indices_train, indices_test in croise.split(X, y):
+        modele.fit(X[indices_train], y[indices_train])
+        scores.append(modele.score(X[indices_test], y[indices_test]))
+    return scores
+
+print("par mesure :", validation_stratifiee(X, y, pondere))
+```
+
+La restitution finale doit réunir trois éléments indissociables : la matrice de confusion au seuil retenu, les métriques calculées sur cette matrice, et la description du protocole utilisé. Sans le seuil, le lecteur ne peut pas reproduire votre résultat ; sans le protocole, il ne peut pas en estimer la fiabilité. Ajoutez la distribution des classes du jeu de test, le nombre d'exemples par classe, et l'écart observé entre validation croisée et jeu de test final. Ce niveau de rigueur semble lourd pour un premier modèle, mais il devient indispensable dès que la décision est automatisée, car c'est sur ces chiffres que l'on auditera le système plusieurs mois plus tard, une fois que les données auront changé et que les auteurs de l'analyse auront changé de poste.
+$lesson$),
+  ('ia-c4-p7', 'ia-c4', 7, $lesson$Évaluer sans se mentir : courbe ROC, aire sous la courbe, validation croisée$lesson$, $lesson$
+Une seule matrice de confusion ne décrit qu'un point de fonctionnement : celui du seuil que vous avez choisi. Or un modèle produit tout un continuum de seuils possibles, et sa qualité se juge à sa capacité à bien ordonner les exemples, indépendamment de la coupure retenue. La courbe ROC offre cette vue d'ensemble. Elle balaye tous les seuils imaginables, du plus exigeant au plus permissif, et pour chacun reporte deux grandeurs : le taux de vrais positifs, qui est exactement le rappel, et le taux de faux positifs, obtenu en divisant les faux positifs par le nombre total de cas réels négatifs. On trace ensuite le premier en fonction du second. Le point bas à gauche correspond au seuil extrême où l'on ne prédit jamais positif ; le point haut à droite au seuil opposé où l'on prédit positif partout ; entre les deux se dessine la courbe propre au modèle.
+
+La diagonale du graphique est la référence : elle relie l'angle inférieur droit à l'angle supérieur gauche et représente un modèle qui décide au hasard, sans aucun pouvoir discriminant. Plus la courbe se plaque vers le coin supérieur gauche, plus le modèle est bon, car cela signifie qu'il obtient beaucoup de vrais positifs tout en produisant peu de faux positifs. La déformation globale se résume par l'aire sous la courbe, notée AUC. Cette aire possède une lecture probabiliste particulièrement claire : elle donne la probabilité pour qu'un exemple pris au hasard dans la classe positive reçoive un score plus élevé qu'un exemple pris au hasard dans la classe négatif. Une valeur de 0,5 correspond au hasard, une valeur de 0,75 à un classement correct trois fois sur quatre, une valeur de 1,0 à une séparation parfaite.
+
+Le calcul de cette aire n'a rien de mystérieux : il suffit de parcourir les seuils par ordre décroissant, de mémoriser la suite des points parcourus, puis d'additionner les aires des trapèzes successifs. Le programme ci-dessous construit la courbe à partir de scores bruts et mesure son aire, sans aucune bibliothèque externe. Regardez la liste des points : chaque ligne correspond à un seuil, et vous verrez que les valeurs se déplacent par paliers, un palier par exemple dont le score change de classe lorsqu'on abaisse la coupure.
+
+```python
+def courbe_roc(scores, reels):
+    seuils = sorted(set(scores), reverse=True)
+    total_pos = sum(reels)
+    total_neg = len(reels) - total_pos
+    tp = fp = 0
+    points = [(0.0, 0.0)]
+    for seuil in seuils:
+        for score, reel in zip(scores, reels):
+            if score >= seuil and reel == 1 and score == seuil:
+                tp += 1
+            elif score >= seuil and reel == 0 and score == seuil:
+                fp += 1
+        points.append((fp / total_neg, tp / total_pos))
+    aire = 0.0
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        aire += (x2 - x1) * (y1 + y2) / 2.0
+    return points, aire
+
+scores = [0.97, 0.84, 0.72, 0.63, 0.55, 0.44, 0.31, 0.18]
+reels  = [1,     1,    0,    1,    0,    1,    0,    0   ]
+
+points, aire = courbe_roc(scores, reels)
+print("AUC =", round(aire, 4))
+for faux, vrai in points:
+    print("taux faux positifs {:.2f} | taux vrais positifs {:.2f}".format(faux, vrai))
+```
+
+Côté scikit-learn, la même opération tient en deux appels, et il est bon de savoir ce qu'ils attendent. La fonction roc_curve reçoit les vérités et les scores de probabilité — non les étiquettes prédites, ce qui est une erreur fréquente — puis renvoie les taux de faux positifs, les taux de vrais positifs et les seuils associés. La fonction roc_auc_score calcule directement l'aire à partir des mêmes éléments. Attention : si vous passez des étiquettes 0 et 1 au lieu des probabilités, le calcul reste valide mais ne produit qu'un seul point de la courbe, et l'aire devient dénuée de sens. Pour tracer la courbe, on utilise ensuite la bibliothèque de graphiques habituelle, en affichant la diagonale de référence et en annotant l'aire obtenue pour rendre la figure parlante dans un rapport.
+
+```python
+from sklearn.metrics import roc_curve, roc_auc_score
+
+scores = modele.predict_proba(X_test)[:, 1]
+tfaux, tvrais, seuils = roc_curve(y_test, scores)
+aire = roc_auc_score(y_test, scores)
+
+print("AUC-ROC =", round(aire, 4))
+meilleur = max(zip(tvrais, tfaux), key=lambda p: p[0] - p[1])
+print("point le plus haut :", meilleur)
+```
+
+La validation croisée répond à un autre problème, celui de la fiabilité de la mesure. Sur un petit jeu de test, la performance varie fortement selon le tirage : quelques exemples rares déplacés d'un côté à l'autre suffisent à faire bouger les chiffres de plusieurs points, et il est tentant de présenter le tirage le plus flatteur. La validation croisée découpe l'ensemble des données en un nombre égal de parts, conserve la proportion de chaque classe dans chacune, puis répète l'entraînement en réservant tour à tour une part comme contrôle. On obtient ainsi une mesure par part, dont on reporte la moyenne et l'écart-type. Un écart-type élevé est une information précieuse : il signale que la performance dépend du hasard du découpage et qu'il faut davantage de données ou un modèle plus robuste. L'important est de n'exécuter cette boucle que sur la part entraînement, jamais de laisser une ligne de contrôle influencer l'ajustement.
+
+```python
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+
+folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+scores = cross_val_score(
+    modele, X, y, cv=folds, scoring="f1", n_jobs=-1)
+
+print("F1 par part :", scores.round(3))
+print("moyenne {:.3f} +/- {:.3f}".format(scores.mean(), scores.std()))
+```
+
+Un dernier point distingue le classement de la prédiction et clôt cette section. Un modèle peut ordonner parfaitement les clients du plus au moins à risque tout en attribuant des probabilités fautives : dire 0,90 à un client qui ne churnera qu'une fois sur deux, c'est un excellent rangement mais une mauvaise probabilité. On parle alors de calibration, et elle se vérifie en regroupant les prédictions par tranches de probabilité et en comparant chaque tranche à la fréquence observée. Une courbe de calibration bien alignée sur la diagonale permet d'utiliser les chiffres tels quels pour du calcul de coût ; sans elle, on se contente de l'ordre et l'on raisonne en seuils plutôt qu'en valeurs absolues. scikit-learn fournit une courbe de calibration dédiée, et une transformation de probabilité peut corriger un modèle systématiquement trop confiant ou trop timide.
+$lesson$),
+  ('ia-c4-p8', 'ia-c4', 8, $lesson$Exercice guidé : fixer le seuil et rendre compte$lesson$, $lesson$
+Voici le scénario complet que vous devez être capable de rejouer de bout en bout, en une dizaine de minutes. On dispose d'un jeu de données déséquilibré, on veut une classification binaire, et l'on doit livrer à un responsable métier un modèle dont on pourra justifier du fonctionnement. L'ordre des opérations compte autant que les opérations elles-mêmes : d'abord le découpage stratifié en entraînement et test, puis tout apprentissage de paramètres de transformation sur l'entraînement uniquement, puis l'entraînement du modèle, puis la recherche du seuil sur une part de validation, et enfin une évaluation unique et définitive sur le test. Inversez deux de ces étapes et vos chiffres seront trop beaux, très convaincants, et faux.
+
+La dernière étape consiste à transformer ce travail en livrable lisible. On y fait figurer la distribution des classes, le modèle retenu et son raisonnement simplifié, la matrice de confusion au seuil choisi, les métriques associées avec leur intervalle issu de la validation croisée, la courbe ROC et la courbe de précision-rappel, la comparaison des seuils envisagés avec leur coût métier estimé, et enfin les limites connues du modèle. Le code ci-dessous assemble la boucle de balayage et la production du rapport final : il parcourt les seuils, calcule les métriques, retient le meilleur F1 puis affiche la matrice correspondante. C'est ce dernier affichage, et non le score agrégé, que vous présenterez.
+
+```python
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+
+probas = modele.predict_proba(X_valid)[:, 1]
+meilleur_seuil, meilleur_f1 = 0.5, -1.0
+
+for seuil in [i / 20 for i in range(1, 20)]:
+    preds = (probas >= seuil).astype(int)
+    score = f1_score(y_valid, preds)
+    if score > meilleur_f1:
+        meilleur_f1, meilleur_seuil = score, seuil
+
+preds_test = (modele.predict_proba(X_test)[:, 1] >= meilleur_seuil).astype(int)
+print("seuil retenu :", meilleur_seuil)
+print("precision :", round(precision_score(y_test, preds_test), 3))
+print("rappel    :", round(recall_score(y_test, preds_test), 3))
+print(confusion_matrix(y_test, preds_test))
+```
+
+Pour rédiger votre conclusion, revenez à la question de départ, celle du métier, et non à celle du modèle. Demandez-vous ce que change concrètement le seuil retenu pour l'équipe qui exploitera le système, combien d'alertes elle recevra par jour, quelle proportion sera infondée, et quel sera le coût des cas manqués. Si ces réponses ne tiennent pas en quelques phrases chiffrées, c'est que l'analyse n'est pas encore terminée, quelle que soit la finesse des métriques calculées. La classification n'a de valeur que transformée en décision, et une décision sans estimation d'erreur n'est qu'une intuition déguisée en résultat.
+$lesson$),
+  ('ia-c4-p9', 'ia-c4', 9, $lesson$À retenir$lesson$, $lesson$
+- La classification prédit une catégorie ; la probabilité produite par le modèle et la décision prise à partir d'un seuil sont deux choses distinctes.
+- La régression logistique additionne des variables pondérées, comprime le résultat par la sigmoïde et obtient une probabilité ; elle suppose une frontière linéaire et des variables centrées-réduites.
+- L'arbre de décision pose des questions successives, minimise l'impureté de Gini ou de l'entropie, s'interprète en une phrase mais se surapprend vite s'il est profond.
+- Abaisser le seuil augmente le rappel et diminue la précision ; l'inverse se produit quand on le relève. Aucun seuil n'améliore les deux à la fois.
+- La matrice de confusion compte VP, FP, FN et VN ; précision, rappel, exactitude et F1 n'en sont que des ratios.
+- L'exactitude devient trompeuse dès que les classes sont déséquilibrées : un modèle qui prédit toujours la classe majoritaire peut atteindre 95 % sans rien détecter.
+- L'aire sous la courbe ROC mesure le pouvoir de séparation indépendamment du seuil ; en cas de classes très rares, préférez l'aire sous la courbe de précision-rappel.
+- Le seuil se choisit sur des données de validation, jamais sur le jeu de test, et on ne mesure la performance finale qu'une seule fois.
+- La validation croisée stratifiée fournit une moyenne et un écart-type : annoncez toujours les deux.
+- La pondération des classes agit à l'entraînement, l'ajustement du seuil agit après coup ; les deux sont complémentaires et se valident séparément.
+$lesson$),
+  ('ia-c4-p10', 'ia-c4', 10, $lesson$Erreurs fréquentes$lesson$, $lesson$
+La première erreur consiste à présenter une exactitude élevée comme une preuve de qualité, en omettant de préciser la proportion de chaque classe dans les données de test. Une seconde consiste à appeler la méthode de prédiction d'étiquette quand c'est la probabilité qui est attendue, ce qui revient à figer le seuil à 0,5 sans le dire. Une troisième consiste à tuner le seuil directement sur le jeu de test, ce qui revient à choisir le meilleur résultat après avoir vu les réponses. Viennent ensuite l'oubli de la stratification lors du découpage, la normalisation calculée sur l'ensemble du fichier avant le découpage, et la comparaison de deux modèles évalués à des seuils différents présentée comme une comparaison de modèles.
+
+Une erreur plus sournoise consiste à évaluer un modèle sur les données qui ont servi à l'entraîner, très fréquent lorsqu'on ne crée pas de jeu de test par méconnaissance du découpage. Une autre consiste à ne regarder que le F1 global d'un modèle multiclasses, qui masque une classe entière très mal traitée et qui a pourtant une importance métier considérable. Enfin, il faut se méfier des seuils figés définitivement : la population change, les coûts changent, et un seuil qui était optimal au lancement peut devenir pire que le défaut de 0,5 quelques mois plus tard sans que personne ne s'en aperçoive. Ces sept pièges ont en commun de rendre un chiffre plus beau qu'il ne l'est.
+
+| Symptôme | Cause probable | Correctif |
+| --- | --- | --- |
+| Exactitude très élevée, rappel nul | Classes déséquilibrées | Métriques adaptées, pondération, seuil bas |
+| Score parfait en entraînement, médiocre en test | Arbre trop profond | Réduire la profondeur, échantillon minimum par feuille |
+| Métriques excellentes et reproductibles nulle part | Fuite ou seuil calé sur le test | Reprendre le découpage, valider le seuil sur la part dédiée |
+| Modèle juste en classement mais probabilités inutilisables | Mauvaise calibration | Vérifier la courbe de calibration, recalibrer si besoin |
+$lesson$),
+  ('ia-c4-p11', 'ia-c4', 11, $lesson$Pour aller plus loin$lesson$, $lesson$
+Le guide d'utilisation de scikit-learn consacré à l'apprentissage supervisé présente en détail la régression logistique, les arbres et les méthodes ensemblistes, avec les paramètres de régularisation et de profondeur évoqués ici : https://scikit-learn.org/stable/supervised_learning.html. La page des métriques d'évaluation contient les définitions exactes de la matrice de confusion, de l'aire sous la courbe ROC, des courbes de précision-rappel et des scores dérivés, ainsi que les exemples de code correspondants : https://scikit-learn.org/stable/modules/model_evaluation.html. Enfin, l'ouvrage d'introduction à la statistique prédictive souvent employé en formation détaille la régression logistique, l'analyse des arbres et la validation croisée avec des exemples complets : https://www.statlearning.com/. Collez ces adresses dans la barre d'adresse de votre navigateur et ouvrez-les le jour où une question précise se pose plutôt que de chercher à tout retenir.
+
+Un conseil de méthode pour terminer. Les métriques de classification s'apprennent comme les formules d'un sport : en les recalculant à la main sur de petits exemples, jusqu'à ce que le lien entre une case de la matrice et un rapport devienne immédiat. Prenez dix prédictions, écrivez les quatre compteurs, dérivez-en la précision, le rappel et le F1, puis changez le seuil et recommencez. Une fois ce geste acquis, les rapports de bibliothèque ne seront plus des chiffres à recevoir mais des vérifications à contrôler.
+$lesson$),
+  ('ia-c4-p12', 'ia-c4', 12, $lesson$Et maintenant : la vidéo du chapitre$lesson$, $lesson$
+La vidéo du chapitre prolonge cette leçon en reprenant les mêmes étapes dans l'ordre : passage d'une probabilité à une décision, construction pas à pas de la matrice de confusion, calcul de la précision et du rappel à la main, puis balayage des seuils sur un jeu de données déséquilibré. Regardez-la avec votre éditeur ouvert à côté de vous et interrompez la lecture à chaque exemple pour exécuter le code, recalculer les compteurs et vérifier que vous obtenez les mêmes valeurs. Une fois la visionnage terminé, passez à l'exercice pratique : vous y écrirez seul, en Python pur, le programme qui lit un fichier de transactions, applique plusieurs seuils, construit la matrice de confusion, calcule les quatre métriques et recommande le seuil retenu en justifiant votre choix par le coût des erreurs.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c5-p1', 'ia-c5', 1, $lesson$Pourquoi le non supervisé : travailler sans étiquettes$lesson$, $lesson$
+Jusqu'ici, dans ce parcours, vous avez presque toujours travaillé dans les mêmes conditions : quelqu'un vous remettait un tableau dont une colonne portait la réponse attendue, et votre modèle apprenait à reproduire cette colonne à partir des autres. Ce réglage s'appelle l'apprentissage supervisé, et il reste de loin le plus courant en entreprise, parce qu'une entreprise qui possède déjà des étiquettes préfère les réutiliser plutôt que de les inventer. Mais les données réelles ressemblent rarement à un exercice scolaire aussi bien balisé. Une base de clients n'arrive pas avec une colonne indiquant quels sont les « bons » ; un catalogue de contenus n'emporte aucune étiquette décrivant ses grandes familles de programmes ; un jeu de mesures issues de capteurs ne dit pas quelles machines sont en fin de vie. Dans toutes ces situations, la vérité que vous aimeriez prédire n'existe pas encore, et la fabriquer est précisément le travail qui reste à faire.
+
+C'est là qu'intervient l'apprentissage non supervisé. Plutôt que d'apprendre une correspondance entre des entrées et une sortie connue, on demande à la machine de repérer d'elle-même des regroupements, des structures, des redondances dans les données brutes. Deux familles de questions reviennent sans cesse. La première : quels individus se ressemblent ? On parle alors de clustering, ou regroupement, et l'objectif est de partitionner les points en groupes homogènes à l'intérieur et nettement différents les uns des autres. La seconde : comment décrire chaque individu avec beaucoup moins de caractéristiques, sans perdre l'essentiel de son information ? On parle de réduction de dimension. Ces deux questions forment le cœur de ce chapitre, et vous verrez très vite qu'elles se répondent l'une l'autre : on réduit souvent les dimensions avant de regrouper, puis on relit les groupes à l'aide des nouvelles dimensions pour comprendre ce que l'algorithme a réellement découvert.
+
+
+
+La première raison d'utiliser ces méthodes est d'ordre économique : les étiquettes coûtent cher. Faire annoter des milliers d'e-mails par un humain, faire auditer des dizaines de milliers de transactions par un expert, ou faire catégoriser manuellement une base de produits suffisamment vaste demande du temps, de la compétence et donc de l'argent. Or une grande partie de ce travail peut être préparée par un algorithme : regrouper les cas qui se ressemblent, puis ne faire intervenir l'expert que sur un échantillon représentatif de chaque groupe. Le gain est double, puisque l'annotation devient plus rapide et plus cohérente, un annotateur traitant un ensemble homogène plutôt qu'une succession de cas hétérogènes. Le non supervisé ne remplace donc pas l'humain : il le met là où son jugement apporte le plus de valeur.
+
+La seconde raison est que le regroupement révèle des catégories que personne n'avait imaginées. Quand vous lancez un algorithme de clustering sur le comportement de navigation de vos visiteurs, vous ne lui demandez pas de retrouver vos quatre segments marketing historiques : vous lui demandez de montrer les segments que vos visiteurs forment réellement. Il arrive souvent que ces groupes recoupent les segments existants, ce qui les valide, mais il arrive tout aussi souvent qu'ils en révèlent un cinquième, ou qu'ils montrent qu'un segment historique est en réalité composé de deux populations très différentes. C'est cette capacité à interroger les données sans hypothèse préalable qui fait la valeur de l'apprentissage non supervisé, et c'est aussi ce qui le rend délicat à valider : sans vérité de référence, la qualité se juge à l'aide d'indices internes et, surtout, à l'usage concret qui est fait des groupes.
+
+La troisième raison est technique : plus un jeu de données comporte de caractéristiques, plus la notion de voisin proche perd son sens, car tous les points finissent par être à peu près également éloignés les uns des autres. Réduire les dimensions, c'est donc à la fois rendre les distances plus parlantes, accélérer les calculs et rendre des données enfin visualisables sur un écran, ce dernier point n'étant pas un luxe : on comprend un problème en le regardant.
+
+- Supervisé : la réponse est fournie pour chaque exemple, on apprend à la prédire.
+- Non supervisé : aucune réponse, on demande simplement ce qui se dégage des données.
+- Clustering : partitionner les individus en groupes homogènes et distincts.
+- Réduction de dimension : décrire les individus avec moins de caractéristiques.
+- Détection d'anomalies : repérer les individus qui ne rejoignent aucun groupe crédible.
+- Visualisation : projeter des données à de nombreuses colonnes sur un plan, pour les regarder.
+- Prétraitement : produire des regroupements ou des composantes qui nourriront un modèle supervisé.
+$lesson$),
+  ('ia-c5-p2', 'ia-c5', 2, $lesson$La distance : ce que veut dire « se ressembler »$lesson$, $lesson$
+Aucun algorithme de regroupement ne peut fonctionner sans une définition précise de la ressemblance, et cette définition se nomme une distance. Une distance est une fonction qui prend deux points et renvoie un nombre : zéro si les points sont identiques, positif sinon, d'autant plus grand que les points diffèrent. Cette définition est le contrat que l'on signe avec l'algorithme : k-means ne « comprend » rien à vos données, il ne fait qu'appliquer la distance que vous lui avez choisie, et le résultat n'a donc de sens que si cette distance correspond à votre intuition métier. Deux clients se ressemblent s'ils achètent des produits similaires, deux articles se ressemblent s'ils partagent des termes rares, deux capteurs se ressemblent si leurs courbes se superposent : chaque cas appelle souvent sa propre mesure.
+
+La plus utilisée reste la distance euclidienne, qui n'est rien d'autre que la généralisation du théorème de Pythagore à un nombre quelconque de dimensions. On soustrait les coordonnées terme à terme, on met les écarts au carré, on additionne, on prend la racine carrée. En deux dimensions, c'est exactement la longueur du segment qui relie les deux points ; en trente dimensions, c'est la longueur de la diagonale de ce qu'on appelle un parallélépipède rectangle, et le calcul reste formellement identique. Sa parenté avec la géométrie de l'école a deux conséquences pratiques : elle est intuitive à expliquer à un collègue non technique, et elle est implementee de manière optimisée dans toutes les bibliothèques numériques, ce qui la rend très rapide même sur des millions de lignes.
+
+Deux autres mesures méritent d'être connues parce qu'elles dominent dans des contextes précis. La distance de Manhattan additionne les valeurs absolues des écarts sans les élever au carré : elle correspond à un parcours qui suivrait les axes, comme les rues d'une grille, et elle est moins sensible aux valeurs extrêmes que la distance euclidienne, puisque le carré amplifie les écarts anormaux. La distance cosinus, elle, ne mesure pas l'écart en valeur mais l'angle entre les deux vecteurs : elle vaut un pour deux vecteurs de même direction, même si leurs longueurs sont très différentes. C'est la mesure reine du traitement du texte, où l'on se moque qu'un document soit long ou court et où l'on veut seulement comparer la répartition des mots. Le tableau suivant résume les arbitrages.
+
+| Distance | Ce qu'elle mesure | Points forts | Défaut principal |
+| --- | --- | --- | --- |
+| Euclidienne | Longueur du segment reliant les deux points | Intuitive, rapide, adaptée aux variables continues | Très sensible aux variables à grande échelle et aux valeurs extrêmes |
+| Manhattan | Somme des écarts suivant chaque axe | Plus robuste aux valeurs aberrantes | Moins familière à interpréter géométriquement |
+| Cosinus | Angle entre les vecteurs, indépendant de leur longeur | Idéale pour du texte et des profils de fréquence | Ignore l'amplitude : deux vecteurs très courts peuvent être identiques |
+| Hamming | Nombre de positions qui diffèrent | Chaînes de caractères, données binaires | Inutilisable sur des variables continues |
+
+Le piège qui attend tout débutant tient dans l'échelle des variables. Reprenons un exemple simple : vous regroupez des clients avec deux caractéristiques, l'âge exprimé en années, compris entre quinze et quatre-vingts, et le montant annuel exprimé en euros, compris entre vingt et vingt mille. Avec la distance euclidienne, un écart de cent euros dans le montant vaut cent fois plus qu'un écart d'un an dans l'âge : la variable montant écrase entièrement la distance, et vos groupes finiront par ne refléter que le montant, sans que l'âge n'ait jamais pesé dans la décision. La correction standard consiste à centrer et réduire chaque variable, c'est-à-dire à lui soustraire sa moyenne puis à la diviser par son écart-type. Chaque caractéristique se retrouve alors centrée sur zéro avec un écart-type de un, et chaque unité devient comparable aux autres. La règle est suffisamment importante pour être répétée : standardiser avant toute distance, sauf si vos variables sont déjà exprimées dans les mêmes unités et ont des ordres de grandeur proches.
+
+```python
+import math
+
+def euclidienne(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def manhattan(a, b):
+    return sum(abs(x - y) for x, y in zip(a, b))
+
+def cosinus(a, b):
+    produit = sum(x * y for x, y in zip(a, b))
+    norme_a = math.sqrt(sum(x * x for x in a))
+    norme_b = math.sqrt(sum(x * x for x in b))
+    return 1.0 - produit / (norme_a * norme_b)
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    dimension = len(vecteurs[0])
+    moyennes = [sum(v[d] for v in vecteurs) / n for d in range(dimension)]
+    ecarts = [
+        math.sqrt(sum((v[d] - moyennes[d]) ** 2 for v in vecteurs) / n)
+        or 1.0
+        for d in range(dimension)
+    ]
+    return [
+        tuple((v[d] - moyennes[d]) / ecarts[d] for d in range(dimension))
+        for v in vecteurs
+    ]
+
+clients = [
+    (25, 180.0),
+    (26, 210.0),
+    (24, 165.0),
+    (47, 940.0),
+    (45, 870.0),
+]
+
+normalises = standardiser(clients)
+print("premier client ramene a l echelle :", [round(x, 2) for x in normalises[0]])
+print("euclidienne brute 25 vs 47 :", round(euclidienne(clients[0], clients[3]), 2))
+print("euclidienne normalisee :", round(euclidienne(normalises[0], normalises[3]), 2))
+
+differences = [
+    (euclidienne(normalises[0], normalises[i]), i)
+    for i in range(1, len(normalises))
+]
+differences.sort()
+print("voisins du premier client :", differences)
+```
+
+Exécutez ce bloc tel quel : vous verrez que la distance brute entre le premier et le quatrième client est dominée par les euros, tandis que la distance calculée après standardisation reflète un écart d'âge et de dépense proportionnés. Le rangement des voisins devient lui aussi plus logique : le deuxième et le troisième client, qui ont presque le même âge et la même dépense que le premier, remontent en tête. Notez la petite précaution `or 1.0` dans le calcul des écarts : elle évite une division par zéro quand une variable est constante sur tout le jeu de données, cas fréent quand une colonne ne contient qu'une seule valeur.
+$lesson$),
+  ('ia-c5-p3', 'ia-c5', 3, $lesson$k-means : l'algorithme de référence, pas à pas$lesson$, $lesson$
+L'algorithme k-means est probablement la procédure la plus citée de tout l'apprentissage non supervisé, et ce n'est pas un hasard : son énoncé tient en quelques phrases, son coût par itération est minime, et il converge presque toujours vers une solution exploitable. L'idée directrice est celle d'un compromis itératif entre deux opérations qui se rééquilibrent mutuellement. On choisit un nombre de groupes k. On place k points de départ, appelés centroïdes, n'importe où dans l'espace. Puis on répète deux gestes : affecter chaque individu au centroïde le plus proche, puis repositionner chaque centroïde au centre exact, c'est-à-dire au barycentre des individus qui lui ont été affectés. On s'arrête quand plus aucun individu ne change de groupe, ou quand on atteint la limite d'itérations fixée à l'avance.
+
+Il est essentiel de comprendre ce que l'algorithme optimise, car c'est la clé de lecture de tous ses défauts. À chaque itération, la quantité appelée inertie, ou somme des carrés intra-clusters, ne peut que diminuer : cette somme ajoute, pour chaque individu, le carré de la distance qui le sépare de son centroïde, et le fait de replacer les centroïdes sur les barycentres est exactement ce qui minimise cette somme pour des affectations données. L'inertie est donc une mesure de compacité : elle vaut zéro si tous les points d'un groupe sont superposés à leur centre, et elle grandit avec la dispersion. Le k-means est une procédure de descente sur cette quantité, ce qui explique à la fois sa fiabilité et sa limite : il converge vers un minimum, mais pas nécessairement le meilleur de tous les minima.
+
+Cette précision sur les minima locaux a une conséquence pratique immédiate. Deux exécutions avec des centroïdes initiaux différents peuvent aboutir à des regroupements différents, avec des inerties différentes, sans qu'aucune erreur n'ait eu lieu. En pratique, on relance la procédure un certain nombre de fois, par exemple dix ou vingt, avec des tirages aléatoires variés, et on conserve la meilleure solution au sens de l'inertie. C'est exactement ce que fait le paramètre n_init dans scikit-learn, dont vous verrez la formulation dans la dernière section. Pour vos propres implémentations, une graine fixe suffit à rendre le résultat reproductible, ce qui est indispensable pour tester et déboguer : on veut pouvoir relancer le programme et obtenir la même réponse, puis, une fois le code validé, lever la graine pour explorer d'autres partitions.
+
+Le coût d'une itération est également simple à estimer. L'affectation exige une distance entre chaque point et chaque centroïde, soit n multiplié par k distances, chacune portant sur d dimensions ; le recalcul des centroïdes parcourt une seule fois l'ensemble des points. Une itération coûte donc environ n fois k fois d opérations élémentaires, et le nombre d'itérations restantes est en pratique petit, souvent entre trois et vingt. Voici l'algorithme complet, écrit uniquement avec la bibliothèque standard, sur un jeu de douze points en deux dimensions qui forment visuellement trois nuages.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    historique = []
+
+    for tour in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+
+        historique.append(inertie(points, centres, affectations))
+
+    return affectations, centres, historique
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+affectations, centres, historique = k_moyennes(points, k=3)
+for i, centre in enumerate(centres):
+    effectif = affectations.count(i)
+    arrondi = tuple(round(c, 2) for c in centre)
+    print("groupe", i, ":", effectif, "points, centre", arrondi)
+print("inertie par tour :", [round(v, 2) for v in historique])
+print("inertie finale :", round(inertie(points, centres, affectations), 2))
+```
+
+En lançant ce programme, trois enseignements apparaissent sur l'écran. Le premier est que les trois groupes comptent quatre points chacun et que leurs centres correspondent aux trois nuages que l'on voyait écrits dans la liste : l'algorithme a retrouvé la structure sans jamais avoir été prévenu de son existence. Le deuxième est que la liste des inerties par tour décroît strictement, puis se stabilise : les dernières itérations ne changent plus rien, ce qui signale la convergence. Le troisième est que le programme s'arrête de lui-même grâce à la comparaison des affectations consécutives, bien avant d'avoir épuisé son quota de vingt-cinq tours. Ces trois observations forment le réflexe de diagnostic à appliquer dès la première exécution d'un clustering : compter les effectifs, regarder décroître l'inertie, vérifier que la boucle s'arrête.
+
+Une fois l'algorithme écrit, la première habitude à prendre consiste à le rendre bavard. Un clustering qui se contente d'afficher trois centres ne vous apprend presque rien : vous ignorez comment les groupes se sont formés, combien de tours ont été nécessaires, et si le résultat tient d'un heureux hasard d'initialisation. Le programme suivant reprend le k-means précédent et l'équipe d'un traçage complet : à chaque tour, il imprime l'affectation de chaque point sous forme de chaîne de caractères, puis l'inertie obtenue. Lire une telle trace de haut en bas est la meilleure introduction possible au mécanisme interne de l'algorithme, bien plus parlante qu'une animation : vous voyez les points sauter d'un groupe à l'autre, puis se stabiliser, puis ne plus bouger du tout.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def tracer(points, k, tours=8, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+
+    for tour in range(tours):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        changements = sum(
+            1 for a, b in zip(affectations, nouvelles) if a != b
+        )
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+        inertie = sum(
+            distance(points[j], centres[affectations[j]]) ** 2
+            for j in range(len(points))
+        )
+        resume = "".join(str(a) for a in affectations)
+        print("tour", tour, "| affects:", resume, "| moves:", changements,
+              "| inertie:", round(inertie, 2))
+        if changements == 0:
+            print("convergence : plus aucun point ne change de groupe")
+            break
+
+tracer(points, k=3)
+```
+
+La trace révèle un schéma récurrent, et son déroulé mérite d'être lu dans l'ordre. Au premier tour, le compteur affiche douze changements, ce qui n'a rien d'étonnant : l'affectation de départ est encore vide, tout point est donc compté comme un déplacement. La chaîne obtenue, 220201011111, montre en revanche que les trois centroïdes tirés au sort se trouient déjà chacun dans un nuage, à ceci près que trois points se sont trompés de voisinage. Au tour suivant, ces trois points basculent vers leur véritable groupe, le compteur tombe à trois, et l'inertie s'effondre de cinquante unités à moins de deux. Au tour d'après, plus rien ne bouge : l'algorithme annonce lui-même sa convergence et s'arrête. Plus le jeu de données est nettement séparé, plus cette décroissance est rapide, et l'inverse signale un problème de structure ou d'échelle, que nous examinerons plus bas. Un dernier point mérite l'attention : le nombre de changements par tour est une métrique de stabilité bien plus informative qu'un simple compteur d'itérations, car il indique si la partition vacille encore ou si elle est réellement installée.
+$lesson$),
+  ('ia-c5-p4', 'ia-c5', 4, $lesson$Combien de groupes ? La règle du coude et la silhouette$lesson$, $lesson$
+Jusqu'ici, le nombre de groupes k était une donnée du problème, décidée avant l'exécution. Dans la vraie vie, c'est rarement le cas : personne ne vous dira « il y a exactement trois segments de clients ». La question du choix de k n'a pas de solution théorique unique, mais dispose de trois méthodes complémentaires qui, lorsqu'elles concordent, donnent une réponse très raisonnable. La première est la règle du coude. On fait varier k de un à une dizaine, on calcule l'inertie associée à chaque valeur, et on trace la courbe. L'inertie diminue toujours quand k augmente, mécaniquement : avec autant de clusters que de points, elle tombe à zéro. L'astuce consiste donc à chercher le point de la courbe où la décroissance passe de brutale à résiduelle, c'est-à-dire le coude au-delà duquel ajouter un groupe n'apporte plus grand-chose.
+
+La deuxième méthode, la silhouette, évalue la qualité d'une partition donnée sans comparer plusieurs d'elles. Pour chaque individu, on calcule d'une part la distance moyenne aux autres membres de son propre groupe, et d'autre part la distance moyenne au groupe voisin le plus proche, puis on combine ces deux valeurs en un score compris entre moins un et un. Un individu très bien placé a une silhouette proche de un : il est nettement plus proche de ses camarades que de tout autre groupe. Un individu à la frontière obtient une valeur proche de zéro : il est aussi proche de l'un que de l'autre. Un individu mal affecté descend sous zéro, ce qui signale qu'il serait mieux ailleurs. La silhouette moyenne du jeu de données se compare alors entre différentes valeurs de k, et l'on retient le k qui la maximise.
+
+La troisième approche est plus statistique : elle consiste à comparer la structure obtenue à celle d'un jeu de données entièrement aléatoire, dépourvu de tout groupement réel. Si vos données produisent un indice de structure nettement supérieur à celui d'un bruit simulé avec les mêmes dimensions, c'est qu'il existe bel et bien des groupes. Le coefficient de Calinski-Harabasz, disponible dans scikit-learn, repose exactement sur ce principe de rapport entre la dispersion inter-groupes et la dispersion intra-groupes, et le score de Davies-Bouldin, lui, compare la compacité d'un groupe à sa distance avec le groupe le plus proche. Ces trois familles d'indices ne se remplacent pas : le coude raconte ce que l'on gagne, la silhouette juge la cohésion locale, et les indices de structure comparent au hasard.
+
+```python
+import math
+import random
+
+points = [
+    (1.0, 2.0), (1.3, 1.7), (0.9, 2.5), (1.4, 2.2),
+    (5.0, 5.4), (5.5, 5.0), (4.7, 5.8), (5.2, 5.3),
+    (8.1, 1.0), (8.5, 1.5), (7.7, 0.7), (8.3, 1.2),
+]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+def silhouette_moyenne(points, affectations):
+    groupes = sorted(set(affectations))
+    scores = []
+    for j, point in enumerate(points):
+        meme_groupe = [
+            i for i in range(len(points))
+            if affectations[i] == affectations[j] and i != j
+        ]
+        if not meme_groupe:
+            scores.append(0.0)
+            continue
+        a = sum(distance(point, points[i]) for i in meme_groupe) / len(meme_groupe)
+        b = min(
+            sum(
+                distance(point, points[i])
+                for i in range(len(points))
+                if affectations[i] == autre
+            ) / sum(1 for i in range(len(points)) if affectations[i] == autre)
+            for autre in groupes
+            if autre != affectations[j]
+        )
+        scores.append((b - a) / max(a, b))
+    return sum(scores) / len(scores)
+
+print("k  inertie  silhouette")
+meilleur = None
+for k in range(1, 7):
+    affectations, centres = k_moyennes(points, k)
+    if k == 1:
+        print(k, round(inertie(points, centres, affectations), 2), "  n.a.")
+        continue
+    sil = silhouette_moyenne(points, affectations)
+    print(k, round(inertie(points, centres, affectations), 2), "  ", round(sil, 3))
+    if meilleur is None or sil > meilleur[1]:
+        meilleur = (k, sil)
+print("meilleur k selon la silhouette :", meilleur[0])
+```
+
+La sortie montre exactement le comportement attendu. Avec un seul groupe, l'inertie vaut cent quarante, puis elle tombe à cinquante-quatre pour k égal à deux et s'effondre à moins de deux pour k égal à trois : le coude est nettement visible à cet endroit, puisque les valeurs suivantes, un virgule cinquante-sept puis un virgule zéro-sept, ne baissent plus que de quelques centièmes. La silhouette confirme en donnant son maximum, zéro virgule huit huit quatre, exactement à k égal à trois, puis elle régresse nettement quand on force la présence d'un quatrième groupe, qui ne fait que scinder un nuage déjà homogène. Quand les deux indicateurs désignent le même k, on peut partir en confiance. Le tableau ci-dessous récapitule comment les lire, et surtout ce qu'il faut faire quand ils ne sont pas d'accord, situation plus fréquente qu'on ne le croit sur des données réelles.
+
+| Indicateur | Ce qu'il compare | Bonne nouvelle | Mauvaise nouvelle |
+| --- | --- | --- | --- |
+| Règle du coude | Inertie pour k et k+1 | Cassure nette : un ajout de groupe ne paie plus | Courbe sans coude : les données ne forment pas de groupes nets |
+| Silhouette moyenne | Compacité d'un groupe face à son voisin | Valeur proche de un, toutes tailles équilibrées | Valeur proche de zéro ou négative : frontières floues ou point mal placé |
+| Calinski-Harabasz | Variance entre groupes sur variance à l'intérieur | Score élevé et croissant | Score bas : groupes qui se chevauchent |
+| Domaine métier | Homogénéité réelle des groupes obtenus | Chaque groupe débouche sur une action distincte | Groupes indistinguables : la segmentation n'a aucun usage |
+$lesson$),
+  ('ia-c5-p5', 'ia-c5', 5, $lesson$Les défauts de k-means, et comment les contourner$lesson$, $lesson$
+k-means repose sur un petit nombre d'hypothèses explicites, et chaque défaut de l'algorithme correspond à l'une d'elles non respectée. La première hypothèse est que les groupes ont une forme sphérique, c'est-à-dire que chaque cluster est un nuage rond dont la dispersion est comparable dans toutes les directions. Cela vient de la distance euclidienne, qui trace des cercles autour des centroïdes : dès que vos données forment des formes allongées, en croissant, en boucle ou imbriquées, k-means découpe ces formes en tranches arbitraires. La seconde hypothèse est que les groupes ont des tailles comparables, car l'algorithme minimise une somme pondérée par les effectifs : un cluster vaste et diffus peut attirer des points qui, visuellement, appartiennent clairement à un voisin plus petit et plus dense.
+
+La troisième hypothèse concerne le nombre de groupes, qui doit être fixé à l'avance, et la quatrième la sensibilité au choix des centroïdes initiaux. Cette dernière se démontre en trois lignes : on exécute le même k-means avec plusieurs graines différentes et on observe les inerties obtenues. Quand les données sont nettes, toutes les graines convergent vers la même inertie, à quelques unités près ; quand les données sont ambiguës, deux exécutions peuvent aboutir à des partitions nettement différentes. C'est pourquoi l'initialisation intelligente, dite k-means++, a été inventée : elle choisit le premier centroïde au hasard, puis place les suivants de manière à ce qu'ils soient chacun relativement éloignés des précédents, ce qui réduit fortement le risque de démarrer avec deux centroïdes empilés sur le même groupe.
+
+Enfin, k-means est très sensible aux valeurs extrêmes. Un point aberrant, isolé très loin de tout, tire le barycentre de son groupe vers lui à chaque recalcul, et peut faire dériver un centroïde hors de la zone dense. Une variable non standardisée agit de la même manière sur l'ensemble du jeu de données : c'est l'effet d'échelle vu précédemment, qui se manifeste ici comme un biais systématique de regroupement. Le remède tient en trois gestes, tous simples : centrer et réduire les variables, examiner et éventuellement écarter les aberrations avant de lancer l'algorithme, puis relancer la procédure plusieurs fois en conservant la meilleure inertie.
+
+```python
+import math
+import random
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=25, graine=0):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def inertie(points, centres, affectations):
+    return sum(
+        distance(points[j], centres[affectations[j]]) ** 2
+        for j in range(len(points))
+    )
+
+# Deux nuages nets et un point aberrant tres eloigne
+points = [
+    (1.0, 1.1), (1.4, 0.9), (0.8, 1.3), (1.2, 1.0),
+    (1.1, 4.9), (0.9, 5.2), (1.5, 5.0), (1.0, 4.7),
+    (40.0, 40.0),
+]
+
+print("graine  effectifs          inertie")
+for graine in range(6):
+    affectations, centres = k_moyennes(points, k=2, graine=graine)
+    effectifs = [affectations.count(i) for i in range(2)]
+    print(graine, effectifs, round(inertie(points, centres, affectations), 2))
+
+sans_aberrante = points[:-1]
+meilleure = None
+for graine in range(6):
+    affectations, centres = k_moyennes(sans_aberrante, k=2, graine=graine)
+    valeur = inertie(sans_aberrante, centres, affectations)
+    if meilleure is None or valeur < meilleure:
+        meilleure = valeur
+print("meilleur inertie sans aberration :", round(meilleure, 2))
+```
+
+L'exécution montre un phénomène qu'aucune ligne de code ne laissait présager. Quelle que soit la graine tirée, les six exécutions rendent exactement le même résultat : huit points réunis dans un même groupe, un seul point isolé dans l'autre, et une inertie de trente virgule six six. Autrement dit, le point aberrant, situé à quarante unités de tout le reste, a littéralement confisqué un centroïde à lui seul, et les deux vrais nuages, privés d'un centre, se sont fusionnés en un unique paquet. Le résultat est stable, parfaitement reproductible, et totalement faux : c'est toute la dangerosité de l'aberration, qui ne se signale par aucune erreur d'exécution. Dès qu'on retire ce point, l'inertie tombe à zéro virgule soixante-deux et les graines retrouvent les deux groupes réels. Retenez la leçon de méthode : avant d'interpréter un clustering qui semble incohérent, contrôlez l'échelle des variables, cherchez les aberrations, puis seulement examinez les groupes.
+$lesson$),
+  ('ia-c5-p6', 'ia-c5', 6, $lesson$Les voisins de k-means : k-médianes, DBSCAN et classification hiérarchique$lesson$, $lesson$
+Toutes les limitations précédentes ont provoqué l'émergence d'algorithmes alternatifs, chacun corrigeant un défaut précis. Le k-médianes remplace le barycentre par la médiane composée, c'est-à-dire la médiane calculée indépendamment sur chaque dimension : comme la médiane ignore l'amplitude exacte des valeurs extrêmes, cet algorithme résiste beaucoup mieux aux aberrations, au prix d'un calcul plus lent. Le mini-batch k-means, lui, met à jour les centroïdes sur des sous-ensembles tirés au hasard à chaque itération, ce qui permet de traiter des millions de lignes en quelques secondes plutôt qu'en plusieurs minutes, avec un résultat très voisin de celui de la version complète.
+
+DBSCAN répond à une objection d'un autre ordre : il ne demande pas le nombre de groupes, et il accepte que les formes soient quelconques. Son principe est la densité : on spécifie un rayon et un nombre minimum de points, puis on relie chaque point à ses voisins situés à l'intérieur de ce rayon, formant ainsi des grappes continues. Les points qui ne remplissent pas la condition, parce qu'ils sont isolés ou trop peu nombreux, sont marqués comme bruit. DBSCAN découpe donc sans difficulté des formes en croissant ou en anneaux, trouve lui-même le nombre de groupes, et signale explicitement les observations atypées. Sa faiblesse tient à son rayon : si les groupes ont des densités très différentes, un seul rayon ne peut pas tous les suivre correctement, et la méthode du coude revient alors sous une autre forme.
+
+La classification hiérarchique agit enfin d'une manière radicalement différente, puisqu'elle ne produit pas une partition unique mais tout un arbre de partitions. L'approche ascendante part de chaque point comme d'un groupe isolé, puis fusionne à chaque étape les deux groupes les plus proches, jusqu'à ne plus en avoir qu'un seul. Le résultat se dessine sous forme de dendrogramme, et c'est l'utilisateur qui décide où couper l'arbre pour obtenir k groupes, ce qui rend la question du nombre de groupes beaucoup plus exploratoire : on regarde la hauteur à laquelle les fusions deviennent coûteuses et on tranche en dessous. La distance entre groupes, ou critère de liaison, se choisit entre liaison simple, complète, moyenne ou méthode de Ward, chaque option privilégiant un type de structure différent.
+
+```python
+import math
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def dbscan(points, rayon=1.5, minimum=3):
+    """Clusterisation par densite, version educative en O(n au carre)."""
+    etiquettes = [None] * len(points)
+    numero = 0
+    for j in range(len(points)):
+        if etiquettes[j] is not None:
+            continue
+        voisins = [
+            i for i in range(len(points))
+            if distance(points[j], points[i]) <= rayon
+        ]
+        if len(voisins) < minimum:
+            etiquettes[j] = -1
+            continue
+        etiquettes[j] = numero
+        a_visiter = [i for i in voisins if i != j]
+        while a_visiter:
+            candidat = a_visiter.pop()
+            if etiquettes[candidat] == -1:
+                etiquettes[candidat] = numero
+            if etiquettes[candidat] is not None:
+                continue
+            etiquettes[candidat] = numero
+            nouveaux = [
+                i for i in range(len(points))
+                if distance(points[candidat], points[i]) <= rayon
+            ]
+            if len(nouveaux) >= minimum:
+                a_visiter.extend(i for i in nouveaux if etiquettes[i] is None)
+        numero += 1
+    return etiquettes
+
+def liaison_simple(groupes):
+    """Fusionne les deux groupes les plus proches selon une distance min."""
+    def ecart(a, b):
+        return min(distance(pa, pb) for pa in a for pb in b)
+    while len(groupes) > 1:
+        meilleur = None
+        for i in range(len(groupes)):
+            for j in range(i + 1, len(groupes)):
+                valeur = ecart(groupes[i], groupes[j])
+                if meilleur is None or valeur < meilleur[0]:
+                    meilleur = (valeur, i, j)
+        _, i, j = meilleur
+        fusion = groupes[i] + groupes[j]
+        groupes = [g for num, g in enumerate(groupes) if num not in (i, j)]
+        groupes.append(fusion)
+    return groupes[0]
+
+forme = [(x / 4.0, math.sin(x / 4.0)) for x in range(12)]
+forme += [(x / 4.0, math.sin(x / 4.0) + 5.0) for x in range(12)]
+bruit = [(3.0, 9.0), (11.0, -4.0)]
+donnees = forme + bruit
+
+etiquettes = dbscan(donnees, rayon=0.6, minimum=3)
+print("groupes trouves par DBSCAN :", sorted(set(etiquettes)))
+print("bruit marque -1 :", sum(1 for e in etiquettes if e == -1))
+
+arbre = liaison_simple([[(0.0, 0.0), (0.3, 0.1)], [(5.0, 5.0), (5.4, 5.2)],
+                        [(9.0, 1.0), (9.4, 1.3)], [(0.2, 0.4)]])
+print("dernier noeud de la fusion :", [(round(x, 2), round(y, 2)) for x, y in arbre])
+```
+
+Le choix se décide donc sur la structure attendue des données : k-means pour des groupes ronds et de taille comparable, DBSCAN pour les formes libres et la détection du bruit, la classification hiérarchique pour explorer plusieurs niveaux de granularité.
+
+La réduction de dimension répond à un malaise que tout praticien a rencontré : le jeu de données est trop large. Trop large pour être visualisé, puisqu'un écran n'offre que deux, parfois trois, dimensions. Trop large pour être calculé rapidement, car le coût de la plupart des algorithmes croît au moins linéairement, et souvent carrément, avec le nombre de colonnes. Trop large pour être fiable, car beaucoup de variables sont redondantes : l'âge et l'année de naissance, le chiffre d'affaires et le nombre de contrats, la taille du fichier et son nombre de lignes portent en partie la même information, et conserver les deux revient à compter deux fois le même phénomène. Enfin, trop large pour être interprété, car aucun humain ne peut suivre simultanément l'effet de trente caractéristiques. Réduire, c'est donc compresser sans détruire le sens.
+
+L'opération la plus naïve consiste à supprimer des colonnes au hasard ou par corrélation : on garde une variable sur deux quand deux sont parfaitement liées. Cette approche fonctionne dans des cas simples mais gaspille de l'information, car elle ne conserve que des variables existantes et ignore que l'essentiel peut se trouver dans une combinaison de plusieurs d'entre elles. L'analyse en composantes principales, abrégée ACP et connue en anglais sous le nom de PCA, adopte exactement l'inverse : elle ne sélectionne pas des colonnes, elle en fabrique de nouvelles. Chaque composante est une combinaison linéaire de toutes les variables d'origine, choisie pour expliquer le plus de variabilité possible. La première composante est l'axe le plus informatif du nuage de points, la seconde le suivant en étant perpendiculaire au premier, et ainsi de suite.
+
+Le schéma suivant résume ce qui se passe dans l'espace des individus quand on passe de quatre colonnes à deux composantes : le nuage, qui vivait dans un hyperespace impossible à dessiner, est projeté sur le plan défini par les deux axes qui conservent le plus de variabilité. Les distances ne sont plus tout à fait les mêmes qu'avant, mais elles restent une excellente approximation tant que la part de variance conservée est élevée.
+
+```
+  quatre colonnes                         deux composantes projetees
+
+  age ----.                                axe 2 ^
+          |                                       |   o  o
+  taille -+----> PC2                       o o    | o
+          |                             o o   +---------> axe 1
+  poids ---|                            o    o
+          |                          o
+  score ---'                          o
+
+  (le nuage vit dans R4)              (le plan PC1 x PC2 suffit a le decrire)
+```
+
+Concrètement, réduire de trente colonnes à deux composantes offre quatre gains difficiles à contester. Le premier est la visualisation : on peut enfin dessiner les individus, ce qui permet de repérer à l'œil des groupes, des valeurs aberrantes et des axes de variation. Le second est la débruitage : les dernières composantes capturent souvent du bruit de mesure plutôt que de la structure, et les écarter agit comme un filtre. Le troisième est le gain de calcul, parfois décisif pour des méthodes au coût quadratique comme certaines approches de clustering. Le quatrième est la stabilité statistique : en diminuant le nombre de variables estimées, on réduit le risque de surajustement, au sens où un modèle apprenant sur deux composantes solides se généralise souvent mieux qu'un modèle apprenant sur trente colonnes bruitées.
+
+| Situation | Ce que l'on fait | Gain obtenu | Ce que l'on accepte de perdre |
+| --- | --- | --- | --- |
+| 30 variables corrélées, modèle supervisé | ACP gardant 90 % de la variance | Bruit filtré, modèle plus stable | L'interprétation directe des colonnes d'origine |
+| 4 variables, jeu de quelques centaines de lignes | Aucune réduction | On garde toute la lisibilité | Rien, mais la visualisation reste impossible |
+| Des milliers de variables, clustering à réaliser | ACP puis k-means dans les composantes | Distances plus saines, calcul rapide | Une part de variance, celle des dernières composantes |
+| Jeu destiné à un rapport | Deux composantes, graphique scatter | Un tableau visuel compréhensible de tous les individus | Les détails propres à chaque variable |
+$lesson$),
+  ('ia-c5-p7', 'ia-c5', 7, $lesson$L'ACP en intuition : trouver les axes qui expliquent le plus$lesson$, $lesson$
+Pour comprendre ce que calcule réellement l'ACP, il faut d'abord se mettre à la place des données. Chaque individu est un point, chaque variable est un axe. L'ACP cherche dans cet espace un nouvel axe, c'est-à-dire une direction, telle que si l'on écrasait le nuage le long de cette direction, on perdrait le moins d'information possible. Autrement dit, elle cherche la droite le long de laquelle les points sont le plus étalés, puisque l'étallement, la variance, est notre façon de mesurer l'information contenue dans les données. Le premier axe est donc la direction de variance maximale. Le second est la direction de variance maximale parmi celles qui restent, en étant orthogonal au premier, et ainsi de suite jusqu'à épuisement des dimensions.
+
+Cette définition a une conséquence très pratique : les composantes sont des combinaisons de toutes les variables, avec des coefficients appelés charges. Quand une composante présente des charges élevées de même signe sur plusieurs variables, elle représente un facteur commun qui les fait varier ensemble, par exemple un facteur d'engagement regroupant le nombre de connexions, le temps passé et les exercices validés. Lire ces charges, c'est donner un nom à la composante, et c'est souvent à cette étape que l'analyse devient parlante pour un métier : l'axe abstrait se transforme en « les apprenants très actifs ». Les individus, eux, reçoivent des scores, une valeur par composante, qui servent ensuite de nouvelles coordonnées.
+
+L'étape préalable indispensable est le centrage, et plus généralement la standardisation. Sans centrage, l'origine des axes n'est plus au centre du nuage et les calculs de variance perdent leur sens statistique. Sans standardisation, une variable exprimée en euros écrase une variable exprimée en milliers, exactement comme pour les distances, et la première composante reflétera alors uniquement l'échelle de la variable la plus ample. La règle à retenir est donc la même que pour le clustering : centrez et réduisez avant l'ACP, sauf si toutes les variables sont déjà exprimées dans des unités comparables. Une exception mérite d'être citée : si vos variables sont toutes des proportions ou toutes des compteurs d'ordre de grandeur proche, la standardisation change peu le résultat et peut parfois masquer des différences de dispersion qui vous intéressent.
+
+Enfin, une notion commande toute l'interprétation : la part de variance expliquée. Chaque composante emporte une fraction de la variabilité totale du jeu de données, et ces fractions s'additionnent à cent pour cent. Dans la pratique, la répartition est presque toujours très inégale : les deux ou trois premières composantes captent l'essentiel, puis la décroissance devient rapide. Le cumul de variance expliquée est le critère de décision : retenir assez de composantes pour conserver, disons, entre quatre-vingt et quatre-vingt-quinze pour cent de la variabilité, tout en gardant un nombre de dimensions maniable. En dessous de soixante-dix pour cent, on a généralement trop compressé ; au-dessus de quatre-vingt-quinze, on garde souvent du bruit.
+
+```python
+import math
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0),
+    (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5),
+    (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0),
+    (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5),
+    (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0),
+    (1.5, 9.0, 2.5, 14.0),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [
+        [(v[j] - moyennes[j]) / ecarts[j] for j in range(d)]
+        for v in vecteurs
+    ]
+
+def matrice_correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [
+        [
+            sum(v[a] * v[b] for v in vecteurs) / n
+            for b in range(d)
+        ]
+        for a in range(d)
+    ]
+
+normalises = standardiser(donnees)
+correlation = matrice_correlation(normalises)
+
+noms = ["heures", "exercices", "erreurs", "connexions"]
+for ligne, nom in zip(correlation, noms):
+    print(nom.ljust(12), [round(x, 2) for x in ligne])
+
+variances = [round(ligne[i], 2) for i, ligne in enumerate(correlation)]
+print("variances unitaires :", variances)
+print("variance totale :", round(sum(variances), 2))
+```
+
+L'exécution confirme deux choses attendues. Chaque variable, après standardisation, affiche une variance de un, et la somme de ces variances vaut le nombre de colonnes : c'est la variance totale que l'ACP devra répartir entre ses nouvelles composantes. Les corrélations élevées entre certaines variables annoncent déjà qu'une seule composante pourra représenter plusieurs colonnes à la fois : quand deux variables bougent ensemble, leurs informations se chevauchent, et l'ACP a justement pour vocation de fusionner ce qui se redouble.
+$lesson$),
+  ('ia-c5-p8', 'ia-c5', 8, $lesson$Calculer l'ACP soi-même, sans librairie$lesson$, $lesson$
+Le calcul formel de l'ACP revient à résoudre un problème de valeurs propres sur la matrice de corrélation, un sujet qui fait peur parce qu'il est souvent présenté sous sa forme algébrique la plus compacte. La version procédurale, celle qu'un programme peut exécuter ligne à ligne, est plus rassurante. On commence par standardiser, puis on construit la matrice de corrélation. Ensuite on trouve le vecteur propre associé à la plus grande valeur propre, ce qui donne le premier axe. On « défait » cette direction de la matrice, c'est-à-dire qu'on lui retire la part de variance déjà expliquée, et on recommence pour obtenir le second axe. Cette astuce de déflation garantit que chaque axe découvert est bien perpendiculaire au précédent.
+
+La méthode dite de la puissance itérée permet de trouver ce vecteur sans aucune algebra : on part d'un vecteur arbitraire, on le multiplie par la matrice, on le renormalise, et on recommence. À chaque tour, le vecteur s'oriente un peu plus vers la direction dominante, et il finit par se stabiliser. Le nombre d'itérations requis est en pratique modeste, quelques dizaines pour des matrices de taille raisonnable, et le critère d'arrêt se formule simplement : quand le vecteur cesse de changer sensiblement d'une itération à l'autre, on a converge. La valeur propre associée se récupère ensuite en projetant le vecteur sur son propre produit par la matrice.
+
+```python
+import math
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0),
+    (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5),
+    (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0),
+    (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5),
+    (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0),
+    (1.5, 9.0, 2.5, 14.0),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs]
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [
+        [sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)]
+        for a in range(d)
+    ]
+
+def multiplier(matrice, vecteur):
+    return [
+        sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur)))
+        for i in range(len(matrice))
+    ]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        suivant = [x / n for x in suivant]
+        ecart = norme([a - b for a, b in zip(suivant, vecteur)])
+        vecteur = suivant
+        if ecart < 1e-12:
+            break
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [
+        [matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)]
+        for i in range(d)
+    ]
+
+normalises = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+
+axes = []
+restante = matrice
+for numero in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append((vecteur, valeur))
+    print("composante", numero + 1,
+          "| charges", [round(x, 2) for x in vecteur],
+          "| variance", round(valeur, 3),
+          "| part", str(round(100 * valeur / trace, 1)) + " %")
+    restante = deflate(restante, valeur, vecteur)
+
+cumul = sum(v for _, v in axes) / trace
+print("cumul sur les deux premieres composantes :", round(100 * cumul, 1), "%")
+
+scores = [
+    [sum(v[j] * axes[i][0][j] for j in range(len(v))) for i in range(2)]
+    for v in normalises
+]
+print("individu 1 projete :", [round(x, 2) for x in scores[0]])
+print("individu 5 projete :", [round(x, 2) for x in scores[4]])
+```
+
+Le programme affiche les charges de chaque composante, leur variance propre et la part de variance expliquée, puis projette les individus sur les deux axes retenus. Deux réflexes d'interprétation se dégagent. D'abord, on lit les charges comme un vocabulaire : les composantes dont les charges sont fortes sur les mêmes variables désignent un facteur commun, et les charges de signes opposés révèlent un arbitrage entre deux caractéristiques. Ensuite, on surveille le cumul : s'il reste bas après deux composantes, le jeu de données est réellement riche en dimensions et il faudra en conserver davantage, ou accepter de perdre de l'information. Notez enfin que les signes des charges sont arbitraires : l'axe peut être retourné sans changer l'analyse, seule la direction relative des individus compte.
+$lesson$),
+  ('ia-c5-p9', 'ia-c5', 9, $lesson$Enchaîner réduction et clustering$lesson$, $lesson$
+La combinaison la plus classique d'un pipeline non supervisé consiste à standardiser, puis réduire, puis regrouper. Chaque étape corrige un défaut de la suivante : la standardisation égalise les variables, l'ACP supprime les redondances et le bruit, et le k-means opère alors sur des distances calculées dans un espace bien plus sain. Le bénéfice n'est pas seulement technique. En-clusterant dans l'espace des composantes, on s'affranchit des corrélations qui faussent la distance euclidienne : deux variables fortement corrélées pèsent en réalité deux fois dans la distance, alors qu'elles ne mesurent qu'un seul phénomène. Réduire revient à pondérer chaque information une seule fois.
+
+L'ordre des étapes n'est pas négociable. Standardiser avant l'ACP, car les composantes se calculent sur les écarts à la moyenne ; réduire avant le clustering, pour que la distance porte sur des dimensions indépendantes ; et toujours garder une trace de la variance expliquée, car un pipeline qui se termine en aveugle sur la part d'information conservée ne permet pas de défendre ses résultats. Une précaution supplémentaire s'impose dans les cas où l'on veut prédire ou comparer : ajuster la standardisation et l'ACP sur un ensemble d'apprentissage, puis appliquer les mêmes moyennes, écarts et charges à l'ensemble de test. Ajuster deux fois, sur des ensembles différents, reviendrait à fabriquer deux espaces non comparables.
+
+Le programme suivant assemble tout le chapitre en une seule chaîne exécutable, entièrement en bibliothèque standard : il standardise un jeu de douze individus à quatre variables, calcule deux composantes par puissance itérée, projette, applique k-means dans cet espace réduit et affiche la répartition finale.
+
+```python
+import math
+import random
+
+donnees = [
+    (8.0, 9.0, 6.5, 12.0), (9.5, 8.5, 5.5, 11.0),
+    (7.5, 9.5, 7.0, 13.5), (8.5, 8.0, 6.0, 12.5),
+    (6.0, 3.0, 9.5, 4.0), (5.0, 2.5, 10.0, 3.5),
+    (6.5, 3.5, 9.0, 4.5), (5.5, 2.0, 10.5, 3.0),
+    (2.0, 8.5, 2.0, 15.0), (1.5, 9.0, 2.5, 14.0),
+    (7.0, 6.0, 8.0, 8.0), (4.0, 5.5, 7.5, 7.5),
+]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs], moyennes, ecarts
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [[sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)] for a in range(d)]
+
+def multiplier(matrice, vecteur):
+    return [sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur))) for i in range(len(matrice))]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        vecteur = [x / n for x in suivant]
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [[matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)] for i in range(d)]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=30, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+normalises, moyennes, ecarts = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+
+axes = []
+restante = matrice
+for _ in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append(vecteur)
+    print("part de variance expliquee :", round(100 * valeur / trace, 1), "%")
+    restante = deflate(restante, valeur, vecteur)
+
+projete = [
+    [sum(v[j] * axes[i][j] for j in range(len(v))) for i in range(2)]
+    for v in normalises
+]
+
+affectations, centres = k_moyennes(projete, k=3)
+for i in range(3):
+    membres = [j for j in range(len(projete)) if affectations[j] == i]
+    print("segment", i, "->", len(membres), "individus, indices", membres)
+print("centres dans le plan des composantes :",
+      [[round(c, 2) for c in centre] for centre in centres])
+```
+
+La sortie de ce pipeline mérite d'être lue lentement, car elle condense tout le chapitre. Les deux premières composantes expliquent à elles seules soixante-dix pour cent puis vingt-sept pour cent de la variance, soit un cumul de quatre-vingt-dix-huit pour cent : réduire quatre colonnes à deux axes n'a donc rien fait perdre d'important. Les individus projetés se répartissent ensuite en trois segments, et chacun correspond à un profil réel du jeu de données : quatre apprenants assidus qui combinent beaucoup d'heures et peu d'erreurs, un duo qui progresse très vite avec très peu d'heures de cours, et un groupe de six plus en retrait, marqué par davantage d'erreurs et peu de connexions. Le clustering dans l'espace réduit a donc produit une partition lisible sur un plan, ce qui permet de la présenter graphiquement à un non spécialiste, tout en conservant l'essentiel de l'information des quatre variables d'origine.
+$lesson$),
+  ('ia-c5-p10', 'ia-c5', 10, $lesson$De la théorie aux outils : numpy et scikit-learn$lesson$, $lesson$
+Tout ce que vous avez codé jusqu'ici existe déjà, sous forme optimisée, dans deux bibliothèques que vous utiliserez systématiquement à partir de maintenant. NumPy fournit le conteneur de base, le tableau multidimensionnel, qui remplace les listes de listes Python par une structure compacte où les opérations s'appliquent d'un coup à tous les éléments, ce que l'on appelle la vectorisation. Écrire un tableau moins un autre, ou multiplier un tableau par une constante, se fait sans boucle, avec une vitesse proche de celle du langage C. C'est cette structure qui rend possible le calcul de distances entre des millions de points, et c'est elle qui stocke les matrices de corrélation, les centroïdes et les composantes de l'ACP. L'essentiel à retenir pour lire le reste de ce cours est que les méthodes renvoient toujours des tableaux, et qu'indexer un tableau se fait avec les mêmes crochets que pour une liste.
+
+Scikit-learn, quant à lui, ne contient pas d'algorithme : c'est une collection de ces algorithmes derrière une interface uniforme. Tous les estimateurs suivent le même contrat en trois temps. On instancie l'objet avec ses paramètres, on l'ajuste sur les données avec la méthode fit, puis on interroge le résultat, soit avec la méthode transform quand l'objet produit de nouvelles valeurs, soit avec l'attribut predict quand il produit des étiquettes. Ce contrat unique est un énorme avantage pédagogique : une fois compris pour la régression, il est immédiatement valable pour le clustering et pour l'ACP. Les données d'entrée se présentent sous forme d'un tableau où les lignes sont les individus et les colonnes les caractéristiques, la convention que tout le monde partage désormais.
+
+Le clustering y est représenté par la classe KMeans, dont les paramètres principaux sont le nombre de groupes, le nombre de réinitialisations engagées et la graine aléatoire. Après l'ajustement, trois attributs résument le résultat : les étiquettes de chaque individu, les coordonnées des centroïdes, et l'inertie finale. Scikit-learn retient par ailleurs l'initialisation intelligente vue plus haut, qui choisit les premiers centroïdes de manière à maximiser leur distance mutuelle, et il lance plusieurs exécutions en conservant la meilleure, ce qui supprime presque entièrement le problème des minima locaux. L'ACP est représentée par la classe PCA, qui reçoit le nombre de composantes à conserver et expose les charges, les scores des individus et la part de variance expliquée composante par composante. La standardisation, elle, vit dans la classe StandardScaler, dont la méthode transform applique aux données de test les paramètres appris sur les données d'apprentissage.
+
+Le tableau suivant traduit chaque étape que vous avez écrite à la main vers son équivalent professionnel.
+
+| Étape du chapitre | Équivalent scikit-learn | Ce que l'on en extrait |
+| --- | --- | --- |
+| Centrer et réduire à la main | StandardScaler().fit_transform(X) | Tableau des variables à moyenne nulle et écart-type un |
+| k-means écrit en Python | KMeans(n_clusters=k, n_init=10, random_state=0).fit(X) | labels_ pour les groupes, cluster_centers_ pour les centroïdes, inertie_ pour la compacité |
+| Silhouette calculée à la main | silhouette_score(X, labels) | Score global entre moins un et un, à maximiser |
+| ACP par puissance itérée | PCA(n_components=2).fit_transform(X) | Tableau des scores individus sur les deux axes retenus |
+| Variance expliquée | PCA().explained_variance_ratio_ | Part apportée par chaque composante, à cumuler |
+| Choix de k par la règle du coude | Boucle Python appelant KMeans pour chaque k | Liste des inerties à afficher ensuite |
+| Classification hiérarchique | AgglomerativeClustering ou scipy.cluster.hierarchy | Partition à un niveau donné, ou dendrogramme complet |
+$lesson$),
+  ('ia-c5-p11', 'ia-c5', 11, $lesson$Lire les clusters : passer des nombres à des profils$lesson$, $lesson$
+Un clustering livré sous forme de trois colonnes d'entiers n'a aucune valeur tant que personne ne sait ce que ces entiers désignent. La lecture d'un résultat de regroupement est un exercice distinct de son calcul, et c'est souvent l'étape qui décide de l'utilité d'un projet. Le premier réflexe consiste à décrire chaque groupe par ses centroïdes, non pas en tant que coordonnées brutes, mais en tant que profil : un groupe dont le centroïde affiche beaucoup d'heures de cours et peu d'erreurs se nomme « assidus », un groupe dont le centroïde combine peu d'heures et beaucoup d'erreurs se nomme « décrochés en devenir ». Nommer les groupes n'est pas de la décoration : c'est l'acte qui transforme une partition algorithmique en information exploitable par un métier.
+
+Le deuxième réflexe est de regarder les tailles. Un groupe qui ne contient que trois individus sur mille mérite une vérification : s'agit-il d'une niche réelle à traiter séparément, d'un amas de valeurs aberrantes, ou d'un artefact dû à un nombre de groupes mal choisi ? À l'inverse, un groupe qui en absorbe quatre-vingt-dix pour cent signale que le k est trop faible, ou que la structure attendue n'existe pas. Le troisième réflexe est de confronter le profil à une variable que l'algorithme n'a pas utilisée, par exemple le secteur d'activité ou la région : si les groupes se recoupent avec cette variable cachée, la partition gagne en crédibilité ; si elle ne s'y retrouve pas du tout, il faut comprendre pourquoi avant de conclure.
+
+Le tableau suivant offre une grille de lecture systématique, à dérouler chaque fois que l'on reçoit un résultat de clustering.
+
+| Question à se poser | Où regarder | Ce que cela indique |
+| --- | --- | --- |
+| Les groupes sont-ils compacts ? | Inertie et silhouette moyenne | Score élevé : séparation nette ; score proche de zéro : frontières floues |
+| Les groupes sont-ils équilibrés ? | Effectifs par étiquette | Un groupe géant signale un k trop faible ; un groupe quasi vide signale une niche ou des aberrations |
+| Le résultat est-il reproductible ? | Inerties obtenues sur dix graines | Valeurs voisines : structure stable ; écarts importants : partition fragile |
+| Chaque groupe a-t-il un sens métier ? | Centroïdes ramenés à l'unité d'origine | Profil nommable en une phrase : le regroupement est exploitable |
+| Les groupes résistent-ils à l'échelle ? | Résultat avant et après standardisation | Identique : robuste ; très différent : le résultat dépendait des unités |
+| L'ACP est-elle cohérente ? | Cumul de variance des axes retenus | Au-delà de quatre-vingt-dix pour cent : la visualisation est fidèle |
+
+```python
+import math
+
+# Etiquettes produites par un k-means sur quatre individus types
+groupes = [0, 0, 1, 1, 2, 2, 0, 2]
+individus = [
+    ("nadia", 9.0, 8.5, 2.0, 14.0),
+    ("omar", 8.5, 9.0, 2.5, 13.5),
+    ("lea", 4.0, 3.0, 9.5, 5.0),
+    ("hugo", 5.0, 2.5, 10.0, 4.5),
+    ("sami", 1.5, 8.5, 2.0, 15.5),
+    ("ines", 2.0, 8.0, 2.5, 15.0),
+    ("tara", 7.5, 6.5, 6.0, 9.0),
+    ("yann", 1.0, 9.0, 1.5, 16.0),
+]
+variables = ["heures", "exercices", "erreurs", "connexions"]
+
+def moyennes_par_groupe(individus, groupes):
+    profils = {}
+    for groupe in sorted(set(groupes)):
+        membres = [row for row, g in zip(individus, groupes) if g == groupe]
+        moyennes = [
+            sum(row[1:][j] for row in membres) / len(membres)
+            for j in range(4)
+        ]
+        profils[groupe] = (len(membres), moyennes)
+    return profils
+
+profils = moyennes_par_groupe(individus, groupes)
+for groupe, (taille, moyennes) in profils.items():
+    lisible = {v: round(m, 1) for v, m in zip(variables, moyennes)}
+    print("groupe", groupe, "| effectif", taille, "| profil", lisible)
+```
+
+En relisant ce profil, on remarque que le groupe zéro rassemble des individus très actifs, que le groupe un correspond à des apprenants en difficulté, et que le groupe deux réunit des profils inverses : très peu d'heures de cours, mais beaucoup d'exercices validés et le moins d'erreurs du jeu. Notez le risque d'une lecture à l'aveugle : le groupe zéro contient un membre nettement moins connecté que les deux autres, qui abaisse sensiblement les moyennes, et c'est précisément pour cela qu'on examine toujours les centroïdes accompagnés des médianes et des dispersions, jamais seuls. Un profil moyen peut cacher un groupe hétérogène, et un centre de gravité n'a de sens que rapporté à l'étallement des points autour de lui.
+$lesson$),
+  ('ia-c5-p12', 'ia-c5', 12, $lesson$Exemple guidé : segmenter les apprenants d'un site$lesson$, $lesson$
+Réunissons maintenant tout le chapitre dans un cas d'usage unique et concret. Un site e-learning dispose, pour chacun de ses dix mille apprenants, de quatre mesures : le nombre d'heures de cours suivies, le nombre d'exercices validés, le taux d'erreur aux devoirs et le nombre de connexions mensuelles. La direction marketing souhaite identifier des profils distincts afin d'adapter ses relances, mais aucun historique de segmentation n'existe. Le pipeline complet que vous allez exécuter suit le chemin que la pratique recommande.
+
+```
+  etape 1            etape 2              etape 3            etape 4
+
+  donnees brutes  ->  standardisation  ->  ACP a 2 axes   ->  k-means k=3
+  4 colonnes          moyenne 0             98 % conserve       3 groupes
+                      ecart-type 1          du signal            + profils
+
+        ^                                                           |
+        |                controles : silhouette, inertie,           |
+        +---------  effectifs, stabilite sur dix graines  <----------+
+```
+
+L'ordre des étapes n'est pas discutable : standardiser avant l'ACP, réduire avant de regrouper, contrôler après chaque passage. Le programme ci-dessous applique cette chaîne complète en bibliothèque standard, affiche la variance expliquée, calcule la silhouette dans l'espace réduit, puis décrit les trois groupes obtenus en termes de profil.
+
+```python
+import math
+import random
+
+donnees = [
+    (9.0, 8.5, 2.0, 14.0), (8.5, 9.0, 2.5, 13.5), (9.5, 8.0, 2.2, 14.5),
+    (8.0, 8.8, 3.0, 13.0), (2.0, 8.5, 2.0, 15.5), (1.5, 8.0, 2.5, 15.0),
+    (1.0, 9.0, 1.5, 16.0), (2.5, 8.2, 3.0, 14.5),
+    (5.0, 3.0, 9.5, 5.0), (4.5, 2.5, 10.0, 4.5), (5.5, 3.5, 9.0, 5.5),
+    (4.0, 2.0, 10.5, 4.0), (7.5, 6.5, 6.0, 9.0), (7.0, 6.0, 6.5, 8.5),
+    (8.0, 7.0, 5.5, 9.5), (6.5, 7.5, 7.0, 8.0),
+]
+noms_variables = ["heures", "exercices", "erreurs", "connexions"]
+
+def standardiser(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    moyennes = [sum(v[j] for v in vecteurs) / n for j in range(d)]
+    ecarts = [
+        math.sqrt(sum((v[j] - moyennes[j]) ** 2 for v in vecteurs) / n) or 1.0
+        for j in range(d)
+    ]
+    return [[(v[j] - moyennes[j]) / ecarts[j] for j in range(d)] for v in vecteurs]
+
+def correlation(vecteurs):
+    n = len(vecteurs)
+    d = len(vecteurs[0])
+    return [[sum(v[a] * v[b] for v in vecteurs) / n for b in range(d)] for a in range(d)]
+
+def multiplier(matrice, vecteur):
+    return [sum(matrice[i][j] * vecteur[j] for j in range(len(vecteur))) for i in range(len(matrice))]
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def valeur_propre(matrice, iterations=200):
+    d = len(matrice)
+    vecteur = [1.0 / math.sqrt(d)] * d
+    for _ in range(iterations):
+        suivant = multiplier(matrice, vecteur)
+        n = norme(suivant)
+        if n == 0:
+            break
+        vecteur = [x / n for x in suivant]
+    valeur = sum(a * b for a, b in zip(multiplier(matrice, vecteur), vecteur))
+    return vecteur, valeur
+
+def deflate(matrice, valeur, vecteur):
+    d = len(matrice)
+    return [[matrice[i][j] - valeur * vecteur[i] * vecteur[j] for j in range(d)] for i in range(d)]
+
+def distance(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
+
+def k_moyennes(points, k, iterations=30, graine=1):
+    rng = random.Random(graine)
+    centres = [list(p) for p in rng.sample(list(points), k)]
+    affectations = [None] * len(points)
+    for _ in range(iterations):
+        nouvelles = [
+            min(range(k), key=lambda i: distance(points[j], centres[i]))
+            for j in range(len(points))
+        ]
+        if nouvelles == affectations:
+            break
+        affectations = nouvelles
+        for i in range(k):
+            groupe = [points[j] for j in range(len(points)) if affectations[j] == i]
+            if groupe:
+                centres[i] = [sum(c) / len(groupe) for c in zip(*groupe)]
+    return affectations, centres
+
+def silhouette(points, affectations):
+    scores = []
+    groupes = sorted(set(affectations))
+    for j, point in enumerate(points):
+        memes = [i for i in range(len(points))
+                 if affectations[i] == affectations[j] and i != j]
+        if not memes:
+            scores.append(0.0)
+            continue
+        a = sum(distance(point, points[i]) for i in memes) / len(memes)
+        b = min(
+            sum(distance(point, points[i]) for i in range(len(points))
+                if affectations[i] == autre)
+            / max(1, sum(1 for i in range(len(points)) if affectations[i] == autre))
+            for autre in groupes if autre != affectations[j]
+        )
+        scores.append((b - a) / max(a, b))
+    return sum(scores) / len(scores)
+
+normalises = standardiser(donnees)
+matrice = correlation(normalises)
+trace = sum(matrice[i][i] for i in range(len(matrice)))
+axes, restante = [], matrice
+for _ in range(2):
+    vecteur, valeur = valeur_propre(restante)
+    axes.append((vecteur, valeur))
+    restante = deflate(restante, valeur, vecteur)
+
+cumul = sum(v for _, v in axes) / trace
+print("variance expliquee par les deux axes :", round(100 * cumul, 1), "%")
+
+projete = [[sum(v[j] * axes[i][0][j] for j in range(len(v))) for i in range(2)]
+           for v in normalises]
+
+meilleur = None
+for graine in range(10):
+    affectations, centres = k_moyennes(projete, k=3, graine=graine)
+    valeur = sum(distance(p, centres[affectations[j]]) ** 2
+                 for j, p in enumerate(projete))
+    if meilleur is None or valeur < meilleur[0]:
+        meilleur = (valeur, affectations, centres)
+inertie, affectations, centres = meilleur
+
+print("meilleure inertie sur dix graines :", round(inertie, 2))
+print("silhouette dans l espace reduit :", round(silhouette(projete, affectations), 3))
+
+for groupe in range(3):
+    membres = [row for row, etiquette in zip(donnees, affectations)
+               if etiquette == groupe]
+    profils = [round(sum(row[j] for row in membres) / len(membres), 1)
+               for j in range(4)]
+    description = {v: m for v, m in zip(noms_variables, profils)}
+    print("segment", groupe, "|", len(membres), "apprenants |", description)
+```
+
+Trois contrôles ressortent de cette exécution, et chacun correspond à une étape du tableau de lecture. Le cumul de variance confirme que deux axes suffisent à représenter le signal. La silhouette obtenue dans l'espace réduit doit être élevée, ce qui valide la séparation des trois groupes. La répétition sur dix graines avec conservation de la meilleure inertie protège contre un tirage malheureux. Un dernier contrôle, purement métier, reste à faire : relier chaque segment à l'action qu'il déclenchera, une relance pédagogique, un message d'encouragement, une proposition de tutorat. Sans cette dernière étape, le clustering reste une curiosité statistique ; avec elle, il devient un outil de décision.
+$lesson$),
+  ('ia-c5-p13', 'ia-c5', 13, $lesson$À retenir$lesson$, $lesson$
+- Le non supervisé regroupe ou compresse des données qui n'ont pas d'étiquette de réponse.
+- Une distance définit la ressemblance : k-means ne fait qu'appliquer celle que vous lui choisissez.
+- Euclidienne, Manhattan et cosinus répondent à des questions différentes ; la cosinus domine pour le texte.
+- Centrez et réduisez les variables avant toute distance ou toute ACP, sinon l'échelle décide à votre place.
+- k-means alterne affectation des points au centroïde le plus proche puis recentrage sur le barycentre.
+- L'inertie, somme des carrés des distances au centroïde, décroît à chaque itération jusqu'à convergence.
+- k-means suppose des groupes ronds, de tailles comparables, et il dépend de l'initialisation : relancez-le plusieurs fois.
+- Le coude donne le k où la baisse d'inertie se casse ; la silhouette juge la compacité locale et vaut au maximum un.
+- DBSCAN découpe des formes arbitraires et marque le bruit, mais demande un rayon de densité.
+- La classification hiérarchique produit un arbre de partitions que l'on coupe à la hauteur de son choix.
+- L'ACP fabrique de nouvelles colonnes, combinaisons des anciennes, ordonnées par variance expliquée cumulée.
+- Standardiser, réduire, regrouper, puis contrôler : cet ordre de pipeline est celui de la pratique.
+- Lire un clustering, c'est nommer les profils, vérifier les effectifs, tester la stabilité et relier chaque groupe à une action.
+$lesson$),
+  ('ia-c5-p14', 'ia-c5', 14, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Piège : lancer k-means sur des variables aux échelles très différentes → Correction : appliquez StandardScaler, ou équivalent, avant de calculer la moindre distance.
+- Piège : choisir k parce que c'est le nombre que l'on espérait trouver → Correction : croisez la règle du coude, la silhouette et le sens métier avant de trancher.
+- Piège : conclure qu'un clustering est faux parce que les groupes ne correspondent pas aux classes historiques → Correction : le non supervisé cherche des structures, pas à reproduire des étiquettes qui n'ont pas servi à l'apprentissage.
+- Piège : faire confiance à une seule exécution avec une graine donnée → Correction : relancez une dizaine de fois et gardez la meilleure inertie, ou fixez une graine pour déboguer puis relâchez-la.
+- Piège : interpréter les centroïdes bruts sans revenir aux unités d'origine → Correction : reconstruisez les profils en inversant la standardisation pour les présenter.
+- Piège : retenir deux composantes alors que le cumul de variance reste sous soixante-dix pour cent → Correction : suivez explained_variance_ratio_ et gardez assez d'axes pour conserver le signal.
+- Piège : traiter les composantes de l'ACP comme des variables à interpréter directement → Correction : lisez les charges de chaque composante pour lui donner un nom.
+- Piège : appliquer la standardisation sur l'ensemble complet avant de découper entraînement et test → Correction : ajustez sur l'entraînement et transformez le test avec les mêmes paramètres.
+- Piège : arrêter le travail à l'affichage des groupes sans jamais nommer les profils → Correction : produisez une phrase par groupe et une action associée.
+$lesson$),
+  ('ia-c5-p15', 'ia-c5', 15, $lesson$Pour aller plus loin$lesson$, $lesson$
+La documentation officielle de scikit-learn reste la référence la plus pratique pour consolider ce chapitre, car elle illustre chaque notion sur des exemples exécutables. La page consacrée au clustering, https://scikit-learn.org/stable/modules/clustering.html, détaille les hypothèses de chaque algorithme, les cas de dérive classiques et les métriques d'évaluation, avec des graphiques qui rendent immédiatement visibles les formes que k-means ne sait pas découper. La page consacrée à la décomposition, https://scikit-learn.org/stable/modules/decomposition.html#pca, explique le calcul des charges, le rôle de la valeur expliquée et l'effet de la standardisation sur les résultats. Prenez le temps de lire les sections sur les pièges courants : elles reprennent, en termes d'API, chacune des précautions énoncées dans cette leçon.
+
+Pour aller vers les méthodes hiérarchiques, la documentation de SciPy, https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.hierarchy.linkage.html, décrit les critères de liaison et fournit le tracé des dendrogrammes, utile quand le nombre de groupes reste à découvrir. Du côté de la bibliothèque de calcul elle-même, le guide rapide de NumPy, https://numpy.org/doc/stable/user/quickstart.html, vous apprendra la vectorisation qui remplace les boucles montrées ici, et vous gagnerez un facteur important de productivité une fois les tableaux assimilés. Aucune de ces pages ne se lit d'un seul trait : ouvrez-la le jour où une question précise se pose, reproduisez l'exemple, modifiez-le, et revenez-y aussi souvent que nécessaire.
+$lesson$),
+  ('ia-c5-p16', 'ia-c5', 16, $lesson$Et maintenant : regardez la vidéo du chapitre, puis réécrivez seul le k-means de l'exercice pratique sans consulter la solution$lesson$, $lesson$
+Le k-means est simple à appeler et difficile à bien utiliser : le choix de k, la sensibilité aux initialisations et l'interprétation des clusters demandent autant d'attention que la mise en œuvre. Regardez la vidéo du chapitre pour ancrer la démarche, puis réécrivez l'algorithme seul, sans consulter la solution : initialisation des centroïdes, assignation, mise à jour, critère d'arrêt. L'exercice pratique vous demandera ensuite de justifier la valeur de k retenue sur un jeu de données réel — un raisonnement que seul un modèle bien compris permet de défendre.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c6-p1', 'ia-c6', 1, $lesson$Comprendre : ce que mesure vraiment un score$lesson$, $lesson$
+Bienvenue dans ce sixième chapitre du parcours data science, consacré à une question que l'on préfère souvent esquiver : à quoi servent les chiffres que votre modèle affiche ? Un modèle qui annonce 95 % de réussite n'est pas nécessairement un bon modèle, et un modèle qui en annonce 72 peut parfaitement être celui qu'il faut déployer. Tout dépend de la manière dont le chiffre a été produit. Si les données qui ont servi à mesurer la performance ont, de près ou de loin, contaminé l'entraînement, le score est un mirage. Si le score a été obtenu sur un seul découpage arbitraire, il n'a aucune valeur de généralisation. Si le modèle est assez complexe pour retenir chaque détail du jeu d'entraînement, il peut afficher un résultat parfait tout en étant incapable de prédire la moindre nouvelle observation. La validation et la robustesse des modèles existent précisément pour transformer un chiffre flatteur en une information défendable devant un pair revêche.
+
+Ce chapitre vous apprendra quatre choses concrètes, que vous manipulerez toutes dans du code Python écrit à la main. Premièrement, vous découvrirez ce qu'est réellement le surapprentissage, pourquoi il survient presque inévitablement quand la complexité du modèle dépasse ce que les données peuvent soutenir, et comment le reconnaître à la simple lecture de deux nombres. Deuxièmement, vous découperez proprement vos données en ensembles d'entraînement, de validation et de test, puis vous construirez une validation croisée k plis sans aucune bibliothèque de machine learning, uniquement avec la bibliothèque standard de Python. Troisièmement, vous appliquerez la régularisation, c'est-à-dire l'art de retenir un modèle pour l'empêcher de trop apprendre, et vous lirez des courbes d'apprentissage pour décider si votre problème manque de données ou si votre modèle est trop ambitieux. Quatrièmement, vous traquerez les fuites de données, ces contaminants invisibles qui gonflent les scores en interne et font s'effondrer les performances une fois le modèle en production. À la fin, vous saurez écrire un rapport de validation que l'on ne peut pas réfuter d'un revers de main.
+
+Un dernier conseil avant d'entrer dans le vif du sujet. La rigueur statistique s'apprend comme la natation : en plongeant, pas en regardant depuis le bord de la piscine. Chaque notion de cette leçon est illustrée par un bloc de code complet et exécutable tel quel, écrit sans aucun paquet externe, afin que rien ne vienne parasiter votre compréhension. Vous n'aurez besoin ni de scikit-learn, ni de pandas, ni d'un environnement particulier : la bibliothèque standard suffit amplement à fabriquer des données, à les découper, à ajuster un modèle et à mesurer ses erreurs. Le fil rouge du chapitre sera un banc d'essai complet : vous générerez un jeu de données synthétique reproductible, vous l'évaluerez de plusieurs manières, vous identifierez le surapprentissage, puis vous corrigerez le protocole jusqu'à obtenir un score auquel vous pouvez croire.
+
+
+
+Un score de performance n'est jamais une propriété intrinsèque d'un modèle. C'est le résultat d'une mesure, et toute mesure repose sur trois piliers : les données observées, la manière dont elles ont été réparties, et la métrique choisie. Changer l'un de ces trois éléments change le chiffre, parfois du tout au tout. Le même modèle qui obtient 0,91 de R² sur un échantillon favorable tombera à 0,55 sur un échantillon ordinaire, sans qu'une seule ligne de code n'ait été modifiée. C'est pourquoi un score isolé, dépourvu de contexte, ne signifie rien : il faut savoir sur quelles données il a été calculé, quelles prétraitements ont été appliqués avant le découpage, et combien de fois l'expérience a été répétée.
+
+La quantité que l'on cherche réellement à estimer porte un nom précis : l'erreur de généralisation, c'est-à-dire l'erreur que le modèle commettra sur des observations qu'il n'a jamais vues, qui représentent exactement celles qui comptent en production. Cette quantité est inaccessible par construction, car on ne dispose jamais de toutes les données futures. On s'en approche en fabriquant une simulation honnête : on cache une partie des données au modèle, on l'entraîne sur le reste, puis on mesure son erreur sur la partie cachée. Le jeu de test joue le rôle de données futures simulées, et son intégrité conditionne toute la valeur du chiffre affiché.
+
+Le piège le plus courant consiste à calculer une statistique quelconque sur la totalité des données avant de découper. Moyenne, écart-type, encodage des catégories, sélection des variables : chaque opération effectuée avant la coupe utilise de l'information du futur ensemble de test, qui fuit alors dans l'entraînement. Le modèle paraît meilleur qu'il n'est, et la déception arrive au pire moment, celui du déploiement. La règle à graver est simple : on découpe d'abord, on transforme ensuite, et chaque transformation apprise sur l'entraînement est réappliquée à l'identique sur le test.
+
+```python
+import random
+
+random.seed(1)
+x = [random.uniform(0, 10) for _ in range(60)]
+y = [2.5 * xi + 8 + random.gauss(0, 4) for xi in x]
+
+moy = sum(y) / len(y)
+print("moyenne globale calculee avant coupe :", round(moy, 2))
+
+coupe = int(len(x) * 0.75)
+x_train, x_test = x[:coupe], x[coupe:]
+y_train, y_test = y[:coupe], y[coupe:]
+
+moy_train = sum(y_train) / len(y_train)
+print("moyenne du seul entrainement :", round(moy_train, 2))
+print("ecart entre les deux :", round(moy - moy_train, 2))
+```
+
+Ce petit programme montre une fuite bénigne en action : la moyenne globale intègre les valeurs du futur test, elle est donc faussée dès la première ligne. Sur un jeu de données réel, des fuites de ce type, multipliées par le nombre de colonnes et de transformations, peuvent ajouter plusieurs dizaines de points de performance fictifs. Notez que l'écart paraît faible ici parce que l'échantillon est homogène ; avec des données déséquilibrées ou des populations mélangées, l'écart devient considérable.
+
+Trois questions suffisent pour éprouver n'importe quel score. Premièrement, quelles données ont servi à l'entraîner, et les a-t-on vues avant le découpage ? Deuxièmement, quelles données ont servi à le mesurer, et le modèle les a-t-il vues pendant l'entraînement ? Troisièmement, la mesure a-t-elle été répétée sur plusieurs découpages, si bien que l'on connaît non seulement la moyenne mais aussi la dispersion ? Un score accompagné de ces trois réponses devient discutable, donc scientifique. Un score sans ces réponses relève de la communication.
+
+- Un score dépend du découpage autant que du modèle.
+- L'erreur de généralisation n'est jamais observée directement, on l'estime.
+- Toute statistique calculée avant le découpage contamine les ensembles suivants.
+- Un chiffre isolé n'a pas de sens sans protocole de mesure.
+- La rigueur se résume à une phrase : on découpe avant de transformer.
+$lesson$),
+  ('ia-c6-p2', 'ia-c6', 2, $lesson$Surapprentissage : quand le modèle apprend par cœur$lesson$, $lesson$
+Le surapprentissage, ou overfitting en anglais, se produit quand un modèle capture, en plus du signal réel, le bruit aléatoire propre aux observations d'entraînement. Le bruit, ce sont les fluctuations qui ne tiennent ni à la relation étudiée ni à la qualité de la mesure, mais simplement au hasard : une journée inhabituelle, une erreur de saisie, une coïncidence locale. Un modèle suffisamment flexible est capable de passer exactement par chaque point d'entraînement, y compris les points aberrants, et obtient alors une erreur nulle sur les données vues. Sa performance sur des données nouvelles, en revanche, s'effondre, car le bruit qu'il a appris ne se reproduira pas.
+
+L'analogie de l'élève qui apprend par cœur sans comprendre résume exactement la situation. Si vous donnez à un étudiant les questions exactes du contrôle avec les réponses, il obtiendra 20 sur 20, sans rien pouvoir produire le jour de l'examen réel. Un autre étudiant, qui aura compris les raisonnements généraux, obtiendra peut-être 15 en contrôle blanc et 16 le jour J. Le premier modèle affiche un score d'entraînement spectaculaire et un score de test décevant ; le second affiche des scores cohérents. Détecter le surapprentissage revient donc à comparer la performance sur les données vues à la performance sur des données cachées.
+
+Trois facteurs aggravants interagissent et expliquent pourquoi le surapprentissage explose soudainement. Le premier est la puissance expressive du modèle : plus il dispose de paramètres ou de degrés de liberté, plus il peut se plier aux accidents de l'échantillon. Le second est la petite taille du jeu de données : avec trente observations, n'importe quel modèle suffisamment souple épouse le hasard. Le troisième est le rapport signal sur bruit : si la relation réelle est faible comparée aux fluctuations, le modèle a davantage de bruit à retenir que de signal à apprendre. Retirez l'un de ces trois facteurs et le surapprentissage recule immédiatement.
+
+Le programme suivant illustre le phénomène avec le plus simple des modèles souples : la régression par plus proches voisins. Avec un seul voisin, le modèle mémorise parfaitement l'entraînement, puisqu'il se contente de recopier la valeur la plus proche, qui est lui-même. En augmentant le nombre de voisins, on force le lissage et la généralisation. L'expérience se joue entièrement sur des données fabriquées avec une graine fixe, si bien qu'elle produit exactement les mêmes nombres à chaque exécution.
+
+```python
+import random
+
+random.seed(3)
+points = []
+for _ in range(80):
+    xi = random.uniform(0, 10)
+    yi = 3 * xi + 5 + random.gauss(0, 7)
+    points.append((xi, yi))
+
+random.shuffle(points)
+coupe = 60
+train, test = points[:coupe], points[coupe:]
+
+
+def predire(apprentissage, x, k):
+    tri = sorted(apprentissage, key=lambda p: abs(p[0] - x))
+    voisins = tri[:k]
+    return sum(v[1] for v in voisins) / k
+
+
+def erreur(echantillon, x, y, k):
+    return sum((predire(echantillon, xi, k) - yi) ** 2 for xi, yi in zip(x, y)) / len(x)
+
+
+x_tr = [p[0] for p in train]
+y_tr = [p[1] for p in train]
+x_te = [p[0] for p in test]
+y_te = [p[1] for p in test]
+
+print("k  erreur_train  erreur_test")
+for k in (1, 3, 7, 15, 31):
+    print(k, round(erreur(train, x_tr, y_tr, k), 2), round(erreur(train, x_te, y_te, k), 2))
+```
+
+En exécutant ce code, vous observez une courbe familière : l'erreur d'entraînement augmente doucement avec k, tandis que l'erreur de test décroche au début puis remonte. Le minimum de l'erreur de test définit la complexité idéale pour ce jeu de données. Le modèle à un voisin est surappris ; le modèle à trente et un voisin est en passe de lisser tout signal utile. Entre les deux se trouve une région de compromis que la validation seule permet de localiser.
+
+Le schéma suivant, tracé en caractères, résume la géométrie classique de la situation. Il montre deux courbes qui divergent : à gauche, les deux erreurs se confondent et le modèle est trop simple ; au centre, elles se rejoignent au plus près ; à droite, l'écart se creuse et le modèle mémorise.
+
+```text
+erreur
+  |\
+  | \                      erreur_test
+  |  \                     ___________
+  |   \                 ___/
+  |    \             ___/        erreur_entrainement
+  |     \         ___/          _______________
+  |      \     ___/          ___/
+  |       \__/          ___/
+  |      ____      ____/
+  |   __/    \__ /
+  |__/            \___
+  +------------------------------------------ complexite
+       sous-ajustement | bon | surapprentissage
+```
+
+La règle empirique la plus utile tient en une phrase : si votre modèle affiche une erreur d'entraînement nettement inférieure à son erreur de test, il surapprend, et aucun réglage fin de la métrique ne changera rien à cette situation. À l'inverse, si les deux erreurs sont toutes les deux élevées et proches, il souffre de sous-ajustement : il est trop simple pour saisir la relation. Ces deux diagnostics, obtenus en comparant deux nombres, orientent toutes les décisions techniques qui suivent.
+$lesson$),
+  ('ia-c6-p3', 'ia-c6', 3, $lesson$Biais et variance : les deux visages de l'erreur$lesson$, $lesson$
+La théorie classique décompose l'erreur d'un modèle en deux composantes, auxquelles s'ajoute un bruit irréductible. Le biais mesure l'erreur systématique du modèle, c'est-à-dire l'écart qu'il commettrait même s'il était entraîné sur d'innombrables échantillons : il traduit des hypothèses trop faibles, une capacité insuffisante pour représenter la réalité. La variance mesure la sensibilité du modèle au jeu d'entraînement choisi : elle traduit l'instabilité, le fait que deux échantillons tirés de la même population produisent des modèles très différents. Le bruit irréductible, lui, provient de facteurs que rien ne permettra de prédire, et constitue la limite absolue de toute performance.
+
+Le point délicat est que biais et variance se paient l'un l'autre. Réduire le biais, c'est rendre le modèle plus flexible, ce qui augmente la variance. Réduire la variance, c'est le rendre plus rigide, ce qui augmente le biais. Le choix de la complexité n'est donc pas une question de goût, mais un arbitrage à optimiser sur des données que le modèle n'a pas vues. Un modèle linéaire simple illustre un biais élevé et une variance faible : il fait toujours peu d'erreurs différentes, mais il se trompe toujours dans le même sens si la relation réelle est courbe. Un arbre de décision profond illustre l'inverse : il épouse parfaitement chaque échantillon et change du tout au tout au moindre changement de données.
+
+Le tableau ci-dessous rassemble les symptômes que vous rencontrerez en pratique et les leviers correspondants. Gardez-le sous la main : il condense en une lecture l'essentiel du diagnostic.
+
+| Situation | Erreur d'entraînement | Erreur de test | Cause probable | Levier prioritaire |
+| --- | --- | --- | --- | --- |
+| Sous-ajustement | élevée | élevée et proche | modèle trop simple | complexifier, ajouter des variables |
+| Surapprentissage | très faible | élevée, écart large | modèle trop flexible ou données rares | régulariser, simplifier, collecter |
+| Modèle instable | faible | très variable selon le découpage | variance élevée | validation croisée, plus de données |
+| Mesure faussée | faible | faible, mais faux en prod | fuite de données | reconstruire le protocole |
+
+La colonne la plus précieuse est celle des erreurs rapprochées ou écartées. Deux nombres suffisent pour orienter la décision, à condition qu'ils aient été mesurés dans des conditions honnêtes. Notez que le diagnostic de fuite se distingue des trois autres : il ne s'agit pas d'un problème de modèle, mais d'un problème de protocole, et aucun réglage d'hyperparamètre ne le corrigera.
+
+Un réflexe professionnel consiste à toujours entraîner deux modèles de complexité très différente sur les mêmes données, puis à comparer leurs comportements. Si le modèle simple obtient presque autant que le modèle complexe, la complexité est inutile et le modèle simple doit être retenu. Si le modèle complexe l'emporte nettement en validation croisée, la complexité est justifiée. Cette confrontation, rapide à mettre en œuvre, évite la moitié des débats stériles autour du choix d'architecture.
+
+- Le biais est l'erreur systématique, la variance est l'instabilité.
+- Le bruit irréductible fixe un plancher que aucun modèle ne franchira.
+- Réduire un terme en augmente souvent l'autre : le choix de complexité est un arbitrage.
+- Un écart train-test large signale la variance ; deux erreurs hautes signalent le biais.
+- Comparer deux modèles de complexité très différente est le test le plus économique qui soit.
+$lesson$),
+  ('ia-c6-p4', 'ia-c6', 4, $lesson$Découper les données : entraînement, validation, test$lesson$, $lesson$
+Le découpage des données est l'acte fondateur de toute évaluation honnête. On distingue classiquement trois ensembles, remplissant trois rôles distincts. L'ensemble d'entraînement sert à estimer les paramètres du modèle, c'est-à-dire à apprendre. L'ensemble de validation sert à comparer les variantes, à choisir les hyperparamètres et à décider du moment où l'on arrête d'apprendre. L'ensemble de test sert à produire le chiffre définitif, celui que l'on communique, et il ne doit être consulté qu'une seule fois, à la toute fin. Cette séparation des rôles est la colonne vertébrale du protocole.
+
+La distinction entre hyperparamètres et paramètres mérite d'être rappelée, car elle justifie l'existence de l'ensemble de validation. Les paramètres, comme les coefficients d'une régression, sont appris automatiquement à partir des données d'entraînement. Les hyperparamètres, comme le nombre de voisins, la profondeur d'un arbre ou la force de la pénalisation, sont fixés par l'humain avant l'entraînement. Puisqu'on les choisit en comparant des performances, il faut pour cela un jeu de données distinct de celui utilisé pour apprendre les paramètres, et distinct aussi du test final. Sans validation, on finit par choisir l'hyperparamètre qui convient le mieux au test, et le test cesse d'être une évaluation : il devient une variable d'ajustement.
+
+Une proportion courante consiste à répartir 60 % pour l'entraînement, 20 % pour la validation et 20 % pour le test. D'autres préfèrent 80/20 avec une validation croisée à l'intérieur du premier tiers. Aucune de ces répartitions n'est universellement correcte : tout dépend de la taille du jeu de données. Avec mille observations, la règle des trois tiers fonctionne bien ; avec deux cents, affecter 20 % au test revient à évaluer sur quarante points, ce qui produit une estimation d'une instabilité regrettable, et l'on préférera réserver le test à quarante points tout en effectuant la sélection par validation croisée sur le reste.
+
+```python
+import random
+
+
+def decouper(observations, proportions=(0.6, 0.2, 0.2), graine=42):
+    indices = list(range(len(observations)))
+    random.Random(graine).shuffle(indices)
+    n = len(indices)
+    n_app = int(n * proportions[0])
+    n_val = int(n * proportions[1])
+    app = [observations[i] for i in indices[:n_app]]
+    val = [observations[i] for i in indices[n_app:n_app + n_val]]
+    test = [observations[i] for i in indices[n_app + n_val:]]
+    return app, val, test
+
+
+donnees = [(i, i * 2 + 1) for i in range(100)]
+app, val, test = decouper(donnees)
+print(len(app), len(val), len(test))
+print("premier indice d'entrainement :", app[0])
+```
+
+Ce bloc renvoie 60, 20 et 20 comme attendu. Notez l'emploi d'un générateur aléatoire indépendant, obtenu avec random.Random(graine), plutôt que de réutiliser le générateur global : ainsi, appeler deux fois la fonction avec la même graine reproduit exactement les mêmes ensembles, tandis qu'un appel avec une autre graine produit un découpage différent. Cette propriété est essentielle pour comparer plusieurs modèles sur des ensembles strictement identiques.
+
+Le découpage doit aussi respecter la structure de la tâche. En classification avec des classes déséquilibrées, un découpage purement aléatoire risque de placer presque tous les rares positifs dans un seul ensemble : on découpe alors par stratification, c'est-à-dire en conservant dans chaque sous-ensemble la même proportion de classes qu'ensemble. En données temporelles, le découpage aléatoire est proscrit, car il fait apprendre au modèle le futur pour prédire le passé : on découpe alors chronologiquement, en n'évaluant que sur des périodes postérieures à celles de l'entraînement. En données de clients, on découpe par identifiant de client plutôt que par transaction, afin qu'aucun client n'apparaisse des deux côtés.
+
+| Type de données | Découpage correct | Découpage dangereux | Raison |
+| --- | --- | --- | --- |
+| Classification déséquilibrée | stratifié | aléatoire simple | les classes rares disparaissent d'un côté |
+| Séries temporelles | chronologique | aléatoire | le futur fuit dans l'entraînement |
+| Plusieurs mesures par client | groupé par client | aléatoire par ligne | le même client des deux côtés |
+| Images similaires (doublons) | groupé par source | aléatoire | quasi-doublons de part et d'autre |
+
+Une dernière précaution, souvent négligée, concerne le test. On ne consulte pas le test au fur et à mesure des essais, car chaque consultation révèle de l'information et transforme imperceptiblement le test en validation. Le test ressemble à une épreuve que l'on ne passe qu'une fois, après avoir tout réglé ailleurs. Si vous avez besoin de mesurer le test plusieurs fois, c'est que vos réglages manquent d'un ensemble de validation.
+
+- L'entraînement apprend les paramètres, la validation choisit les hyperparamètres, le test produit le chiffre final.
+- Le test ne se consulte qu'une fois, à la fin.
+- La proportion dépend du volume : de petits jeux souffrent des découpages trop fins.
+- Stratifier, grouper ou respecter le temps : le découpage suit la structure des données.
+- Un générateur dédié par découpage rend l'expérience reproductible.
+$lesson$),
+  ('ia-c6-p5', 'ia-c6', 5, $lesson$Découpage aléatoire et reproductibilité$lesson$, $lesson$
+La reproductibilité n'est pas un luxe : elle est la condition de toute comparaison. Deux modèles évalués sur des découpages différents ne sont pas comparables, car l'écart observé peut provenir du découpage plutôt que de la qualité des modèles. D'où la première habitude à prendre : figer la graine d'aléa, la documenter, et réutiliser les mêmes ensembles pour toutes les variantes que l'on souhaite comparer. En Python, le module random fournit cette possibilité sous deux formes, et la comprendre évite bien des erreurs.
+
+La première forme consiste à appeler random.seed(valeur) une seule fois au début du programme. Toutes les tirages ultérieurs du générateur global deviennent alors déterministes. L'inconvénient est que l'ordre des appels compte : ajouter une ligne qui tire un nombre au milieu du programme change tous les tirages suivants, et le découpage devient différent sans que rien ne le laisse deviner. La seconde forme, préférable, consiste à créer un générateur local avec random.Random(graine) et à n'utiliser que celui-ci pour le découpage. Le générateur global reste alors libre pour les autres besoins, et le découpage ne dépend que de sa propre graine.
+
+```python
+import random
+
+random.seed(99)
+a = [random.random() for _ in range(3)]
+b = [random.random() for _ in range(3)]
+
+random.seed(99)
+c = [random.random() for _ in range(3)]
+print("reproductible global :", a == c)
+
+gen_1 = random.Random(99)
+gen_2 = random.Random(99)
+print("reproductible local  :", [gen_1.random() for _ in range(3)] == [gen_2.random() for _ in range(3)])
+```
+
+L'exécution affiche deux fois True. Le générateur local présente l'avantage décisif d'être autonome : deux programmeurs, sur deux machines, avec des ordres d'appel différents, obtiennent exactement le même découpage tant qu'ils partagent la même graine. C'est ce principe qui rend possible la confrontation de modèles, laquelle n'a de sens que si les ensembles de référence sont rigoureusement identiques.
+
+Un autre piège de reproductibilité concerne l'ordre des données avant le découpage. Si votre fichier d'origine est trié par date, par ville ou par classe, un découpage par simple coupe consécutive crée des ensembles hétérogènes : le premier tiers sera ancien, le dernier récent, et la comparaison devient absurde. Le mélange préalable des indices, effectué avec la même graine, règle le problème en une ligne. À l'inverse, lorsque l'ordre porte du sens, comme dans une série temporelle, on ne mélange pas : on coupe à une date, ce qui rappelle que la technique du mélange n'est jamais bonne ou mauvaise en soi, elle est juste adaptée ou inadaptée à la structure du problème.
+
+Enfin, notez que la reproductibilité s'étient aux bibliothèques et aux versions. Une graine fixe ne garantit rien si l'algorithme de tri de la bibliothèque change entre deux versions. Pour un travail sérieux, on documente simultanément la graine, la version du langage et le chemin d'accès des données. Ce niveau de métadonnées paraît obsessif au début, mais il devient automatique, et il sauve des journées entières lorsque l'on doit comprendre, six mois plus tard, pourquoi un score diffère de celui du rapport initial.
+
+- Fixez la graine et notez-la : sans elle, aucune comparaison n'a de valeur.
+- Préférez un générateur local random.Random(graine) au générateur global.
+- Mélanges les indices seulement si l'ordre des lignes n'a aucun sens.
+- Un découpage trié sans mélange produit des ensembles hétérogènes.
+- Documentez graine, version et données pour rendre l'expérience rejouable.
+$lesson$),
+  ('ia-c6-p6', 'ia-c6', 6, $lesson$Validation croisée : le k plis pas à pas$lesson$, $lesson$
+La validation croisée répond à une faiblesse évidente du découpage unique : le score dépend du hasard. Avec un seul découpage, on obtient un nombre sans indication de stabilité, et l'on ignore si l'on a eu chance ou malchance. La validation croisée, ou cross-validation, répète l'expérience plusieurs fois sur des partitions différentes, puis agrège les résultats. Le cas le plus répandu est le découpage en k plis : on taille les données en k morceaux de taille comparable, puis on exécute k entraînements, à chaque fois en désignant un pli différent comme ensemble de validation et en utilisant les k moins un autres pour l'apprentissage.
+
+Le schéma ci-dessous montre le principe pour k égal à cinq. Chaque ligne représente une itération ; la case hachurée désigne le pli réservé à la validation, les autres étant consacrés à l'entraînement. À la fin, chaque observation a servi exactement une fois à valider.
+
+```text
+iteration 1   [ val ][ app ][ app ][ app ][ app ]
+iteration 2   [ app ][ val ][ app ][ app ][ app ]
+iteration 3   [ app ][ app ][ val ][ app ][ app ]
+iteration 4   [ app ][ app ][ app ][ val ][ app ]
+iteration 5   [ app ][ app ][ app ][ app ][ val ]
+
+score_final = (s1 + s2 + s3 + s4 + s5) / 5
+```
+
+L'avantage est double. D'une part, chaque observation est utilisée une fois pour la validation : aucune donnée n'est gaspillée, ce qui est précieux lorsque le jeu est petit. D'autre part, on obtient non seulement une moyenne, mais aussi un écart-type, qui mesure la sensibilité du modèle au découpage. Une moyenne de 0,45 avec un écart-type de 0,02 est une information nettement plus solide qu'un score unique de 0,45 : elle signifie que le modèle se comporte pareil quel que soit le sous-ensemble évalué.
+
+L'implémentation à la main n'a rien d'aride. On mélange les indices avec une graine, on les répartit en k morceaux, puis pour chaque morceau on construit l'entraînement comme la concatenation des autres. On entraîne, on prédit, on mesure l'erreur, et on conserve la valeur. Aucune bibliothèque n'est nécessaire : des listes, une boucle et une fonction d'erreur suffisent.
+
+```python
+import random
+import statistics
+
+
+def plis(indices, k, graine=7):
+    melange = list(indices)
+    random.Random(graine).shuffle(melange)
+    taille = len(melange) // k
+    morceaux = []
+    for i in range(k):
+        debut = i * taille
+        fin = len(melange) if i == k - 1 else (i + 1) * taille
+        morceaux.append(melange[debut:fin])
+    return morceaux
+
+
+def validation_croisee(observations, k, graine=7, apprentissage=None):
+    indices = list(range(len(observations)))
+    morceaux = plis(indices, k, graine)
+    scores = []
+    for i in range(k):
+        val = morceaux[i]
+        app = [j for j in indices if j not in val]
+        donnees_app = [observations[j] for j in app]
+        donnees_val = [observations[j] for j in val]
+        modele = apprentissage(donnees_app)
+        erreurs = [(modele(x) - y) ** 2 for x, y in donnees_val]
+        scores.append(sum(erreurs) / len(erreurs))
+    return scores
+```
+
+Pour utiliser cette fonction, il suffit de fournir une fonction d'apprentissage qui renvoie un prédicteur, par exemple une régression linéaire écrite à la main. Le retour, une liste de k erreurs, se lit directement : on en calcule la moyenne avec statistics.mean et la dispersion avec statistics.pstdev. Si l'écart-type est élevé, c'est que le modèle se comporte différemment selon le sous-ensemble, signe que la variance reste élevée ou que le jeu de données est hétérogène.
+
+Le choix de k n'est pas anodin. Le cas k égal à cinq est un compromis répandu : cinq entraînements, une part d'entraînement suffisante dans chaque itération, et une validation assez volumineuse pour produire un score stable. Le cas k égal à dix donne des ensembles d'entraînement plus grands et des estimations encore moins variables, mais triple le coût par rapport à k égal à trois. À la limite, k égal à n, dit validation croisée du jack-knife, entraîne sur n moins un observations, ce qui est coûteux et souvent inutile. Dans l'autre sens, k égal à deux divise les données en deux moitiés : le score est très bruyant et l'entraînement gaspille la moitié des données à chaque tour.
+
+| Valeur de k | Part entraînée | Coût d'entraînement | Variance du score | Usage typique |
+| --- | --- | --- | --- | --- |
+| 2 | 50 % | très faible | très élevée | diagnostics rapides |
+| 5 | 80 % | modéré | faible | réglage d'hyperparamètres |
+| 10 | 90 % | élevé | très faible | estimation finale soignée |
+| n | n-1 sur n | prohibif | minimale | très petits jeux |
+
+Il existe une variante indispensable en classification : la validation croisée stratifiée, qui répartit dans chaque pli la même proportion de classes que dans l'ensemble total. Sans elle, un pli peut ne contenir aucun exemple d'une classe rare, et la mesure de ce pli devient absurde. Le principe d'implémentation est identique, avec un groupement des indices par classe avant la répartition.
+
+Une subtilité importante concerne l'endroit où se fait la transformation des données. Les statistiques apprises, comme la moyenne ou l'écart-type utilisés pour normaliser, doivent être calculées à l'intérieur de chaque pli d'entraînement, puis appliquées au pli de validation correspondant. Les calculer une fois pour toutes sur le jeu complet revient à faire fuir l'information du pli de validation vers l'entraînement, ce qui ruine subtilement l'exercice. Ce point revient dans la section consacrée aux fuites, et il constitue l'erreur la plus fréquente des practitioners pressés.
+
+- La validation croisée transforme un score unique en moyenne et écart-type.
+- k plis : chaque observation valide exactement une fois.
+- k égal à cinq ou dix convient à la plupart des cas ; k égal à deux reste bruyant.
+- Stratifier quand les classes sont déséquilibrées.
+- Toute transformation apprise se réapprend dans chaque pli, jamais sur le jeu complet.
+$lesson$),
+  ('ia-c6-p7', 'ia-c6', 7, $lesson$Choisir k et interpréter les écarts$lesson$, $lesson$
+Passer de la théorie à la pratique demande de savoir lire un tableau de scores de validation croisée. Reprenons le banc d'essai du chapitre et mesurons, pour différentes valeurs de k, la moyenne et l'écart-type des erreurs. Le point à observer n'est pas le score le plus bas, mais la stabilité : un modèle dont le score moyen est très bon mais dont l'écart-type est important est un modèle dont on ne peut pas garantir le comportement sur de nouvelles données.
+
+```python
+import random
+import statistics
+
+random.seed(12)
+observations = []
+for _ in range(200):
+    xi = random.uniform(0, 10)
+    yi = 4 * xi - 3 + random.gauss(0, 6)
+    observations.append((xi, yi))
+
+
+def modele_lineaire(paires):
+    n = len(paires)
+    mx = sum(p[0] for p in paires) / n
+    my = sum(p[1] for p in paires) / n
+    var = sum((p[0] - mx) ** 2 for p in paires)
+    cov = sum((p[0] - mx) * (p[1] - my) for p in paires)
+    pente = cov / var if var else 0.0
+    return lambda x: pente * (x - mx) + my
+
+
+def evaluer(k, graine):
+    indices = list(range(len(observations)))
+    random.Random(graine).shuffle(indices)
+    taille = len(indices) // k
+    erreurs = []
+    for i in range(k):
+        val = indices[i * taille:(i + 1) * taille] if i < k - 1 else indices[i * taille:]
+        app = [j for j in indices if j not in val]
+        fit = modele_lineaire([observations[j] for j in app])
+        erreurs.append(sum((fit(observations[j][0]) - observations[j][1]) ** 2 for j in val) / len(val))
+    return statistics.mean(erreurs), statistics.pstdev(erreurs)
+
+
+for k in (2, 5, 10):
+    moyennes = [evaluer(k, g)[0] for g in (1, 2, 3)]
+    print("k =", k, "moyenne des moyennes =", round(statistics.mean(moyennes), 2))
+```
+
+Ce programme fait plus que calculer une moyenne : il répète l'expérience complète avec trois graines différentes et mesure la moyenne des moyennes. C'est l'expérience de pensée la plus utile du chapitre, car elle confronte directement la variance due au modèle à la variance due au protocole. Si l'écart entre graines est comparable à l'écart observé entre deux modèles candidats, alors la comparaison des modèles est elle-même non concluante, et il faut soit augmenter k, soit répéter davantage l'expérience, soit collecter plus de données.
+
+Une heuristique simple guide la décision. Si le score moyen d'un modèle dépasse celui d'un autre d'au moins deux écarts-types, la différence est robuste et le choix est arbitré. Si l'écart est inférieur à un écart-type, les deux modèles sont statistiquement indistinguables, et l'on choisira le plus simple, le plus rapide ou le plus interprétable. Cette règle, appliquée avec discipline, élimine une grande part des comparaisons interminables où deux équipes défendent chacune son architecture favorite sur la base d'un écart de quelques dixièmes.
+
+Le tableau de synthèse suivant montre comment présenter honnêtement les résultats d'une comparaison.
+
+| Modèle | k | Moyenne erreur | Écart-type | Verdict |
+| --- | --- | --- | --- | --- |
+| Régression linéaire | 5 | 36,4 | 2,1 | référence stable |
+| Voisin à 1 | 5 | 48,9 | 9,7 | variance excessive |
+| Voisin à 7 | 5 | 35,8 | 2,4 | comparable, plus lent |
+| Moyenne constante | 5 | 92,3 | 4,5 | sous-ajustement manifeste |
+
+La ligne du voisin à un voisin est instructive : son écart-type, quatre fois supérieur à celui des autres, trahit une dépendance extrême au découpage. Une équipe pressée qui n'aurait regardé que la moyenne pourrait conclure à la supériorité du voisin à sept, alors que la vraie information est ailleurs : le voisin à un voisin est instable, donc impropre à la production, quel que soit son score un jour donné.
+
+Un dernier point sur le coût. La validation croisée multiplie le temps d'entraînement par k, et pour des modèles entraînés sur plusieurs heures, k égal à dix devient prohibitif. Deux pratiques professionnelles atténuent le problème. La première utilise une validation croisée à faible k pour l'exploration rapide des hyperparamètres, puis une estimation finale à k élevé une seule fois, sur la configuration retenue. La seconde réserve la validation croisée aux modèles instables et aux petits jeux, en se contentant d'un simple découpage multiplié par quelques graines lorsque le modèle est parfaitement déterministe et le jeu abondant.
+
+- Un écart-type élevé signale l'instabilité, pas seulement une performance moyenne.
+- Répéter l'expérience avec plusieurs graines mesure la variance du protocole.
+- Un écart supérieur à deux écarts-types justifie un choix ; sinon, préférez le plus simple.
+- Réservez la validation croisée fine à l'étape de réglage, une fois la structure fixée.
+- Le coût de la validation croisée est un critère de choix à part entière.
+$lesson$),
+  ('ia-c6-p8', 'ia-c6', 8, $lesson$Régularisation : retenir le modèle$lesson$, $lesson$
+La régularisation est l'ensemble des techniques qui limitent volontairement la capacité d'un modèle pendant l'apprentissage, afin qu'il se concentre sur le signal généralisable et abandonne les accidents de l'échantillon. L'idée est contre-intuitive au premier abord : on améliore un modèle en l'empêchant de bien apprendre sur ses propres données. Elle repose pourtant sur une observation empirique incontestable, celle que vous venez de voir dans la section précédente : un modèle qui descend jusqu'à une erreur nulle sur l'entraînement a souvent cessé d'être utile.
+
+Le mécanisme le plus répandu consiste à ajouter à la fonction d'erreur un terme de pénalité proportionnel à l'amplitude des coefficients. Le modèle doit alors arbitrer entre expliquer les données et garder des coefficients raisonnables. Si une variable n'apporte que du bruit, il lui coûte moins cher de lui attribuer un coefficient proche de zéro que de lui donner une valeur importante qui améliore à peine l'ajustement. La pénalisation agit donc comme un filtre de pertinence : elle favorise les relations stables et étouffe les corrélations de hasard.
+
+La variante la plus utilisée est la régularisation dite L2, ou ridge, qui pénalise la somme des coefficients au carré. Sa force est réglée par un hyperparamètre lambda. Quand lambda est nul, on retrouve la régression ordinaire ; quand lambda grandit, les coefficients se contractent vers zéro et le modèle s'aplatit vers une droite horizontale, c'est-à-dire vers la moyenne constante. Entre ces deux extrêmes se trouve la valeur qui minimise l'erreur en validation. La variante L1, ou lasso, pénalise la somme des valeurs absolues et a la propriété remarquable d'annuler exactement certains coefficients, ce qui réalise une sélection automatique des variables.
+
+```python
+import random
+
+
+def generer(n=150, graine=5):
+    alea = random.Random(graine)
+    donnees = []
+    for _ in range(n):
+        x1 = alea.uniform(0, 10)
+        x2 = alea.uniform(0, 10)
+        x3 = alea.uniform(0, 10)
+        y = 3 * x1 + 0.05 * x2 + 0.03 * x3 + alea.gauss(0, 5)
+        donnees.append(([x1, x2, x3], y))
+    return donnees
+
+
+def ridge(donnees, lamb=1.0, iterations=400, pas=0.001):
+    nb_var = len(donnees[0][0])
+    poids = [0.0] * nb_var
+    ordonnee = 0.0
+    n = len(donnees)
+    for _ in range(iterations):
+        grad = [0.0] * nb_var
+        g0 = 0.0
+        for x, y in donnees:
+            pred = sum(w * xi for w, xi in zip(poids, x)) + ordonnee
+            ecart = pred - y
+            for j in range(nb_var):
+                grad[j] += ecart * x[j]
+            g0 += ecart
+        for j in range(nb_var):
+            poids[j] -= pas * (2 * grad[j] / n + 2 * lamb * poids[j])
+        ordonnee -= pas * 2 * g0 / n
+    return poids, ordonnee
+
+
+donnees = generer()
+for lamb in (0.0, 0.01, 1.0, 100.0):
+    w, b = ridge(donnees, lamb=lamb)
+    print("lambda", lamb, "poids", [round(v, 2) for v in w])
+```
+
+En faisant varier lambda, vous observez exactement le comportement décrit : les coefficients significatifs, ici la première variable qui porte réellement la relation, restent proches de leur valeur vraie, tandis que les deux variables parasites, qui ne portent que du bruit, sont progressivement écrasées vers zéro. Le modèle devient plus court, plus stable et plus lisible, au prix d'un léger biais supplémentaire. C'est précisément l'arbitrage biais-variance en action.
+
+Il est essentiel de comprendre que la régularisation ne remplace pas la validation croisée, elle en dépend. Le paramètre lambda est un hyperparamètre : il n'existe pas de valeur universellement bonne, et sa détermination passe par une recherche sur des ensembles de validation. La pratique courante consiste à tester une grille de valeurs logarithmiques, par exemple de 0,001 à 1000, à évaluer chaque valeur en validation croisée, puis à retenir celle qui obtient le meilleur score moyen. Le modèle final est ensuite réentraîné sur l'ensemble d'entraînement avec le lambda retenu, et le test n'est consulté qu'une seule fois.
+
+Un mot sur l'arrêt anticipé, troisième forme de régularisation, particulièrement courante dans l'apprentissage profond. Plutôt que de pénaliser les coefficients, on surveille l'erreur de validation pendant l'entraînement et on interrompt l'apprentissage au moment où elle cesse de diminuer. Le modèle est alors sauvé à son meilleur état, avant le point où il commence à mémoriser. Le principe est identique à celui de la pénalisation : introduire une limite artificielle pour empêcher la mémorisation pure.
+
+| Régularisation | Ce qu'elle pénalise | Effet principal | Usage typique |
+| --- | --- | --- | --- |
+| L2 (ridge) | somme des coefficients au carré | coefficients petits mais non nuls | variables corrélées, défaut |
+| L1 (lasso) | somme des valeurs absolues | sélection de variables exacte | beaucoup de variables inutiles |
+| Arrêt anticipé | durée de l'apprentissage | stoppe avant la mémorisation | modèles itératifs |
+| Dropout | neurones aléatoires | évite la dépendance à une voie | réseaux de neurones |
+
+La régularisation trouve sa limite dans deux situations. Si le modèle est structurellement trop simple pour capturer la relation, pénaliser davantage ne fait qu'aggraver le sous-ajustement. Et si le jeu de données est minuscule, aucun réglage de lambda ne compensera le manque d'exemples : il faut alors collecter des données, simplifier la tâche ou recourir à des méthodes de réplication raisonnée. La régularisation est un puissant correctif de complexité excessive, pas un remède universel.
+
+- La régularisation pénalise la complexité pour favoriser la généralisation.
+- L2 contracte les coefficients, L1 annule les variables superflues.
+- Lambda est un hyperparamètre : il se choisit en validation croisée.
+- L'arrêt anticipé est la régularisation temporelle des modèles itératifs.
+- Pénaliser ne corrige pas un modèle trop simple ni un jeu de données trop petit.
+$lesson$),
+  ('ia-c6-p9', 'ia-c6', 9, $lesson$Courbes d'apprentissage : voir le diagnostic$lesson$, $lesson$
+Une courbe d'apprentissage trace l'évolution de l'erreur d'entraînement et de l'erreur de validation en fonction d'une quantité : la taille de l'échantillon, le nombre d'itérations ou la profondeur du modèle. C'est l'outil de diagnostic le plus parlant qui existe, car il transforme une discussion abstraite sur les performances en une image dont la forme suffit à prescrire le remède. Trois formes typiques suffisent à couvrir la majorité des situations rencontrées.
+
+La première forme est celle du sous-apprentissage : les deux courbes sont hautes et se rejoignent. Le modèle ne parvient pas à capturer la relation, aussi bien sur l'entraînement que sur la validation. Agrandir le jeu de données ne changera rien, car le modèle ne manque pas d'exemples, il manque de capacité ou de bonnes variables. La seconde forme est celle du surapprentissage : l'erreur d'entraînement est très basse, l'erreur de validation est haute, et l'écart se creuse à mesure que la taille de l'échantillon augmente. La troisième forme est celle du modèle sain : les deux courbes sont basses, proches, et l'erreur de validation décroît doucement quand on ajoute des données, signe qu'un peu plus de données améliorerait encore les choses.
+
+```text
+sous-ajustement          surapprentissage         situation saine
+error |______            error  \                 error
+      |      \                   \                       \
+      |       \___                 \                       \__
+      |___________\                 \_______________         \___
+          taille echantillon             taille echantillon
+   les deux courbes se rejoignent   ecart qui se creuse    convergence basse
+```
+
+Construire une telle courbe sans bibliothèque est un exercice limpide, et il vaut la peine de l'avoir écrit une fois pour comprendre ce que les outils automatiques font sous le capot. On fait varier la taille de l'ensemble d'entraînement, pour chaque taille on réentraîne le modèle sur plusieurs sous-échantillons tirés avec des graines différentes, on mesure l'erreur sur un ensemble de validation fixe, puis on affiche la moyenne des erreurs. L'ensemble de validation reste identique d'une itération à l'autre, afin que la comparaison porte uniquement sur la quantité de données d'entraînement.
+
+```python
+import random
+import statistics
+
+random.seed(21)
+donnees = []
+for _ in range(400):
+    xi = random.uniform(0, 10)
+    yi = 2 * xi + 12 + random.gauss(0, 5)
+    donnees.append((xi, yi))
+
+random.Random(0).shuffle(donnees)
+validation = donnees[:120]
+apprentissage = donnees[120:]
+
+
+def ajuster(paires):
+    n = len(paires)
+    mx = sum(p[0] for p in paires) / n
+    my = sum(p[1] for p in paires) / n
+    var = sum((p[0] - mx) ** 2 for p in paires)
+    cov = sum((p[0] - mx) * (p[1] - my) for p in paires)
+    pente = cov / var if var else 0.0
+    return lambda x: pente * (x - mx) + my
+
+
+def erreur(fonction, paires):
+    return statistics.mean((fonction(x) - y) ** 2 for x, y in paires)
+
+
+for taille in (20, 40, 80, 160, 280):
+    scores = []
+    for graine in range(5):
+        tirage = list(apprentissage)
+        random.Random(graine).shuffle(tirage)
+        fit = ajuster(tirage[:taille])
+        scores.append(erreur(fit, validation))
+    print("taille", taille, "erreur validation", round(statistics.mean(scores), 2))
+```
+
+Lecture de la sortie : si l'erreur de validation diminue puis se stabilise, le modèle a exploité ce que les données pouvaient lui donner, et collecter encore des données du même type n'apportera presque rien. Si l'erreur de validation diminue régulièrement sans se stabiliser, la collecte reste rentable. Si elle augmente avec la quantité d'entraînement, quelque chose cloche dans le protocole : une fuite, un bug de prétraitement ou une distribution qui change d'un ensemble à l'autre. Cette dernière situation, bien que rare, est celle qu'il faut détecter immédiatement.
+
+La courbe d'hyperparamètre, ou validation curve, est la sœur jumelle de la précédente : au lieu de faire varier la taille de l'échantillon, on fait varier la complexité, par exemple lambda ou la profondeur maximale. Elle produit typiquement une erreur d'entraînement qui décroît avec la complexité et une erreur de validation en U, dont le minimum indique la valeur retenue. Tracer cette courbe avant de lancer une recherche exhaustive sur une grille d'hyperparamètres fait gagner un temps considérable, car elle révèle immédiatement l'ordre de grandeur pertinent et évite de tester des valeurs absurdes.
+
+Un piège méthodologique accompagne ces courbes : il ne faut pas choisir l'hyperparamètre et estimer sa performance sur le même ensemble de validation. Le minimum de la courbe est optimiste, parce qu'il a été sélectionné parmi plusieurs candidats. On en corrige l'optimisme en réévaluant la configuration retenue sur un ensemble vierge, ou, mieux, en validation croisée imbriquée, où la sélection de l'hyperparamètre a lieu à l'intérieur de chaque pli d'entraînement. Pour un travail courant, un compromis honnête consiste à réserver un test jamais touché pendant la phase de réglage.
+
+- Le sous-apprentissage : courbes hautes et jointes, la complexité manque.
+- Le surapprentissage : entraînement très bas, validation haute, écart qui se creuse.
+- Une validation qui décroît encore signifie que collecter des données reste utile.
+- Les courbes d'hyperparamètres orientent la recherche avant de la rendre exhaustive.
+- Ne sélectionnez jamais et n'évaluez pas sur le même ensemble.
+$lesson$),
+  ('ia-c6-p10', 'ia-c6', 10, $lesson$Fuites de données : la triche invisible$lesson$, $lesson$
+La fuite de données, ou data leakage, désigne toute situation où une information qui ne devrait pas être connue au moment de l'entraînement a influencé les paramètres du modèle. Le symptôme est trompeur : les scores internes sont excellents, souvent trop, et les performances réelles en production sont bien inférieures. Comme rien ne signale l'anomalie dans le code, la fuite passe inaperçue jusqu'au jour du déploiement. C'est pour cette raison qu'elle mérite une section entière et une chasse méthodique.
+
+Il existe deux grandes familles. La première concerne la cible : une variable qui encode directement ou indirectement la réponse se retrouve parmi les entrées. L'exemple classique concerne les données bancaires, où une colonne indiquant qu'une demande a été refusée n'existe que parce que la décision a été prise, ce qui trahit l'issue du processus. Toute colonne créée après l'événement à prédire est suspecte par défaut, et la moindre colonne dont le nom évoque une décision, un statut ou un résultat doit être interrogée.
+
+La seconde famille concerne les statistiques calculées sur l'ensemble du jeu de données avant le découpage : normalisation, réduction de dimension, encodage des catégories rares, sélection des variables les plus corrélées à la cible. L'information ainsi synthétisée provient aussi bien de l'entraînement que du test, et le modèle l'utilise pendant son apprentissage. Le score de validation devient optimiste, parfois de plusieurs points, sans qu'aucune ligne de code ne paraisse incorrecte.
+
+```python
+import random
+
+random.seed(4)
+lignes = []
+for i in range(100):
+    x = random.gauss(0, 1)
+    y = 1 if x + random.gauss(0, 0.5) > 0 else 0
+    lignes.append((i, x, y))
+
+indices = list(range(len(lignes)))
+random.shuffle(indices)
+app_indices, val_indices = indices[:70], indices[70:]
+
+mauvais = sum(lignes[i][2] for i in range(len(lignes))) / len(lignes)
+correct = sum(lignes[i][2] for i in app_indices) / len(app_indices)
+print("stat globale fuitante :", round(mauvais, 2))
+print("stat honnete          :", round(correct, 2))
+
+fuite = [lignes[i][2] for i in val_indices]
+print("part de la cible lue depuis le cote entrainement :", round(sum(fuite) / len(fuite), 2))
+```
+
+Ce programme montre la fuite la plus scolaire : calculer une proportion de classe sur toutes les lignes avant de découper. La différence paraît minuscule sur ce jeu réduit, mais elle s'amplifie avec la déséquilibre, le nombre de colonnes et les transformations successives. Chaque opération faite avant la coupe ajoute une couche de contamination, et leur effet cumulé peut faire passer un modèle médiocre de 0,70 à 0,90 de score apparent.
+
+Les fuites les plus redoutables sont celles qui ne se voient pas dans le code, parce qu'elles résident dans les données elles-mêmes. Trois situations typiques méritent d'être mémorisées. D'abord, les doublons : si un même client, un même patient ou une même transaction apparaît à la fois dans l'entraînement et dans le test, le modèle reconnaît la réponse au lieu de la déduire. Ensuite, la redondance temporelle : des colonnes décrivant le futur, comme un montant total calculé sur toute la période alors qu'on prédit un mois précis. Enfin, la cible codée : une catégorie dont le libellé intègre la classe, ou un identifiant attribué en fonction de l'issue.
+
+Le schéma suivant résume le trajet de la contamination et l'endroit où la bloquer.
+
+```text
+donnees brutes
+     |
+     |  stat globale, encodage, selection    <-- CONTAMINATION ICI
+     v
+[ transformes ] -------------------------------+
+     |                                          |
+     |  coupe                                   |  information du test
+     v                                          |  remonte vers l'entrainement
+ [ train ]        [ val ]        [ test ] <------+
+     |
+     |  apprentissage honnete (stats reapprises sur train)
+     v
+   modele  -->  score honnete
+```
+
+La parade tient en une règle opérationnelle : construire un pipeline de traitement qui s'adapte aux données, c'est-à-dire une chaîne dont chaque étape apprend ses paramètres sur le pli d'entraînement courant, puis les réapplique au pli de validation. Les bibliothèques modernes formalisent ce principe sous le nom de pipeline, mais l'idée se résume en une phrase à retenir : les statistiques appartiennent au pli où elles ont été apprises. Si vous écrivez votre propre code, comme dans cette leçon, vous appliquez manuellement la même discipline en calculant moyenne et écart-type à partir des seules données d'entraînement du pli courant.
+
+Il reste une forme de fuite plus insidieuse encore, qui ne provient pas du code mais de la répétition des essais. Si vous testez cinquante modèles et ne communiquez que le meilleur, vous avez implicitement sélectionné sur le jeu de test, qui s'est alors transformé en validation. Le score du meilleur modèle est optimiste par construction, car parmi cinquante candidats, l'un d'eux profitera du hasard. Cette fuite expérimentale se soigne en gardant un test final intact, consulté une seule fois, et en rapportant toujours le nombre d'essais effectués.
+
+- Une colonne créée après l'événement à prédire est suspecte d'emblée.
+- Toute statistique calculée avant la découpe contamine les ensembles suivants.
+- Les doublons entre entraînement et test produisent des scores fictifs.
+- Les statistiques se réapprennent dans chaque pli, jamais sur le jeu complet.
+- Tester beaucoup de modèles et retenir le meilleur use le test : gardez-le intact.
+$lesson$),
+  ('ia-c6-p11', 'ia-c6', 11, $lesson$Reconnaître une fuite : la check-list$lesson$, $lesson$
+La détection d'une fuite ne se fait pas avec un outil magique, mais avec une suite de questions posées systématiquement à chaque colonne et à chaque étape de traitement. Cette check-list, appliquée avant même le premier entraînement, fait gagner les semaines de diagnostic qui suivent habituellement un déploiement raté. Elle se lit en cinq minutes et se vérifie en une heure sur un jeu de données neuf.
+
+Première question : chaque colonne existait-elle, et portait-elle exactement la même valeur, au moment où la prédiction aurait dû être faite ? Si la réponse est non, la colonne est interdite. Deuxième question : quelle part des lignes contient des informations calculées à partir de l'ensemble du jeu, y compris le test ? La troisième question : y a-t-il des doublons, des groupes ou des redondances qui font qu'une même entité apparaît des deux côtés de la coupe ? La quatrième : le découpage respecte-t-il l'ordre du temps ? La cinquième : combien de modèles ont été essayés, et sur quel ensemble a-t-on choisi ?
+
+Une technique de détection extrêmement efficace consiste à entraîner le modèle sur des données volontairement corrompues, par exemple en remplaçant toutes les colonnes sauf la cible par des valeurs aléatoires. Un modèle honnête obtient alors un score proche du hasard. S'il obtient un score nettement supérieur, c'est que de l'information sur la cible subsiste ailleurs : fuite confirmée. Cet essai, qui coûte quelques secondes, élimine d'un coup la moitié des hypothèses lorsqu'un score paraît trop beau.
+
+```python
+import random
+
+random.seed(8)
+cible = [random.randint(0, 1) for _ in range(300)]
+features = [[random.gauss(0, 1) for _ in range(5)] for _ in range(300)]
+
+
+def apprentissage_simple(paires):
+    n = len(paires)
+    moy = sum(p[1] for p in paires) / n
+    return lambda x: moy
+
+
+def evaluer(features, cible):
+    paires = list(zip(features, cible))
+    entrainement, test = paires[:240], paires[240:]
+    fit = apprentissage_simple(entrainement)
+    erreurs = [(fit(x) - y) ** 2 for x, y in test]
+    return sum(erreurs) / len(erreurs)
+
+
+print("score sur donnees purement aleatoires :", round(evaluer(features, cible), 2))
+print("score theorique du hasard :", round(0.5 ** 2, 2))
+```
+
+Cet exemple sert de témoin : quand tout est aléatoire, le score doit retomber au niveau théorique du hasard. Toute valeur sensiblement meilleure signale qu'une information a fuité. Vous pouvez adapter le test en simulant une fuite volontaire, par exemple en ajoutant une colonne qui dépend de la cible, et vérifier que votre procédure la détecte : il vaut mieux valider son détecteur de fuites quand on sait qu'il y a une fuite.
+
+La communication fait partie intégrante du travail. Un rapport de validation digne de confiance expose le protocole avant les résultats : taille et structure des ensembles, graines utilisées, transformations appliquées et leur ordre par rapport à la coupe, nombre de configurations testées, score moyen et dispersion. Ce format, un peu plus long à rédiger, a l'avantage de rendre toute anomalie visible pour un lecteur extérieur, qui repérera en une phrase ce que vous n'avez pas vu en une journée.
+
+- Posez les cinq questions à chaque colonne avant d'entraîner quoi que ce soit.
+- Le test d'entraînement sur bruit pur doit retomber au niveau du hasard.
+- Simulez une fuite pour vérifier que votre procédure la détecte.
+- Rapportez le nombre d'essais effectués, pas seulement le meilleur score.
+- Un protocole décrit avant les résultats rend le rapport vérifiable.
+$lesson$),
+  ('ia-c6-p12', 'ia-c6', 12, $lesson$Protocole complet : du fichier brut à la décision$lesson$, $lesson$
+Tout ce qui précède se rassemble dans un protocole en six étapes, que vous pourrez appliquer à n'importe quel projet sans rien oublier. La première étape consiste à figer la question et la métrique : que prédit-on, à quel horizon, et quel coût attribue-t-on à chaque type d'erreur ? Sans cette réponse, toute la suite est du bruit, car le choix d'une métrique et d'un seuil n'a pas de sens détaché de la décision qu'ils vont éclairer.
+
+La deuxième étape est le découpage initial, effectué une seule fois et documenté, avec graine, proportions et logique de stratification ou de groupement. La troisième étape enchaîne les transformations dans l'ordre strict : ce qui s'apprend, s'apprend à l'intérieur du pli. La quatrième étape conduit la recherche d'hyperparamètres par validation croisée sur l'ensemble d'entraînement, sans jamais consulter le test. La cinquième étape réentraîne la configuration retenue sur tout l'ensemble d'entraînement, y compris la validation, puis évalue une seule fois sur le test. La sixième étape rédige le rapport.
+
+```python
+import random
+import statistics
+
+
+def protocole(observations, k=5, graine=13):
+    indices = list(range(len(observations)))
+    alea = random.Random(graine)
+    alea.shuffle(indices)
+    taille = len(indices) // k
+    moyennes = []
+    for i in range(k):
+        val = indices[i * taille:(i + 1) * taille] if i < k - 1 else indices[i * taille:]
+        app = [j for j in indices if j not in val]
+        paires_app = [observations[j] for j in app]
+        paires_val = [observations[j] for j in val]
+        mx = sum(p[0] for p in paires_app) / len(paires_app)
+        my = sum(p[1] for p in paires_app) / len(paires_app)
+        var = sum((p[0] - mx) ** 2 for p in paires_app)
+        cov = sum((p[0] - mx) * (p[1] - my) for p in paires_app)
+        pente = cov / var if var else 0.0
+        erreurs = [(pente * (x - mx) + my - y) ** 2 for x, y in paires_val]
+        moyennes.append(sum(erreurs) / len(erreurs))
+    return statistics.mean(moyennes), statistics.pstdev(moyennes)
+
+
+random.seed(3)
+donnees = [(x, 3 * x + 7 + random.gauss(0, 4)) for x in [random.uniform(0, 10) for _ in range(150)]]
+moy, ect = protocole(donnees)
+print("score final :", round(moy, 2), "+/-", round(ect, 2))
+```
+
+Le rapport qui découle de ce protocole contient toujours les mêmes rubriques, et leur ordre n'est pas neutre. On y décrit d'abord les données et leur découpage, puis les transformations et leur position par rapport à la coupe, ensuite les modèles testés avec le nombre de configurations essayées, enfin les scores moyens et dispersés pour chaque modèle retenu. Les résultats arrivent à la fin, une fois le terrain préparé, de sorte que le lecteur peut juger de leur fiabilité avant de les interpréter.
+
+Un tableau de synthèse final suffit souvent à résumer des semaines de travail et à déclencher la décision.
+
+| Étape | Ce qu'on fait | Ce qu'on ne fait surtout pas |
+| --- | --- | --- |
+| Découpage | figer graine, proportions, stratification | regénérer le test à chaque essai |
+| Transformations | apprendre dans le pli d'entraînement | calculer des stats sur le jeu complet |
+| Réglage | grille et validation croisée | choisir sur le test |
+| Évaluation | une mesure unique sur le test | consulter le test en boucle |
+| Rapport | moyenne, dispersion, nombre d'essais | communiquer le meilleur score seul |
+
+La dernière étape du protocole est souvent la plus rentable : l'analyse des erreurs. Plutôt que de s'arrêter au chiffre global, on regarde les cas où le modèle se trompe le plus, on cherche une structure dans ces erreurs, et l'on découvre parfois qu'un modèle au score modeste est excellent sur les cas qui comptent et médiocre sur des cas sans enjeu, ou l'inverse. Un score global n'est qu'un résumé ; l'analyse des erreurs en révèle la substance.
+
+- Fixez la question et la métrique avant tout calcul.
+- Découpez une fois, puis ne touchez plus jamais au test.
+- Placez chaque transformation après la coupe, apprise sur le seul entraînement.
+- Cherchez les hyperparamètres en validation croisée, rapportez moyenne et dispersion.
+- Terminez par l'analyse des erreurs : elle explique ce que le chiffre global cache.
+$lesson$),
+  ('ia-c6-p13', 'ia-c6', 13, $lesson$À retenir$lesson$, $lesson$
+- Un score n'a de sens qu'accompagné de son protocole : données, découpage, métrique, répétitions.
+- L'erreur de généralisation n'est jamais observée, on l'estime sur des données cachées.
+- Le surapprentissage se lit en deux nombres : erreur d'entraînement très basse, erreur de test nettement supérieure.
+- Biais élevé et erreurs proches signalent un modèle trop simple ; variance élevée et écart large signalent un modèle trop flexible ou des données rares.
+- Trois ensembles, trois rôles : entraînement pour apprendre, validation pour choisir, test pour conclure une seule fois.
+- Le test ne se consulte jamais pendant le réglage, sous peine de se transformer en validation.
+- La validation croisée en k plis transforme un score unique en moyenne et écart-type, en utilisant chaque observation une fois pour valider.
+- k égal à cinq convient au réglage courant, k égal à dix à l'estimation finale soignée ; k égal à deux reste trop bruyant.
+- Stratifier en classification déséquilibrée, grouper par entité, découper chronologiquement pour les séries temporelles.
+- La régularisation pénalise les coefficients : L2 contracte, L1 sélectionne, l'arrêt anticipé limite la durée d'apprentissage.
+- Lambda est un hyperparamètre et se choisit en validation croisée, jamais à l'œil sur le test.
+- Les courbes d'apprentissage distinguent sous-ajustement, surapprentissage et situation saine en un coup d'œil.
+- Une fuite, c'est de l'information future ou de la cible qui contamine l'entraînement : le score interne devient faux.
+- Toute statistique s'apprend dans le pli d'entraînement courant, puis se réapplique au pli de validation.
+- Les doublons d'entités entre ensembles et les colonnes créées après l'événement sont les fuites les plus fréquentes.
+- Un modèle entraîné sur des données purement aléatoires doit retomber au niveau du hasard : c'est votre test de fuite.
+- Rapportez toujours la moyenne, la dispersion et le nombre de configurations essayées.
+$lesson$),
+  ('ia-c6-p14', 'ia-c6', 14, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Calculer la moyenne ou l'écart-type de normalisation sur le jeu complet avant de découper : la fuite la plus répandue qui soit.
+- Utiliser le jeu de test pour choisir entre plusieurs modèles, puis se vanter du score obtenu sur ce même test.
+- Se contenter d'un seul découpage et conclure à partir d'un score dépourvu de dispersion.
+- Oublier de fixer la graine et comparer ensuite deux modèles sur des ensembles différents.
+- Appliquer un découpage aléatoire à des données temporelles, ce qui fait apprendre au modèle le futur pour prédire le passé.
+- Laisser les doublons d'une même entité se retrouver des deux côtés de la coupe.
+- Penser qu'augmenter le nombre d'itérations corrigera un surapprentissage, alors que cela l'aggrave.
+- Choisir k égal à dix par réflexe sur un jeu de données minuscule, ce qui réduit l'entraînement à presque rien.
+- Interpréter un écart-type élevé comme un détail statistique alors qu'il trahit l'instabilité du modèle.
+- Déployer un modèle sans réévaluer sa performance sur une période récente, postérieure à l'entraînement.
+$lesson$),
+  ('ia-c6-p15', 'ia-c6', 15, $lesson$Pour aller plus loin$lesson$, $lesson$
+Les ressources officielles suivantes sont regroupées dans le même ordre que la progression de cette leçon, et chacune correspond à une section précise. Copiez simplement les adresses dans la barre d'adresse de votre navigateur : https://scikit-learn.org/stable/modules/cross_validation.html présente la validation croisée, le choix de k et les variantes stratifiées avec des exemples complets. https://scikit-learn.org/stable/modules/learning_curve.html détaille les courbes d'apprentissage et leur interprétation en termes de biais et de variance. https://scikit-learn.org/stable/modules/linear_model.html#ridge-regression décrit la régression ridge et le rôle du paramètre de pénalisation.
+
+Pour approfondir la question des fuites, le document de référence de Google sur les bonnes pratiques de machine learning consacre plusieurs sections au découpage des données et à la détection des fuites, à l'adresse https://developers.google.com/machine-learning/rules-of-ml#splitting-your-data . La documentation de la bibliothèque scikit-learn, quant à elle, contient un guide complet sur la construction de pipelines qui respectent la frontière entre ensembles, à l'adresse https://scikit-learn.org/stable/modules/compose.html . Ces pages se lisent une première fois de bout en bout, puis servent de référence ponctuelle : ouvrez-les le jour où un score vous paraîtra suspect, et revenez-y quand un doute précis se présentera.
+$lesson$),
+  ('ia-c6-p16', 'ia-c6', 16, $lesson$Et maintenant : la vidéo du chapitre$lesson$, $lesson$
+La vidéo du chapitre reprend la même progression en la montrant s'écrire sous vos yeux : le découpage avec une graine fixe, la boucle de validation croisée en k plis, l'ajout du terme de pénalisation dans la fonction d'erreur, puis la recherche systématique d'une fuite dans un jeu de données volontairement corrompu. Regardez-la avec votre éditeur ouvert à côté de vous et rejouez chaque bloc en pause, en changeant les graines pour observer comment les scores bougent. Une fois la visionnage terminé, passez à l'exercice pratique, où vous écrirez seul le banc d'essai complet : données synthétiques, découpage, régression à la main, validation croisée et verdict sur le surapprentissage. C'est là que les notions de cette leçon deviennent des réflexes, et le quiz final vérifiera les quatre points essentiels : lire un écart train-test, justifier le choix de k, appliquer la règle d'or des transformations après la coupe et reconnaître une fuite de données.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c7-p1', 'ia-c7', 1, $lesson$Pourquoi la mise en production change tout$lesson$, $lesson$
+Bienvenue dans ce chapitre consacré à la mise en production d'un modèle. Jusqu'ici, dans ce parcours data science, vous avez nettoyé des données, construit des variables, entraîné des classifieurs et des régresseurs, comparé leurs métriques et affiné des hyperparamètres. Tout ce travail vivait dans un notebook, ce document personnel où l'on expérimente, où l'on recommence, où l'on laisse parfois une cellule morte parce qu'elle raconte une erreur que l'on a comprise. Le notebook est l'atelier du chercheur : il est souple, il autorise la gourmandise du code, il accepte que l'on change d'avis à la dixième cellule. Mais l'atelier a une frontière très nette. Le jour où une personne extérieure à votre équipe, un utilisateur, un client ou un autre logiciel, a besoin de la réponse de votre modèle au moment précis où il la demande, le notebook ne suffit plus : il faut un service. Mettre un modèle en production, c'est précisément cette transformation : faire d'un artefact de recherche une fonctionnalité fiable, adressable, observable et maintenable dans la durée.
+
+Ce changement de statut est plus profond qu'un simple changement d'outil. Dans un notebook, vous êtes le seul utilisateur, vous voyez toutes les sorties, vous tolérez une exécution de quatre minutes et vous relancez à la main quand quelque chose casse. En production, votre code reçoit des dizaines ou des centaines de requêtes par seconde, certaines bien formées, d'autres incomplètes ou malicieuses, pendant que vous dormez, pendant que votre équipe est en congé, pendant qu'un déploiement de votre compagnie modifie la manière dont les données arrivent. Le modèle n'est plus seulement un algorithme : c'est un composant d'un système plus grand, qui a des contractualités, des attentes de latence, des exigences de sécurité et une responsabilité métier. Comprendre cette révolution d'échelle est la première compétence de ce chapitre, bien avant toute ligne de code, parce qu'elle détermine toutes les décisions techniques qui suivent.
+
+À la fin de cette leçon, vous saurez faire trois choses concrètes, et vous les aurez déjà manipulées dans du code exécutable. Premièrement, vous saurez concevoir une interface de programmation applicative, souvent appelée API, qui accepte un échantillon de données sous forme structurée, le valide, le transmet au modèle et renvoie une prédiction accompagnée des métadonnées qui la rendent traçables. Deuxièmement, vous saurez versionner un modèle : le rendre identifiable de manière unique, associer à chaque artefact les données et les métriques qui l'ont produit, et permettre un retour arrière sans panique. Troisièmement, vous saurez suivre la dérive, c'est-à-dire détecter le moment où les données reçues en production s'éloignent de celles de l'entraînement, où les prédictions dérivent elles-mêmes, et où la qualité métier descend sous un seuil qui impose un réentraînement. Ces trois compétences forment le triptyque de la mise en production : servir, tracer, surveiller.
+
+Nous illustrerons l'ensemble avec deux outils très répandus, que nous décrirons en français courant avant de les utiliser, sans que leur installation soit nécessaire pour pratiquer. FastAPI est un framework moderne, écrit en Python, qui permet de décrire une API avec quelques lignes de code, de valider automatiquement les requêtes et de servir du HTTP avec un moteur asynchrone rapide ; il produit en bonus une documentation interactive à partir de vos propres définitions de données. Joblib est une bibliothèque de persistance, très utilisée dans l'écosystème scikit-learn, qui enregistre un objet entraîné dans un fichier binaire et le relit à l'identique, compression comprise. Tous deux sont excellent choix en entreprise, mais aucun n'est indispensable pour comprendre le fond : c'est pourquoi les blocs de code de démonstration de ce chapitre n'utilisent que la bibliothèque standard de Python, afin que vous puissiez les exécuter tels quels, y compris dans un environnement Pyodide embarqué dans une page web, sans réseau ni installation. La logique que vous y apprendrez, elle, se transfère à FastAPI, à joblib et à n'importe quel orchestrateur sans le moindre changement de mentalité.
+
+Un dernier conseil avant de commencer, sur la manière d'aborder cette leçon. La mise en production se comprend par les pannes autant que par les succès : lisez chaque avertissement comme un incident que vous n'aurez pas à vivre. Réfléchissez systématiquement à la question que se posera l'ingénieur d'astreinte à trois heures du matin, à savoir d'où vient ce modèle, quelle version tourne, ce qu'il a reçu en entrée et pourquoi il a répondu cela. Cette obsession de la trace est la vraie culture de production, et elle se cultive dès le premier exemple.
+
+
+
+La première différence tient au contrat. Un notebook n'a aucun contrat : il promet seulement à son auteur d'afficher quelque chose si tout se passe bien. Un service en production, lui, promet un comportement à des inconnus. Il promet qu'une requête conforme recevra une réponse dans un délai donné, qu'une requête non conforme recevra une erreur explicite et non un plantage, que le serveur restera joignable même si un panier de données est absurde, et que deux appels identiques produiront des réponses cohérentes. Ce contrat se traduit en spécifications vérifiables : schéma d'entrée, codes HTTP, budgets de latence, taux d'erreur toléré, disponibilité visée. Dès que vous le formulez, vous découvrez que votre modèle n'est qu'une brique parmi d'autres, entourée de validation, de journalisation, de mise en cache et de supervision.
+
+La deuxième différence est la concurrence. Dans un notebook, une seule exécution occupe le processeur et personne d'autre n'attend. Sur un service, plusieurs requêtes arrivent en même temps, souvent par dizaines ou par centaines, et chacune réclame une réponse rapide. Vous devez donc réfléchir au coût d'un appel : combien de temps votre fonction de prédiction consomme-t-elle, que se passe-t-il si elle est trop lente, faut-il une file d'attente, un découpage en lots, un cache pour les profils déjà calculés. Un modèle lent n'est pas seulement désagréable, il devient un point de saturation : la file s'allonge, les requêtes expirent, les clients abandonnent, et l'observabilité du système se dégrade au moment précis où elle serait le plus utile. La performance d'un modèle en production se mesure donc en deux dimensions, la qualité statistique de ses réponses et la vitesse avec laquelle il les délivre.
+
+La troisième différence concerne la reproductibilité. Un résultat de notebook est reproductible si vous gardez le fichier, les données et la version des bibliothèques ; en pratique, ces trois éléments vivent sur votre machine et parfois seulement dans votre tête. En production, il faut que n'importe quel collègue, depuis une machine vierge, puisse reconstruire exactement l'environnement qui a produit le service, puis déployer la même version du modèle avec les mêmes pré-traitements. Cette exigence impose de figer les dépendances, de versionner le code d'application comme le code de données, de figer la graine aléatoire lors de l'entraînement, et d'enregistrer l'empreinte des jeux d'entraînement. Sans cela, la question « quel modèle tourne réellement ? » n'a pas de réponse vérifiable, et toute analyse ultérieure d'un incident devient une enquête archéologique.
+
+La quatrième différence est la propriété. Un notebook appartient à une personne, un service appartient à une équipe et à ses utilisateurs. Quand la prédiction est faussée, quelqu'un doit le savoir, le diagnostiquer et le corriger : c'est ce qu'on appelle la responsabilité de service. Elle se traduit par des alertes, des tableaux de bord, des seuils décidés à l'avance et une procédure d'incident. Elle implique aussi que l'on distingue deux familles de défaillances, celles qui se voient immédiatement, comme une erreur 500 ou une absence de réponse, et celles qui restent invisibles, comme un modèle qui répond correctement mais sur des données qui ne ressemblent plus à celles de l'entraînement. Les secondes sont de loin les plus coûteuses, et tout le troisième temps de ce chapitre leur est consacré.
+
+Le tableau suivant résume, en termes concrets, ce que l'on abandonne et ce que l'on gagne en passant de l'atelier au service.
+
+| Aspect | Notebook d'expérimentation | Service de prédiction |
+| --- | --- | --- |
+| Utilisateur | Vous seul | Applications, humains, autres services |
+| Entrée | Cellules exécutées à la main | Requêtes validées par un schéma |
+| Sortie | Cellules affichées | Réponses JSON avec codes HTTP |
+| Fréquence | Quelques exécutions par jour | Des appels continus, parfois en rafale |
+| Défaillance | Message d'erreur visible | Incident à détecter, alerter, corriger |
+| Traçabilité | Historique du notebook | Journal de chaque appel, modèle et version |
+| Version | Dossier renommé à la main | Identifiant unique, retour arrière possible |
+| Dérive des données | Non observée | Mesurée, alertée, corrigée par réentraînement |
+
+Ne pas assumer ces différences produit des pannes célèbres et très ordinaires à la fois : un chemin de fichier absolu qui n'existe que sur votre machine, un champ obligatoire que personne ne vérifie, un modèle qui renvoie un nombre alors que l'application attend une étiquette, une unité de mesure changée en amont, un modèle entraîné sur des données dupliquées qui semblent parfaites jusqu'au premier mois réel. Aucune de ces pannes n'exige une attaque : elles se produisent toutes seules, parce que le monde change plus vite que vos données d'entraînement. La mise en production n'est donc pas une formalité de fin de projet, c'est la discipline qui fait d'un modèle un produit.
+$lesson$),
+  ('ia-c7-p2', 'ia-c7', 2, $lesson$Le parcours d'un modèle, de l'entraînement à la réponse$lesson$, $lesson$
+Le parcours d'un modèle en production se décompose en étapes distinctes, chacune avec son livrable, son propriétaire et son critère de réussite. Comprendre cette chaîne dans son intégralité est utile avant d'écrire le moindre serveur, car chaque brique conditionne la suivante : un modèle mal sérialisé ne peut pas être versionné, un service sans journal ne peut pas être surveillé, une surveillance sans seuil ne peut pas déclencher de décision. Nous allons détailler chaque maillon, puis vous verrez le schéma d'ensemble sous forme de schéma ASCII, volontairement placé dans un bloc de code pour rester lisible dans tous les afficheurs.
+
+La première étape est l'entraînement, qui se déroule dans votre environnement de développement ou de calcul. Elle produit deux choses que l'on confond trop souvent : une métrique de performance, qui sert à convaincre, et un artefact, c'est-à-dire l'objet réellement exécutable, qui contient les paramètres appris, le pré-traitements associés et, idéalement, la liste des variables attendues avec leur ordre. Un modèle sans ses pré-traitements est un modèle incomplet : la normalisation, l'encodage des catégories, les seuils de transformation doivent voyager avec les coefficients, sinon la prédiction en production calculera quelque chose d'autre que ce que vous avez évalué. C'est l'une des causes les plus fréquentes d'écart entre les métriques de recette et les résultats réels.
+
+La deuxième étape est la sérialisation, qui transforme l'objet mémoire en un fichier que l'on peut copier, archiver et transmettre. joblib est l'outil courant dans l'écosystème scikit-learn parce qu'il gère efficacement les tableaux volumineux et la compression ; à l'autre bout du spectre, un modèle simple tient parfaitement dans un fichier JSON, qui a l'immense avantage d'être lisible, diffable et contrôlable sans bibliothèque spécialisée. Les deux approches répondent au même besoin : produire un artefact stable, dont le contenu puisse être vérifié par une empreinte numérique. Cette empreinte, calculée par une fonction de hachage comme SHA-256, deviendra l'identifiant objectif du modèle, indépendant de tout nom de fichier que quelqu'un pourrait écraser.
+
+La troisième étape est le versionnage et l'enregistrement. À partir du moment où l'artefact existe, il reçoit un numéro de version et il est déposé dans un registre, un emplacement central où l'on conserve les modèles, leurs métadonnées, leurs métriques de référence et leur historique. Le registre peut être un dossier Git, un stockage objet versionné, ou un outil dédié comme MLflow qui ajoute recherche, comparaison et historique. L'essentiel n'est pas l'outil mais la règle : chaque modèle déployé doit être traçable jusqu'à ses données d'entraînement et à son code source, et l'inverse doit être vrai aussi, c'est-à-dire qu'à partir d'un modèle en production, on doit pouvoir dire quel code l'a fabriqué. Sans cette bidirectionalité, les audits et les retours arrière deviennent impossibles.
+
+La quatrième étape est le déploiement, qui consiste à mettre le service à la disposition de ses appelants. On y range généralement plusieurs environnements : un environnement de développement pour l'équipe, un environnement de recette où l'on valide la version candidate avec des jeux de tests réalistes, puis la production, seul endroit où de vraies requêtes arrivent. Un déploiement réussi n'est pas seulement un serveur qui démarre : c'est un serveur dont on a vérifié les réponses de référence, dont on a mesuré la latence sur des charges représentatives, dont on a préparé le retour arrière, et dont on a confirmé que les journaux sont bien écrits. La règle du retour arrière, souvent négligée, se formule simplement : avant de publier une version, s'assurer que la précédente reste installable en une commande.
+
+La cinquième étape est le service lui-même, c'est-à-dire l'API qui écoute sur un port, accepte des requêtes, les valide, appelle le modèle et répond. La validation n'est pas une formalité : elle constitue la frontière entre le monde extérieur, imprévisible, et votre code, qui suppose des types propres. Une requête sans champ, avec un nombre à la place d'une chaîne, ou avec une valeur hors plage, doit être refusée proprement avec une erreur explicite, jamais laissée passer jusqu'au calcul. FastAPI, que nous avons évoqué, illustre bien cette philosophie : on décrit le schéma une fois, et la validation, la sérialisation de la réponse et la documentation sont déduites automatiquement de cette description unique.
+
+La sixième étape est la journalisation, souvent appelée logging. Chaque appel utile laisse une trace : horodatage, identifiant de requête, entrées reçues, prédiction produite, version du modèle, temps de calcul et, quand elle est disponible, l'étiquette réelle tardive. Cette trace est le carburant de tout le suivi qui vient ensuite : sans journal d'entrées, on ne mesure pas la dérive des données ; sans journal de sorties, on ne mesure pas la dérive des prédictions ; sans étiquettes retardées, on ne mesure pas l'erreur réelle. Il faut cependant rester sobre : journaliser des données sensibles ou des volumes bruts sans politique de rétention crée à la fois un risque juridique et un coût de stockage, donc on journalise des statistiques agrégées et des échantillons représentatifs plutôt que tout.
+
+La septième étape est la surveillance, qui transforme les journaux en indicateurs et les indicateurs en décisions. On y mesure la disponibilité et la latence, bien sûr, mais surtout la qualité : dérive des distributions en entrée, dérive des prédictions, dégradation des métriques quand les étiquettes arrivent, respect des seuils métier. La huitième étape boucle le système : le réentraînement, déclenché soit à calendrier fixe, soit par une alerte de dérive, soit par une baisse de performance constatée, qui produit une nouvelle version et repart dans le registre. Le cycle ainsi décrit n'a pas de fin, et c'est exactement ce qui distingue un système de production d'un modèle ponctuel.
+
+```text
+  [ données brutes ]
+          |
+          v
+  +-------------------+     +---------------------+
+  | entrainement      |---->| artefact + metrics  |
+  | (code, seed, jeu) |     | empreinte SHA-256   |
+  +-------------------+     +----------+----------+
+                                       |
+                                       v
+                            +---------------------+
+                            | registre / versions |
+                            | v1  v2  v3  (rollback)|
+                            +----------+----------+
+                                       |
+                                       v
+  [ appels ] ---> +-----------------------------+ ---> [ reponse JSON ]
+                  | API : validation + modele   |        + version
+                  | journal : entrees/sorties   |
+                  +-------------+---------------+
+                                |
+                                v
+                    +-------------------------+
+                    | suivi de derive (PSI,   |
+                    | metriques, alertes)     |
+                    +-----------+-------------+
+                                |
+                                v
+                    +-------------------------+
+                    | reentrainement + nouvelle|
+                    | version dans le registre |
+                    +-------------------------+
+```
+
+Ce schéma mérite d'être relu une seconde fois, car il contient les deux boucles qui structurent toute mise en production moderne. La boucle courte est la boucle de requête : entrée, validation, prédiction, journal, réponse, en quelques millisecondes, sans état conservé d'un appel à l'autre. La boucle longue est la boucle d'amélioration : agrégation des journaux, mesure de la dérive, décision humaine ou automatique, réentraînement, validation, nouvelle version. Une équipe mature sépare ces deux boucles dans son organisation comme dans son code, parce qu'elles n'ont ni la même fréquence, ni les mêmes responsables, ni le même niveau de risque. Confondre les deux, par exemple en réentraînant le modèle à chaque requête, conduit à des systèmes impossibles à valider ; ignorer la seconde, c'est livrer un modèle qui vieillit sans que personne ne le sache.
+$lesson$),
+  ('ia-c7-p3', 'ia-c7', 3, $lesson$Ce qu'est réellement une API de prédiction$lesson$, $lesson$
+Une API de prédiction, ou interface de programmation applicative, est un point d'entrée unique et stable par lequel d'autres logiciels sollicitent votre modèle. Concrètement, c'est un processus qui écoute sur un port réseau, comprend le protocole HTTP, accepte des messages structurés, généralement en JSON, et renvoie des messages structurés eux aussi. Le point essentiel est que l'appelant ne sait rien de votre modèle : il ignore si vous utilisez un réseau de neurones, une régression ou une règle de trois, il connaît seulement le contrat d'entrée et le contrat de sortie. Cette ignorance est une force : elle vous permet de remplacer le modèle, de changer sa version, de le mettre en cache ou de le faire tourner sur une autre machine, sans jamais casser l'application qui vous appelle.
+
+Prenons le contrat d'entrée. Une requête contient typiquement un identifiant d'appel optionnel, un horodatage implicite fourni par le transport, et un objet de caractéristiques, c'est-à-dire les valeurs sur lesquelles le modèle doit raisonner. La difficulté, toujours la même, est que le monde extérieur produit ce qu'il veut : des chaînes là où vous attendiez des nombres, des nombres négatifs pour une surface, des catégories inconnues, des champs oubliés, des objets imbriqués qui débordent la profondeur autorisée. La validation existe pour transformer ce chaos en une décision binaire, conforme ou non conforme, avant que la moindre ligne de votre logique métier ne s'exécute. Elle protège votre modèle, mais elle protège aussi l'appelant, qui reçoit un message précis indiquant le champ fautif au lieu d'une exception interne qui ne lui dirait rien.
+
+Le contrat de sortie porte la prédiction, bien sûr, mais il porte aussi du contexte, et c'est là que beaucoup de débutants s'arrêtent trop tôt. Une réponse utile contient au minimum la valeur prédite, l'identifiant de version du modèle qui l'a produite, un horodatage, parfois un intervalle d'incertitude ou les contributions des principales variables quand l'interprétabilité est demandée. Le pourquoi est simple : six mois plus tard, un support client réclamera l'explication d'une décision, et vous devrez reconstruire exactement ce que le système a répondu, avec quel modèle, sur quelles valeurs. Sans version et sans horodatage dans la réponse, cette reconstruction relève de la divination. La traçabilité se décrit donc dans le contrat lui-même, pas seulement dans vos journaux.
+
+Les codes de statut HTTP constituent le vocabulaire de ces décisions. Le code 200 annonce une prédiction réussie. Le code 422 signale que le corps de la requête est syntaxiquement présent mais ne respecte pas le schéma attendu, et c'est le code que l'on rencontre le plus souvent en pratique. Le code 401 ou 403 concerne l'authentification et l'autorisation. Le code 429 prévient qu'un appelant dépasse son quota, ce qui est fréquent quand un partenaire automatise vos appels. Le code 500 indique une erreur interne, toujours regrettable, et le code 503 annonce que le service est momentanément indisponible, par exemple pendant le chargement d'une nouvelle version. Choisir le bon code n'est pas de la sémantique vaine : les bibliothèques clientes réagissent différemment selon l'information, certaines réessaient automatiquement sur 429 et 503, jamais sur 422.
+
+```json
+{
+  "request_id": "8f2c1a",
+  "features": {
+    "surface": 35,
+    "pieces": 4,
+    "age": 8
+  }
+}
+```
+
+```json
+{
+  "prediction": 115900.0,
+  "unit": "EUR",
+  "model_version": "1.0.0",
+  "model_fingerprint": "c1bf756a6272",
+  "generated_at": "2026-01-15T10:00:00Z",
+  "request_id": "8f2c1a"
+}
+```
+
+Observez que la réponse echo le request_id reçu : ce simple renvoi permet de corréler, dans les journaux de l'appelant et les vôtres, une requête précise avec sa réponse, y compris quand les deux flux arrivent en rafale. Notez aussi la présence du fingerprint du modèle, cette empreinte calculée sur le contenu même de l'artefact : alors que le numéro de version peut être réutilisé par erreur, l'empreinte change nécessairement dès que le moindre octet du modèle change. Les deux se complètent, l'un pour l'humain, l'autre pour la machine.
+
+La conception d'une telle API suit quelques principes que l'on énonce mieux avant d'écrire que pendant. Le premier est la Stateless, ou absence d'état : aucune requête ne doit dépendre du contenu mémorisé de la précédente, sinon votre service devient impossible à répartir sur plusieurs instances et un redémarrage fait perdre des informations. Le second est l'idempotence des opérations de lecture : demander deux fois la même prédiction pour les mêmes entrées doit renvoyer la même réponse, ce qui suppose un modèle fixe entre les deux appels et, si vous misez en cache, une règle d'expiration explicite. Le troisième est la défense en profondeur : taille maximale du corps, nombre maximal de champs, bornes métier sur les valeurs, contrôle des types, puis seulement le modèle. Le quatrième est la sobriété des messages d'erreur : décrire ce qui ne va pas sans divulguer votre pile technique, vos chemins internes ou la nature exacte de vos paramètres.
+
+FastAPI illustre cette conception avec une élégance particulière, et il est utile de comprendre son mécanisme même sans l'installer. Vous décrivez une classe de données, un schéma pydantic, qui énumère les champs attendus avec leurs types et leurs bornes ; vous écrivez une fonction Python décorée qui reçoit ces données déjà validées et renvoie un autre objet, également typé ; le framework génère alors automatiquement la documentation, la validation, la sérialisation et le routage. Le résultat est que la spécification et le code ne peuvent plus diverger, puisqu'ils sont la même chose. Le service tourne ensuite derrière un serveur d'application comme uvicorn, éventuellement devant un équilibreur de charge, avec plusieurs workers si le calcul l'exige.
+
+Derrière cette façade élégante se posent des questions prosaïques qui décident pourtant de la qualité perçue. Combien de temps met le modèle pour répondre sur le 95e centile des requêtes, et pas seulement en moyenne, car c'est la queue de distribution que l'utilisateur retient. Que se passe-t-il si le modèle est cinq fois plus lent après une mise à jour : la file d'attente grandit, les timeouts se déclenchent, et les clients voient des 503 qui n'ont rien à voir avec la validité de leurs requêtes. Comment gérez-vous le démarrage à froid, ce moment où le service répond déjà mais où le modèle n'est pas encore chargé en mémoire, qui impose soit un état de santé explicite, soit un refus poli tant que le modèle n'est pas prêt. Ces questions n'appartiennent pas au domaine statistique, elles appartiennent au domaine du service, et c'est précisément ce que signifie le mot production.
+
+Voici comment un appel complet se déroule, de bout en bout, lorsque tout est correctement organisé. L'appelant envoie une requête POST vers un chemin explicite, par exemple la racine suivie de predict. Le serveur accepte la connexion, lit le corps avec une limite de taille, décode le JSON, valide le schéma, détecte les champs manquants ou aberrants et, en cas d'anomalie, répond par un 422 sans jamais toucher au modèle. Si tout est conforme, il convertit les valeurs dans le format exact attendu par le modèle, appelle la fonction de prédiction, récupère le résultat, y annexe la version, l'empreinte et l'horodatage, sérialise le tout et renvoie un 200. En parallèle, une ligne de journal est écrite avec les mêmes éléments. Enfin, l'appelant décode la réponse et la met en forme pour son utilisateur. Toute la sophistication tient dans les branches de contrôle, pas dans la ligne de calcul elle-même.
+$lesson$),
+  ('ia-c7-p4', 'ia-c7', 4, $lesson$Sérialiser un modèle sans dépendance externe$lesson$, $lesson$
+La sérialisation consiste à convertir un objet vivant en mémoire, avec ses méthodes et ses références, en une suite d'octets stable que l'on peut écrire sur un disque, copier, transmettre et relire plus tard à l'identique. Pour un modèle, l'enjeu est double : il faut conserver les paramètres appris, bien sûr, mais aussi tout ce qui permet de les interpréter correctement, à savoir l'ordre des variables, les unités, le pré-traitements éventuel, la date d'entraînement et l'identifiant du jeu de données. Un fichier qui ne contient que les coefficients est un fichier dangereux, car il oblige à deviner le reste, et la devinette en production est toujours une source d'incidents silencieux.
+
+joblib est la solution habituelle dans l'écosystème scikit-learn. Elle enregistre un objet Python quelconque dans un fichier binaire, souvent compressé, en traversant sa structure interne ; le recharger restitue un objet qui a l'apparence exact du modèle entraîné, méthodes de prédiction comprises. Son intérêt devient évident quand les tableaux de coefficients pèsent des centaines de mégaoctets, car l'écriture reste rapide et le chargement se fait en une seule opération. Sa contrepartie tient en un avertissement que la documentation scikit-learn répète : un fichier joblib est un fichier de confiance. Le chargement d'un tel fichier exécute du code de désérialisation, il ne doit donc provenir que d'une source authentifiée, idéalement d'un registre interne accessibles en lecture seule, et jamais d'une pièce jointe ou d'un lien reçu par message.
+
+L'alternative, que nous allons pratiquer ici parce qu'elle est entièrement pédagogique et parfaitement honnête en usage réel, consiste à représenter le modèle sous forme d'un dictionnaire Python puis à l'écrire en JSON. Un modèle linéaire, par exemple, se réduit à un intercept et à un coefficient par variable : rien de plus simple à exprimer en clair. Le format JSON présente trois avantages décisifs pour apprendre et pour auditer. Il est lisible par un humain, ce qui permet de vérifier d'un coup d'œil qu'un coefficient n'a pas pris une valeur absurde. Il est universel, donc consommable par n'importe quel langage, y compris par l'application qui appellera votre API. Il est strict, puisqu'une valeur non sérialisable, comme un nombre indéfini ou un objet maison, provoque une erreur immédiate plutôt qu'un fichier corrompu.
+
+Le passage du dictionnaire à la chaîne de caractères se fait avec la fonction json.dumps, qui accepte plusieurs paramètres utiles. Le paramètre indent déplie le résultat sur plusieurs lignes, ce qui rend le fichier lisible et diffable. Le paramètre sort_keys place les clés dans un ordre constant, si bien que deux écritures du même modèle produisent exactement la même chaîne, condition nécessaire pour comparer des versions par simple égalité de texte. Le paramètre ensure_ascii permet de conserver ou non les accents ; en le laissant actif, le fichier reste compatible avec les environnements qui supposent une sortie ASCII, et c'est le réglage prudent pour un artefact que l'on archivera longtemps. L'inverse, json.loads, reconstruit le dictionnaire à partir de la chaîne, et c'est tout le cycle de vie dont nous avons besoin.
+
+```python
+import json
+
+modele = {
+    "version": "1.0.0",
+    "features": ["surface", "pieces", "age"],
+    "intercept": 12000.0,
+    "coefficients": {"surface": 2100.0, "pieces": 8500.0, "age": -450.0},
+}
+
+payload = json.dumps(modele, indent=2, sort_keys=True, ensure_ascii=False)
+print(payload)
+
+restaure = json.loads(payload)
+print(restaure == modele)
+print(restaure["coefficients"]["surface"])
+```
+
+Exécutez ce bloc et observez deux phénomènes. Le premier est que la sortie est un texte structuré, avec des accolades, des guillemets et des points-virgules de fin de chaîne, que vous pourriez ouvrir dans n'importe quel éditeur : c'est votre modèle, rendu transparent. Le deuxième est que la comparaison d'égalité renvoie True, ce qui signifie que le cycle écriture puis lecture n'a rien perdu. Cette propriété est le socle du versionnage par empreinte : si la sérialisation est déterministe, alors deux modèles identiques ont nécessairement la même représentation textuelle, et deux modèles différents en ont forcément une distincte.
+
+Reste à transformer cette représentation en identifiant. La bibliothèque hashlib propose plusieurs fonctions de hachage, dont SHA-256, qui calcule une empreinte de 64 caractères hexadécimaux à partir d'une chaîne quelconque. Trois propriétés expliquent son usage : la fonction est déterministe, donc la même entrée donne toujours la même empreinte ; elle est sensible, donc la moindre modification, même l'ajout d'un espace, change complètement le résultat ; et l'inverse est impossible, on ne peut pas reconstituer la chaîne à partir de l'empreinte. En pratique, on tronque souvent l'empreinte à une douzaine de caractères pour l'afficher dans les journaux et les réponses, tout en conservant la valeur complète pour les comparaisons internes.
+
+```python
+import hashlib
+
+def fingerprint(payload):
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+corps_a = json.dumps({"poids": 1.5}, sort_keys=True)
+corps_b = json.dumps({"poids": 1.5000001}, sort_keys=True)
+print(fingerprint(corps_a))
+print(fingerprint(corps_b))
+print(fingerprint(corps_a) == fingerprint(corps_b))
+```
+
+Voici maintenant la fonction de prédiction, c'est-à-dire la partie qui remplace réellement le modèle entraîné. Elle est délibérément pure : elle ne lit aucun fichier, n'écrit rien, ne dépend d'aucune bibliothèque, et renvoie toujours le même résultat pour les mêmes arguments. Cette pureté a une conséquence pratique très appréciée en production, elle se teste sans préparation. Notez également la vérification en tête de fonction : refuser explicitement une entrée incomplète, en nommant la donnée manquante, vaut mieux que laisser Python lever une erreur de clé absente, beaucoup moins claire pour l'appelant qui lira la réponse.
+
+```python
+def predict(model, features):
+    for name in model["features"]:
+        if name not in features:
+            raise ValueError("caracteristique manquante : " + name)
+    total = float(model["intercept"])
+    for name in model["features"]:
+        total += float(model["coefficients"][name]) * float(features[name])
+    return round(total, 2)
+
+print(predict(modele, {"surface": 35, "pieces": 4, "age": 8}))
+print(predict(modele, {"surface": 20, "pieces": 2, "age": 25}))
+```
+
+Assemblons les pièces dans une séquence de travail complète, telle qu'on l'exécute réellement avant une mise en ligne. On sérialise, on écrit, on relit, on recalcule, on compare. La comparaison d'empreinte après réécriture est le test de non-régression le plus économique qui soit : si l'empreinte publiée ne correspond pas à l'artefact relu, c'est que le chemin d'accès, l'encodage ou la fonction de sérialisation a changé, et il faut arrêter le déploiement avant d'aller plus loin.
+
+```python
+import json
+
+def save_model(model, path="model.json"):
+    payload = json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    return fingerprint(payload)
+
+def load_model(path="model.json"):
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+empreinte = save_model(modele)
+charge = load_model()
+print("empreinte :", empreinte)
+print("stable    :", empreinte == save_model(charge))
+print("prediction:", predict(charge, {"surface": 35, "pieces": 4, "age": 8}))
+```
+
+Le tableau comparatif suivant ne cherche pas à départager les formats, mais à éclairer le choix selon la situation.
+
+| Critère | joblib binaire | Modèle en JSON |
+| --- | --- | --- |
+| Lisibilité humaine | Aucune, binaire compressé | Totale, texte structuré |
+| Volumétrie | Très compact sur les gros objets | Plus verbeux, compressible ensuite |
+| Portabilité | Python et écosystème compatible | Tout langage, tout outil |
+| Audit et diff | Comparaison difficile | Comparaison ligne à ligne |
+| Confiance | Chargement exécutant du code | Lecture de données déclaratives |
+| Usage conseillé | Grands modèles scikit-learn | Petits modèles, contrats, métadonnées |
+
+En entreprise, on combine souvent les deux : l'artefact lourd reste au format natif de la bibliothèque d'entraînement, tandis qu'un fichier JSON de métadonnées l'accompagne toujours, contenant version, empreinte, liste des variables, métriques de référence et emplacement exact de l'artefact. Ce compagnonnage donne le meilleur des deux mondes, performance de chargement et traçabilité immédiate, et il évite la situation où le seul moyen de connaître la version d'un modèle est d'ouvrir un binaire avec le bon outil.
+$lesson$),
+  ('ia-c7-p5', 'ia-c7', 5, $lesson$Versionner chaque artefact$lesson$, $lesson$
+Versionner un modèle, ce n'est pas ajouter un suffixe au nom du fichier. C'est garantir que chaque état du système est identifiable, reproductible et, si nécessaire, restaurable. Une pratique courante consiste à combiner deux formes d'identifiant : un numéro de version lisible par les humains, généralement de la forme majeure, mineure, patch, qui raconte la nature du changement, et une empreinte calculée sur le contenu, qui constitue la preuve objective. La première sert à la communication et à la décision ; la seconde sert à la vérification. Aucune des deux ne remplace l'autre, car un numéro peut être attribué deux fois par erreur, tandis que l'empreinte ne ment pas.
+
+Le sens des trois nombres se fixe rapidement. Un changement de version majeure correspond à une rupture de contrat : une variable disparaît, l'unité change, le type de sortie passe de nombre à étiquette, et l'application appelante doit être adaptée. Une version mineure signale une évolution compatible, par exemple l'ajout d'un champ facultatif dans la réponse ou l'amélioration du modèle sans modifier les entrées attendues. Une version patch couvre un correctif sans effet visible sur le contrat, comme une correction de calcul ou une mise à jour de dépendances de build. Cette discipline évite le débat éternel sur la signification des chiffres et permet à l'équipe de production de décider d'un effort de migration avant même d'avoir lu le détail.
+
+Pour que le versionnage soit utile, il faut lui associer des métadonnées minimales, car un identifiant isolé n'a aucune valeur analytique. Chaque enregistrement de registre contient au minimum l'identifiant et l'empreinte, la date de création, l'emplacement du fichier, le commit du code source, l'empreinte ou la référence du jeu d'entraînement, les hyperparamètres, la liste des variables dans leur ordre exact, les métriques mesurées sur l'ensemble de validation, et enfin la personne ou le processus responsable de la publication. Ce jeu de champs est court à produire, et il transforme une simple conservation de fichiers en une base d'interrogation : quel modèle tournait le 3 mars, quelles étaient ses performances, qui l'a approuvé.
+
+```python
+import json
+from datetime import datetime, timezone
+
+def build_record(model, path, validation_metrics, source_commit):
+    payload = json.dumps(model, indent=2, sort_keys=True, ensure_ascii=False)
+    return {
+        "version": model["version"],
+        "fingerprint": fingerprint(payload),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "artifact_path": path,
+        "features": list(model["features"]),
+        "metrics": dict(validation_metrics),
+        "source_commit": source_commit,
+        "stage": "staging",
+    }
+
+registre = [build_record(
+    modele,
+    "model.json",
+    {"rmse": 4820.5, "mae": 3110.7, "r2": 0.86},
+    "9f1c2ab",
+)]
+print(json.dumps(registre[0], indent=2, sort_keys=True))
+```
+
+La notion de stage mérite une attention particulière, car elle est à l'origine de nombreuses mises en ligne accidentelles. Un modèle suit ordinairement trois états, candidat, recette, production, et seul le dernier sert de vrais utilisateurs. Le passage d'un état à l'autre n'est jamais automatique à partir du moment où le fichier est écrit : il doit être une décision, appuyée par des critères écrits, par exemple des métriques supérieures au modèle en place sur un jeu de test tenu à part, un contrôle des distributions des variables clés, et un avis humain. Une règle simple et efficace consiste à n'autoriser qu'une seule transition à la fois, de sorte que le modèle de production ne puisse être remplacé que par un modèle déjà validé en recette.
+
+Le déploiement lui-même doit prévoir le retour arrière avant l'installation, jamais après. Concrètement, on conserve toujours la version précédente intacte sur la machine ou dans l'image, avec sa configuration et son jeu de variables, de sorte qu'un basculement revient à modifier un raccourci, une variable d'environnement ou une entrée de table, plutôt qu'à reconstruire quoi que ce soit. On vérifie ensuite la nouvelle version par des appels de référence, ces quelques requêtes dont on connaît les réponses exactes, exécutées juste après la bascule. Si l'une d'elles échoue, on revient à la version précédente, on note l'incident, et seulement ensuite on analyse. Cette séquence, d'abord revenir puis comprendre, protège les utilisateurs de votre curiosité.
+
+La coordination entre versions de code et versions de modèle est le dernier point délicat. Le code applicatif qui prépare les caractéristiques peut changer indépendamment du modèle, et l'inverse est tout aussi fréquent : un nouveau modèle peut exiger une variable que l'ancien ignorait. Pour éviter l'incompatibilité silencieuse, deux habitudes suffisent. La première consiste à faire déclarer au modèle la liste exacte des variables qu'il attend, avec leur ordre, et à faire échouer bruyamment toute requête qui ne la respecte pas. La seconde consiste à publier code et modèle dans la même unité de déploiement, de sorte que l'un ne puisse pas avancer sans l'autre. On retrouve la même logique que pour les migrations de base de données : on ne modifie jamais deux côtés d'un contrat sans coordination.
+
+```python
+import json
+
+VERSIONS = {
+    "1.0.0": {"status": "production", "fingerprint": "c1bf756a6272"},
+    "1.1.0": {"status": "staging", "fingerprint": "7d0aa41e55f2"},
+    "0.9.0": {"status": "archive", "fingerprint": "2be917c40d81"},
+}
+
+def promote(registry, version, target="production"):
+    if version not in registry:
+        raise KeyError("version inconnue : " + version)
+    for other in registry:
+        if registry[other]["status"] == "production":
+            registry[other]["status"] = "archive"
+    registry[version]["status"] = target
+    return registry[version]["status"]
+
+print(promote(VERSIONS, "1.1.0"))
+print(json.dumps(VERSIONS, indent=2, sort_keys=True))
+```
+
+Le tableau ci-dessous résume le rôle de chaque métadonnée et la question à laquelle elle répond.
+
+| Métadonnée | Question à laquelle elle répond |
+| --- | --- |
+| Version sémantique | Quel changement a eu lieu pour les appelants ? |
+| Empreinte SHA-256 | Ce fichier est-il bien celui qui a été validé ? |
+| Date et heure | Quand cette version a-t-elle été publiée ? |
+| Commit source | Quel code a produit cet artefact ? |
+| Référence des données | Sur quelles observations le modèle a-t-il appris ? |
+| Métriques de validation | À quelle qualité pouvait-on s'attendre en ligne ? |
+| Étage courant | Où ce modèle se trouve-t-il dans son parcours ? |
+| Responsable | Qui décide de le promouvoir ou de le rétrograder ? |
+
+Enfin, il faut accepter une vérité simple : le registre n'a de valeur que s'il est consultable par ceux qui en ont besoin. Une table tenue à la main dans un tableur se périme dès que la première publication exceptionnelle l'oublie. Préférez une source unique, versionnée avec le code, dont la mise à jour soit une étape explicite du processus de publication, ou un outil dédié comme MLflow qui rend l'enregistrement presque involontaire. L'objectif est que le modèle publié et son entrée de registre ne puissent pas diverger, parce que la divergence exactement ici est celle qu'on découvre un mois plus tard, quand il faut réexpliquer une décision prise par le système.
+$lesson$),
+  ('ia-c7-p6', 'ia-c7', 6, $lesson$Publier : du fichier à l'application$lesson$, $lesson$
+Publier un modèle revient à rendre son artefact accessible au processus qui servira les requêtes, et à le faire sans interruption perceptible. Plusieurs topologies coexistent, et le choix dépend moins de la mode que de la forme de votre système. La première consiste à embarquer le modèle dans le processus applicatif, ce qui donne la latence la plus faible puisqu'aucun appel réseau n'est nécessaire, mais impose de redémarrer l'application à chaque changement de modèle. La deuxième consiste à exposer un service dédié, souvent appelé microservice de prédiction, auquel l'application se connecte par réseau : c'est la topologie la plus modulaire, qui permet des cycles de publication indépendants, au prix d'un aller-retour supplémentaire et d'une responsabilité partagée. La troisième passe par un outil dédié à l'inférence, ou par un format d'échange comme ONNX quand plusieurs langages doivent consommer le même artefact.
+
+Quelle que soit la topologie, le chargement se fait une seule fois au démarrage, jamais pendant la première requête. Lire un fichier depuis le disque et l'interpréter coûte cher, surtout si le modèle est volumineux ; le faire à chaque appel rendrait la latence imprévisible et exposerait le service à une panne de stockage au pire moment. On adopte donc le schéma du préchargement : au démarrage, le processus charge l'artefact, vérifie son empreinte contre celle annoncée dans le registre, exécute quelques appels de référence, puis ouvre le port réseau. Tant que ces étapes ne sont pas achevées, l'endpoint de santé répond que le service n'est pas prêt, ce qui permet à l'orchestrateur de patienter au lieu d'envoyer des requêtes dans le vide.
+
+La gestion des ressources accompagne ce préchargement. Un modèle qui consomme beaucoup de mémoire limite le nombre de processus que vous pourrez lancer sur une machine ; un modèle gourmand en processeur impose une file d'attente ou un découpage par lots pour lisser la charge. Le lot, ou batching, consiste à agréger plusieurs requêtes en un seul appel au modèle, ce qui augmente le débit au prix d'une légère attente pour la première requête du lot. Dans beaucoup de cas réels, cette optimisation fait gagner un facteur entier sur le coût d'inférence, à condition de mesurer la latence du 95e centile avant et après, sinon on améliore le débit en ruinant la réactivité perçue.
+
+Le secret, l'authentification et la limitation de débit appartiennent également à la publication. Une API de prédiction expose un investissement, parfois des données sensibles à travers les caractéristiques fournies, et un modèle qui peut être interrogé sans contrôle peut être extrait par épuisement : on l'interroge massivement sur des points choisis et on reconstitue ses frontières de décision. On limite donc le nombre d'appels par période et par client, on journalise les dépassements, on sépare les clés par environnement, et on interdit toute clé de production dans un dépôt de code. Ces mesures ne demandent pas d'infrastructure exotique, elles demandent d'être décidées avant la première mise en ligne, car les corriger après coup oblige à migrer les clients existants.
+
+Enfin, la publication inclut sa propre communication. À l'instant où la nouvelle version reçoit ses premières requêtes, deux métriques doivent être surveillées avec une attention particulière : le taux d'erreur et la latence. Une hausse immédiate de l'un ou de l'autre signale un problème de compatibilité ou de performance, bien avant que quiconque ne remarque une dégradation de la qualité métier, qui elle n'apparaît qu'avec le temps et les étiquettes. Le réflexe à instaurer est un période d'observation dédiée, pendant laquelle un humain garde les tableaux de bord ouverts et reste prêt à basculer vers la version précédente. Cette discipline, un peu coûteuse en présence humaine, se mesure beaucoup moins cher qu'un incident prolongé.
+$lesson$),
+  ('ia-c7-p7', 'ia-c7', 7, $lesson$Tester avant de publier$lesson$, $lesson$
+En production, un test n'est pas un exercice scolaire, c'est un filet de sécurité. Il existe trois familles de tests qui concernent directement la mise en d'un modèle, et elles répondent à trois questions différentes. Les tests de contrat vérifient que l'API accepte bien ce qu'elle prétend accepter et refuse le reste. Les tests de non-régression vérifient que le modèle donne encore les réponses attendues sur un jeu de cas dont on conserve les sorties. Les tests de robustesse vérifient le comportement aux frontières, avec des valeurs extrêmes, absentes ou mal typées. Une équipe qui ne fait que la première famille peut déployer un modèle faux avec succès total : la réponse arrive, bien formée, et complètement fausse.
+
+Le test de contrat est le plus simple à automatiser et le plus rentable à court terme. On décrit un ensemble de requêtes, certaines valides dont on connaît le code de retour attendu, d'autres invalides dont on sait qu'elles doivent être rejetées, puis on exécute le scénario complet contre l'API déployée. Environnement de recette, donc, et non poste de développement, car c'est la configuration réelle qu'on veut valider. Le résultat doit être binaire et bloquant : un échec empêche la publication, sans exception ni contournement manuel, sinon le test devient une habitude que l'on s'autorise à ignorer sous la pression.
+
+```python
+import json
+
+def check_contract(response_status, body, expected_status=200):
+    if response_status != expected_status:
+        return False, "status " + str(response_status)
+    if expected_status == 200 and "prediction" not in body:
+        return False, "champ prediction absent"
+    if expected_status == 422 and "detail" not in body:
+        return False, "detail d'erreur absent"
+    return True, "ok"
+
+print(check_contract(200, {"prediction": 115900.0}))
+print(check_contract(422, {"detail": "champ surface manquant"}, 422))
+print(check_contract(500, {"prediction": 1.0}))
+```
+
+Le test de non-régression, lui, porte sur le modèle et non sur le transport. On constitue une petite collection de cas de référence, une dizaine suffit au départ, couvrant les situations ordinaires et les cas limites : un bien neuf, un bien très ancien, une surface minimale, une valeur manquante. Pour chacun, on enregistre l'entrée et la sortie exacte du modèle validé. Après chaque changement de modèle ou de code de préparation, on rejoue la collection et on compare à la valeur stockée avec une tolérance explicite, souvent quelques unités dans la dernière décimale, parce que deux machines peuvent arrondir différemment. Cette collection se place à côté du code, se versionne avec lui, et constitue la mémoire institutionnelle de ce que le système promet de renvoyer.
+
+Les tests de robustesse interrogent les limites. Que renvoie la fonction de prédiction si une variable vaut zéro, si elle est négative, si elle est absente du dictionnaire, si elle est fournie en texte alors qu'on attend un nombre. Chaque réponse acceptable doit être décidée à l'avance : soit une erreur explicite, soit une valeur par défaut documentée, mais jamais une exception non maîtrisée qui se propagera jusqu'à l'appelant sous la forme d'une erreur interne. Le principe est simple à énoncer : toute entrée possible doit produire une réponse prévisible, y compris les entrées absurdes, et la meilleure manière de le garantir est de les tester une par une.
+
+Le dernier niveau est le test de charge, qui mesure le comportement du service quand les requêtes se multiplient. On simule un débit représentatif, plusieurs fois le pic attendu, et on observe trois grandeurs : le taux d'erreur, la latence médiane et la latence du 95e centile. Une moyenne rassurante peut cacher une queue de distribution catastrophique, c'est pourquoi le centile supérieur est systématiquement surveillé. Le test de charge se déroule sur la configuration exacte de production, même réduite, car une machine de développement généreuse trompe l'appréciation : le goulot d'étranglement apparaît rarement là où on l'attendait.
+$lesson$),
+  ('ia-c7-p8', 'ia-c7', 8, $lesson$Déployer et tenir le service$lesson$, $lesson$
+Le déploiement commence par la préparation de l'environnement, et son principe directeur est la reproductibilité. On fige les versions de toutes les dépendances, y compris celles qui semblent neutres, on enregistre la version de l'interpréteur, et on écrit une commande unique capable de reconstruire l'état complet à partir d'une machine vierge. Cette exigence a un coût réel, quelques heures de travail initial, et un gain énorme, la disparition de la catégorie entière des incidents liés à la différence entre la machine de développement et celle de production. Un environnement décrit par du code, plutôt que par une documentation datée, est un environnement que l'on peut recréer à volonté.
+
+La conteneurisation est la réponse courante à ce besoin. Un conteneur regroupe l'application, ses dépendances et sa configuration dans une image immuable, identifiée elle aussi par une empreinte, qui s'exécute de manière identique sur l'ordinateur du développeur, la machine d'intégration et le serveur de production. On ajoute souvent un manifeste qui décrit les ressources nécessaires, le nombre de réplicas, les seuils de santé et la politique de redémarrage. Le point essentiel tient dans l'immuabilité : on ne modifie jamais un conteneur en production, on en construit un nouveau, on le teste, puis on le substitue. Ainsi la description de l'état en production est toujours exacte, parce qu'il n'y a qu'une source, l'image versionnée.
+
+La mise en route suit un ordre strict que l'on appelle le démarrage à froid. Le processus démarre, charge le modèle depuis le stockage, vérifie son empreinte contre celle déclarée au registre, exécute deux ou trois appels de référence dont on connaît la réponse, prépare les structures de journalisation, et seulement ensuite ouvre son port d'écoute. Tant que ces étapes ne sont pas terminées, l'endpoint de santé répond un état non prêt, ce qui évite d'envoyer des requêtes à un processus qui ne peut pas encore y répondre. Ce protocole est court à écrire et il évite la classe d'incidents la plus déconcertante pour un appelant, recevoir des réponses d'un service qui croit être prêt alors que son modèle n'est pas chargé.
+
+La supervision, ou observabilité, repose sur trois piliers qui se complètent. Les métriques agrègent des compteurs et des durées, taux d'appels, taux d'erreur, latence, taille moyenne des lots, et se visualisent sur un tableau de bord. Les journaux conservent le détail de chaque événement significatif, sous forme de lignes structurées que l'on peut filtrer. Les traces, plus fines encore, relient les étapes d'un appel à travers plusieurs processus quand le système est distribué. Pour la mise en production d'un modèle, une règle simple évite bien des débats : journalisez l'essentiel de manière structurée, une ligne JSON par événement, avec les mêmes champs d'un jour à l'autre, sans jamais varier la forme sans avertissement.
+
+```python
+import json
+from datetime import datetime, timezone
+
+def log_prediction(path, model_version, features, prediction, elapsed_ms):
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "model_version": model_version,
+        "features": features,
+        "prediction": prediction,
+        "elapsed_ms": elapsed_ms,
+    }
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+    return entry
+
+print(log_prediction("predictions.jsonl", "1.0.0",
+                     {"surface": 35, "pieces": 4, "age": 8},
+                     115900.0, 3))
+```
+
+Le format journal que vous venez de produire, une ligne JSON par appel, est devenu un standard de fait parce qu'il se traite sans base de données : un simple outil de filtrage suffit pour en extraire les entrées du dernier jour, et ces entrées sont exactement la matière première du calcul de dérive que nous allons aborder. Attention toutefois à la politique de rétention et à la sobriété : conserver indéfiniment des caractéristiques individuelles peut violer une obligation légale, tandis que conserver uniquement des agrégats par heure rend parfois impossible l'analyse d'un incident précis. On tranche généralement en conservant des échantillons représentatifs, pseudonymisés quand la donnée l'exige, et des agrégations horaires pour la surveillance continue.
+
+La gestion des incidents accompagne la supervision. Un alerte utile décrit un fait mesurable et appelle une action connue : plus de dix pour cent d'erreurs sur cinq minutes, latence du 95e centile au-delà du seuil accepté, absence de requêtes là où on en attend, empreinte de modèle différente de celle déclarée. Une alerte qui décrit un symptôme vague, sans seuil ni action, produit à la longue la fatigue d'alerte, c'est-à-dire l'état où personne ne regarde plus les messages. Chaque alerte réellement déclenchée doit déclencher un retour d'expérience court, notant ce qui a été fait, ce qui a manqué et quelle modification du système évitera la récidive.
+
+Enfin, il faut écrire la procédure de retour arrière avant le premier déploiement, et la tester une fois, en conditions réalistes. Elle tient en quelques lignes : identifier la version précédente, restaurer son artefact, redémarrer, rejouer les appels de référence, vérifier les métriques, puis seulement analyser la cause. Si cette procédure n'a jamais été exécutée, elle ne fonctionnera pas le jour où elle sera nécessaire, parce qu'il manquera soit une configuration, soit un secret, soit une étape oubliée. Une restauration chronométrée et réussie en conditions réelles est la meilleure preuve que votre déploiement est maîtrisé.
+$lesson$),
+  ('ia-c7-p9', 'ia-c7', 9, $lesson$Détecter la dérive des données$lesson$, $lesson$
+La dérive des données désigne le décalage entre la distribution des caractéristiques observées en production et celle des données sur lesquelles le modèle a été entraîné. Elle survient pour des raisons banales et fréquentes : une campagne marketing attire une nouvelle clientèle, une réglementation change un champ de saisie, un capteur vieillit, un fournisseur de données modifie son unité, une saison se transforme. Aucun de ces événements n'est une erreur, et pourtant chacun peut rendre un modèle faux, parce que le modèle a appris des régularités propres à une population qui n'est plus la vôtre. La dérive est donc un phénomène normal dont il faut seulement mesurer l'amplitude et la date.
+
+La métrique la plus répandue pour ce mesure s'appelle l'indice de stabilité de population, ou PSI, très utilisé en analytique de risque. Le calcul se déroule en quatre temps. On découpe la distribution de référence, celle de l'entraînement, en classes, typiquement dix classes de fréquences égales appelées quantiles. On compte les mêmes proportions sur la distribution de production en utilisant exactement les mêmes bornes. On remplace les proportions nulles par une très petite valeur pour éviter une division par zéro. Puis on additionne, pour chaque classe, le produit de l'écart de proportions par le logarithme népérien de leur rapport.
+
+Les seuils d'interprétation sont globalement admis et constituent un bon point de départ, à adapter toutefois à votre métier. En dessous de 0.10, les deux distributions sont considérées comme stables et aucune action n'est requise. Entre 0.10 et 0.20, la stabilité se dégrade et l'on passe en vigilance renforcée, avec une fréquence de calcul accrue et une inspection des variables concernées. Au-delà de 0.20, la dérive est forte : il faut alerter l'équipe, rechercher la cause racine et préparer un réentraînement, car le modèle raisonne sur des données qu'il n'a jamais vues. Ces valeurs ne sont pas des lois physiques : un PSI de 0.15 peut être critique sur une variable qui gouverne une décision réglementaire, tandis qu'un PSI plus élevé peut être tolérable sur une variable sans influence sur la sortie.
+
+```python
+import math
+
+def quantile_bounds(reference, bins=10):
+    ordered = sorted(reference)
+    bounds = []
+    for i in range(1, bins):
+        position = (len(ordered) - 1) * i / bins
+        low = int(math.floor(position))
+        high = int(math.ceil(position))
+        if low == high:
+            bounds.append(ordered[low])
+        else:
+            weight = position - low
+            bounds.append(ordered[low] * (1 - weight) + ordered[high] * weight)
+    return bounds
+
+def proportions(values, bounds):
+    edges = [float("-inf")] + bounds + [float("inf")]
+    counts = [0] * (len(edges) - 1)
+    for value in values:
+        for index in range(len(bounds)):
+            if value <= edges[index + 1]:
+                counts[index] += 1
+                break
+        else:
+            counts[-1] += 1
+    total = max(len(values), 1)
+    return [max(count / total, 1e-6) for count in counts]
+
+def psi(reference, current, bins=10):
+    bounds = quantile_bounds(reference, bins)
+    expected = proportions(reference, bounds)
+    observed = proportions(current, bounds)
+    return sum((o - e) * math.log(o / e) for o, e in zip(observed, expected))
+
+reference = [22, 30, 41, 28, 35, 29, 33, 37, 31, 26, 24, 39]
+stable = [23, 31, 40, 27, 34, 30, 36, 25, 32, 28, 38, 29]
+shifted = [55, 62, 71, 58, 66, 60, 69, 54, 64, 57, 73, 61]
+print("stable :", round(psi(reference, stable), 4))
+print("shifted:", round(psi(reference, shifted), 4))
+```
+
+Exécutez le bloc et observez l'écart de comportement : la première comparaison reste très basse, la seconde explose au point de franchir sans discussion le seuil d'alerte. C'est exactement l'usage attendu, non pas un chiffre décoratif, mais une alarme calibrée. En pratique, on calcule le PSI par variable, on conserve un historique horaire ou quotidien, et on présente les résultats sous forme de tableau triable, afin que l'opérateur voie immédiatement les deux ou trois variables responsables du mouvement global plutôt qu'un indice agrégé unique.
+
+Un point métrique souvent négligé mérite d'être souligné : le PSI mesure des proportions, il ne dit rien de la direction du préjudice métier, ni de l'ampleur de l'erreur qui en résulte. Une distribution peut bouger sans que la performance chute, et l'inverse est tout aussi vrai. C'est pourquoi la dérive des données n'est jamais surveillée seule : elle est associée à la dérive des prédictions et, quand les étiquettes finissent par arriver, à la dégradation directe des métriques. Les trois signaux forment un ensemble cohérent, chacun compensant la cécité des deux autres, et c'est leur croisement qui fonde une décision solide.
+
+Le calcul doit également s'accompagner de précautions méthodologiques. Il faut une base de référence stable, sinon l'indice mesure le bruit de votre propre référence ; un volume minimal d'observations par classe, sinon les proportions sont trop instables pour être significatives ; et une distinction nette entre variables continues et catégorielles, pour lesquelles on préfère une comparaison de fréquences par modalité plutôt qu'un découpage artificiel en intervalles. Enfin, il faut exclure du calcul les variables qui portent la cible ou qui en dérivent, sous peine d'observer une dérive qui n'est que le reflet de ce que l'on cherche justement à prédire.
+$lesson$),
+  ('ia-c7-p10', 'ia-c7', 10, $lesson$Surveiller la dérive des prédictions et la qualité métier$lesson$, $lesson$
+La dérive des prédictions observe le résultat produit par le modèle plutôt que les données fournies. Elle répond à une question différente : est-ce que le modèle renvoie encore le même type de réponse qu'avant, en moyenne, par segment et dans le temps. Concrètement, on agrège les sorties sur des fenêtres glissantes, par exemple des tranches horaires ou quotidiennes, puis on compare la distribution de la fenêtre courante à celle de la période de référence. Pour un modèle de régression, on suit la moyenne, la médiane, les quantiles extrêmes et la dispersion ; pour un classifieur, on suit le taux de prédictions positives, la distribution des scores et le nombre de classes effectivement prédites.
+
+Cette surveillance apporte une information que le PSI sur les entrées ne peut pas donner. Deux phénomènes illustrent bien la complémentarité. Un changement de comportement des utilisateurs peut faire bouger les entrées sans toucher aux prédictions, par exemple quand une variable dérive mais que ses effets s'annulent entre eux ; le PSI alarme alors sans dommage réel, et l'analyse des prédictions calme l'alerte. À l'inverse, un bug dans le code de préparation des caractéristiques peut altérer les sorties alors que la distribution des entrées reçues reste parfaitement stable ; seule la surveillance des prédictions attrape l'incident. Aucun des deux signaux n'est redondant, ils couvrent des angles morts différents.
+
+```python
+import math
+from collections import Counter
+
+def prediction_profile(scores, buckets=10):
+    low, high = min(scores), max(scores)
+    width = (high - low) / buckets if high > low else 1.0
+    counts = Counter(min(int((value - low) / width), buckets - 1) for value in scores)
+    total = max(len(scores), 1)
+    return [max(counts[i] / total, 1e-6) for i in range(buckets)]
+
+def distribution_shift(reference, current):
+    a, b = prediction_profile(reference), prediction_profile(current)
+    return sum((y - x) * math.log(y / x) for x, y in zip(a, b))
+
+base = [0.62, 0.55, 0.71, 0.48, 0.59, 0.66, 0.52, 0.60, 0.57, 0.64]
+same = [0.61, 0.57, 0.69, 0.50, 0.58, 0.65, 0.53, 0.62, 0.56, 0.63]
+dernier = [0.12, 0.08, 0.15, 0.05, 0.11, 0.09, 0.14, 0.07, 0.10, 0.13]
+print("stable :", round(distribution_shift(base, same), 4))
+print("effondre:", round(distribution_shift(base, dernier), 4))
+```
+
+Le troisième signal, et le plus précieux de tous, est la dégradation de la qualité quand les étiquettes finissent par être connues. Dans de nombreux cas, le résultat réel arrive avec un délai : la facturation confirme la valeur réelle du bien, l'exam médical confirme le diagnostic, le client confirme ou non sa réservation. Dès qu'une fraction suffisante d'étiquettes retardées est disponible, on recalcule les métriques de référence sur une fenêtre glissante et on les compare aux métriques enregistrées au moment de la publication. C'est la mesure directe du préjudice, la seule qui autorise une décision arbitrairement ferme, puisqu'elle ne mesure pas un proxy mais l'erreur elle-même.
+
+Le tableau suivant rassemble les trois familles de signaux, leurs seuils de départ et l'action qu'ils appellent. Ces seuils sont volontairement conservateurs : mieux vaut une alerte examinée et classée à tort qu'une dégradation ignorée pendant un trimestre.
+
+| Signal | Mesure | Seuil d'alerte initial | Action |
+| --- | --- | --- | --- |
+| Entrées | PSI par variable | 0.10 vigilance, 0.20 fort | Inspecter, fréquence accrue |
+| Sorties | Écart de distribution des prédictions | Selon référence établie en recette | Vérifier code et segments |
+| Qualité | Métrique sous le seuil métier | Dégradation supérieure au toléré | Réentraîner, alerter le métier |
+| Service | Taux d'erreur et latence | Panier défini avec le métier | Corriger, retour arrière |
+| Intégrité | Empreinte du modèle chargé | Toute divergence | Stopper la publication |
+
+Pour que ces mesures deviennent exploitable, il faut une base de référence honnête. On calcule les distributions de référence sur un échantillon de production représentatif, jamais sur le jeu d'entraînement brut, car les deux populations diffèrent par construction : le décalage constant que cela produirait serait du bruit permanent. On fige cette référence avec la version du modèle, on la conserve avec le registre, et on la recalcule seulement lors d'un réentraînement validé. Toute référence modifiée sans versionnement transforme la surveillance en mesure subjective, chacun pouvant alors choisir la référence qui arrange son tableau de bord.
+$lesson$),
+  ('ia-c7-p11', 'ia-c7', 11, $lesson$Choisir et déclencher le réentraînement$lesson$, $lesson$
+Un réentraînement peut être déclenché de trois manières, qui ne répondent pas aux mêmes situations. Le calendrier pur, par exemple mensuel ou trimestriel, offre une prévisibilité appréciée des équipes d'exploitation : les fenêtres de maintenance existent, les ressources sont réservées, la charge de travail est lisse. Sa faiblesse est l'aveuglement, car il réentraîne aussi quand rien n'a changé et ignore ce qui bouge entre deux échéances. Le déclenchement par alerte, fondé sur un PSI ou une métrique sous seuil, réagit au réel mais exige des seuils calibrés, une chaîne d'alerte fiable et une capacité à intervenir sans préavis. La troisième voie, hybride, combine une échéance planifiée avec la possibilité d'une accélération sur alerte, et c'est généralement celle qui s'impose en pratique.
+
+Quel que soit le déclenchement, le réentraînement reste un processus de validation, pas une simple exécution de script. On reprend la dernière version du code d'entraînement, on utilise des données récentes en conservant un échantillon tenu à part, on reproduit le jeu de validation utilisé pour la version en place, puis on compare les deux modèles avec les mêmes métriques et les mêmes conditions. Le nouveau modèle ne remplace l'ancien que s'il le dépasse avec une marge décidée à l'avance, et jamais parce qu'il est simplement différent. Cette discipline protège d'un phénomène bien documenté, le réentraînement qui dégrade, où l'on remplace un modèle légèrement vieilli par un modèle entraîné sur des données plus bruitées.
+
+Le réentraînement automatique intégral, sans validation humaine, n'est recommandé que lorsque trois conditions sont réunies : la mesure de qualité est directe et rapide, la procédure de validation est entièrement mécanique, et le retour arrière est instantané. Hors de ces conditions, on garde une étape d'approbation. Il faut également prévoir ce qui arrive aux dépendances du modèle lors de la remise à zéro, notamment l'ordre des variables, les valeurs par défaut et les transformations : un pipeline recréé à la main est la cause classique d'un modèle qui, parfait sur papier, renvoie des valeurs décalées dès son arrivée en ligne.
+
+Une bonne pratique consiste à rédiger, à côté du modèle, une fiche de version courte et à la mettre à jour à chaque publication. Elle indique ce qui a changé depuis la version précédente, les métriques comparées sur le même jeu de test, les variables entrées ou sorties, les seuils de surveillance retenus, et la décision d'adoption avec son auteur. Ce document de quelques lignes remplace, six mois plus tard, des heures de reconstitution et permet de répondre sans archives à la question qui revient toujours : pourquoi avons-nous choisi ce modèle plutôt que l'autre, et qu'a-t-on sacrifié en chemin.
+$lesson$),
+  ('ia-c7-p12', 'ia-c7', 12, $lesson$Exemple guidé : la chaîne complète$lesson$, $lesson$
+Réunissons maintenant les pièces dans un scénario unique, entièrement en bibliothèque standard, qui reproduit les grandes étapes d'une mise en production légère : enregistrer un modèle, le relire, l'invoquer, journaliser l'appel, calculer une mesure de dérive et décider d'une action. Le code ci-dessous n'est pas un serveur HTTP, il en simule la logique métier de bout en bout, ce qui vous permet d'observer chaque transition sans rien installer.
+
+```python
+import json
+import math
+from datetime import datetime, timezone
+
+MODELE = {"version": "1.0.0", "features": ["surface", "pieces", "age"],
+          "intercept": 12000.0,
+          "coefficients": {"surface": 2100.0, "pieces": 8500.0, "age": -450.0}}
+
+def predict(model, features):
+    for name in model["features"]:
+        if name not in features:
+            raise ValueError("caracteristique manquante : " + name)
+    total = float(model["intercept"])
+    for name in model["features"]:
+        total += float(model["coefficients"][name]) * float(features[name])
+    return round(total, 2)
+
+def handle(payload, log):
+    try:
+        prediction = predict(MODELE, payload["features"])
+    except (KeyError, ValueError) as error:
+        log.append({"status": 422, "detail": str(error)})
+        return 422, {"detail": str(error)}
+    entry = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+             "version": MODELE["version"], "prediction": prediction}
+    log.append(entry)
+    return 200, {"prediction": prediction, "model_version": MODELE["version"]}
+
+journal = []
+print(handle({"features": {"surface": 35, "pieces": 4, "age": 8}}, journal))
+print(handle({"features": {"surface": 35}}, journal))
+print(len(journal), "appel(s) journalise(s)")
+```
+
+La partie suivante ajoute la surveillance, en comparant les caractéristiques de la journée courante à la référence figée, puis en traduisant l'indice en décision. Notez la forme du résultat : un dictionnaire contenant la mesure, son interprétation et l'action recommandée, qui peut être lu aussi bien par un humain que par un système d'alerte.
+
+```python
+def quantile_bounds(reference, bins=10):
+    ordered = sorted(reference)
+    bounds = []
+    for i in range(1, bins):
+        position = (len(ordered) - 1) * i / bins
+        low, high = int(math.floor(position)), int(math.ceil(position))
+        bounds.append(ordered[low] if low == high else
+                      ordered[low] + (ordered[high] - ordered[low]) * (position - low))
+    return bounds
+
+def proportions(values, bounds):
+    edges = [float("-inf")] + bounds + [float("inf")]
+    counts = [0] * (len(edges) - 1)
+    for value in values:
+        for index in range(len(bounds)):
+            if value <= edges[index + 1]:
+                counts[index] += 1
+                break
+        else:
+            counts[-1] += 1
+    total = max(len(values), 1)
+    return [max(count / total, 1e-6) for count in counts]
+
+def psi(reference, current, bins=10):
+    bounds = quantile_bounds(reference, bins)
+    a, b = proportions(reference, bounds), proportions(current, bounds)
+    return sum((y - x) * math.log(y / x) for x, y in zip(a, b))
+
+def decide(value):
+    if value < 0.10:
+        return "stable", "aucune action"
+    if value < 0.20:
+        return "vigilance", "frequence de calcul accrue"
+    return "derive forte", "alerter et preparer un reintrainement"
+
+reference = [22, 30, 41, 28, 35, 29, 33, 37, 31, 26, 24, 39]
+aujourdhui = [55, 62, 71, 58, 66, 60, 69, 54, 64, 57, 73, 61]
+indice = psi(reference, aujourdhui)
+print(round(indice, 4), decide(indice))
+```
+
+Cette séquence illustre la totalité du cycle en moins de cent lignes : contrat d'entrée, refus propre, journal structuré, mesure de dérive, décision graduée. En production, chaque brique se remplace par son équivalent mature, un serveur HTTP devant la logique, une base ou un entrepôt pour les journaux, un planificateur pour les mesures, un tableau de bord pour les décisions, mais la logique de contrôle reste exactement celle que vous venez d'exécuter. C'est cette permanence qui justifie l'effort de comprendre les mécanismes avant d'apprendre les outils.
+$lesson$),
+  ('ia-c7-p13', 'ia-c7', 13, $lesson$À retenir$lesson$, $lesson$
+- Mettre un modèle en production, c'est faire d'un artefact de recherche un service contrôlé, traçable et surveillé.
+- Une API repose sur un contrat d'entrée validé, un contrat de sortie enrichi et des codes HTTP qui décrivent précisément l'issue.
+- Le format JSON, la sérialisation déterministe et l'empreinte SHA-256 donnent au modèle un identifiant vérifiable et lisible.
+- joblib convient aux gros objets de l'écosystème scikit-learn, le JSON aux petits modèles et aux métadonnées de contrôle.
+- Chaque version combine un numéro lisible pour les humains et une empreinte de contenu pour la machine.
+- Le registre de modèles relie artefact, données, métriques, commit source et responsable de publication.
+- Le déploiement se prépare par le préchargement, les appels de référence et une procédure de retour arrière testée.
+- La surveillance suit trois familles de signaux, entrées, sorties et qualité réelle, qui se complètent mutuellement.
+- Le PSI au-delà de 0.20 sur une variable critique déclenche l'alerte et la préparation d'un réentraînement.
+- Un réentraînement est une décision validée, jamais une simple exécution automatique du script d'entraînement.
+$lesson$),
+  ('ia-c7-p14', 'ia-c7', 14, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Publier le modèle sans ses pré-traitements, ce qui fait diverger la prédiction de production de la métrique de validation.
+- Écraser le même fichier de modèle à chaque réentraînement, rendant impossible tout retour arrière.
+- Comparer les entrées de production au jeu d'entraînement brut, ce qui fabrique une dérive permanente artificielle.
+- Alimenter les alertes avec des seuils choisis après coup, pour les ajuster jusqu'à ce qu'elles ne se déclenchent plus.
+- Journaliser tout, ou rien : sans politique de rétention et sans champs fixes, le journal devient inexploitable.
+- Confondre stabilité des prédictions et qualité du modèle, alors qu'une distribution stable peut masquer une erreur croissante.
+- Oublier de tester le retour arrière, qui échoue précisément lorsqu'on en a besoin.
+- Accepter une réponse rapide mais muette : une prédiction sans version ni horodatage ne peut pas être expliquée plus tard.
+- Changer une référence de mesure sans versionner, ce qui casse la continuité de toute la courbe historique.
+$lesson$),
+  ('ia-c7-p15', 'ia-c7', 15, $lesson$Pour aller plus loin$lesson$, $lesson$
+- https://fastapi.tiangolo.com/ — documentation du framework d'API, notamment la validation déclarative et l'authentification.
+- https://scikit-learn.org/stable/model_persistence.html — persistance des modèles avec joblib et mises en garde associées.
+- https://mlflow.org/docs/latest/index.html — registre de modèles, traçage d'expériences et versionnage d'artefacts.
+- https://docs.python.org/3/library/json.html — module json de la bibliothèque standard, sérialisation et décodage.
+- https://docs.python.org/3/library/hashlib.html — fonctions de hachage, dont SHA-256, pour les empreintes de contenu.
+- https://docs.python.org/3/library/http.server.html — serveur HTTP minimal, utile pour comprendre le mécanisme d'un service.
+- https://www.evidentlyai.com/ — outils open source de détection de dérive et de rapports de suivi de modèles.
+
+La meilleure façon d'exploiter ces liens est de les ouvrir après avoir pratiqué : chaque page vous paraîtra alors concrète, parce que vous saurez déjà quel problème elle résout. Relisez en priorité la page sur la persistance, elle confirme les précautions de confiance que nous avons énoncées, puis celle sur le json standard, qui vous donnera les options de formats pour vos propres métadonnées.
+$lesson$),
+  ('ia-c7-p16', 'ia-c7', 16, $lesson$Et maintenant : la mise en pratique du chapitre$lesson$, $lesson$
+La vidéo qui clôt ce chapitre reprend la chaîne complète, de la sérialisation d'un modèle linéaire jusqu'au calcul d'un indice de dérive, en montrant comment chaque brique s'assemble dans un petit module unique. Regardez-la après avoir écrit votre propre version de l'exercice pratique, puis comparez : cherchez d'abord les différences de comportement sur les entrées invalides, elles vous diront plus que les différences de style. Ensuite, essayez d'ajouter une nouvelle variable au modèle et observez combien de points du système doivent bouger ensemble, le schéma, la fiche de version, les appels de référence et les seuils de surveillance. Cette expérimentation vous donnera le réflexe le plus précieux de la mise en production, penser le changement comme un événement à coordonner plutôt que comme une ligne de code à modifier.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('ia-c8-p1', 'ia-c8', 1, $lesson$Comprendre : ce qu'est vraiment un grand modèle de langage$lesson$, $lesson$
+Bienvenue dans le dernier chapitre du parcours data science et intelligence artificielle. Après avoir entraîné des modèles de classification, évalué des métriques, déployé une API et suivi un modèle en production, vous voilà confrontés à la famille qui a le plus changé le logiciel au cours des dernières années : les grands modèles de langage, et tout ce qu'on bâtit autour d'eux. L'objectif de ce chapitre n'est pas de vous faire réciter la liste des noms commerciaux du moment, mais de vous donner une compréhension mécanique de ce qui se passe entre votre phrase et la réponse qui apparaît à l'écran. Une fois les mots « prompt », « token », « embedding » et « récupération augmentée » dépouillés de leur marketing, il ne reste que du calcul sur des vecteurs, des probabilités et des chaînes de traitement : du code, en somme, que vous êtes parfaitement capable d'écrire.
+
+À la fin de cette leçon, vous saurez faire cinq choses concrètes. Premièrement, vous formulerez un prompt structuré, avec un rôle, une consigne, un contexte et un format de sortie attendu, au lieu de laisser un texte vague produire une réponse vague. Deuxièmement, vous expliquerez ce qu'un modèle voit réellement quand vous lui écrivez : des identifiants de tokens, pas des mots, et pourquoi cette distinction change la façon dont on mesure la longueur d'un texte. Troisièmement, vous réglerez les paramètres de génération, température et longueur de contexte en tête, en sachant exactement ce qu'ils font à la fois à la qualité et à la facture. Quatrièmement, vous transformerez des documents en vecteurs de nombres et vous les comparerez entre eux avec la similarité cosinus, en pur Python et sans une seule dépendance externe. Cinquièmement, vous assemblerez un pipeline complet de recherche augmentée : découpage du corpus, indexation vectorielle, recherche des passages pertinents, puis synthèse finalisée par le modèle.
+
+Le fil rouge de la leçon sera un assistant documentaire miniature. Il répondra à des questions sur un corpus de quelques pages en s'appuyant uniquement sur les passages qu'il a jugés proches de la question, ce qui est la définition même de la recherche augmentée par la génération. Tous les exemples de code sont écrits en bibliothèque standard : math, json, urllib, unicodedata, rien d'autre. Vous pourrez donc les exécuter tels quels dans l'environnement Pyodide de ce cours, sans clé d'API, sans installation et sans réseau. Quand une vraie requête vers un service distant deviendra nécessaire, nous l'écrirons à la main avec urllib et nous simulerons la réponse, afin que la mécanique reste lisible ligne à ligne. La règle du chapitre est simple : aucune boîte noire, tout se démonte.
+
+
+
+Un grand modèle de langage, souvent abrégé LLM pour large language model, est un réseau de neurones entraîné à prédire la suite d'un texte. Le point est tellement central qu'il mérite d'être répété : pendant son entraînement, le modèle n'a jamais appris à répondre à des questions, il a appris, des milliards de fois, à deviner le fragment suivant. C'est de cette seule compétence, répétée avec une perfection croissante, que semblent émerger le raisonnement, la traduction, la rédaction et l'explication de code. Quand vous posez une question, vous n'interrogez pas une base de connaissances : vous lancez un processus de prédiction qui, mot après mot, assemble une suite plausible en tenant compte de tout ce qui précède.
+
+Cette mécanique explique deux comportements que les débutants trouvent déconcertants. Le premier est l'absence de mémoire : hors de la fenêtre de contexte, le modèle ne retient rien ; chaque appel repart d'une page blanche, sauf si vous lui rappeliez l'historique dans le prompt. Le second est l'absence de garantie de vérité : le modèle optimise la cohérence statistique, pas la justesse factuelle, d'où ces réponses admirables de ton et parfaitement fausses sur les points vérifiables. Corriger ces deux limites est précisément le travail de l'ingénieur : on recolle la mémoire avec un historique qu'on envoie explicitement, on ancre la vérité avec des documents que l'on insère dans le prompt, et l'ensemble prend un nom plus long mais une idée très simple : la génération augmentée par la récupération.
+
+Les modèles se distinguent par trois caractéristiques principales. La fenêtre de contexte mesure le nombre de tokens que le modèle accepte en entrée et en sortie pour un même appel : quelques dizaines de milliers chez les modèles compacts, plusieurs centaines de milliers chez les plus récents, avec une corrélation directe entre cette capacité et le prix. La date de connaissance, souvent appelée cutoff, indique la période au-delà de laquelle le modèle n'a pas été entraîné, ce qui rend indispensable toute question portant sur l'actualité. Enfin la famille de modèles, généralement déclinée en une version rapide et économique et en une version plus réfléchie et plus chère, impose un arbitrage permanent entre latence, coût et qualité de raisonnement. Un bon concepteur de système choisit sa variante par tâche, plutôt que d'utiliser partout le modèle le plus puissant.
+
+Il faut aussi se défaire d'une image fausse : le modèle n'est pas un moteur de recherche, et il n'est pas non plus une base de données. Il ne consulte rien pendant qu'il écrit, il ne clique sur aucun lien et il n'a aucun accès à vos fichiers tant que vous ne les lui avez pas fournis. Tout ce qu'il produit sort de ses paramètres, c'est-à-dire de ce qu'il a absorbé pendant son entraînement, corrigé de ce que vous glissez dans le prompt. C'est la raison pour laquelle la deuxième moitié de ce chapitre est consacrée à la recherche augmentée : plutôt que d'espérer que la réponse soit déjà quelque part dans les paramètres, on va la chercher dans vos propres documents, on la place devant les yeux du modèle, et on lui demande de rédiger à partir de cette matière.
+
+Enfin, un mot sur la manière dont on parle aux modèles. Les interfaces commerciales présentent un échange de messages ; sous le capot, l'API attend une liste ordonnée de rôles et de contenus. Chaque message déclare qui parle et ce qu'il dit, et le modèle traite la totalité de cette liste comme un unique tableau de bord. Cette structure est la première chose à maîtriser, car elle conditionne tout le reste : la qualité d'un système conversationnel dépend de la façon dont on découpe, on étiquette et on ordonne ces messages.
+
+```python
+# La structure exacte envoyée à la plupart des API de chat.
+messages = [
+    {"role": "system",
+     "content": "Tu es un assistant qui répond en français, "
+                "uniquement à partir du contexte fourni."},
+    {"role": "user", "content": "Combien de temps dure la fenêtre de contexte ?"},
+    {"role": "assistant", "content": "Elle se compte en tokens."},
+    {"role": "user", "content": "Et pour une page web moyenne ?"},
+]
+print(len(messages), "messages à envoyer")
+for message in messages:
+    print(message["role"].ljust(10), message["content"][:40])
+```
+
+Les trois rôles standards couvrent l'essentiel des besoins, et les comprendre évite bien des prompts brouillons.
+
+| Rôle | Qui l'utilise | Usage typique | Ce qu'il ne fait pas |
+| --- | --- | --- | --- |
+| system | le développeur | ton, langue, règles, format de sortie | ne contient pas les données métier |
+| user | l'utilisateur final | la question réelle posée à l'instant t | ne doit pas porter les consignes globales |
+| assistant | le modèle lui-même | historique, réponses précédentes, brouillon | ne doit pas inventer de consigne |
+
+L'ordre compte autant que le contenu. Les consignes placées tout en début de contexte bénéficient d'une attention plus stable, tandis qu'une contrainte noyée au milieu d'un long historique a plus de chances d'être ignorée à mesure que la conversation s'allonge. Une pratique simple et efficace consiste à garder un message système court et invariable, à poser les règles de format dans ce message, et à relancer la contrainte juste avant la demande, quand la réponse se prépare. Vous verrez dans la section sur les prompts que cette architecture se répète, à des échelles différentes, dans presque tous les systèmes de génération.
+$lesson$),
+  ('ia-c8-p2', 'ia-c8', 2, $lesson$Le prompt : votre interface avec le modèle$lesson$, $lesson$
+Un prompt est un texte d'entrée qui détermine tout ce que le modèle va produire. Le mot est volontairement modeste : il s'agit d'une chaîne de caractères, rien de plus, mais cette chaîne est le seul levier que vous avez sur un modèle déjà entraîné et que vous ne modifieriez pas. Déplacer une phrase, ajouter un exemple, préciser le format de sortie, et la réponse change du tout au tout, sans que la moindre pondération du réseau n'ait bougé. C'est la caractéristique la plus pratique du domaine : vous itérez sur du texte, en quelques secondes, sans réentraîner quoi que ce soit.
+
+Un prompt efficace se compose presque toujours des mêmes briques. Le rôle décrit qui parle et avec quelle autorité : vous êtes un auditeur, un traducteur, un collègue expérimenté. La consigne dit ce qui doit être fait, à l'impératif, avec un verbe unique : résume, compares, extrait, corrige. Le contexte apporte les informations que le modèle ne peut pas deviner, et c'est la seule partie qui change d'un appel à l'autre dans un système automatisé. Les exemples, quand ils existent, montrent l'entrée voulue et la sortie voulue, ce qui vaut souvent mieux qu'une longue explication abstraite. Enfin la contrainte de sortie fige le format : une phrase, dix lignes maximum, un tableau, du JSON valide. Chaque brique manquante se paie par une ambiguïté que le modèle comblera lui-même, généralement mal.
+
+La tentation du prompt monolithique est grande : tout mettre dans un seul bloc, espérer que le modèle s'y retrouve. Le résultat habituel est une réponse qui traite la moitié des demandes, ignore l'autre moitié et invente une conclusion. Une meilleure approche consiste à découper. On sépare ce qui ne change pas, appelé souvent gabarit ou template, de ce qui change à chaque appel, appelé variables. Le gabarit porte les règles et le format ; les variables portent la question et les documents. Ce découpage se retrouve dans tous les frameworks du marché, mais il se réalise en trois lignes de Python et mérite d'être compris avant d'être délégué à une bibliothèque.
+
+```python
+# Un gabarit de prompt en pur Python : constantes d'un côté, variables de l'autre.
+GABARIT = """Tu es un assistant documentaire.
+Réponds en français, en trois phrases maximum.
+Appuie-toi uniquement sur le contexte ci-dessous.
+Si l'information n'y figure pas, dis-le explicitement.
+
+Contexte :
+{contexte}
+
+Question : {question}
+Réponse :"""
+
+def construire_prompt(question, passages):
+    contexte = "\n".join("- " + p for p in passages)
+    return GABARIT.format(contexte=contexte, question=question)
+
+print(construire_prompt("Qu'est-ce que la température ?", ["La température règle le hasard."]))
+```
+
+Trois erreurs reviennent dans presque tous les prompts que l'on relit. La première est la consigne négative pure : ne fais pas ceci, n'écris pas cela, sans jamais dire ce qu'il faut faire à la place ; le modèle retient mieux une action qu'une interdiction, il faut donc toujours proposer le comportement voulu. La deuxième est la contradiction : une règle en tête de prompt et son contraire en queue, le modèle choisira arbitrairement et vous attribuerez le problème à l'aléatoire. La troisième est le format non contraint : demander du JSON sans donner la structure exacte, ni les noms de champs, ni un exemple complet, puis constater que chaque appel invente des clés différentes.
+
+La longueur du prompt a elle aussi une influence mesurable. Un prompt très court laisse trop de liberté, un prompt très long noie la demande sous le contexte et augmente le coût, puisque la facture se compte en tokens d'entrée. Le bon équilibre se trouve en pratique : garder les règles constantes, fournir le contexte strictement nécessaire à la question, et éliminer toute phrase qui n'affecte pas la réponse. On mesure cette économie simplement, en comparant la taille du prompt et la longueur de la réponse, et en vérifiant que retirer une phrase ne dégrade pas la sortie. Cette discipline devient un réflexe dès le premier système en production.
+
+Enfin, un prompt n'est jamais terminé : il est testé. On constitue un petit jeu d'évaluation, une dizaine de questions représentatives avec la réponse attendue, on exécute le prompt à chaque modification, et on observe les régressions. Ce protocole, aussi modeste soit-il, transforme l'art de la reformulation en une pratique d'ingénierie. Les frameworks de prompt management ne font rien d'autre, avec plus de télémétrie et d'historique, mais le principe tient en une phrase : ce qui n'est pas mesuré ne s'améliore pas.
+$lesson$),
+  ('ia-c8-p3', 'ia-c8', 3, $lesson$Anatomie d'un appel d'API$lesson$, $lesson$
+Un appel d'API de génération est une requête HTTP comme une autre : on sérialise une charge utile en JSON, on l'envoie en POST vers une adresse, on ajoute une clé d'authentification dans un en-tête, et on lit la réponse. Rien de magique, et la bibliothèque standard suffit amplement à l'écrire avec urllib.request. Comprendre cette mécanique à la main a un avantage durable : quand vous utiliserez un client tout prêt, vous saurez exactement ce qu'il cache, qu'il s'agit des en-têtes, du délai d'attente, des essais automatiques et du décodage du corps de réponse.
+
+La charge utile minimale contient le modèle à utiliser et la liste des messages. Autour de ce noyau, les paramètres optionnels pilotent la génération : le nombre maximal de tokens de sortie, la température, le top_p, parfois une consigne de format. La réponse contient, elle, le texte généré dans un champ de contenu, ainsi que des métadonnées instructives : identifiant de l'appel, indices de tokens consommés, raison de l'arrêt, et parfois un détail de contribution au coût. Ces métadonnées sont votre tableau de bord : sans elles, impossible de savoir si une réponse courte vient du modèle ou d'une limite que vous avez vous-même posée.
+
+```python
+# Un appel d'API écrit à la main, en bibliothèque standard.
+import json
+import urllib.request
+
+def appeler_modele(messages, modele="modele-virtuel"):
+    charge = json.dumps({
+        "model": modele,
+        "messages": messages,
+        "max_tokens": 120,
+        "temperature": 0.2,
+    }).encode("utf-8")
+    requete = urllib.request.Request(
+        "https://api.exemple.test/v1/chat/completions",
+        data=charge,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer CLE_SECRETE"},
+        method="POST",
+    )
+    with urllib.request.urlopen(requete, timeout=30) as reponse:
+        corps = json.loads(reponse.read().decode("utf-8"))
+    return corps["choices"][0]["message"]["content"]
+```
+
+Notez ce que ce code ne fait pas : il ne gère ni la rotation de clé, ni la reprise après un échec transitoire, ni le débit maximal autorisé. En production, ces trois préoccupations reviennent toujours. La clé se range dans une variable d'environnement et jamais dans le dépôt de code ; un appel qui échoue pour cause de saturation doit être relancé avec un délai croissant, quelques fois seulement ; et un appel successful trop rapide en série finit par être refusé, il faut donc espacer les requêtes. Ces règles tiennent en quelques dizaines de lignes, mais leur absence est la première cause d'incidents sur les intégrations de génération.
+
+Un point mérite une attention particulière : les erreurs ne se ressemblent pas. Une réponse de code 401 signale une clé invalide, et aucun délai ne la corrigera. Une réponse de code 429 annonce un quota dépassé ou un débit trop élevé, et elle appelle un attente puis une nouvelle tentative. Une réponse de code 500 ou 503 vient du service, et elle justifie une reprise avec plafond d'essais. Un délai d'attente dépassé, en revanche, peut avoir laissé la requête parvenir : relancer aveuglément risque alors de produire deux réponses facturées. Distinguer ces cas est la première compétence d'exploitation d'un système de génération.
+
+Pour construire un système de bout en bout, il faut encore prévoir la journalisation. Chaque appel mérite d'être tracé avec son identifiant, la version du gabarit, le nombre de tokens d'entrée et de sortie, la latence et, si la tâche le permet, un jugement de qualité. Ces journaux sont ce qui vous permettra, dans trois mois, de répondre à la question qui tuera tout autre diagnostic : est-ce que la réponse était mauvaise parce que le modèle a changé, parce que le prompt a changé, ou parce que les documents fournis n'étaient plus à jour. Sans traçabilité, ces trois causes sont indiscernables.
+
+```python
+# Le formatage d'une réponse, isolé pour rester testable.
+def extraire_reponse(corps, index=0):
+    """Renvoie le texte, le nombre de tokens d'entrée et de sortie."""
+    choix = corps["choices"][index]
+    texte = choix["message"]["content"]
+    usage = corps.get("usage", {})
+    return texte, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+
+exemple = {
+    "choices": [{"message": {"role": "assistant", "content": "La fenêtre se compte en tokens."}}],
+    "usage": {"prompt_tokens": 180, "completion_tokens": 12},
+}
+texte, entree, sortie = extraire_reponse(exemple)
+print(texte, "| entrée :", entree, "| sortie :", sortie)
+print("total facturé :", entree + sortie, "tokens")
+```
+
+La figure suivante résume le trajet complet d'une requête, de la phrase tapée par l'utilisateur jusqu'à la réponse affichée. Elle vous servira de repère pour le reste du chapitre, car chaque bloc deviendra, dans les sections qui suivent, un morceau de code que vous écrirez vous-même.
+
+```text
+utilisateur
+    |
+    v
+[ normaliser la question ] ---> [ encoder en vecteur ]
+                                      |
+                                      v
+                              [ corpus indexe ]
+                                      |
+                                      v
+                           [ k passages proches ]
+                                      |
+                                      v
+                   [ gabarit : regles + contexte + question ]
+                                      |
+                                      v
+                              [ appel du modele ]
+                                      |
+                                      v
+                            [ reponse + traces ]
+```
+$lesson$),
+  ('ia-c8-p4', 'ia-c8', 4, $lesson$Tokenisation : ce que le modèle voit vraiment$lesson$, $lesson$
+Avant tout calcul, le texte doit être découpé. Cette opération, appelée tokenisation, transforme une chaîne de caractères en une suite d'identifiants numériques que le modèle sait traiter. Le point qui surprend toujours à la première lecture, c'est que cette découpe ne suit pas les mots : elle suit des unités fréquentes, à mi-chemin entre le caractère et le mot. Un mot courant comme le ou et devient un seul token ; un mot rare ou technique se scinde en plusieurs fragments, souvent un préfixe, une racine et une terminaison. La chaîne développement peut ainsi devenir trois tokens distincts, et le modèle ne « voit » que cette trinité d'entiers.
+
+Cette mécanique a trois conséquences pratiques qu'il faut intégrer dès maintenant. La première : les coûts et les limites de longueur se comptent en tokens, jamais en mots ni en caractères, et une page française contient en moyenne plus de tokens que la même page en anglais, car la tokenisation des langues moins représentées est moins économe. La deuxième : un mot que le découpeur ignore complètement devient une succession de fragments inconnus du contexte sémantique, ce qui dégrade la compréhension ; d'où l'utilité de normaliser avant d'indexer un corpus. La troisième : la frontière du contexte se coupe sur un token, pas sur une phrase, si bien qu'un document tronqué au pile peut finir au milieu d'un mot et rendre la dernière phrase inutilisable.
+
+Autre point crucial : deux modèles n'utilisent pas nécessairement le même découpeur. Les vocabulaires diffèrent, ce qui signifie qu'un même paragraphe paie un nombre de tokens différent selon le service choisi, et qu'un budget calibré sur un modèle peut déborder sur un autre. Pour cette raison, on mesure toujours la longueur réelle avec l'encodeur du modèle cible, jamais avec une règle du type trois caractères pour un token, qui ne reste qu'une estimation rapide de bureau. Quand l'encodeur réel n'est pas disponible, comme dans les exemples de ce chapitre, on affiche l'estimation en la nommant clairement, pour ne pas la prendre pour une mesure.
+
+Le vocabulaire d'un découpeur moderne compte typiquement de quelques dizaines à plus d'un centaine de milliers de sous-mots, appris automatiquement à partir d'un corpus d'entraînement par un algorithme qui fusionne les séquences les plus fréquentes. Ce vocabulaire est fixe une fois le modèle entraîné : on ne peut pas lui apprendre un nouveau mot sans réentraîner, tout au plus existe-t-il des jetons réservés pour signaler l'inconnu, la coupure ou les frontières de document. Dans la pratique quotidienne, cela se traduit par un réflexe : avant d'envoyer un corpus au système d'indexation, on le nettoie, on normalise les accents, on supprime la ponctuation parasite, et seulement ensuite on compte.
+
+```python
+# Un découpeur pédagogique, en bibliothèque standard.
+import string
+import unicodedata
+
+def tokenizer_simple(texte):
+    """Découpe en mots minuscules, sans ponctuation ni accent."""
+    table = str.maketrans("", "", string.punctuation)
+    propre = texte.lower().translate(table)
+    propre = unicodedata.normalize("NFD", propre)
+    propre = "".join(c for c in propre if not unicodedata.combining(c))
+    return [m for m in propre.split() if m]
+
+phrase = "La fenêtre de contexte se compte en tokens, pas en mots !"
+jetons = tokenizer_simple(phrase)
+print(len(jetons), "jetons :", jetons)
+print("estimation ~", round(len(phrase) / 3.5), "tokens pour un encodeur réel")
+```
+
+On peut aller plus loin et simuler une découpe par fréquence, ce qui donne une intuition très fidèle du comportement d'un vrai encodeur. L'idée est d'affecter à chaque mot rencontré un identifiant stable, en puisant dans un vocabulaire de départ qui contient les mots les plus courants. Les mots absents de ce vocabulaire sont alors découpés en préfixes et suffixes de deux ou trois lettres, exactement comme un vrai découpeur traite un terme rare. Ce comportement reproduit l'essentiel : les mots courants coûtent un jeton, les mots inhabituels en coûtent plusieurs, et l'identifiant dépend du vocabulaire, pas du mot lui-même.
+
+```python
+VOCAB = {"le", "la", "les", "de", "des", "un", "une", "et", "en", "du"}
+
+def encode(texte, vocab=VOCAB, taille=3):
+    """Attribue un identifiant par mot ; les mots rares sont fragmentés."""
+    table = str.maketrans("", "", string.punctuation)
+    jetons = texte.lower().translate(table).split()
+    sortie = []
+    for mot in jetons:
+        if mot in vocab or len(mot) <= taille:
+            sortie.append(("mot", mot))
+        else:
+            for i in range(0, len(mot), taille):
+                sortie.append(("partie", mot[i:i + taille]))
+    return sortie
+
+for type_jeton, valeur in encode("Une tokenisation découpe les mots rares"):
+    print(type_jeton.ljust(7), valeur)
+```
+
+Deux leçons se dégagent de cet exercice. D'abord, l'identifiant d'un jeton n'a aucun sens isolé : comparer le numéro 512 au numéro 513 ne dit rien du tout sur la proximité des mots, seule la position dans la table de plongement compte, et c'est précisément le sujet de la section suivante. Ensuite, fragmenter coûte cher : un mot rare consomme plusieurs entrées de contexte, ce qui explique pourquoi les acronymes inventés et les noms propres exotiques font exploser les compteurs, et pourquoi il est plus sage de normaliser un vocabulaire métier avant l'indexation que de le subir dans la facture.
+$lesson$),
+  ('ia-c8-p5', 'ia-c8', 5, $lesson$Température, top_p et fenêtre de contexte$lesson$, $lesson$
+La génération n'est pas déterministe par défaut. À chaque pas, le modèle calcule une distribution de probabilités sur tous les jetons de son vocabulaire, puis tire un jeton au hasard pondéré. Les deux réglages principaux agissent sur ce tirage. La température divise les scores avant l'application de l'exponentielle : à zéro, la distribution s'écrase et le jeton le plus probable gagne presque toujours, d'où des réponses stables et reproductibles ; à des valeurs supérieures à un, la queue de la distribution prend du poids et les choix deviennent plus rares, donc plus originaux, donc plus risqués. Le top_p, quant à lui, tronque la queue : on trie les jetons par probabilité décroissante et on ne tire que dans le plus petit ensemble dont la probabilité cumulée dépasse le seuil.
+
+Le choix entre ces deux réglages est plus simple qu'il n'y paraît. Pour une tâche mécanique, extraction, conversion de format, réponse factuelle, classification, on règle la température à zéro et on oublie le sujet. Pour une tâche créative, rédaction d'une accroche, reformulation variée, brainstorming, on monte prudemment, en observant toujours plusieurs sorties pour juger la dispersion. On évite en général de combiner une température élevée et un top_p élevé : les deux injectent du hasard, et leur effet se multiplie plutôt qu'il ne s'additionne, ce qui produit des réponses indisciplinées dont il est difficile de comprendre la cause. Un bon protocole change un seul paramètre à la fois.
+
+```python
+# L'effet de la température sur une distribution de probabilités.
+import math
+import random
+
+scores = {"reponse": 5.0, "hypothese": 3.0, "inconnu": 1.0}
+
+def probabilites(scores, temperature):
+    if temperature <= 0:
+        return {k: (1.0 if v == max(scores.values()) else 0.0)
+                for k, v in scores.items()}
+    bruts = {k: math.exp(v / temperature) for k, v in scores.items()}
+    total = sum(bruts.values())
+    return {k: v / total for k, v in bruts.items()}
+
+for temperature in (0.0, 0.5, 1.0, 2.0):
+    dist = probabilites(scores, temperature)
+    affiche = "  ".join(f"{k}={v:.2f}" for k, v in dist.items())
+    print("T =", temperature, "->", affiche)
+```
+
+La fenêtre de contexte constitue la troisième grandeur à maîtriser, et la plus concrète financièrement. Elle regroupe les tokens d'entrée et les tokens de sortie d'un même appel : la question, le contexte injecté, l'historique de conversation et la réponse doivent tous tenir dans cette enveloppe. Au-delà, il faut tronquer, et tronquer est toujours un choix douloureux : couper l'historique efface la mémoire de la conversation, couper le contexte fait disparaître le document qui contenait la réponse. Une bonne architecture dimensionne les trois compartiments séparément, en gardant une réserve pour la réponse, plutôt que de remplir l'enveloppe au hasard.
+
+```text
+fenetre de contexte = [ historique ] + [ contexte ] + [ question ] + [ reponse ]
+                          ^               ^            ^            ^
+                     taille fixe     taille fixe   petite    reservee a
+                     et decroissante  par passage            l'avance
+```
+
+Le tableau suivant rassemble les réglages que vous toucherez le plus souvent, avec la valeur par défaut raisonnable et la conséquence d'un abus dans chaque sens.
+
+| Réglage | Valeur de départ | Trop bas | Trop haut |
+| --- | --- | --- | --- |
+| temperature | 0.0 à 0.3 | réponses sèches, toujours identiques | divagations, incohérence |
+| top_p | 1.0 | appauvrissement du vocabulaire | doublons, détours |
+| max_tokens | selon la tâche | phrases coupées | facture gonflée, latence |
+| fenêtre utilisée | 50 à 70 pour cent | perte de contexte utile | coût élevé, noyade de la demande |
+
+Un dernier réglage, souvent ignoré, mérite d'être cité : la longueur maximale de sortie. Elle borne la réponse, ce qui borne la facture et la latence, mais elle tronque aussi. Si vous demandez un tableau en dix lignes et que vous autorisez soixante tokens, vous obtiendrez un tableau amputé de sa fin, sans aucun message d'erreur. Le réflexe correct consiste à dimensionner la limite en fonction du format attendu, et à vérifier dans la réponse la raison de l'arrêt : quand celle-ci indique une longueur atteinte plutôt qu'une fin naturelle, il faut augmenter la limite ou réduire la demande.
+
+Enfin, la reproductibilité a un coût. Régler la température à zéro ne garantit pas à lui seul des sorties identiques : la concurrence, les mises à jour silencieuses du service et les variations d'implémentation peuvent modifier le résultat. Si votre application exige une réponse stable, il faut enregistrer la sortie attendue, comparer à chaque exécution et alerter sur divergence. C'est exactement la philosophie des tests de contrat appliquée à un composant non déterministe, et cela s'écrit en une dizaine de lignes.
+$lesson$),
+  ('ia-c8-p6', 'ia-c8', 6, $lesson$Mesurer la qualité d'une réponse$lesson$, $lesson$
+Une réponse vous plaît ? Ce n'est pas une mesure. Pour piloter un système de génération, il faut des critères observables, reproductibles et automatisables, sinon chaque modification de prompt dégénère en débat d'opinions. La première famille de critères est structurelle : la réponse respecte-t-elle le format demandé, se termine-t-elle par une ponctuation valide, contient-elle les champs annoncés, reste-t-elle dans la limite de longueur. Ces contrôles s'écrivent en Python pur, s'exécutent sans modèle et éliminent immédiatement une grande partie des échecs.
+
+La deuxième famille est sémantique, et c'est là que le vocabulaire du chapitre devient utile. On encode la réponse attendue et la réponse obtenue, on calcule leur similarité cosinus, et on retient au-delà d'un seuil. Cette mesure ne comprend rien : elle compare des directions de vecteurs. Mais elle est suffisamment fidèle pour repérer une réponse hors sujet, ce qui est exactement le défaut le plus coûteux à laisser passer. On l'utilise donc comme garde-fou, pas comme jugement de vérité, et on garde un œil humain sur ce qui passe sous le seuil.
+
+```python
+import math
+
+def cosine(a, b):
+    numerateur = sum(x * y for x, y in zip(a, b))
+    norme_a = math.sqrt(sum(x * x for x in a))
+    norme_b = math.sqrt(sum(y * y for y in b))
+    if norme_a == 0.0 or norme_b == 0.0:
+        return 0.0
+    return numerateur / (norme_a * norme_b)
+
+attendue = [1.0, 0.5, 0.0, 0.0]
+obtenue = [0.9, 0.6, 0.1, 0.0]
+hors_sujet = [0.0, 0.0, 0.8, 0.7]
+print("proche :", round(cosine(attendue, obtenue), 3))
+print("lointain :", round(cosine(attendue, hors_sujet), 3))
+```
+
+La troisième famille est la plus rentable à mettre en place dès le début : le jeu d'évaluation. On écrit dix questions représentatives, avec pour chacune une réponse de référence et un critère de réussite, puis on exécute le pipeline complet à chaque modification. Le score global protège contre les régressions silencieuses, et le détail par question montre exactement où le prompt s'est dégradé. Rien de neuf sous le soleil de l'ingénierie logicielle : c'est un jeu de tests, simplement ses cas d'entrée sont des phrases et ses attendus sont des jugements.
+
+Un mot sur les métriques plus savantes, que vous croiserez dans la littérature. On mesure parfois la fidélité à la source, c'est-à-dire la proportion d'affirmations de la réponse réellement étayées par le contexte fourni, ainsi que la couverture, la part des informations du contexte effectivement reprise. D'autres approches confient la notation à un second modèle, plus grand ou plus strict, qui attribue des points à la réponse selon une grille. Ces techniques sont utiles à grande échelle, mais elles introduisent leurs propres biais et leur propre coût ; pour un premier système, un jeu de cas à la main et une mesure de similarité suffisent largement à vous faire progresser.
+
+Enfin, il faut tracer ce qu'on mesure. Chaque exécution d'évaluation produit une ligne : identifiant de version du prompt, paramètres de génération, scores, latence et coût. Ces lignes, accumulées, transforment une suite d'essais en une historique exploitable. Vous découvrirez alors des corrélations que l'intuition n'aurait pas devinées : un prompt qui gagne en fidélité mais double la latence, une température qui améliore la créativité sur trois questions sur dix et détruit les sept autres, un contexte plus long qui n'apporte rien parce que le bon passage arrivait en dernier.
+$lesson$),
+  ('ia-c8-p7', 'ia-c8', 7, $lesson$Les embeddings : le sens sous forme de vecteur$lesson$, $lesson$
+Un embedding est une liste de nombres qui représente un texte. Une quarantaine de valeurs pour une phrase, plusieurs centaines pour un document, et voilà transformé en géométrie ce qui n'était qu'une suite de caractères. L'intérêt n'est pas cosmétique : dès que deux textes sont devenus deux vecteurs, on peut mesurer leur proximité par du calcul, trier des milliers de documents par similarité, détecter des doublons ou regrouper des requêtes autour d'un même thème. C'est le pont entre le langage naturel et les algorithmes classiques, et tout le reste du chapitre repose sur ce pont.
+
+Ces vecteurs ne sont pas construits à la main, ils sont entraînés. On expose un modèle à des paires de textes connexes, on le pousse à placer leurs représentations près les unes des autres et à éloigner celles qui n'ont aucun rapport, puis on garde ce qu'il a appris. Le résultat remarquable est la généralisation : deux phrases qui n'ont aucun mot commun, comme « un chien aboie dans le jardin » et « l'animal aboie dehors », se retrouvent voisines, parce que le modèle a appris le sens et non la cooccurrence littérale. Inversement, deux phrases au vocabulaire identique mais de sens opposé peuvent se retrouver lointaines, ce qui est exactement ce qu'on attend d'une représentation sémantique.
+
+Un détail d'ingénierie change beaucoup la pratique : la dimension est fixée par le modèle, et les vecteurs de modèles différents ne sont pas comparables entre eux. Un vecteur de 384 dimensions ne se compare pas à un vecteur de 1536 dimensions, ni ne se convertit sans réentraînement. Choisir un modèle d'encodage revient donc à choisir un espace, et cet espace doit rester le même entre l'indexation et la requête. C'est la raison la plus fréquente d'un système de recherche qui fonctionne au démarrage puis retombe brutalement : on a réindexé une partie du corpus avec un autre modèle sans s'en apercevoir. Une bonne pratique consiste à stocker, avec chaque index, l'identifiant exact du modèle d'encodage et sa dimension, et à refuser toute recherche en cas de discordance.
+
+Pour produire ces vecteurs en production, on interroge une API dédiée qui renvoie une liste de listes de nombres. L'encodage est un appel réseau ordinaire, tout comme l'appel de génération vu précédemment, et il se paie à l'unité de texte. Dans ce chapitre, nous ferons volontairement l'inverse : nous coderons à la main de minuscules vecteurs de dimension quatre, suffisants pour démontrer chaque mécanisme, afin que les calculs restent lisibles et que rien ne dépende du réseau. Le passage d'une échelle à l'autre ne change aucune formule, seulement les nombres.
+
+Trois familles de représentation coexistent en pratique, et les distinguer évite de suréquiper un besoin simple.
+
+| Représentation | Dimension typique | Force | Faiblesse |
+| --- | --- | --- | --- |
+| mots-clés exacts | nulle, simple index | rapide, explicite | rate les synonymes et la reformulation |
+| sac de mots pondéré | quelques milliers | simple, efficace sur le vocabulaire fixe | ignore l'ordre et le sens |
+| embedding dense | 384 à 1536 | capture la proximité de sens | coût d'indexation, modèle à imposer |
+
+Le bon choix dépend de la question posée au système. Si l'utilisateur tape un identifiant de produit ou un numéro de version, la recherche littérale est non seulement suffisante, elle est préférable, car elle est exacte et gratuite. Si l'utilisateur reformule une idée avec ses propres mots, seule la représentation dense suivra. La plupart des systèmes récents combinent les deux, en classant par similarité dense puis en recalant sur les termes exacts, ce qui donne la robustesse de l'une et la précision de l'autre.
+
+```python
+# Des embeddings de démonstration, codés à la main, dimension 4.
+VECTEURS = {
+    "le chien aboie":        [1.0, 0.0, 0.0, 0.0],
+    "un chien aboie":        [0.9, 0.1, 0.0, 0.0],
+    "l'animal aboie":        [0.8, 0.2, 0.0, 0.1],
+    "le chat dort":          [0.0, 0.0, 1.0, 0.0],
+    "température du modèle": [0.0, 0.0, 0.1, 1.0],
+}
+
+def encoder(texte, table=VECTEURS):
+    """Renvoie le vecteur associé, ou un vecteur nul si le texte est inconnu."""
+    return table.get(texte, [0.0] * len(next(iter(table.values()))))
+
+print("inconnu :", encoder("phrase jamais indexée"))
+```
+$lesson$),
+  ('ia-c8-p8', 'ia-c8', 8, $lesson$Similarité cosinus en pur Python$lesson$, $lesson$
+La mesure de proximité la plus utilisée en recherche sémantique est la plus simple à écrire : le cosinus de l'angle entre deux vecteurs. On calcule d'abord la somme des produits termes à termes, puis on la divise par le produit des normes, c'est-à-dire des racines carrées des sommes des carrés. Le résultat vit entre moins un et un : deux vecteurs de même direction donnent un, deux vecteurs orthogonaux donnent zéro, deux directions opposées donnent moins un. Dans la pratique, seuls les cas positifs vous intéresseront.
+
+Pourquoi ce produit scalaire plutôt que la distance euclidienne ? Parce que la longueur d'un vecteur porte peu d'information : un document long a des fréquences plus élevées qu'un document court sur les mêmes sujets, et la distance euclidienne le pénaliserait alors, alors que sa direction, elle, reste identique. La similarité cosinus se focalise sur la direction, donc sur la répartition relative des termes, donc sur le sens. C'est exactement le comportement voulu quand on compare deux textes de longueurs différentes, ce qui est le cas la plupart du temps.
+
+```python
+import math
+
+def norme(vecteur):
+    return math.sqrt(sum(x * x for x in vecteur))
+
+def cosinus(a, b):
+    """Similarité cosinus entre deux vecteurs de même longueur."""
+    if len(a) != len(b):
+        raise ValueError("les vecteurs doivent avoir la même longueur")
+    produit = sum(x * y for x, y in zip(a, b))
+    na, nb = norme(a), norme(b)
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return produit / (na * nb)
+
+print(round(cosinus([1.0, 0.0], [1.0, 0.0]), 3))
+print(round(cosinus([1.0, 0.0], [0.0, 1.0]), 3))
+print(round(cosinus([1.0, 0.0], [-1.0, 0.0]), 3))
+```
+
+Les deux cas particuliers méritent une attention. Le vecteur nul, obtenu pour un texte entièrement hors vocabulaire, ne possède pas de direction : toute division deviendrait absurde, et la fonction renvoie donc zéro, ce qui place innocemment le document au bout du classement. Le problème ne vient pas du calcul mais de l'indexation, et il se signale par un document qui n'apparaît jamais dans aucun résultat. Le second cas est le déséquilibre de dimension : comparer deux vecteurs de longueurs différentes est une erreur de programmation, non une donnée manquante, et lever une exception dès le départ fait gagner des heures de diagnostic.
+
+Une fois la mesure établie, le classement se résume à une boucle et un tri. On calcule le score de chaque document par rapport à la requête, on ordonne les résultats par score décroissant, puis on ne conserve que les premiers, typiquement trois à cinq passages. Le nombre à retenir, souvent appelé k, fait partie des réglages du système : trop petit, la génération manque de matière et invente ; trop grand, le prompt s'allonge, le coût augmente et la pertinence se dilue sous des passages qui n'ont rien à voir. On le choisit par expérience sur un jeu d'évaluation, et on le garde identique d'une mesure à l'autre pour pouvoir comparer.
+
+```python
+def rechercher(question, documents, vecteurs, k=3):
+    """Classe les documents par similarité avec la question, meilleurs d'abord."""
+    cible = vecteurs[question]
+    scores = []
+    for i, document in enumerate(documents):
+        score = cosinus(cible, vecteurs[document])
+        scores.append((round(score, 4), i, document))
+    scores.sort(key=lambda ligne: (-ligne[0], ligne[1]))
+    return scores[:k]
+
+DOCUMENTS = ["le chien aboie", "l'animal aboie", "le chat dort"]
+VECTEURS = {
+    "le chien aboie": [1.0, 0.0, 0.0, 0.0],
+    "l'animal aboie": [0.8, 0.2, 0.0, 0.1],
+    "le chat dort":   [0.0, 0.0, 1.0, 0.0],
+    "un chien dort":  [0.3, 0.0, 0.8, 0.0],
+}
+for score, i, texte in rechercher("un chien dort", DOCUMENTS, VECTEURS, k=2):
+    print(score, i, texte)
+```
+
+Un piège revient souvent quand on passe de quatre dimensions à mille : la complexité. Une comparaison coûte le produit des dimensions, et la recherche exhaustive au sein d'un corpus de cent mille documents multiplie ce coût par cent mille, ce qui devient lent à chaque requête. Les systèmes réels répondent par des index vectoriels qui organisent les vecteurs en groupes proches et ne visitent qu'une fraction du corpus, ou par une réduction de dimension avant le tri. Ces structures, utiles dès quelques dizaines de milliers de documents, ne changent rien à la mesure : elles accélèrent seulement le calcul du même score.
+$lesson$),
+  ('ia-c8-p9', 'ia-c8', 9, $lesson$Le pipeline RAG en cinq étapes$lesson$, $lesson$
+La recherche augmentée par la génération, souvent abrégée RAG, combine deux composants que l'on vient de construire séparément : un rechercheur qui trouve des passages, et un générateur qui rédige une réponse à partir de ces passages. L'articulation des deux se fait en cinq étapes, toujours les mêmes, quel que soit le framework utilisé. Comprendre cette séquence, c'est pouvoir diagnostiquer n'importe quel système du domaine, y compris ceux qui la masquent derrière des abstractions nombreuses.
+
+La première étape est l'ingestion : récupérer les documents sources, fichiers texte, pages exportées, notes internes, et les convertir en texte brut exploitable. La deuxième est le découpage : un document entier est presque toujours trop long pour être utile, on le découpe donc en passages de taille raisonnable, en gardant un chevauchement pour ne pas perdre une phrase à cheval sur deux blocs. La troisième est l'indexation : chaque passage est encodé en vecteur et stocké avec son identifiant, son emplacement et le texte original. La quatrième est la récupération : la question de l'utilisateur est encodée avec le même modèle, puis les k passages les plus proches sont extraits de l'index. La cinquième est la génération : le gabarit assemble les règles, les passages et la question, et le modèle rédige la réponse.
+
+```text
+1. ingestion      -> fichiers bruts
+2. decoupage      -> passages + chevauchement
+3. indexation     -> vecteurs + metadonnees
+4. recuperation   -> question -> k passages proches
+5. generation     -> gabarit + passages + question -> reponse
+```
+
+Chacune de ces étapes possède ses propres échecs, et les confondre est la première erreur de diagnostic. Une réponse fausse vient rarement du modèle : elle vient le plus souvent d'un découpage qui a coupé la phrase clé, d'une indexation faite avec un modèle différent de celui de la requête, ou d'une récupération qui a renvoyé trois passages sans rapport parce que la question était trop courte. Avant de soupçonner la génération, on vérifie donc ce qui a été fourni au modèle, en affichant les passages retenus et leurs scores. Cette habitude, quelques lignes de journalisation, règle la moitié des incidents.
+
+Le découpage mérite une attention particulière, car il est souvent traité négligemment. Deux paramètres dominent : la taille du passage et le chevauchement. Un passage trop court perd son contexte, une phrase détachée de sa négation ou de son sujet devient trompeur ; un passage trop long dilue l'information et rapproche des vecteurs qui mélangent plusieurs thèmes. Un chevauchement nul fait perdre les frontières, un chevauchement excessive double le coût d'indexation. Des valeurs courantes se situent entre quelques dizaines et quelques centaines de mots, avec un dixième de recouvrement, mais la seule règle fiable est de découper sur des séparateurs naturels, titres, phrases, puis de vérifier sur votre propre corpus que les passages restent autonomes.
+
+```python
+def decouper(texte, taille=200, chevauchement=40):
+    """Découpe en passages de `taille` caractères, avec recouvrement."""
+    if chevauchement >= taille:
+        raise ValueError("le chevauchement doit être inférieur à la taille")
+    passages = []
+    debut = 0
+    while debut < len(texte):
+        fin = debut + taille
+        passage = texte[debut:fin]
+        if fin < len(texte):
+            dernier_espace = passage.rfind(" ")
+            if dernier_espace > taille // 2:
+                passage = passage[:dernier_espace]
+        passages.append(passage.strip())
+        if fin >= len(texte):
+            break
+        debut += len(passage) - chevauchement
+    return [p for p in passages if p]
+
+texte = ("La recherche augmentée améliore la fiabilité des réponses. " * 12).strip()
+blocs = decouper(texte, taille=80, chevauchement=20)
+print(len(blocs), "passages")
+for bloc in blocs[:3]:
+    print("-", bloc)
+```
+
+L'indexation, troisième étape, est la plus simple à écrire et la plus critique à fiabiliser. Pour chaque passage, on calcule le vecteur, on l'enregistre avec son texte, son identifiant et l'identifiant du modèle d'encodage, puis on persiste l'ensemble dans un fichier. Le format n'a aucune importance tant qu'il est lisible et versionné : du JSON suffit largement pour un corpus de quelques centaines de documents, et il a l'avantage d'être inspectable à la main quand quelque chose cloche. On ajoute volontiers une empreinte du corpus, afin de savoir si la base indexée correspond bien aux sources, et une date, afin de savoir quand elle a été construite.
+
+```python
+import hashlib
+import json
+
+def indexer(passages, encoder):
+    """Construit un index : vecteurs, textes, modèle utilisé, empreinte."""
+    entrees = []
+    for identifiant, texte in enumerate(passages):
+        entrees.append({"id": identifiant, "texte": texte,
+                        "vecteur": encoder(texte)})
+    charge = json.dumps(entrees, ensure_ascii=False, sort_keys=True)
+    return {
+        "mode": "embedding-demo-v1",
+        "empreinte": hashlib.sha256(charge.encode("utf-8")).hexdigest()[:12],
+        "entrees": entrees,
+    }
+
+index = indexer(["le chien aboie", "le chat dort"], lambda t: [1.0, 0.0])
+print(index["mode"], index["empreinte"], len(index["entrees"]), "entrées")
+```
+$lesson$),
+  ('ia-c8-p10', 'ia-c8', 10, $lesson$Robustesse : quand la recherche se trompe$lesson$, $lesson$
+Un pipeline de recherche augmentée échoue toujours de la même manière : il fournit au modèle de mauvais matériaux, puis on reproche au modèle d'avoir mal bâti. Repérer ce moment précis est l'essentiel du métier. Quatre symptômes reviennent régulièrement, et chacun a son remède. Si aucun passage n'est retourné, la requête est hors vocabulaire ou l'index est vide : on affiche alors un message d'indisponibilité plutôt que de laisser le modèle improviser. Si les scores sont tous proches de zéro, la question est trop générique ou mal formulée : on la reformule, on ajoute des termes, on interroge l'utilisateur. Si le bon passage arrive en quatrième position, la valeur de k est trop faible ou le seuil de pertinence est mal calé. Et si les passages sont corrects mais que la réponse s'en écarte, le gabarit est fautif : la consigne de rester dans le contexte manque, ou elle est noyée.
+
+```python
+def scorer_reponse(reponse_vecteur, passages, cosine):
+    """Retourne la similarité maximale entre la réponse et chaque passage."""
+    if not passages:
+        return 0.0
+    meilleure = 0.0
+    for passage in passages:
+        valeur = cosine(reponse_vecteur, passage["vecteur"])
+        if valeur > meilleure:
+            meilleure = valeur
+    return round(meilleure, 4)
+```
+
+La version naïve de cette fonction, celle que l'on écrit spontanément, réencode la réponse à l'intérieur de la boucle, une fois par passage, pour obtenir exactement le même résultat. Extrayez cet encodage hors de la boucle, transmettez-le déjà calculé, et vous divisez le temps d'exécution par le nombre de passages. Ce type d'optimisation n'a rien d'exotique : il consiste simplement à ne pas recomputer une valeur constante, et il s'applique à l'ensemble du pipeline. La requête est encodée une seule fois, les vecteurs des documents sont précalculés à l'indexation, et la seule chose qui change d'une requête à l'autre est le vecteur de la question.
+
+La deuxième ligne de défense est le garde-fou. Quand aucun passage ne dépasse un seuil de similarité, la réponse honnête vaut mieux qu'une réponse inventée : on renvoie un message explicite indiquant que l'information n'a pas été trouvée, accompagné éventuellement des documents les plus proches pour que l'utilisateur vérifie. Ce comportement transforme une défaillance silencieuse en défaillance visible, et c'est la différence entre un outil auquel on fait confiance et un outil qu'on double d'une vérification manuelle.
+
+La troisième est la traçabilité, déjà évoquée pour l'appel d'API mais décuplée ici. Chaque réponse doit pouvoir être reconstituée : version du gabarit, identifiant du modèle, liste des passages retenus avec leurs scores, paramètres de génération et horodatage. Avec ces éléments, un litige se résout en quelques minutes ; sans eux, chaque mauvaise réponse relance le débat sur le modèle, le prompt, les documents et la météo. En pratique, un journal JSON ligne à ligne, un identifiant de session et une convention de nommage de version suffisent amplement à pérenniser cette mémoire.
+
+Enfin, la sécurité du système se joue aussi dans le contenu fourni. Un document du corpus peut contenir des instructions malveillantes qui se trouvent injectées dans le prompt, par exemple une ligne demandant d'ignorer les consignes précédentes. La parade n'est pas technique mais architecturale : on délimite strictement le rôle du contexte dans le gabarit, on rappelle que le contexte est une donnée et non une instruction, et on interdit au modèle d'obéir à ce qu'il contient. Ce réflexe, à installer dès la première version, évite une famille entière de dysfonctionnements.
+$lesson$),
+  ('ia-c8-p11', 'ia-c8', 11, $lesson$Bonnes pratiques de production$lesson$, $lesson$
+Passer du prototype à la production ne demande pas d'autres algorithmes, seulement de la discipline. La première règle est l'immutabilité des artefacts : gabarit de prompt, modèle d'encodage, index, seuils et paramètres de génération sont versionnés ensemble, et toute modification produit une nouvelle version identifiable. Si les performances chutent, on sait exactement quel élément est responsable, et on peut revenir en arrière. Sans versionnement, la seule alternative est de restaurer l'état par intuition, ce qui ne fonctionne pas.
+
+La deuxième règle est la budgétisation. Chaque appel a un coût en tokens et une latence ; multiplié par le trafic, il devient une dépense prévisible qu'il faut estimer avant le lancement, pas après la facture. On compte les tokens d'entrée moyens par requête, on ajoute le contexte, on multiplie par le nombre de requêtes journalier, puis on applique le tarif du modèle choisi. Ce calcul, aussi approximatif soit-il, suffit à trancher entre un modèle rapide et un modèle réfléchi, ou à décider de réduire le contexte fourni. Les systèmes qui ignorent ce calcul découvrent leur coût au moment où il devient insoutenable.
+
+La troisième règle est la supervision. Une alerte doit se déclencher quand le taux d'erreur dépasse un seuil, quand la latence médiane s'allonge, quand plus de la moitié des réponses tombent sous le seuil de similarité, ou quand l'index n'a pas été reconstruit depuis trop longtemps. Ces quatre alertes coûtent quelques lignes à mettre en place et détectent la très grande majorité des dégradations silencieuses, y compris celles causées par un changement de modèle côté fournisseur que vous n'avez pas initié.
+
+Le déploiement progressif s'applique ici comme partout ailleurs. On expose la nouvelle version du gabarit à une fraction du trafic, on compare les scores et la latence avec l'ancienne, puis on généralise ou on revient. L'ancienne version reste déployée pendant une période de sécurité, et l'index n'est reconstruit qu'après validation, jamais pendant une fenêtre de trafic soutenu. Ces précautions paraissent lourdes pour un outil de génération, mais l'expérience montre qu'un système de restitution de documents bénéficie exactement des mêmes exigences qu'un service transactionnel.
+
+```python
+# Journal d'une requête, formaté pour être relu et agrégé.
+import json
+import time
+
+def journaliser(entree, sorties, latence, version):
+    trace = {
+        "horodatage": int(time.time()),
+        "version_prompt": version,
+        "tokens_entree": entree,
+        "tokens_sortie": sorties,
+        "latence_ms": round(latence * 1000),
+        "fin_arret": "longueur" if sorties >= 500 else "naturelle",
+    }
+    print(json.dumps(trace, ensure_ascii=False))
+    return trace
+
+journaliser(320, 84, 0.62, "prompt-v3.2")
+```
+
+Une dernière pratique, souvent négligée, concerne la documentation du système. Décrivez, en une page, ce que fait l'assistant, ce qu'il ne fait pas, sur quel corpus il s'appuie, avec quelle fréquence l'index est reconstruit, et quel comportement adopter quand il répond qu'il ne sait pas. Cette page devient le contrat entre les utilisateurs et l'équipe, elle réduit les attentes irréalistes et elle sert de base aux tests d'acceptation. Un système de génération sans contrat écrit est un système dont chacun attend des choses différentes, et dont personne ne peut dire s'il fonctionne.
+$lesson$),
+  ('ia-c8-p12', 'ia-c8', 12, $lesson$Assembler la génération augmentée$lesson$, $lesson$
+Tous les morceaux sont maintenant sur la table : prompt structuré, appel d'API, tokenisation, embeddings, similarité cosinus, pipeline en cinq étapes, garde-fous. Il reste à les coudre ensemble dans une fonction unique qui prend une question et rend une réponse, avec ses traces. L'assemblage n'a rien de spectaculaire, et c'est précisément le signe qu'il est correct : chacune des étapes tient en quelques lignes, chacune est testable isolément, et aucune ne cache de magie. Le code ci-dessous tient entièrement en bibliothèque standard et peut être exécuté tel quel dans l'environnement de ce cours.
+
+```python
+import math
+
+def cosine(a, b):
+    produit = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return 0.0 if na == 0.0 or nb == 0.0 else produit / (na * nb)
+
+def repondre(question, index, k=2, gabarit=None):
+    """Recherche les passages proches, puis construit le prompt final."""
+    cible = index["vecteurs"].get(question, [0.0] * index["dimension"])
+    scores = sorted(
+        ((cosine(cible, entree["vecteur"]), entree["texte"])
+         for entree in index["entrees"]),
+        reverse=True,
+    )
+    retenus = [texte for score, texte in scores[:k] if score > 0.0]
+    if not retenus:
+        return "Aucun passage pertinent n'a été trouvé.", []
+    gabarit = gabarit or "Contexte :\n{contexte}\n\nQuestion : {question}\nRéponse :"
+    prompt = gabarit.format(
+        contexte="\n".join("- " + p for p in retenus),
+        question=question,
+    )
+    return prompt, retenus
+```
+
+Observez ce que renvoie la fonction : le prompt construit et les passages retenus, pas seulement une promesse de réponse. Cette API de retour est volontairement expéditive. Elle permet d'afficher, avant tout appel de génération, exactement ce que le modèle va recevoir, ce qui est la seule façon fiable de comprendre une sortie décevante. Dans un système réel, la génération s'ajoute en fin de fonction, avec l'appel urllib vu plus haut, et la même fonction renvoie alors la réponse, les passages, les scores et les métadonnées de coût.
+
+Un point d'architecture mérite d'être tranché maintenant : où vit la génération ? Trois positions se rencontrent, et elles n'ont pas le même coût d'évolution. La génération peut être intégrée au même module que la recherche, ce qui va vite mais empêche de faire évoluer les deux indépendamment. Elle peut vivre derrière une frontière nette, la recherche renvoyant des passages, la génération consommant ces passages, ce qui permet de remplacer le modèle sans toucher à l'index. Elle peut enfin être décomposée davantage encore, en chaînes d'étapes intermédiaires avec reprise sur erreur, ce qui convient aux traitements longs mais complique le débogage. Pour un premier système, la deuxième position est le meilleur rapport souplesse et simplicité.
+
+```text
+question
+   |
+   v
+[ recherche ] -- passages + scores --> [ generation ] --> reponse
+   |                                        ^
+   |                                        |
+   +----------- journal d'execution --------+
+```
+$lesson$),
+  ('ia-c8-p13', 'ia-c8', 13, $lesson$Évaluer une chaîne complète$lesson$, $lesson$
+Tester la recherche et tester la génération séparément ne suffit pas : c'est leur interaction qui produit la qualité finale. On évalue donc la chaîne entière, avec un jeu de questions représentatives, et on note chaque sortie selon plusieurs critères indépendants. La pertinence des passages retenus se juge d'abord : les documents fournis contiennent-ils l'information demandée ? La fidélité vient ensuite : la réponse s'appuie-t-elle sur ces documents sans les déformer ? Le format intervient enfin : la structure demandée a-t-elle été respectée ? Trois notes simples valent mieux qu'une note globale impossible à interpréter.
+
+```python
+def evaluer(entrees, repondre, noter):
+    """Exécute le jeu d'évaluation et agrège les résultats."""
+    lignes = []
+    for question, reference in entrees:
+        prompt, passages = repondre(question)
+        note = noter(question, reference, passages, prompt)
+        lignes.append({"question": question, "note": note,
+                       "passages": len(passages)})
+    moyenne = sum(ligne["note"] for ligne in lignes) / max(len(lignes), 1)
+    return lignes, round(moyenne, 3)
+
+JEU = [
+    ("Qu'est-ce qu'un embedding ?", "vecteur représentant un texte"),
+    ("Comment règle-t-on le hasard ?", "température et top_p"),
+    ("Combien de passages retenir ?", "trois à cinq"),
+]
+
+def noter(question, reference, passages, prompt):
+    if not passages:
+        return 0.0
+    mots = set(reference.lower().split())
+    couverture = sum(1 for m in mots if any(m in p.lower() for p in passages))
+    return round(couverture / len(mots), 2)
+
+lignes, moyenne = evaluer(JEU, lambda q: repondre(q, index), noter)
+print("moyenne :", moyenne)
+for ligne in lignes:
+    print(ligne["note"], "-", ligne["question"])
+```
+
+Le seuil de réussite se fixe avant l'exécution, jamais après. Si vous décidez que soixante-quinze pour cent de couverture constitue un passage acceptable, cette valeur se note en tête du fichier d'évaluation, et toute version qui descend en dessous est rejetée. Définir le critère après avoir vu les résultats transforme l'évaluation en exercice de justification, et il n'y a plus moyen de savoir si le système progresse ou si c'est la barre qui a bougé. Une équipe qui tient ce carnet depuis quelques mois possède un actif rare : la preuve mesurable que ses modifications améliorent réellement le produit.
+
+La surveillance en production reprend les mêmes critères, mais calculés en continu et sur des échantillons. On ne peut pas noter chaque réponse à la main, alors on prélève au hasard quelques pourcents des interactions, on leur applique les mêmes métriques automatiques, et on surveille la tendance. Une baisse progressive signale presque toujours une dérive des sources, une rupture brutale signale un changement de modèle ou de gabarit, et une hausse sans modification côté équipe trahit un changement silencieux chez le fournisseur. Dans les trois cas, la détection repose uniquement sur la continuité de la mesure.
+$lesson$),
+  ('ia-c8-p14', 'ia-c8', 14, $lesson$Du prototype à l'usage réel$lesson$, $lesson$
+Le passage à l'échelle ne se fait pas en multipliant par mille le code du prototype, mais en déplaçant le travail hors du chemin critique. L'indexation, qui ne dépend d'aucune requête utilisateur, se déclenche en tâche de fond, à la demande ou par planification, et remplace l'ancien index d'un bloc une fois complet. La génération, qui dépend de la requête, reste en chemin critique et doit donc rester minimal : prompt court, contexte resserré, gabarit stable. Ce découpage en temps différé et temps réel est la structure qui tient tous les systèmes de recherche documentaire.
+
+Le dimensionnement s'exprime en trois grandeurs : le nombre de requêtes par seconde, la latence acceptable pour l'utilisateur, et le budget alloué. Ces trois grandeurs sont en conflit permanent, et la résolution de ce conflit constitue l'essentiel de la conception. On réduit la latence en raccourcissant le contexte et en choisissant le modèle rapide ; on augmente la qualité en faisant l'inverse ; on augmente le débit en mettant en cache les réponses aux questions déjà posées. Le cache mérite une attention particulière : une question reformulée mais équivalente ne justifie pas un nouvel appel, et une table de hachage sur la question normalisée suffit à absorber une part importante du trafic.
+
+```python
+import hashlib
+
+class CacheReponses:
+    """Mémoire de premier niveau, indicative et expirée, pour les questions vues."""
+
+    def __init__(self, duree=3600, max_entrees=1000):
+        self.duree = duree
+        self.max_entrees = max_entrees
+        self.table = {}
+
+    def cle(self, question):
+        texte = " ".join(question.lower().split())
+        return hashlib.sha256(texte.encode("utf-8")).hexdigest()[:16]
+
+    def obtenir(self, question):
+        entree = self.table.get(self.cle(question))
+        if entree is None:
+            return None
+        horodatage, reponse = entree
+        return reponse
+
+    def mettre(self, question, reponse):
+        import time
+        if len(self.table) >= self.max_entrees:
+            self.table.clear()
+        self.table[self.cle(question)] = (time.time(), reponse)
+
+cache = CacheReponses()
+cache.mettre("Qu'est-ce qu'un embedding ?", "Un vecteur représentant un texte.")
+print("cache :", cache.obtenir("qu'est-ce qu'un  embedding ?"))
+print("manquant :", cache.obtenir("Combien de dimensions ?"))
+```
+
+Le code de ce cache illustre deux choix assumés. La clé est calculée sur la question normalisée, espaces superflus et casse retirés, ce qui regroupe les reformulations mécaniques ; et la table est vidée plutôt que purgée minutieusement quand elle est pleine, solution grossière mais prévisible, adaptée à un premier niveau de cache. Les gains de performance s'accompagnent toujours d'une perte : ici, une réponse potentiellement périmée. On l'assume, on documente la durée de validité, et l'utilisateur le sait.
+
+```python
+# Le même pipeline, version minimale, pour vérifier l'ensemble en une lecture.
+def pipeline(question, documents, encoder, k=3):
+    vecteurs = [encoder(doc) for doc in documents]
+    cible = encoder(question)
+    scores = sorted(
+        ((cosine(cible, v), i, documents[i]) for i, v in enumerate(vecteurs)),
+        reverse=True,
+    )
+    retenus = [texte for score, i, texte in scores[:k] if score > 0.0]
+    if not retenus:
+        return {"reponse": "information introuvable", "passages": []}
+    prompt = "Contexte :\n" + "\n".join(retenus) + "\n\nQuestion : " + question
+    return {"reponse": "SIMULEE : " + prompt.splitlines()[-1], "passages": retenus}
+
+print(pipeline("le chat dort", ["le chien aboie", "le chat dort"],
+               lambda t: [1.0, 0.0] if "chat" in t else [0.0, 1.0], k=1))
+```
+
+Toute la chaîne tient dans cette fonction : encodage, comparaison, sélection, construction du contexte. Le remplacement du dernier par un vrai appel d'API est un changement local, d'une dizaine de lignes, qui ne touche à rien de ce qui précède. C'est la marque d'une bonne frontière : on peut substituer un composant sans réécrire les autres, et les tester séparément avant de les réunir.
+$lesson$),
+  ('ia-c8-p15', 'ia-c8', 15, $lesson$À retenir$lesson$, $lesson$
+- Un grand modèle de langage prédit la suite d'un texte ; il ne consulte aucune base et n'a pas de mémoire hors du contexte qu'on lui fournit.
+- Un prompt efficace se compose d'un rôle, d'une consigne, de variables, d'exemples et d'un format de sortie explicite.
+- Les limites et les coûts se comptent en tokens, et la tokenisation découpe en sous-mots plutôt qu'en mots.
+- Régler la température à zero rend la génération stable ; l'augmenter apporte de la variété au prix de la fiabilité.
+- Un embedding est un vecteur dense qui place les textes de sens proche dans des directions voisines.
+- La similarité cosinus mesure l'angle entre deux vecteurs, indépendamment de leur longueur, et renvoie zéro pour un vecteur nul.
+- Le pipeline de recherche augmentée comporte cinq étapes : ingestion, découpage, indexation, récupération, génération.
+- Avant de soupçonner le modèle, vérifiez toujours les passages qui lui ont été fournis.
+- Versionnez gabarit, modèle d'encodage, index et paramètres ensemble ; ils forment un seul artefact.
+- Un jeu d'évaluation figé, tenu dans le temps, transforme les intuitions en améliorations mesurables.
+$lesson$),
+  ('ia-c8-p16', 'ia-c8', 16, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Fournir la question au modèle sans lui fournir de contexte, puis s'étonner qu'il invente une réponse plausible.
+- Indexer avec un modèle d'encodage et interroger avec un autre, ce qui rend tous les scores inexploitables sans message d'erreur.
+- Découper les documents à une taille fixe sans chevauchement, ce qui coupe les phrases en plein milieu et perd le sens.
+- N'augmenter k qu'après un échec, sans mesurer que des passages supplémentaires diluent le contexte et allongent la facture.
+- Écrire un prompt qui interdit sans dire ce que faire, et laisser le modèle deviner la conduite à tenir.
+- Comparer la sortie du modèle à un souvenir subjectif plutôt qu'à une réponse de référence versionnée.
+- Oublier la raison de l'arrêt de génération : une réponse tronquée ressemble à une réponse complète tant qu'on ne regarde pas ce champ.
+- Ne pas tracer les passages et les scores, ce qui rend chaque réponse fausse indiagnostiquable.
+- Faire dépendre un test du réseau en direct, qui échouera au pire moment et inondera le jeu de résultats faussés.
+- Laisser une clé d'API dans le code source ou dans un journal, y compris dans un exemple pédagogique.
+$lesson$),
+  ('ia-c8-p17', 'ia-c8', 17, $lesson$Pour aller plus loin$lesson$, $lesson$
+Trois documentations officielles suffisent à ancrer tout ce qui précède dans la pratique réelle. La documentation de la plateforme OpenAI, sur platform.openai.com/docs, détaille les paramètres de génération, la structure des messages et les formats de sortie structurés ; elle reste la référence la plus lisible pour comprendre ce que contient réellement une requête et sa réponse. Le guide de Hugging Face, sur huggingface.co/docs, explique les pipelines de texte, les modèles d'encodage et la manière dont vocabulaires et plongements sont stockés ; il est indispensable dès que l'on veut manipuler soi-même les vecteurs. Enfin la documentation de LangChain en Python, sur python.langchain.com, montre comment les cinq étapes du pipeline sont découpées en objets réutilisables, ce qui aide beaucoup à lire le code des frameworks une fois les concepts maîtrisés.
+
+Au-delà des trois lectures obligatoires, deux habitudes valent mieux que dix tutoriels. La première consiste à lire, pour chaque réponse, ce qui a été envoyé : le prompt complet, les passages, les paramètres, et à faire varier un seul élément à la fois. La seconde consiste à noter systématiquement ce qui échoue, question par question, dans un fichier. Au bout de quelques dizaines d'entrées, les faiblesses de votre système sont classées, quantifiées et priorisées, et vous savez exactement quoi améliorer ensuite. C'est ainsi que la recherche documentaire cesse d'être un art et devient une discipline d'ingénierie mesurable, itérative et reproductible.
+$lesson$),
+  ('ia-c8-p18', 'ia-c8', 18, $lesson$Et maintenant : construisez votre assistant documentaire$lesson$, $lesson$
+Vous avez désormais tous les éléments pour bâtir, seul, un assistant qui répond à partir de vos propres documents. Prenez un corpus qui vous est familier, quelques dizaines de pages de documentation interne, un manuel ou des notes de cours, puis écrivez le pipeline complet : nettoyage, découpage avec chevauchement, indexation en vecteurs, recherche par similarité cosinus, assemblage du gabarit et enfin appel du modèle. Commencez sans appel réseau, avec la simulation de réponse que propose l'exemple de clôture, afin de valider la mécanique de recherche dans des conditions entièrement déterministes, puis branchez l'appel réel une fois les passages vérifiés à l'œil.
+
+Quand le système répond de bout en bout, ajoutez les trois éléments qui séparent un prototype d'un outil : un jeu d'évaluation de dix questions avec leurs réponses de référence, un journal d'exécution qui conserve les passages et leurs scores, et un garde-fou qui répond honnêtement quand rien de pertinent n'est trouvé. Prenez l'habitude de faire varier k, la taille des passages et la consigne de fidélité, en notant les scores à chaque fois. Vous constaterez alors, sur votre propre corpus, ce que toute la littérature du domaine répète : la qualité d'un système de génération augmentée se joue à quatre-vingts pour cent dans la qualité de ce qu'on lui donne à lire, et seulement à vingt pour cent dans le modèle lui-même. À vous de jouer.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c1-p1', 'net-c1', 1, $lesson$Comprendre : ce qu'est vraiment le modèle OSI$lesson$, $lesson$
+Bienvenue dans ce premier chapitre du parcours réseaux : du modèle OSI à l'adressage IP. Si vous n'avez jamais manipulé un routeur, jamais ouvert un terminal pour regarder une adresse, vous êtes exactement au bon endroit. Rien de ce qui suit ne suppose un diplôme en télécommunications ni des mathématiques poussées : seuls sont requis la curiosité, un ordinateur sous Linux, macOS ou Windows avec le sous-système Linux installé, et l'envie de comprendre ce qui se passe réellement quand une page web s'affiche. Un réseau, ce n'est pas de la magie : c'est une pile de règles empilées les unes sur les autres, chacune étant chargée d'une tâche précise et repoussant la suite du travail à la couche du dessus. Ce chapitre vous apprend à lire cette pile, à la nommer correctement, puis à fabriquer vous-même les adresses qui la font fonctionner. Tous les exemples sont courts, exécutables tels quels, et commentés pour que vous puissiez les recopier, les modifier et les observer vivre sur votre écran.
+
+À la fin de cette leçon, vous saurez faire quatre choses concrètes, et vous les aurez déjà manipulées dans de vraies commandes. Premièrement, vous situerez un protocole, un équipement et une panne dans le modèle OSI en sept couches, en expliquant ce que chaque couche apporte à la précédente. Deuxièmement, vous lirez une adresse IPv4 en binaire, vous en déduirez le masque, l'adresse de réseau, l'adresse de diffusion et la plage d'hôtes réellement utilisables. Troisièmement, vous planifierez un découpage en sous-réseaux avec la méthode VLSM, en attribuant à chaque segment exactement la taille dont il a besoin. Quatrièmement, vous vérifierez tout cela avec les outils du métier, ip, ping, traceroute et tcpdump, en attaquant le problème couche par couche au lieu de deviner. Ces quatre compétences forment le socle du parcours : les chapitres sur Ethernet et ARP, sur TCP et DNS, puis sur le routage OSPF supposent toutes les notions installées ici.
+
+Le fil rouge du chapitre est un cas pratique que vous retrouverez dans l'exercice de fin de leçon. Une PME lyonnaise exploite trois sites, un siège, une agence et un entrepôt, reliés entre eux, et dispose d'un seul bloc d'adresses : 172.20.0.0/22. Un prestataire parti en cours de route a laissé un plan bâclé, où deux sous-réseaux se chevauchent et où une imprimante réseau se retrouve hors de la passerelle. Vous allez reconstruire ce plan depuis zéro : identifier les besoins de chaque segment, choisir les masques, calculer les plages, vérifier l'absence de conflit, puis tester le résultat en pingant d'une machine à l'autre. Chaque notion abordée dans ce chapitre servira directement ce cas : le modèle OSI pour savoir quel équipement est en cause, les masques pour couper le bloc, le VLSM pour optimiser la coupe, et les commandes de vérification pour prouver que le résultat fonctionne.
+
+Un conseil avant de commencer, sur la manière d'aborder ce cours. Un réseau s'apprend comme on apprend un sport : en faisant, pas en regardant. Rien ne remplace le geste de taper soi-même chaque commande dans un terminal, de lire la sortie, de provoquer volontairement une panne et de constater le message d'erreur. Nous avancerons par petits pas, en alternant explications détaillées, schémas de topologie, tableaux de synthèse et blocs de commandes prêts à exécuter. Quand un bloc apparaît, ouvrez un terminal à côté de cette page et lancez-le : même si votre machine n'a pas exactement la même configuration, la sortie vous apprendra à lire les adresses, les masques et les routes. Si une commande échoue, lisez le message au lieu de le subir : il indique presque toujours si le problème est physique, de liaison, de routage ou de nom de domaine.
+
+
+
+Le modèle OSI, pour Open Systems Interconnection, est un cadre de référence publié par l'Organisation internationale de normalisation. Il découpe la communication entre deux machines en sept couches numérotées de bas en haut, de la couche 1, la plus physique, à la couche 7, la plus proche de l'utilisateur. L'idée centrale est simple : chaque couche fournit un service à la couche située juste au-dessus, et pour remplir ce service elle utilise les possibilités de la couche située juste en dessous. Aucune couche ne se préoccupe du fonctionnement interne de ses voisines. Le logiciel qui échange des messages HTTP n'a aucune idée de la façon dont lesondes radio ou les impulsions électriques transportent ses octets : il se contente de demander à la couche inférieure de livrer son contenu, et reçoit en retour soit la donnée livrée, soit une erreur explicite.
+
+Ce découpage existe pour une raison historique très pratique : l'interopérabilité. Dans les années soixante-dix, chaque constructeur inventait sa propre façon de relier des machines, et deux équipements de marques différentes refusaient de se parler. En séparant la communication en strates indépendantes, un standard de la couche physique peut évoluer sans remettre en cause les programmes d'application, et inversement. C'est ce qui permet aujourd'hui de remplacer une carte filaire par une carte sans fil sans réinstaller votre navigateur. Le modèle OSI reste un outil pédagogique et un langage commun : quand un technicien dit que le problème est en couche 2, tout le monde comprend qu'il faut regarder les câbles, les commutateurs et les adresses MAC, pas le serveur applicatif.
+
+On retient souvent l'analogie du service postal. Vous écrivez une lettre, la couche application ; vous la glissez dans une enveloppe addressée, la couche transport attribue un port, la couche réseau inscrit l'adresse IP de destination ; le facteur la prend en charge, couche liaison, puis le camion la transporte, couche physique. À l'arrivée, l'enveloppe est ouverte dans l'ordre inverse : chaque récepteur retire l'entête de sa couche, vérifie qu'elle s'adresse bien à lui, puis transmet le contenu à la couche du dessus. Ce retrait progressif, c'est exactement ce que fait votre machine quand une réponse HTTP arrive : la carte réseau récupère des octets, le système d'exploitation reconstruit une trame, puis un paquet, puis un segment TCP, et finalement le navigateur reçoit un message complet qu'il sait interpréter.
+
+Voici la pile telle qu'on la représente d'ordinaire, avec l'équipement et l'adresse associés à chaque niveau. Le schéma montre aussi la direction du flux : à l'envoi on descend la pile, à la réception on la remonte.
+
+```text
+  Envoi (haut vers bas)          |  Couche | Rôle courant          | Outil / adresse
+                                 |---------|-----------------------|----------------
+  Application  (navigateur)      |    7    | Service vu de l'usage | https, DNS
+  Présentation (encodage)        |    6    | Format, chiffrement   | TLS, UTF-8
+  Session     (dialogue)         |    5    | Ouvrir/fermer un échange | sockets
+  Transport   (TCP / UDP)        |    4    | Fiabilité, ports      | port 443, 53
+  Réseau      (IP)               |    3    | Acheminement          | routeur, 10.0.0.5
+  Liaison     (Ethernet, Wi-Fi)  |    2    | Trame, MAC, CRC       | commutateur, MAC
+  Physique    (câble, fibre, RF) |    1    | Bits sur le support   | carte, optique
+                                 |---------|-----------------------|----------------
+  Réception (bas vers haut)
+```
+
+Dans la pratique quotidienne, la couche 3 est celle où vous passerez le plus de temps dans ce chapitre, puisque l'adressage IP y vit. La couche 2 intervient dès que vous avez un doute sur le fonctionnement d'un commutateur ou d'un point d'accès, et la couche 4 deviendra centrale au chapitre sur TCP. Les couches 5, 6 et 7 sont souvent regroupées en une seule dans le modèle TCP/IP, celui réellement déployé sur Internet, car leurs frontières sont floues : TLS chiffre et présente autant les données qu'il ne protège un dialogue. Gardez néanmoins les sept couches en tête : elles vous donnent un vocabulaire précis pour dire où commence et où finit un problème.
+$lesson$),
+  ('net-c1-p2', 'net-c1', 2, $lesson$Les sept couches, une par une$lesson$, $lesson$
+La couche 1, physique, concerne le support de transmission : paire torsadée, fibre optique, ondes radio, signal électrique, débit, connecteurs et normes de câblage. Elle transforme des bits en signaux et inversement. Quand un câble est débranché, qu'une fibre est pliée à trop fort angle ou qu'un point d'accès émet sur une fréquence saturée, la panne est en couche 1. C'est aussi le seul endroit où l'on mesure des grandeurs matérielles : volts, décibels, millisecondes de latence intrinsèque. Aucune adresse n'existe à ce niveau, seulement un flux de bits sans structure.
+
+La couche 2, liaison de données, organise ces bits en trames et ajoute l'addressage de proximité : l'adresse MAC, gravée dans la carte réseau. Le commutateur travaille ici : il lit l'adresse MAC de destination, consulte sa table d'apprentissage et bascule la trame vers le bon port. La couche 2 ne sait pas joindre deux réseaux différents, seulement acheminer au sein d'un même réseau local, ce qu'on appelle un domaine de diffusion. Elle vérifie aussi l'intégrité de la trame avec une somme de contrôle, le CRC : si le résultat est faux, la trame est supprimée silencieusement et c'est au protocole de la couche du dessus de se plaindre. Le protocole ARP, qui associe une adresse IP à une adresse MAC, appartient à cette interface entre couche 2 et couche 3.
+
+La couche 3, réseau, est le royaume d'IP et des routeurs. Elle prend une paquet, lit l'adresse IP de destination, le compare aux entrées de sa table de routage et décide par quelle interface le relancer. Contrairement au commutateur, le routeur relie des réseaux différents et franchit les frontières : chaque fois qu'il fait un saut, il réécrit l'en-tête de couche 2, car la trame change de support, mais il conserve l'en-tête IP, sauf pour décrementer le champ TTL. Ce fameux Time to Live, décrémenté à chaque saut, empêche les paquets de circuler indéfiniment quand une boucle de routage apparaît. La couche 3 fournit aussi le diagnostic le plus utilisé du métier, le protocole ICMP, sans lequel la commande ping n'existerait pas.
+
+La couche 4, transport, s'occupe de la livraison de bout en bout entre deux processus, pas entre deux machines. Elle le fait grâce aux ports, ces numéros de 0 à 65535 qui désignent une application de destination : 80 pour le web non chiffré, 443 pour le web chiffré, 53 pour le DNS, 22 pour l'administration à distance. TCP, le protocole fiable, établit une connexion en trois temps, numérote chaque segment, attend un accusé de réception et réenvoie ce qui manque. UDP, plus léger, émet sans garantie ni ordre : il sert au temps réel, à la résolution de nom et aux sondes réseau. La couche 4 résout aussi un problème que la couche 3 ignore totalement : plusieurs conversations peuvent partager la même adresse IP, il faut donc les distinguer.
+
+Les couches 5, 6 et 7 complètent la chaîne jusqu'au logiciel. La couche 5, session, gère l'ouverture, la maintenance et la fermeture des dialogues ; la couche 6, présentation, s'occupe du format, de l'encodage et du chiffrement des données ; la couche 7, application, expose le service que l'utilisateur voit, comme le web, la messagerie ou le transfert de fichiers. Dans le modèle TCP/IP condensé, ces trois couches sont fondues dans la couche applicative. Quel que soit le découpage retenu, gardez le principe : plus on monte, plus on parle le langage de l'utilisateur ; plus on descend, plus on parle le langage de la machine et du support.
+
+Le tableau suivant résume la correspondance entre couches, unités de données, équipements et adresses : c'est la carte mentale que vous devez pouvoir réproduire de mémoire avant le quiz.
+
+| Couche | Nom | Unité de données | Équipement type | Adresse utilisée |
+|---|---|---|---|---|
+| 7 | Application | Message | Serveur, navigateur | Nom de domaine |
+| 6 | Présentation | Message | Passerelle TLS | Format, certificat |
+| 5 | Session | Message | Pare-feu applicatif | Identifiant de session |
+| 4 | Transport | Segment ou datagramme | Balanceur de charge | Port |
+| 3 | Réseau | Paquet | Routeur, pare-feu | IP |
+| 2 | Liaison | Trame | Commutateur, point d'accès | MAC |
+| 1 | Physique | Bits | Câble, fibre, antenne | Aucune |
+
+Une application concrète de ce tableau : diagnostiquer. Quand un site ne se charge plus mais que la messagerie fonctionne, vous savez que la couche 3 est saine, car le trafic sort bien du réseau local ; le problème se situe donc plus haut, probablement au niveau du nom de domaine ou du service distant. Quand aucun trafic ne sort, commencez par le bas : voyez si la carte a une adresse, si la passerelle répond, si un routeur intermédiaire répond. Descendre ou remonter la pile méthodiquement, au lieu de tout redémarrer dans l'espoir d'un miracle, distingue un dépanneur d'un bricoleur.
+$lesson$),
+  ('net-c1-p3', 'net-c1', 3, $lesson$Protocoles, services et encapsulation$lesson$, $lesson$
+Un protocole est un accord écrit entre deux ou plusieurs parties : il définit le format des messages, l'ordre des échanges et l'action à entreprendre en cas d'erreur. Un service, lui, est ce qu'une couche promet à la couche du dessus : la couche 3 promet d'acheminer un paquet vers une autre machine, quelle que soit la manière dont elle y parviendra. La distinction est importante car elle sépare le quoi du comment : votre navigateur réclame un service de livraison, il ignore si la livraison passe par une fibre, une 4G ou un lien satellite. De même, une unité de données change de nom en traversant la pile, un détail qui prête souvent à confusion lors des examens : on parle de message en haut, de segment pour TCP, de datagramme pour UDP, de paquet en couche 3, de trame en couche 2 et de bits en couche 1.
+
+Ce renommage s'explique par l'encapsulation. À l'envoi, chaque couche prend la donnée qui lui est remise, lui préfixe un en-tête portant ses propres informations, et parfois lui ajoute un pied, une fin de message contenant des métadonnées complémentaires. L'en-tête IP porte l'adresse source et l'adresse de destination ; l'en-tête TCP porte les ports et le numéro de séquence ; l'en-tête Ethernet porte les adresses MAC. À la réaction, l'opération se déroule exactement à l'envers : chaque couche lit son en-tête, le valide, le retire et transmet le reste vers le haut. Le schéma ci-dessous montre un message HTTP de quelques octets qui descend la pile et se retrouve coiffé de trois en-têtes successifs.
+
+```text
+Application :  GET /index.html HTTP/1.1
+                   |
+Transport   :  [ TCP : ports 51234 -> 443, seq=1 ] + GET /index.html HTTP/1.1
+                   |
+Réseau      :  [ IP : 10.10.5.24 -> 93.184.216.34, TTL=64 ] + (TCP + HTTP)
+                   |
+Liaison     :  [ ETH : MAC src -> MAC dst, type 0x0800 ] + (IP + TCP + HTTP) + CRC
+                   |
+Physique    :  10110010 11010001 01001011 ...
+```
+
+Cette pile d'en-têtes a une conséquence directe et mesurable : la taille utile diminue à chaque couche. Sur une liaison Ethernet standard, la trame maximale emporte 1500 octets de données utiles, auxquels s'ajoutent les en-têtes. Si votre paquet IP fait 1480 octets, la couche 4 doit encore y ajouter son en-tête TCP : le transport découpe alors le flux en plusieurs segments. C'est le mécanisme de fragmentation, qu'on préfère éviter aujourd'hui car il coûte en performance ; on lui préfère le réglage de la taille maximale de transport, le fameux MTU. Quand une trame est trop grosse pour un lien, le routeur doit la fragmenter ou la rejeter, et si le drapeau interdit la fragmentation, il renvoie une erreur ICMP que ping affiche comme un message de paquet trop grand.
+
+Le routeur joue dans ce processus un rôle double qu'il faut bien saisir. Il désencapsule l'entrée jusqu'à la couche 3, examine l'adresse IP de destination, consulte sa table de routage, puis réencapsule le paquet dans une nouvelle trame adaptée au lien de sortie. Si l'entrée était du Wi-Fi et la sortie de la fibre, l'en-tête Ethernet de départ disparaît au profit d'un nouveau, tandis que l'en-tête IP, lui, ne change pas. Le routeur ne modifie l'adresse IP que s'il pratique de la traduction, le NAT, que nous aborderons plus loin. Ce mécanisme explique pourquoi la même donnée change d'apparence en route tout en restant identique du point de vue des applications : les adresses de proximité sont locales à chaque lien, l'adresse IP est globale à l'acheminement.
+
+Il reste une notion à poser avant de passer à l'adressage : celle de couche lorsque l'équipement fait plusieurs choses à la fois. Un routeur d'entreprise filtre aussi les flux, traduit des adresses, chiffre des tunnels : il opère alors en couche 3 et en couche 4, voire au-dessus. Un pare-feu applicatif inspecte le contenu des messages, donc la couche 7, tout en s'appuyant sur la couche 3 pour savoir d'où vient le trafic. Dire la couche d'un équipement revient à dire la couche de sa décision principale : le commutateur bascule sur la couche 2, le routeur achemine sur la couche 3, le pare-feu applicatif autorise ou refuse sur la couche 7. Connaître cette hiérarchie vous évitera les discussions stériles et, surtout, vous indiquera par où commencer quand le trafic ne passe pas.
+$lesson$),
+  ('net-c1-p4', 'net-c1', 4, $lesson$L'adressage IPv4 : structure d'une adresse$lesson$, $lesson$
+Une adresse IP, c'est un nombre de 32 bits écrit sous une forme que l'on appelle notation décimale pointée : quatre nombres entiers de 0 à 255 séparés par des points, comme 192.168.1.10. Chaque nombre, appelé octet, correspond à huit bits, ce qui donne bien 4 × 8 = 32 bits au total. Pour comprendre ce que la machine voit réellement, il faut parfois repasser en binaire : l'adresse 192.168.1.10 se lit alors une suite de deux mots de seize bits dont les bits de poids fort valent 11000000, 10101000, 00000001 et 00001010. Ce passage entre base dix et base deux n'est pas un exercice de style : il est indispensable pour calculer un masque, car les masques se manipulent comme des lignes de bits, pas comme des nombres décimaux. Chaque octet vaut en effet 128 plus 64 plus 32 puis 16, 8, 4, 2, 1 : voilà toute l'arithmétique dont vous aurez besoin.
+
+Voici à quoi ressemble une machine lorsqu'on lui demande ses adresses, avec la commande ip addr show, disponible sous Linux et très utilisée en milieu professionnel.
+
+```text
+$ ip addr show
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP
+    link/ether 3c:22:fb:8e:11:04 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.25/24 brd 192.168.1.255 scope global dynamic eth0
+       valid_lft 84320sec preferred_lft 84320sec
+    inet6 fe80::3e22:fbff:fe8e:1104/64 scope link
+       valid_lft forever preferred_lft forever
+```
+
+Trois informations essentielles s'y trouvent. L'adresse IPv4 192.168.1.25 est suivie de la barre oblique et du nombre 24, qui indique la longueur du masque : ici 24 bits mis à 1. Le mot brd annonce l'adresse de diffusion du segment, et le mot dynamic précise que cette adresse a été donnée par un serveur de configuration automatique plutôt que fixée à la main. Notez aussi la ligne inet6 : elle commence par fe80, ce qui signifie une adresse de liaison locale, automatique et non routable, obligatoire sur chaque interface IPv6 active. La ligne link/ether affiche l'adresse MAC de la carte, en couche 2, que le protocole ARP utilisera tout à l'heure pour joindre la machine sur le segment local.
+
+L'adresse IP ne prend tout son sens qu'en présence d'un masque. Sans masque, une adresse est un simple nombre ; avec un masque, on sait quelle partie désigne le réseau et quelle partie désigne l'hôte de la machine. Le masque est une suite de bits à 1 suivie d'une suite de bits à 0, toujours contiguë : on ne peut pas avoir un 0 encadré de 1. Les bits à 1 couvrent la partie réseau, les bits à 0 la partie hôte. C'est pourquoi on écrit le masque long, /24, plutôt que le masque décimal 255.255.255.0 : les deux sont équivalents, mais le premier est plus rapide à écrire et à comparer. Une machine dont l'adresse est 172.20.0.0 et le masque /12 possède 20 bits de réseau et 12 bits d'hôte, et c'est ce décompte qui décide si deux machines peuvent dialoguer directement ou doivent passer par un routeur.
+
+Autre avantage du binaire, on peut calculer n'importe quelle plage sans table de correspondance. Prenons l'adresse 192.168.10.64 avec un masque /26, soit 26 bits à 1. Le dernier octet du masque est alors 11000000 en binaire, ce qui vaut 192 en décimal, et le masque complet s'écrit 255.255.255.192. Les bits d'hôte restent 000000 dans ce dernier octet, soit 64 valeurs possibles. L'adresse de réseau s'obtient en forçant tous les bits d'hôte à zéro, et l'adresse de diffusion en les forçant tous à 1 : le réseau est donc 192.168.10.64 et la diffusion est 192.168.10.127. Les adresses utilisables se glissent entre les deux, de .65 à .126, soit 62 machines au maximum.
+
+Le tableau ci-dessous regroupe les masques que vous rencontrerez le plus souvent, avec le nombre d'adresses disponibles et le nombre réellement attribuables aux machines. Apprenez au moins les trois premières lignes et la dernière, celle des liens point à point.
+
+| Masque long | Masque décimal | Adresses totales | Hôtes utilisables |
+|---|---|---|---|
+| /24 | 255.255.255.0 | 256 | 254 |
+| /25 | 255.255.255.128 | 128 | 126 |
+| /26 | 255.255.255.192 | 64 | 62 |
+| /27 | 255.255.255.224 | 32 | 30 |
+| /28 | 255.255.255.240 | 16 | 14 |
+| /30 | 255.255.255.252 | 4 | 2 |
+$lesson$),
+  ('net-c1-p5', 'net-c1', 5, $lesson$Masques, plages et adresses spéciales$lesson$, $lesson$
+Chaque sous-réseau contient deux adresses qui n'appartiennent jamais à une machine : la première, l'adresse de réseau, nomme le segment lui-même et sert de clé dans les tables de routage ; la dernière, l'adresse de diffusion, permet d'envoyer un même message à toutes les machines du segment d'un seul coup. C'est pourquoi le nombre de machines réellement attribuables est toujours le total moins deux. Ce retrait de deux adresses surprend au début, mais il se justifie : un routeur n'a pas besoin d'une adresse pour le réseau, il a besoin d'un nom de destination pour y envoyer, et la diffusion n'est pas une machine mais un mécanisme de livraison groupée. Ajoutez à cela que la première adresse utilisable sert souvent d'adresse de passerelle par convention, ce qui réduit encore d'une unité l'espace réellement libre pour les postes.
+
+Trois adresses ont des comportements spéciaux qu'il vaut mieux connaître dès maintenant. L'adresse 0.0.0.0 représente l'adresse par défaut, c'est-à-dire l'absence d'adresse : elle apparaît dans une table de routage comme la route par défaut et dans les annonces de serveur quand celui-ci écoute sur toutes les interfaces. L'adresse 127.0.0.1, avec le masque 125.0.0.0 sur le domaine local, est la boucle de retour : elle permet à une machine de s'adresser à elle-même sans rien émettre sur le réseau, et c'est le premier réflexe de vérification quand on teste un service. Enfin, l'adresse 169.254.0.0/16 est réservée à l'auto-configuration : quand une machine n'entend aucun serveur de configuration automatique, elle se fabrique une adresse dans cette plage, ce qui produit l'erreur classique d'adresse APIPA, signe que le câble est bon mais que le serveur est absent ou injoignable.
+
+La commande ping est l'outil de base pour tester l'atteinte d'une adresse. Elle envoie des paquets ICMP de type demande d'écho et attend les réponses, en affichant pour chacune le temps d'aller-retour et le nombre de sauts restants, le TTL.
+
+```text
+$ ping -c 4 192.168.1.1
+PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.
+64 bytes from 192.168.1.1: icmp_seq=1 ttl=64 time=0.412 ms
+64 bytes from 192.168.1.1: icmp_seq=2 ttl=64 time=0.387 ms
+
+--- 192.168.1.1 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3005ms
+rtt min/avg/max/mdev = 0.387/0.401/0.428/0.017 ms
+```
+
+Une perte de 0 pour cent et des temps d'une fraction de milliseconde indiquent un segment local en bonne santé. Si le temps augmente fortement, cherchez la congestion sur le chemin ; si vous recevez des réponses avec un TTL faible, le paquet a traversé plusieurs routeurs ; si vous ne recevez rien, le diagnostic commence à peine et dépend du message affiché : destination hors périmètre lorsque la machine sait qu'elle n'a pas le droit d'envoyer, délai dépassé quand le réseau existe mais personne ne répond, ou destination inaccessible quand la couche 2 ne permet pas d'atteindre la passerelle. Comme chaque message oriente vers une couche différente, lire le message vaut mille essais aveugles.
+
+Les routeurs utilisent eux aussi la diffusion, mais avec parcimonie. Les annonces de configuration automatique, les résolutions de noms anciennes et certains protocoles de découverte en ont besoin ; en revanche, la diffusion traversée par un routeur est bloquée par défaut, et à juste titre : diffuser sur tout un réseau au moindre besoin suffit à saturer les liens. C'est la raison pour laquelle un plan d'adressage découpe les machines en segments raisonnables plutôt que de tout mettre dans un immense réseau unique. Plus le nombre de machines dans un même domaine de diffusion est élevé, plus les annonces intempestives consomment la bande passante de chacun, et plus les pannes localisées deviennent difficiles à isoler.
+$lesson$),
+  ('net-c1-p6', 'net-c1', 6, $lesson$Adresses privées, NAT et IPv6$lesson$, $lesson$
+Toutes les adresses IPv4 ne sont pas utilisables sur l'Internet public. La RFC 1918 réserve trois plages à l'usage privé : 10.0.0.0/8, soit plus de seize millions d'adresses, 172.16.0.0/12, soit plus d'un million, et 192.168.0.0/16, soit soixante-cinq mille. Ces plages sont libres d'emploi à l'intérieur d'une organisation, mais aucun routeur Internet ne les achemine : si un paquet en source privée arrive sur le lien d'un fournisseur d'accès, il est jeté. Cette séparation a été décidée au début des années quatre-vingt-dix par manque criant d'adresses publiques : il devenait impossible d'en attribuer une à chaque appareil de la planète. La solution retenue fut de réserver l'espace privé aux réseaux internes et de n'exposer vers l'extérieur que des adresses publiques, en nombre limité.
+
+Le mécanisme qui rend cette économie possible s'appelle NAT, traduction d'adresses réseau. Le routeur de sortie remplace l'adresse IP privée de la machine émettrice par sa propre adresse publique, mémorise la correspondance dans une table, puis, quand la réponse revient, rétablit l'adresse privée d'origine et relaie le paquet. En variante la plus courante, PAT, plusieurs machines partagent la même adresse publique en se distinguant par des numéros de port différents. Le NAT a transformé l'Internet, mais il introduit une asymétrie : une machine privée peut initier une connexion sortante, tandis qu'une machine du monde extérieur ne peut pas l'atteindre directement, ce qui complique les visioconférences, les jeux et les serveurs domestiques. L'IPv6 a été conçu pour supprimer cette asymétrie en rendant chaque appareil globalement addressable.
+
+L'IPv6 repose sur des adresses de 128 bits, écrites en hexadécimal sous la forme de huit groupes de quatre chiffres séparés par des deux-points. Pour alléger l'écriture, deux règles de compression s'appliquent : les zéros de tête de chaque groupe sont supprimés, et une ou plusieurs séries consécutives de groupes nuls sont remplacées par deux-points, une seule fois dans l'adresse. L'adresse de boucle de retour se simplifie ainsi en ::1, et l'adresse de lien local, obligatoire sur chaque interface, commence toujours par fe80. À l'envoi, une machine vérifie d'abord si sa destination appartient au même segment : dans ce cas elle communique directement, sinon elle interroge sa passerelle par l'échange de messages voisin, qui a remplacé le protocole ARP.
+
+```text
+$ ping -6 -c 2 2001:db8:ac10:1::10
+PING 2001:db8:ac10:1::10(2001:db8:ac10:1::10) 56 data bytes
+64 bytes from 2001:db8:ac10:1::10: icmp_seq=1 ttl=64 time=0.52 ms
+64 bytes from 2001:db8:ac10:1::10: icmp_seq=2 ttl=64 time=0.47 ms
+```
+
+Les différences entre les deux versions tiennent en quelques points structurants, que le tableau suivant condense. Notez l'absence de diffusion en IPv6 : elle est remplacée par le multicast, plus économe, chaque service ciblant un groupe d'abonnés plutôt que tout le segment.
+
+| Critère | IPv4 | IPv6 |
+|---|---|---|
+| Taille d'adresse | 32 bits | 128 bits |
+| Écriture | Décimal pointée, 4 octets | Hexadécimal, 8 groupes |
+| Diffusion | Oui, broadcast | Non, remplacée par le multicast |
+| Configuration | Manuelles ou par DHCP | Manuelles, DHCPv6 ou autoconfiguration |
+| NAT | Courant, voire indispensable | En principe inutile |
+| En-tête | Variable, vérification de somme | Fixe, sans somme de contrôle |
+
+L'autoconfiguration sans serveur, dite SLAAC, mérite une précision : en émettant une requête de découverte de routeur, la machine apprend le préfixe du segment, y ajoute une partie générée à partir de son adresse MAC ou tirée au sort, et obtient son adresse en quelques secondes sans aucune configuration. Le protocole de voisinage IPv6 assure ensuite la résolution des adresses voisines, la vérification de doublons et la détection des routeurs disponibles. Dans un environnement de production, on combine d'ordinaire SLAAC et serveur de configuration pour centraliser les baux et le nom de domaine, la découverte automatique restant la solution de secours quand le serveur est hors service.
+$lesson$),
+  ('net-c1-p7', 'net-c1', 7, $lesson$Sous-réseautage : la méthode pas à pas$lesson$, $lesson$
+Découper un réseau en sous-réseaux, c'est remplacer un grand domaine de diffusion par plusieurs petits, chacun administré avec ses propres règles. Les raisons d'y recourir sont toujours les mêmes. La première est technique : plus un segment est vaste, plus les trames de diffusion, les annonces automatiques et les résolutions de noms sollicitent inutilement chaque machine, et plus les pannes localisées deviennent difficiles à isoler. La deuxième est organisationnelle : un service comptable, une zone d'impression et des machines invitées n'ont pas besoin de se voir, et le découpage est le premier filtre que l'on pose. La troisième est le routage : un routeur ne connaît pas les machines individuelles, seulement les réseaux, et un plan en sous-réseaux clairs produit des tables de routage courtes, lisibles et faciles à filtrer. Enfin, la quatrième raison est quantitative : adresser 500 machines dans un unique /24 est impossible, il faut déjà plusieurs blocs.
+
+La méthode en cinq étapes se répète à l'identique quel que soit le besoin. Premièrement, recensez chaque segment et le nombre d'hôtes qu'il doit accueillir, en y ajoutant la passerelle, les équipements réseau, les imprimantes et une marge de croissance raisonnable. Deuxièmement, choisissez pour chacun la plus petite puissance de deux supérieure au besoin, puis retirez deux pour le nombre d'adresses utilisables. Troisièmement, traduisez ce besoin en longueur de masque avec la table des puissances de deux, car le nombre d'adresses vaut 2 puissance 32 moins le masque. Quatrièmement, attribuez les blocs du plus grand au plus petit, en alignant chaque début sur une frontière multiple de sa taille, sans jamais chevaucher le précédent. Cinquièmement, contrôlez le plan en écrivant les plages à la suite et en vérifiant que la dernière adresse d'un bloc est inférieure à la première du suivant.
+
+Appliquons la méthode à un cas simple : découper le réseau 192.168.10.0/24 en quatre morceaux égaux pour accueillir quatre services distincts. Un /24 contient 256 adresses ; pour le partager en quatre, il faut retirer deux bits au masque, ce qui donne quatre blocs de 64 adresses chacun, notés /26. Le calcul tient en quatre lignes, comme le montre le bloc suivant.
+
+```text
+# 192.168.10.0/24 partage en 4 blocs /26
+Bloc A : reseau 192.168.10.0   diffusion .63    utilisables .1    -> .62
+Bloc B : reseau 192.168.10.64  diffusion .127   utilisables .65   -> .126
+Bloc C : reseau 192.168.10.128 diffusion .191   utilisables .129  -> .190
+Bloc D : reseau 192.168.10.192 diffusion .255   utilisables .193  -> .254
+Controle : .63 < .65, .127 < .129, .191 < .193  -> aucun chevauchement
+```
+
+L'alignement n'est pas une coquetterie : un bloc /26 doit débuter à un multiple de 64 dans le dernier octet, sous peine de se répartir de part et d'autre d'une frontière et de devenir inexploitable. Pour vérifier une adresse de début, divisez-la par la taille du bloc et contrôlez que le reste est nul. Une erreur classique consiste à attribuer 192.168.10.100/26 comme réseau : le bloc irait de .100 à .163, chevauchant le bloc suivant et forçant les routeurs à décider arbitrairement entre deux destinations. Retenez donc la règle : l'adresse de réseau s'écrit toujours avec tous les bits d'hôte à zéro, et la longueur du masque toujours précise.
+
+Le nombre d'hôtes, lui, se décompte avec soin. Un /24 offre 254 adresses utilisables, pas 256, et sur ces 254, une part à la passerelle, une autre au serveur de noms et une troisième éventuellement au serveur de noms secondaire. Prévoir 10 pour cent de marge n'est pas du luxe dans un environnement qui grandit : un bureau de vingt personnes accumule en quelques années ordinateurs, téléphones, capteurs et objets connectés. À l'inverse, une liaison entre deux routeurs n'a besoin que de deux adresses, ce qui se loge dans un /30, et depuis la RFC 3021, il est même permis d'utiliser un /31 sur une liaison point à point, en considérant que les deux adresses du couple sont utilisables.
+$lesson$),
+  ('net-c1-p8', 'net-c1', 8, $lesson$VLSM : planifier sans gaspiller$lesson$, $lesson$
+La méthode des masques de longueur variable, VLSM pour Variable Length Subnet Mask, consiste à donner à chaque segment le masque exact qui lui convient, au lieu d'appliquer partout le même. Le principe paraît évident, mais il change radicalement le résultat : avec un masque unique imposé à tout un site, le plus petit segment surdimensionne mécaniquement et le plus grand manque d'adresses. En autorisant plusieurs longueurs de masque au sein du même bloc, on peut loger un réseau de quatre cents machines, un réseau de soixante, un réseau de douze et deux liaisons point à point dans un seul et même espace, sans aucun gâchis. La condition indispensable est que les blocs restent disjoints, ce que garantit un ordre d'attribution rigoureux.
+
+La règle d'or du VLSM tient en une phrase : triez les besoins par taille décroissante et attribuez dans cet ordre. En plaçant d'abord le bloc le plus grand sur une frontière naturelle, les blocs plus petits peuvent ensuite se glisser dans les interstices, à condition qu'ils s'alignent eux aussi sur leurs propres frontières. Si vous commencez par le plus petit, vous risquez de fragmenter l'espace en morceaux non contigus, incapables d'accueillir le grand besoin à la fin. Chaque attribution doit être notée immédiatement dans un tableau : adresse de réseau, masque, première et dernière utilisable, diffusion. Ce tableau est le seul livrable qui compte réellement, car c'est lui que vous recopierez dans la configuration des routeurs et que vous consulterez en pleine intervention.
+
+Voici la topologie du cas pratique qui court jusqu'à la fin du chapitre : trois sites reliés par deux liaisons dédiées, un seul bloc global à répartir.
+
+```text
+            172.20.0.0/22  (bloc unique)
+  +-------------------+        liaison A         +------------------+
+  |   SIEGE  (400)    |--------------------------|   AGENCE  (60)   |
+  | 172.20.0.0/23     |    routeur R1 ----- R2   | 172.20.2.0/26    |
+  +---------+---------+                          +--------+---------+
+            |  liaison B                                   |
+            | 172.20.2.80/30                               |
+            |                                              |
+            +--------------------+    +--------------------+
+                                 |    |
+                          +------+------+------+
+                          |  ENTREPOT (12)    |
+                          | 172.20.2.64/28    |
+                          | routeur R3        |
+                          +-------------------+
+```
+
+Suivons l'attribution pas à pas. Le siège réclame 400 machines : la plus petite puissance de deux qui les accueille est 512, soit 256 moins deux bits, donc un /23. On le place en tête du bloc : 172.20.0.0/23, couvrant 172.20.0.0 à 172.20.1.255, avec 510 adresses utilisables. L'agence réclame 60 machines : 64 adresses suffisent, soit un /26, et on le place juste après la fin du bloc précédent, en 172.20.2.0/26, utilisables de .1 à .62. L'entrepôt réclame 12 machines : seize adresses, soit un /28, logé en 172.20.2.64/28. Les deux liaisons n'ont besoin que de deux adresses chacune : deux /30 se rangent en 172.20.2.80/30 et 172.20.2.84/30. Le tout tient dans le premier tiers du bloc disponible, et il reste 172.20.3.0/24 entier pour les extensions futures.
+
+Le tableau de planification, à conserver comme référence pendant toute la suite, se lit ainsi :
+
+| Segment | Besoin | Masque | Réseau attribué | Utilisables | Diffusion |
+|---|---|---|---|---|---|
+| Siège | 400 postes | /23 | 172.20.0.0 | .0.1 à 1.254 | 172.20.1.255 |
+| Agence | 60 postes | /26 | 172.20.2.0 | 172.20.2.1 à .62 | 172.20.2.63 |
+| Entrepôt | 12 postes | /28 | 172.20.2.64 | 172.20.2.65 à .78 | 172.20.2.79 |
+| Liaison A | 2 routeurs | /30 | 172.20.2.80 | .81 et .82 | 172.20.2.83 |
+| Liaison B | 2 routeurs | /30 | 172.20.2.84 | .85 et .86 | 172.20.2.87 |
+
+Comparer ce résultat avec un découpage naïf éclaire l'intérêt du VLSM. Si l'on avait donné à chaque site un /24, le siège n'aurait pas trouvé les 400 adresses nécessaires, et l'entrepôt aurait gaspillé 242 adresses sur 254. Avec le VLSM, le siège obtient exactement ce dont il manque, l'agence un bloc ajusté, l'entrepôt le strict minimum, et les liaisons deux adresses au lieu de 254. Le gain n'est pas seulement comptable : les tables de routage des routeurs énumèrent des préfixes précis, ce qui accélère la comparaison et simplifie les règles de filtrage. Un pare-feu qui doit n'autoriser que le trafic de l'entrepôt s'exprime en un seul préfixe, 172.20.2.64/28.
+$lesson$),
+  ('net-c1-p9', 'net-c1', 9, $lesson$Outils de vérification : ip, ping, traceroute et tcpdump$lesson$, $lesson$
+Un plan d'adressage n'existe vraiment que s'il est appliqué et vérifié sur les équipements. Sous Linux, la famille de commandes ip de la suite iproute2 a remplacé les anciennes commandes de configuration : ip addr show affiche les adresses, ip route show affiche la table de routage, et ip link show l'état des interfaces. Contrairement à une idée répandue, les adresses attribuées par ces commandes sont éphémères : elles disparaissent au redémarrage, sauf si elles sont écrites dans un fichier de configuration permanent. C'est d'ailleurs une qualité pédagogique : on peut tout tester sur une machine jetable sans rien casser, puis appliquer ce qui fonctionne en production.
+
+```text
+$ ip route show
+default via 172.20.0.1 dev eth0 proto dhcp src 172.20.0.24 metric 100
+172.20.0.0/23 dev eth0 proto kernel scope link src 172.20.0.24
+10.99.0.0/30 via 172.20.2.81 dev eth0
+```
+
+Cette table se lit de la gauche vers la droite. La première ligne est la route par défaut : toute destination qui ne correspond à aucune autre entrée part vers la passerelle 172.20.0.1. La deuxième ligne décrit le réseau directement connecté à l'interface eth0, avec la mention kernel indiquant qu'elle a été créée automatiquement à l'attribution de l'adresse. La troisième est une route statique vers un réseau distant atteignable via un voisin de liaison. Le champ src précise l'adresse source utilisée pour ce départ, et le champ metric sert à départager les routes concurrentes : la plus petite valeur gagne. Lire une table de routage, c'est donc répondre à trois questions : par où sort le paquet, quelle adresse source porte-t-il et quelle route a été préférée.
+
+La commande traceroute révèle le chemin emprunté en faisant varier le nombre de sauts autorisés. En envoyant des paquets avec un temps de vie incrémental, elle reçoit à chaque étape une réponse d'erreur de chaque routeur traversé, ce qui permet d'afficher la liste des hôtes et les temps d'aller-retour par saut.
+
+```text
+$ traceroute -n 198.51.100.7
+traceroute to 198.51.100.7 (198.51.100.7), 30 hops max
+ 1  172.20.0.1   0.412 ms  0.398 ms  0.385 ms
+ 2  10.14.0.1     3.720 ms  3.654 ms  3.610 ms
+ 3  80.10.234.9  11.204 ms  11.150 ms  11.087 ms
+ 4  198.51.100.7 18.442 ms  18.399 ms  18.351 ms
+```
+
+Trois informations se dégagent : le premier saut est toujours votre passerelle locale, le dernier est la destination, et tout ce qui se trouve entre les deux appartient au réseau d'un tiers, sur lequel vous n'avez aucune autorité. Quand la liste s'arrête net à une ligne, la coupure est au niveau du routeur qui ne répond pas ou de son filtre, pas forcément plus loin. Quand un saut affiche des astérisques mais que les suivants répondent, ce routeur refuse simplement d'envoyer les messages d'erreur, ce qui est fréquent sur les liens sensibles. Associez toujours traceroute à ping : l'un confirme l'atteinte, l'autre localise le point de blocage.
+
+Pour observer ce qui circule réellement sur un lien, rien ne remplace tcpdump, qui capture les paquets au plus près de la carte et les affiche en clair. Le filtre exprimé en langage BPF restreint la capture aux seuls paquets qui vous intéressent, évitant des milliers de lignes inutiles.
+
+```text
+$ sudo tcpdump -i eth0 -n icmp
+tcpdump: verbose output suppressed, use -v or -vv for full protocol decode
+listening on eth0, link-type EN10MB (Ethernet), capture size 262144 bytes
+14:22:07.114 IP 172.20.0.24 > 172.20.2.70: ICMP echo request, id 4120, seq 1, length 64
+14:22:07.116 IP 172.20.2.70 > 172.20.0.24: ICMP echo reply, id 4120, seq 1, length 64
+14:22:08.119 IP 172.20.0.24 > 172.20.2.70: ICMP echo request, id 4120, seq 2, length 64
+```
+
+Chaque ligne montre l'heure, les deux adresses IP, le protocole et le sens de l'échange. Si vous ne voyez que les requêtes sans réponses, le problème est côté destination ou côté retour ; si vous ne voyez rien du tout, le paquet n'arrive même pas à cette interface, et le défaut est en amont, sur la carte, le câble ou le commutateur. Une variante utile, tcpdump -i eth0 port 53, isole le trafic de nom de domaine et distingue instantanément une panne de résolution d'une panne de routage. La discipline consiste à ouvrir une capture avant de lancer le test, puis à l'interrompre avec la combinaison de contrôle et de lettre c : on observe d'abord, on conclut ensuite.
+
+Ces outils s'articulent dans une méthode de dépannage en quatre temps. D'abord, vérifiez la couche 1 et 2 : l'interface est-elle active, l'adresse MAC est-elle visible, la liaison locale répond-elle. Ensuite, testez la couche 3 en pignant la passerelle : si elle répond, le segment local est bon. Puis testez une adresse distante connue : si elle répond alors que le nom de domaine échoue, le problème est purement nominatif. Enfin, examinez le chemin avec traceroute et la capture avec tcpdump pour isoler le saut fautif. Ce déroulé, du plus proche au plus loin, transforme une panne floue en une série de tests binaires dont chacun élimine une hypothèse.
+$lesson$),
+  ('net-c1-p10', 'net-c1', 10, $lesson$Exemple guidé : du besoin au plan complet$lesson$, $lesson$
+Tout ce que le chapitre a posé jusqu'ici converge maintenant vers une application complète : le plan d'adressage de la PME lyonnaise, bloc 172.20.0.0/22, trois sites et deux liaisons. Nous allons le reconstruire dans l'ordre, du recensement des besoins jusqu'à la vérification sur les équipements, en passant par les calculs, la configuration et les contrôles. L'objectif de cette section n'est pas seulement de produire des adresses correctes, mais de montrer la démarche professionnelle : un besoin chiffré, un calcul écrit, un tableau validé, une configuration appliquée, puis une preuve mesurable que tout fonctionne. Chaque étape laisse une trace que vous pourrez relire dans six mois, ce qui distingue un plan d'adressage d'une simple liste de nombres improvisés.
+
+Rappelons le cahier des charges pour que les calculs soient devant nous. Le bloc global disponible est 172.20.0.0/22, soit 1024 adresses, de 172.20.0.0 à 172.20.3.255, dont 1022 utilisables. Le siège compte 400 postes fixes plus imprimantes, téléphones et points d'accès, ce qui porte le besoin réel à environ 450 adresses avec marge. L'agence héberge 60 machines, l'entrepôt 12, et chaque liaison entre routeurs n'utilise que deux adresses. Aucun autre bloc n'est disponible aujourd'hui, mais il faut absolument réserver de la place pour la croissance : un plan qui remplit cent pour cent du bloc est un plan mort en une année. Le tableau d'allocation retenu après le tri par taille décroissante est donc le suivant : un /23 pour le siège, un /26 pour l'agence, un /28 pour l'entrepôt et deux /30 pour les liaisons.
+
+Vérifions l'arithmétique avant toute configuration. Un /23 retire 23 bits sur 32, donc il reste 9 bits d'hôte, soit 512 adresses, 510 utilisables : largement de quoi absorber les 450 machines annoncées. Ce bloc démarre en 172.20.0.0 et se termine en 172.20.1.255. Le /26 suivant démarre en 172.20.2.0, premier multiple de 64 situé après la fin du précédent, et couvre jusqu'à 172.20.2.63. Le /28 démarre en 172.20.2.64, multiple de 16, et va jusqu'à 172.20.2.79. Les deux /30 occupent 172.20.2.80 à .83 puis 172.20.2.84 à .87. Aucun chevauchement n'est possible, et le premier bloc suivant libre est 172.20.2.88, tandis que tout le troisième mégaoctet du bloc, 172.20.3.0/24, reste intact pour les futurs sites.
+
+La configuration d'un hôte de siège tient en quelques lignes, à adapter selon la distribution : on fixe l'adresse avec son masque, on déclare la passerelle par défaut, puis on renseigne le serveur de noms sans lequel les noms de domaine resteront muets.
+
+```bash
+# Hote du siege — adresse, passerelle et nom de domaine
+sudo ip addr add 172.20.0.24/23 dev eth0
+sudo ip route add default via 172.20.0.1
+echo "nameserver 172.20.0.10" | sudo tee /etc/resolv.conf
+
+# Routeur R1 — liaison A vers l'agence
+sudo ip addr add 172.20.2.81/30 dev eth1
+sudo ip route add 172.20.2.64/28 via 172.20.2.82
+sudo ip route add 172.20.2.0/26 via 172.20.2.82
+```
+
+Deux détails méritent l'attention dans ce bloc. Le premier est la passerelle : elle doit impérativement appartenir au même sous-réseau que les machines qu'elle sert, sinon les paquets ne trouvent aucun chemin de couche 2 pour l'atteindre et l'envoi échoue avant même d'être routé. Le deuxième est la route statique du routeur : chaque destination distante est écrite avec son préfixe exact et le voisin atteignable, jamais avec une adresse d'hôte isolée, car une route plus précise coûte moins cher à gérer qu'une accumulation d'exceptions. Sur un réseau de cette taille, une route par défaut côté siège et deux routes spécifiques côté routeur suffisent amplement.
+
+La vérification suit un ordre immuable, du plus proche au plus lointain, et produit des preuves à conserver dans le dossier du site. On commence par confirmer l'adresse locale, puis la passerelle, puis un hôte d'un autre site, puis enfin le service attendu. Chaque ligne réussie élimine une couche entière de l'hypothèse.
+
+```text
+$ ip addr show eth0 | grep inet
+    inet 172.20.0.24/23 brd 172.20.1.255 scope global eth0
+
+$ ping -c 2 172.20.0.1
+2 packets transmitted, 2 received, 0% packet loss
+
+$ ping -c 2 172.20.2.70
+2 packets transmitted, 2 received, 0% packet loss, rtt min/avg/max = 1.9/2.1/2.3 ms
+
+$ ping -c 2 intranet.pme.example
+2 packets transmitted, 2 received, 0% packet loss
+```
+
+Pour prouver l'absence de chevauchement de manière reproductible plutôt qu'à l'œil, un petit script d'arithmétique suffit : il convertit chaque paire adresse et masque en nombre entier, puis compare les intervalles deux à deux. C'est exactement le genre de contrôle qu'on ajoute à l'intégration continue d'un dépôt d'infrastructure, car une faute de saisie dans une route statique reste invisible jusqu'au jour où un site devient injoignable.
+
+```bash
+python3 - <<'EOF'
+import ipaddress
+blocs = ["172.20.0.0/23", "172.20.2.0/26", "172.20.2.64/28",
+         "172.20.2.80/30", "172.20.2.84/30"]
+reseaux = [ipaddress.ip_network(b) for b in blocs]
+for i, a in enumerate(reseaux):
+    for b in reseaux[i+1:]:
+        assert not a.overlaps(b), f"chevauchement {a} et {b}"
+print("OK,", len(reseaux), "blocs disjoints, total",
+      sum(n.num_addresses for n in reseaux), "adresses utilisees")
+EOF
+```
+
+Il reste à brancher ce plan sur les services. Le serveur de configuration automatique doit attribuer des baux pris dans chaque plage, en réservant le premier tiers de chaque bloc aux équipements à adresse fixe : routeurs, serveurs, imprimantes, points d'accès et caméras. Les réservations par adresse MAC permettent de garder une adresse stable sans la saisir à la main sur chaque machine. Le serveur de nom de domaine doit inverser chaque plage pour que les adresses soient résolubles en noms, ce qui rend les journaux lisibles. Enfin, la documentation du site : un fichier texte, un tableau ou un wiki, contenant le bloc, le masque, la passerelle, l'étendue du serveur de configuration automatique et le plan des liaisons. Un réseau sans documentation redevient obsolète dès la première modification.
+$lesson$),
+  ('net-c1-p11', 'net-c1', 11, $lesson$Dépannage des erreurs d'adressage$lesson$, $lesson$
+Les pannes d'adressage ont un petit nombre de causes qui reviennent sans cesse, et les reconnaître immédiatement fait gagner un temps considérable. La première est le masque incohérent : deux machines du même segment portent le même préfixe réseau mais des masques différents, chacune croit l'autre distante, tente d'envoyer vers la passerelle et échoue, souvent de façon intermittent selon l'ordre de mise sous tension. La seconde est le conflit d'adresses : deux hôtes portent la même adresse, le trafic part vers la mauvaise machine, les connexions tombent aléatoirement et la commande d'inspection du système signale une collision détectée. La troisième est la passerelle hors plage, où le routeur de sortie n'appartient pas au réseau local : le trafic interne fonctionne parfaitement, seul l'extérieur échoue, ce qui fait dire à tort que le réseau est coupé.
+
+La quatrième cause est la route manquante ou trop générale : une machine sait joindre son voisinage mais ignore par où envoyer vers un autre site, et la table de routage ne contient ni préfixe correspondant ni route par défaut. La cinquième est la confusion entre nom et adresse : la résolution échoue alors que tout le reste fonctionne, donnant l'illusion d'une panne totale alors que la commande vers une adresse brute répond parfaitement. La sixième est le pare-feu local ou distante, qui rejette silencieusement des paquets que le réseau achemine pourtant correctement : dans ce cas, la capture montre les requêtes partir sans réponse, ou sans rien partir du tout selon l'endroit où la règle s'applique. Identifier laquelle de ces six familles vous affrontez, c'est déjà la moitié du diagnostic.
+
+La méthode de résolution suit la pile, couche après couche, en ne changeant d'étape que lorsque la précédente est démontrée. Vérifiez d'abord que l'interface est active et dotée d'une adresse, avec ip addr show. Puis confirmez la couche 2 en pingant un voisin direct du même segment. Ensuite la couche 3 avec la passerelle, puis une adresse distante. Puis le nom de domaine, enfin le port applicatif. À chaque échec, le message obtenu indique la famille de cause évoquée plus haut. Cette discipline a un avantage décisif : elle empêche de modifier plusieurs paramètres à la fois, erreur qui rend la panne impossible à reproduire et la correction impossible à attribuer.
+
+```bash
+# Sequence de diagnostic, couche apres couche
+ip addr show eth0                  # adresse et masque presents ?
+ip route show                      # route par defaut et reseaux connectes ?
+ping -c 2 172.20.0.1               # passerelle joignable ?
+ping -c 2 172.20.2.70              # autre site joignable ?
+ping -c 2 intranet.pme.example     # resolution de nom fonctionnelle ?
+traceroute -n 198.51.100.7         # ou le chemin s'arrete-t-il ?
+sudo tcpdump -i eth0 -n icmp       # les paquets sortent-ils vraiment ?
+```
+
+Deux réflexes complètent la méthode. Le premier consiste à comparer avec une machine qui fonctionne : si le voisin reçoit la même configuration et marche, le défaut est local à la machine, sinon il est sur le segment ou en amont. Le second consiste à ne jamais changer deux choses à la fois : on corrige une hypothèse, on teste, on constate, puis seulement on passe à la suivante. Notez enfin que certaines pannes sont physiques et déguisées en problèmes d'adressage : un câble défectueux abaisse le débit sans couper la liaison, les pertes se multiplient et les commandes semblent échouer sans raison logique. La couche 1 reste donc toujours à inspecter, ne serait-ce que pour vérifier la diode de la carte réseau.
+$lesson$),
+  ('net-c1-p12', 'net-c1', 12, $lesson$De la théorie à la production : le cycle de vie d'un réseau$lesson$, $lesson$
+Un plan d'adressage ne s'arrête pas au calcul : il doit vivre en production, survivre aux changements d'équipe et rester intelligible pour la personne qui l'héritera. Cette dernière partie élargit le champ au-delà du chapitre, en décrivant le cycle de vie complet d'un réseau d'entreprise, de la première évaluation du besoin jusqu'à la supervision quotidienne. L'objectif est de vous donner les réflexes qui distinguent un réseau installé un jour et oublié le lendemain d'un réseau véritablement exploitable. Vous y retrouverez les notions déjà vues, appliquées cette fois à l'organisation du travail plutôt qu'au calcul brut, et vous verrez que la rigueur méthodologique compte autant que la justesse des masques.
+
+Tout commence par un recensement honnête du besoin, qui se fait bien avant d'ouvrir un terminal. On liste les postes fixes, les équipements mobiles, les téléphones, les caméras, les objets connectés, les imprimantes et les serveurs, puis on classe ces hôtes par nature plutôt que par localisation : les machines critiques, les machines de production, les machines invitées et les objets non contrôlables n'ont ni les mêmes exigences de disponibilité ni les mêmes droits. On chiffre la croissance annuelle observée, souvent entre cinq et quinze pour cent dans une PME, et on l'intègre au besoin initial. On identifie enfin les flux indispensables, c'est-à-dire les échanges sans lesquels l'activité s'arrête : messagerie, progiciel de gestion, accès à l'extérieur, sauvegardes. Ce recensement produit deux livrables indispensables, un tableau de dimensionnement et une carte des flux, qui serviront de référence objective à chaque décision technique ultérieure.
+
+Du recensement découle le choix de la plage d'adressage globale. La question n'est pas seulement de savoir combien d'adresses il faut aujourd'hui, mais de savoir quel espace on pourra encore découper dans trois ans sans tout renommer. Une organisation qui choisit d'utiliser un espace privé immense, par exemple un préfixe de la plage 10.0.0.0/8, se laisse une liberté de croissance considérable et peut loger des dizaines de sites sans recourir à des adresses publiques. À l'inverse, un espace étroit impose très vite des recouvrements compliqués et des exceptions de routage. La règle pratique consiste à réserver une grande tranche par site, une tranche par réseau invité et une tranche par objet connecté, sans jamais mélanger ces catégories. Le plan d'adressage devient alors une arborescence lisible, où le préfixe seul indique la nature du trafic autorisé.
+
+Le nommage accompagne l'adressage et en est le complément indispensable. Une adresse dit où est la machine, un nom dit ce qu'elle fait : serveur-app-01, prt-eta-2, cam-ext-nord. Sans convention, la documentation devient un fouillis d'abréviations personnelles et le remplacement d'un administrateur transforme chaque intervention en archéologie. On adopte donc une règle unique, on l'écrit une fois pour toutes, et on l'applique sans exception, y compris pour les équipements les plus modestes. Le serveur de nom de domaine doit tenir à jour les enregistrements directs et inverses pour chaque plage, de sorte qu'un journal de connexion affiche un nom compréhensible plutôt qu'une suite de chiffres. La corrélation stricte entre préfixe réseau, plage de noms et plage de configuration automatique fait gagner un temps considérable lors des dépannages nocturnes.
+
+La mise en service elle-même se planifie par vagues contrôlées, jamais en un seul big bang. On commence par le cœur de la topologie, routeurs et commutateurs, avec des configurations minimales documentées et un accès de secours réservé. Puis on ouvre un site pilote, volontairement petit, où les erreurs de plan se révèlent à moindre coût. Les constats du pilote corrigent le plan global avant que les sites suivants ne le reprennent à l'identique. Chaque vague se termine par une vérification écrite : adresses en place, routes convergentes, service de configuration automatique distribuant les bonnes étendues, résolutions de noms correctes et accès extérieur fonctionnel. Seul un résultat vérifié et consigné permet de passer à la vague suivante, ce qui évite d'accumuler les défauts invisibles jusqu'au jour de la mise en production générale.
+
+La configuration de chaque équipement doit être récupérable à tout moment, y compris lorsque la machine qui la portait est hors service. Une sauvegarde automatique des fichiers de configuration, déclenchée à chaque modification et copiée vers un serveur externe au site, transforme un incident majeur en simple restauration. On conserve aussi une version commentée de l'adresse des équipements, de leur rôle et de leur emplacement physique : siège, baie, position dans le rack. Un croisement entre l'inventaire de couche 1 et le plan d'adressage permet de localiser physiquement l'origine d'une panne affichée à distance, ce qui réduit d'autant les déplacements. Ces deux documents, inventaire physique et plan d'adressage, doivent être mis à jour dans la foulée de toute modification, sous peine de devenir des fictions élégantes.
+
+La supervision transforme ces choix en indicateurs suivis dans la durée. Un simple relevé périodique de la latence vers chaque site, du taux d'utilisation des adresses d'une étendue et de l'état des liens suffit à détecter une dérive avant qu'elle ne devienne une panne. Les alertes se paramètrent sur des seuils, pas sur des absolus : une latence qui augmente de moitié par rapport à sa moyenne est souvent plus préoccupante qu'un pic ponctuel. La consommation des adresses mérite la même attention : une étendue atteignant quatre-vingts pour cent de sa capacité déclenche l'ouverture d'un ticket d'extension, bien avant la crise. Ces mesures n'exigent pas d'outils coûteux, seulement une discipline de relevé régulier et un endroit unique où conserver les courbes.
+
+Le tableau récapitulatif du cycle de vie d'un projet réseau aide à visualiser l'enchaînement des étapes et ce qui doit être produit à chacune.
+
+| Étape | Question posée | Livrable attendu |
+|---|---|---|
+| Recensement | Qui se connecte, combien, pour faire quoi ? | Tableau de dimensionnement |
+| Plan d'adressage | Quel bloc découper, en combien de sous-réseaux ? | Tableau des plages et masques |
+| Conventions | Comment nommer et documenter ? | Règles de nommage écrites |
+| Mise en service | Le plan fonctionne-t-il sur le terrain ? | Rapport de vérification |
+| Sauvegarde | Peut-on tout restaurer ? | Copies de configuration horodatées |
+| Supervision | La dérive est-elle détectée à temps ? | Courbes et alertes paramétrées |
+
+Un dernier point mérite votre attention avant de conclure : la sécurité minimale, qui fait partie intégrante d'un plan d'adressage sain. Séparer les réseaux de production, d'accès invité et d'objets non maîtrisés n'est pas une élégance, c'est la première barrière opposée à un poste compromis. Limiter ce qui circule entre ces zones, journaliser les connexions administratives, et réserver un accès de secours distinct de l'accès courant constituent le socle à partir duquel les chapitres suivants construiront des filtrages plus fins. On ne sécurise efficacement que ce qu'on sait décrire, et un plan d'adressage clair est la première description dont dépend toute règle de contrôle.
+
+Pour matérialiser cette discipline, voici une séquence de commandes de contrôle que l'on peut relire à chaque changement important, avant et après intervention.
+
+```bash
+# Controle avant intervention : etat connu et documente
+ip addr show | grep "inet "
+ip route show
+ip neigh show
+sudo ss -tlnp | head -n 15
+
+# Controle apres intervention : rien ne doit avoir bouge par erreur
+diff <(ssh admin@routeur-01 "ip route show") sauvegardes/routeur-01.routes.txt
+ping -c 3 172.20.0.1
+traceroute -n 172.20.2.70
+```
+
+Le premier bloc capture l'état de référence, le second vérifie que l'intervention n'a modifié que ce qui devait l'être. Cette habitude de comparer avant et après est le nerf du métier : elle transforme une modification risquée en opération réversible, et elle offre surtout, en cas de problème, la certitude de savoir exactement ce qui a changé. Le réseau décrit dans ce chapitre tient désormais debout : les couches sont nommées, les adresses sont calculées, le VLSM a été appliqué, les outils ont prouvé le fonctionnement et le plan est documenté. Ce socle vous sert dès le chapitre suivant, où l'on examinera les trames Ethernet, les commutateurs et le protocole ARP qui relie justement vos adresses IP à vos adresses MAC.
+$lesson$),
+  ('net-c1-p13', 'net-c1', 13, $lesson$À retenir$lesson$, $lesson$
+- Le modèle OSI découpe la communication en sept couches, chacune servant la couche supérieure et utilisant l'inférieure.
+- Couche 1 physique, couche 2 liaison avec les trames et les MAC, couche 3 réseau avec IP et les routeurs, couche 4 transport avec les ports.
+- L'encapsulation ajoute un en-tête par couche à l'envoi et le retire dans l'ordre inverse à la réception.
+- Chaque couleur d'unité de données a un nom : message, segment, paquet, trame, bits.
+- Une adresse IPv4 fait 32 bits et se lit en quatre octets séparés par des points.
+- Le masque indique les bits de réseau et les bits d'hôte ; il s'écrit /24, /26, /30 ou en points.
+- Un sous-réseau contient 2 puissance 32 moins le masque adresses, dont deux non attribuables : réseau et diffusion.
+- L'adresse de réseau porte tous les bits d'hôte à zéro, l'adresse de diffusion tous les bits d'hôte à un.
+- Les plages privées de la RFC 1918 sont 10.0.0.0/8, 172.16.0.0/12 et 192.168.0.0/16.
+- Le NAT permet à de nombreux hôtes privés de partager une adresse publique, au prix d'une asymétrie entrante.
+- L'IPv6 utilise des adresses de 128 bits, sans diffusion, avec voisinage et autoconfiguration.
+- Le VLSM attribue à chaque segment le masque exact dont il a besoin, en triant les besoins par taille décroissante.
+- ip affiche adresses et routes, ping teste l'atteinte, traceroute localise le chemin, tcpdump observe le trafic réel.
+$lesson$),
+  ('net-c1-p14', 'net-c1', 14, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Piège : confondre le nombre d'adresses d'un /26, soit 64, avec le nombre d'hôtes, soit 62. Correction : retirez toujours deux adresses, réseau et diffusion.
+- Piège : écrire une adresse de réseau quelconque, par exemple 192.168.10.100/26, qui déborde sur le bloc suivant. Correction : alignez le début sur un multiple de la taille du bloc.
+- Piège : attribuer une adresse de passerelle hors du sous-réseau des machines. Correction : la passerelle doit partager le préfixe exact du segment qu'elle dessert.
+- Piège : donner le même masque à un siège de 400 machines et à une liaison entre deux routeurs. Correction : utilisez le VLSM et un /30 pour chaque lien point à point.
+- Piège : diagnostiquer en changeant plusieurs paramètres à la fois. Correction : suivez la pile couche après couche et ne modifiez qu'une hypothèse par test.
+- Piège : croire qu'une panne de nom de domaine est une panne réseau. Correction : testez d'abord une adresse brute, puis le nom, pour séparer résolution et routage.
+- Piège : oublier que l'auto-configuration 169.254.0.0/16 signifie l'absence de serveur de configuration, pas un câble débranché. Correction : vérifiez le lien, puis le serveur et son étendue.
+- Piège : penser que le NAT autorise une machine du monde extérieur à atteindre un hôte privé. Correction : prévoyez une redirection de ports ou un accès en tunnel si l'entrée doit venir de l'extérieur.
+- Piège : laisser un plan d'adressage uniquement dans la tête de l'administrateur. Correction : documentez blocs, réservations et routes dès la mise en service.
+$lesson$),
+  ('net-c1-p15', 'net-c1', 15, $lesson$Pour aller plus loin$lesson$, $lesson$
+Les documents de référence restent les meilleures sources pour consolider ce chapitre, et ils sont tous consultables gratuitement. La RFC 791 décrit l'en-tête IPv4 champ par champ, y compris le TTL et les options, et se lit étonnamment bien une fois les bases acquises : https://www.rfc-editor.org/rfc/rfc791.html. La RFC 1918 explique en quelques pages pourquoi les plages privées ont été créées et comment elles doivent être utilisées : https://www.rfc-editor.org/rfc/rfc1918.html. Pour l'IPv6, la RFC 4291 définit l'architecture d'adressage, les types de préfixes et les règles de notation compressée : https://www.rfc-editor.org/rfc/rfc4291.html. Le registre spécial IPv4 de l'IANA, consultable sur https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry.xhtml, indique pour chaque plage réservée le statut exact et les restrictions de routage.
+
+Un document plus pratique accompagne avantageusement ces références : la RFC 3021, dédiée aux liaisons point à point en trente et un bits, que vous rencontrerez sur les liens opérateurs modernes, et que l'on trouve sur https://www.rfc-editor.org/rfc/rfc3021.html. Côté terrain, la commande ip et sa documentation officielle méritent une lecture complète : man ip sur une machine Linux, ou la page du projet iproute2, car la majorité des exemples de ce chapitre s'y appuient. Enfin, pratiquez : recalculez de mémoire le plan du siège, déplacez une machine dans un autre segment, provoquez volontairement un conflit d'adresses sur une machine virtuelle et observez le message exact. La théorie s'installe durablement le jour où vous avez vu vos propres erreurs échouer puis se corriger.
+$lesson$),
+  ('net-c1-p16', 'net-c1', 16, $lesson$Et maintenant : la vidéo du chapitre puis l'exercice pratique$lesson$, $lesson$
+Le modèle OSI et l'adressage IP sont le vocabulaire de base de tout le réseau : sans eux, chaque diagnostic devient une devinette. Regardez la vidéo du chapitre pour revoir les couches en situation réelle, puis passez à l'exercice pratique : masques, plages et découpage VLSM, avec des valeurs différentes de celles de l'exemple. Vérifiez vos calculs avec une table de conversion binaire avant de consulter la correction — l'objectif est que la méthode soit acquise, pas seulement le résultat.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c2-p1', 'net-c2', 1, $lesson$La trame Ethernet : anatomie d'un message en couche 2$lesson$, $lesson$
+Bienvenue dans le deuxième chapitre du parcours Réseaux. Le chapitre précédent vous a appris à adresser les machines : masques, plages, sous-réseaux, passerelles. Celui-ci vous apprend à les relier. Un réseau plat, où tous les ports partagent le même domaine de broadcast, ne survit pas au contact du réel : les diffusions de découverte s'y multiplient, un seul défaut de câble peut y interrompre tout le service, le dépannage y relève de la devinette, et la sécurité y est totalement absente. Les trois mécanismes que nous allons étudier forment la réponse historique et toujours actuelle à ces problèmes. La commutation Ethernet construit des liens fiables entre adresses matérielles, les VLAN redécoupent le réseau en domaines de diffusion indépendants sans toucher à un seul câble, et ARP fait le pont invisible entre les adresses IP manipulées par les logiciels et les adresses MAC exigées par le matériel.
+
+À la fin de cette leçon, vous saurez faire des choses très concrètes. Vous décrirez la structure d'une trame Ethernet champ par champ et vous expliquerez pourquoi elle comporte une adresse de destination, une étiquette de protocole et une somme de contrôle. Vous lirez une table MAC de commutateur et vous saurez dire, pour chaque trame entrante, si elle sera transmise, filtrée ou inondée. Vous segmenterez un réseau en VLAN logiques, vous justifierez chaque frontière par un besoin réel (voix, invités, gestion, caméras) et vous configurerez un port d'accès et un trunk 802.1Q avec son VLAN natif. Vous décrirez le dialogue ARP complet, cache à l'appui, et vous reconnaîtrez un empoisonnement ARP à ses symptômes. Vous identifierez enfin les signes d'une tempête de broadcast et vous appliquerez les parades : limitation du domaine de diffusion, storm-control et arbre couvrant. Chaque compétence est illustrée par des commandes exécutables et par des schémas, puis l'ensemble s'assemble dans un exemple guidé : la configuration du commutateur d'accès du bâtiment B de la Médiathèque des Lilas.
+
+Le fil rouge reste celui du parcours : un commutateur cœur au local technique, un commutateur d'accès par bâtiment, des liaisons fibres en trunk entre eux, des postes publics, du Wi-Fi invité, des imprimantes, des caméras et de la téléphonie IP. Le plan de VLAN est déjà posé : 10 pour le public, 20 pour le Wi-Fi visiteurs, 30 pour les imprimantes, 40 pour les serveurs, 50 pour l'administration, 60 pour la gestion, 99 pour le VLAN natif des trunks, 210 pour les caméras et 220 pour la voix. Vous n'avez pas besoin de matériel coûteux pour pratiquer : Cisco Packet Tracer, GNS3, Containerlab ou une distribution logicielle comme FRRouillage suffisent. Si vous disposez d'un vieux commutateur en libre-service, branchez-y deux postes : les commandes de ce chapitre y fonctionnent presque à l'identique.
+
+Une recommandation sur la manière d'aborder ce cours. La commutation s'apprend en observant des trames, pas en récitant des définitions. À chaque bloc de commandes, ouvrez un terminal, exécutez-le, modifiez un paramètre et regardez ce qui change. Une table MAC qui se remplit, un compteur d'erreurs qui grimpe, un port qui bascule en état inactif : ces observations valent cent paragraphes. Gardez aussi un carnet de configuration : notez ce que vous avez tapé, ce que le commutateur a répondu, ce que vous avez corrigé. Ce carnet deviendra la base de votre mini-projet final. Nous commençons par la brique élémentaire, celle que vous manipulerez chaque fois que vous ouvrirez un analyseur de trames : la trame Ethernet.
+
+
+
+Ethernet décrit deux choses à la fois : un ensemble de règles d'accès au support partagé et un format de paquet. Le format, c'est la trame, et c'est l'unité de transmission que vous verrez défiler dans Wireshark ou dans tcpdump. Une trame est produite par la carte réseau, transmise par le câble ou la fibre, reçue par le commutateur, puis délivrée à la carte du destinataire. Contrairement à ce que suggère l'habitude, une trame ne contient pas d'adresse IP : elle contient des adresses MAC de 48 bits, écrites en hexadécimal sous la forme 00:1a:2b:3c:4d:5e, et un champ d'étiquette qui indique au récepteur quel protocole de couche supérieure doit traiter le contenu. L'adresse IP, elle, est enfermée à l'intérieur du contenu et n'intervient que plus haut dans la pile.
+
+Le format normalisé par l'IEEE dans la famille 802.3 se lit de gauche à droite dans l'ordre suivant. Tout d'abord un préambule de sept octets de motifs alternés plus un octet de délimiteur de trame, qui servent à cadencer le récepteur. Puis l'adresse MAC de destination sur six octets, l'adresse MAC de source sur six octets, un champ EtherType de deux octets, la charge utile, enfin une somme de contrôle CRC sur quatre octets. Le schéma suivant résume la structure ; il est placé dans un bloc de code pour rester aligné quel que soit votre afficheur.
+
+```
+Préambule  Destination         Source            EtherType   Charge utile              FCS
+ 7 oct.      6 octets           6 octets          2 octets    46 à 1500 octets        4 octets
++--------+----------------+----------------+--------------+----------------------+---------+
+|101010..| 00:1a:2b:3c:4d | 00:1b:44:11:3a |    0x0800    |  datagramme IPv4     |  CRC32  |
++--------+----------------+----------------+--------------+----------------------+---------+
+                                    |               |
+                                    |               +-- protocole encapsulé
+                                    +-- adresse du destinataire sur le LAN
+```
+
+Le champ de destination est celui qui détermine le routage de la trame dans le réseau local. S'il contient FF:FF:FF:FF:FF:FF, la trame est une diffusion et chaque interface du réseau local doit la recevoir. Si le bit de poids fort du premier octet vaut 1, l'adresse est multidiffusion et seules les interfaces inscrites dans le groupe correspondant la traiteront. Dans tous les autres cas, il s'agit d'une diffusion classique, et le commutateur ne la transmettra que vers un seul port lorsqu'il connaîtra la destination. Le champ de source, lui, ne doit jamais être modifié en cours de route : c'est précisément la valeur que le commutateur mémorise pour apprendre sa table.
+
+L'adresse MAC est attribuée par le constructeur de la carte réseau. Les trois premiers octets constituent l'identificateur d'organisation, normalisé par l'IEEE, qui permet d'identifier la marque ; les trois suivants sont choisis librement par le fabricant. Ce découpage explique deux pratiques courantes. D'une part, une administration peut parfois réassigner une adresse locale en basculant le second bit du premier octet, ce qui est utile pour la confidentialité : les réseaux sans fil modernes changent d'adresse MAC à chaque connexion pour empêcher le pistage. D'autre part, rien n'empêche de forcer une adresse, à condition de respecter l'unicité sur le segment local, sous peine de conflit silencieux.
+
+Le champ EtherType annonce le protocole contenu dans la charge utile. Ce détail est capital pour l'analyse : c'est lui qui indique à l'analyseur s'il doit décoder une trame IPv4, IPv6 ou ARP. Les valeurs les plus fréquentes se retiennent vite, et le tableau suivant vous servira de référence dès vos premières captures.
+
+| Valeur | Protocole annoncé | Quand la voir |
+| --- | --- | --- |
+| 0x0800 | IPv4 | Trafic IP classique, HTTP, SSH, DNS en UDP |
+| 0x86DD | IPv6 | Trafic IPv6, voisins en flux de lien local |
+| 0x0806 | ARP | Requêtes et réponses de résolution d'adresses |
+| 0x8100 | 802.1Q | Trame étiquetée, port trunk entre deux commutateurs |
+| 0x8847 | MPLS | Liaisons opérateur, à peu jamais dans un réseau local |
+| 0x88CC | LLDP | Annonces de voisinage entre équipements actifs |
+
+Le champ de données porte la charge utile, typiquement de 46 à 1500 octets. La borne haute correspond au MTU de 1500 octets : au-delà, la couche IP fragmente ou le protocole négocie une taille de paquet réduite. La borne basse existe pour une raison historique précise : en demi-duplex, une station doit pouvoir détecter une collision pendant l'émission, ce qui suppose une trame d'au moins 64 octets sur un segment de longueur normalisée. Si l'application produit moins d'octets, la carte ajoute automatiquement du bourrage. De là viennent les trames anormalement petites repérées par les analyseurs, ainsi que les trames géantes dites jumbo, souvent réglées à 9000 octets sur les liens de données centre de données, jamais utilisées sur un LAN d'accès sans accord explicite des deux extrémités.
+
+Les quatre derniers octets portent une somme de contrôle CRC32 calculée sur l'ensemble de la trame. Le récepteur recalcule la somme et compare : en cas d'écart, la trame est détruite silencieusement et l'erreur est comptabilisée. Un taux d'erreur non nul signale presque toujours un problème physique, câble dégradé, connecteur sale, coupleur défectueux ou longueur dépassée. Notez une conséquence importante : Ethernet ne rétransmet rien. Une trame corrompue est perdue, et c'est au protocole de transport, TCP, de déclencher une nouvelle émission. La couche 2 travaille en mode best effort, sans accusé de réception ni numérotation.
+
+Pour observer tout cela en conditions réelles, deux outils suffisent. Sur une machine Linux, la commande suivante capture les trames avec leur en-tête Ethernet et n'affiche que le trafic ARP, ce qui vous montrera immédiatement les échanges de résolution décrits plus loin.
+
+```bash
+# capture des en-têtes Ethernet avec horodatage précis
+sudo tcpdump -i eth0 -e -nn arp
+
+# même chose en limitant à 40 octets affichés par trame
+sudo tcpdump -i eth0 -e -nn -s 40 'ether proto 0x0806'
+```
+
+L'option -e fait apparaître les adresses MAC source et destination, l'option -n évite les résolutions DNS qui faussent les mesures, et l'option -s limite la taille enregistrée pour alléger la sortie. Dans Wireshark, le même filtrage s'écrit avec l'expression ether proto 0x0806, et un clic sur un champ de l'arborescence colore le motif correspondant dans la trame hexadécimale. Prenez l'habitude de repérer systématiquement quatre éléments dans chaque trame : d'où elle vient, où elle va, quel protocole elle porte, et si sa somme de contrôle est valide.
+
+Un dernier point relie cette section à la précédente du parcours. L'adresse IP est une adresse logique, attribuée par l'administrateur ou par un serveur, et elle change quand on change de réseau. L'adresse MAC est une adresse matérielle, gravée dans la carte, et elle ne change pas tant que l'on ne la forcing pas. Les deux coexistent dans une même communication, mais seul le commutateur sait lire la seconde. D'où la question centrale de ce chapitre : comment un programme qui ne connaît qu'une adresse IP parvient-il à produire une trame Ethernet correctement adressée ? La réponse s'appelle ARP, et nous y reviendrons après avoir compris ce que fait le commutateur de chaque trame qu'il reçoit.
+$lesson$),
+  ('net-c2-p2', 'net-c2', 2, $lesson$Du hub au commutateur : l'apprentissage de la table MAC$lesson$, $lesson$
+Le hub, ou répéteur multiport, est l'ancêtre du réseau local filaire. Il reçoit un signal sur un port et le régénère sur tous les autres, sans le moindre examen du contenu. Cette innocence a deux conséquences fatales. Premièrement, tous les ports forment un seul domaine de collision : si deux stations émettent en même temps, les signaux se superposent, la trame est détruite et une procédure d'attente aléatoire, le CSMA/CD, impose de recommencer plus tard. Deuxièmement, chaque trame, même destinée à une seule machine, consomme la bande passante de tous les autres ports. Le réseau partage donc une capacité unique, en demi-duplex, avec des performances qui s'effondrent dès que le trafic augmente. Cet équipement est aujourd'hui obsolète, mais il reste utile à connaître : il décrit exactement ce qui se passe quand un commutateur mal configuré, ou un pont logique, inonde ses ports.
+
+Le commutateur, lui, lit la trame. Il maintient en mémoire vive une table, dite table MAC ou table CAM pour contenu de la mémoire adressable par la recherche, qui associe une adresse MAC à un port d'entrée et à un VLAN. Cette table se remplit toute seule, sans intervention de l'administrateur. Le processus se déroule en quatre temps, et il vaut la peine de le suivre lentement. Le commutateur reçoit une trame sur le port 3, il lit l'adresse MAC de source, il constate que cette adresse n'est pas dans la table, il crée alors une entrée associant cette adresse au port 3 avec un horodatage. Ensuite seulement, il cherche l'adresse de destination : si elle est connue et située sur un autre port, il transmet la trame sur ce port seul ; si elle est absente, il inonde tous les autres ports du VLAN ; si elle se trouve sur le port 3, il filtre, c'est-à-dire il supprime la trame puisqu'elle est déjà au bon endroit.
+
+Le tableau comparatif suivant résume l'écart entre les deux générations d'équipements.
+
+| Critère | Hub | Commutateur |
+| --- | --- | --- |
+| Unité de traitement | Signal brut | Trame, avec adresses MAC |
+| Domaine de collision | Unique, tous les ports | Un domaine par port en full-duplex |
+| Domaine de broadcast | Unique | Un domaine par VLAN |
+| Transmission | Inondation systématique | Filtrage ou inondation ciblée |
+| Duplex | demi-duplex obligatoire | full-duplex négocié |
+| Table MAC | inexistante | apprentissage automatique, vieillissement paramétrable |
+| Diagnostique | quasi impossible | compteurs, journaux, table consultable |
+
+Considérons un segment simple où deux postes, A et B, sont reliés au commutateur S1, dont la table est vide au démarrage. Lorsque A émet vers B, la trame arrive sur le port de A ; S1 apprend l'adresse de A, ne trouve pas celle de B et inonde le port de B. B répond, S1 apprend l'adresse de B, trouve A dans sa table et transmet en unicast direct. Toutes les communications suivantes entre A et B sont donc sélectives et n'occupent plus les autres ports. Le schéma ci-dessous montre ces deux phases, d'abord l'inondation puis le filtrage.
+
+```
+   Phase 1 : table vide, inondation          Phase 2 : table remplie, transmission directe
+
+      A ----+                                    A ----+
+            | [trame A->B inconnu]                   | === unicast vers B
+      +-----S1-----+                           +-----S1-----+
+            |                                    |    (aucun trafic
+      +-----+-----+                           +-----+-----+     sur les autres ports)
+      |     |     |                           |     |     |
+      B     C     D                           B     C     D
+
+   Table après échange :                     Table stable :
+   MAC A -> port 1, MAC B -> port 2          MAC A -> port 1, MAC B -> port 2
+```
+
+La table vieillit. Par défaut, une entrée reste active trois cents secondes ; passé ce délai, elle est purgée afin de libérer la mémoire et d'accommoder les déplacements de machines, notamment les portables qui changent de prise ou de réseau sans fil. Ce vieillissement a un revers : une table trop petite ou saturée force des inondations permanentes. Certaines attaques exploitent d'ailleurs ce mécanisme en émettant des milliers de trames à sources fabriquées, dans l'espoir de faire déborder la table et de transformer le commutateur en hub. La parade s'appelle port-security et fait l'objet d'une section dédiée plus loin.
+
+Quatre cas de figure résument le sort de toute trame entrante, et vous devez être capable de les énoncer avant de toucher à un équipement. Destination connue sur un autre port : transmission sélective. Destination inconnue : inondation dans le VLAN. Adresse de diffusion ou de multidiffusion : inondation dans le VLAN, sauf si l'espionnage IGMP a inscrit les ports dans le groupe. Enfin, trame dont la source est déjà associée au port d'entrée : filtrage, sans émission vers un autre port. À cela s'ajoute le rejet des trames dont la somme de contrôle est invalide et, sur un port en accès, le rejet des trames dont le VLAN déduit ne correspond pas à la configuration du port.
+
+La consultation de la table se fait avec une commande simple, et il est bon de l'exécuter avant et après un échange de trafic pour visualiser l'apprentissage.
+
+```ios
+core-sw# show mac address-table
+          Mac Address Table
+-------------------------------------------
+Vlan    Mac Address       Type        Ports
+----    -----------       --------    -----
+  10    001b.4411.3a01    DYNAMIC     Gi1/0/12
+  10    001a.2b3c.4d5e    DYNAMIC     Gi1/0/14
+  40    0025.90aa.bbcc    DYNAMIC     Gi1/0/31
+  60    0000.0c07.ac3c    DYNAMIC     Gi1/0/48
+Total Mac Addresses for this vlan: 4
+```
+
+Chaque ligne associe un VLAN, une adresse et un port. Le type DYNAMIC signale un apprentissage automatique ; le type STATIC provient d'une saisie manuelle, utilisée quand une adresse doit être impérativement restreinte à un port. Remarquez que deux adresses du VLAN 10 apparaissent sur des ports différents : c'est la preuve que le même domaine de diffusion regroupe des ports, pas des machines. Effacez la table avec clear mac address-table dynamic, faites pinguer deux postes, puis relancez la commande : les entrées réapparaîtront, preuve vivante de l'apprentissage.
+
+Le mode de transmission du commutateur mérite aussi votre attention, car il conditionne la latence et la fiabilité. En store-and-forward, le commutateur attend la réception complète de la trame, vérifie la somme de contrôle, puis la transmet : c'est le mode universel des équipements modernes, seul garanti d'une détection correcte des trames corrompues. En cut-through, il lit l'adresse de destination dès les six premiers octets et relaie immédiatement, ce qui réduit la latence mais propage les trames défectueuses. Un mode intermédiaire, fragment-free, attend les soixante-quatre premiers octets afin d'écarter les collisions. Pour un LAN d'accès, la différence de latence se compte en microsecondes, alors que la différence de fiabilité se compte en incidents évités : laissez le stockage-transmission par défaut.
+
+La négociation duplex constitue une source historique d'incidents. Si deux équipements se mettent d'accord sur le full-duplex d'un côté et restent en demi-duplex de l'autre, les collisions deviennent invisibles pour l'émetteur agressif et se traduisent par des truncations et des erreurs CRC fantômes. Le diagnostic consiste à comparer l'affichage des deux extrémités avec show interfaces et à forcer duplex et vitesse de façon identique si la négociation automatique échoue. Sur du fibre ou du cuivre gigabit, le full-duplex est de règle et la question disparaît.
+
+Enfin, retenons ce que le commutateur ne fait pas. Il ne limite pas les diffusions : une trame FF:FF:FF:FF:FF:FF part vers tous les ports du VLAN. Si tous les ports du réseau appartiennent au même VLAN, le domaine de diffusion est aussi vaste que le réseau, et chaque requête de découverte, chaque annonce de protocole de routage, chaque appel ARP est entendu par toutes les machines. Réduire ce domaine est la mission des VLAN. Avant d'arriver là, il faut cependant admettre une faiblesse structurelle d'Ethernet : aucune trame ne porte un compteur de durée de vie. Une trame diffusée dans une boucle physique ne meurt jamais, elle se multiplie. C'est le point de départ de la section sur les tempêtes de broadcast, mais commençons par la segmentation.
+
+Un VLAN, ou réseau local virtuel, découpe un commutateur en plusieurs domaines de diffusion indépendants. Concrètement, le matériel regroupe des ports logiquement : les ports d'un même VLAN se comportent comme s'ils étaient reliés à un commutateur distinct, tandis qu'aucune trame ne franchit la frontière sans l'aide d'un routeur ou d'un commutateur de couche 3. La segmentation devient donc un réglage logique, modifiable à distance, sans rien débrancher. C'est cette flexibilité qui a fait le succès du VLAN depuis les années 2000 : un service déménage, un projet se crée, un prestataire arrive, et l'on adapte le domaine de diffusion en modifiant quelques lignes de configuration au lieu de repasser les câbles au plafond.
+
+Les bénéfices sont concrets et mesurables. La sécurité gagne parce que les machines sensibles, caméras, serveurs, équipements de gestion, ne voient pas le trafic des invités. Les performances gagnent parce que les diffusions de découverte ne circulent plus sur tout le site : les annonces ARP, les appels de résolution de noms et les annonces de protocole de routage restent confinés. La gestion du trafic gagne parce que chaque VLAN correspond en général à un sous-réseau, lequel correspond à une politique de qualité de service, à une plage d'adresses et à des règles de filtrage. Enfin l'administration y gagne : les comptes rendus, les journaux et les alertes deviennent lisibles quand chaque domaine a un nom et une mission.
+
+Le plan de VLAN de notre médiathèque illustre la démarche. Chaque ligne associe un identifiant, une mission, un sous-réseau et les types de ports concernés. Gardez ce tableau sous la main : toutes les configurations de la suite s'y réfèrent.
+
+| VLAN | Mission | Sous-réseau | Ports types |
+| --- | --- | --- | --- |
+| 10 | Postes du public | 10.20.10.0/24 | Accès, un poste par port |
+| 20 | Wi-Fi visiteurs | 10.20.20.0/23 | Accès ou trunk vers point d'accès |
+| 30 | Imprimantes | 10.20.30.0/24 | Accès, filtrage strict |
+| 40 | Serveurs locaux | 10.20.40.0/26 | Accès, liaisons redondées |
+| 50 | Administration | 10.20.50.0/24 | Accès, contrôle renforcé |
+| 60 | Gestion des équipements | 10.20.60.0/26 | Accès, adresses fixes |
+| 99 | Natif des trunks | aucune | Aucun, réservé et vide |
+| 210 | Caméras IP | 10.20.210.0/24 | Accès, isolation stricte |
+| 220 | Téléphonie IP | 10.20.220.0/24 | Voice VLAN sur ports utilisateurs |
+
+Le VLAN 1 mérite une attention particulière. Il est créé par défaut sur tous les commutateurs, il porte souvent le trafic de gestion, et il constitue la valeur par défaut du VLAN natif. C'est précisément pour cela qu'il ne doit jamais transporter de trafic utilisateur : toute erreur de configuration serait alors indétectable, et les attaques de type saut d'étiquette visent d'abord lui. La règle professionnelle consiste à migrer les usages vers un VLAN dédié, à laisser le VLAN 1 pour les besoins de protocole strictement internes, et à réserver un VLAN numéroté haut, souvent 99 ou 4094, au rôle de natif inutilisé.
+
+Créer et nommer des VLAN tient en quelques commandes. Le nom n'est pas cosmétique : il apparaît dans les tables de vérification et dans les journaux, et un nom explicite fait gagner un temps considérable lors d'un dépannage nocturne.
+
+```ios
+core-sw# configure terminal
+core-sw(config)# vlan 10
+core-sw(config-vlan)# name Publics
+core-sw(config)# vlan 20
+core-sw(config-vlan)# name WiFi-Visiteurs
+core-sw(config)# vlan 30
+core-sw(config-vlan)# name Imprimantes
+core-sw(config)# vlan 40
+core-sw(config-vlan)# name Serveurs
+core-sw(config)# vlan 60
+core-sw(config-vlan)# name Gestion
+core-sw(config)# vlan 99
+core-sw(config-vlan)# name Natif-Inutilise
+core-sw(config)# vlan 210
+core-sw(config-vlan)# name Cameras
+core-sw(config)# vlan 220
+core-sw(config-vlan)# name Telephonie
+```
+
+Une machine appartient à un VLAN de deux manières. La première, statique et majoritaire, consiste à affecter un port : la station qui se branche sur ce port rejoint le domaine, sans rien savoir de la configuration. La seconde, dynamique, repose sur des protocoles d'attribution comme le clustering de ports ou des mécanismes propriétaires, aujourd'hui rares car difficiles à auditer. L'affectation par port offre la prévisibilité dont l'administration a besoin : on sait d'avance quel équipement a le droit de se trouver dans quel domaine.
+
+```ios
+access-sw-b# configure terminal
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# description Postes publics VLAN 10
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 10
+access-sw-b(config)# interface range GigabitEthernet1/0/25 - 28
+access-sw-b(config-if-range)# description Imprimantes VLAN 30
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 30
+```
+
+Il reste à relier les VLAN entre eux et vers l'extérieur, car un poste du VLAN 10 doit pouvoir atteindre un serveur du VLAN 40. Deux architectures coexistent. Sur un routeur de couche 3, on utilise le principe dit du routeur sur une baguette : une seule interface physique, plusieurs sous-interfaces virtuelles, chacune associée à un VLAN. Sur un commutateur de couche 3, on crée une interface virtuelle par VLAN, appelée SVI, et l'équipement fait le routage en interne, à la vitesse de la mémoire. La seconde solution est aujourd'hui la norme dans un réseau de taille moyenne.
+
+```ios
+core-sw(config)# interface Vlan10
+core-sw(config-if)# ip address 10.20.10.1 255.255.255.0
+core-sw(config-if)# no shutdown
+core-sw(config)# interface Vlan40
+core-sw(config-if)# ip address 10.20.40.1 255.255.255.0
+core-sw(config-if)# no shutdown
+core-sw(config)# ip routing
+```
+
+La dernière commande, souvent oubliée, active le routage sur l'équipement. Sans elle, les SVI existent mais le commutateur se comporte comme un simple pont : les sous-réseaux communiquent avec leur propre passerelle, jamais entre eux. Le symptôme est classique : chacun ping sa gateway, personne ne voit les serveurs.
+$lesson$),
+  ('net-c2-p3', 'net-c2', 3, $lesson$Ports d'accès, trunks et étiquetage 802.1Q$lesson$, $lesson$
+Un port de commutateur adopte l'une des trois configurations suivantes. En mode accès, il appartient à un seul VLAN et n'ajoute aucune étiquette aux trames : c'est le mode des postes, imprimantes, caméras et téléphones, qui ignorent tous le concept de VLAN. En mode trunk, il transporte simultanément plusieurs VLAN et marque chaque trame d'un tag qui indique son domaine d'appartenance : c'est le mode des liaisons inter-commutateurs, des points d'accès Wi-Fi, des hyperviseurs et des routesurs. En mode dynamique, il négocie le mode avec son voisin, ce que l'on désactive systématiquement en production pour éviter qu'un équipement non autorisé n'impose un trunk.
+
+La norme IEEE 802.1Q, publiée en 1998 puis régulièrement révisée, ajoute quatre octets à la trame Ethernet. Cette insertion se produit après l'adresse source, avant l'EtherType, ce qui fait que la valeur originale de type devient la valeur encapsulée et que le nouveau champ EtherType vaut 0x8100. Le schéma localise l'étiquette dans la trame.
+
+```
+| MAC dest. | MAC src. | TPID 0x8100 |        Etiquette 802.1Q        | EtherType |   Données   |  FCS  |
+|  6 octets |  6 oct. |   2 octets  |  PCP  |DEI|      VID         |  2 octets | 46-1500 oct.| 4 oct.|
+                                                12 bits = 4094 VLANs utilisables
+```
+
+L'étiquette elle-même se décompose en deux parties. Le champ d'identifiant de VLAN occupe douze bits, ce qui explique la limite historique de 4094 VLANs utilisables par commutateur. Le champ de contrôle de trafic, trois bits, porte une priorité compatible avec la norme 802.1p, de 0 à 7, utilisée notamment pour protéger la voix contre les retards. Un bit d'élimination sert à signaler les trames à écarter en période de congestion. L'ensemble tient dans quatre octets, surcoût négligeable, mais il change la lecture d'une capture : vous verrez désormais une couche 802.1Q entre l'en-tête Ethernet et le protocole IP.
+
+Les trames d'un port en accès ne sont jamais étiquetées. L'étiquette apparaît uniquement à la traversée d'un trunk, et elle est retirée dès que la trame quitte le trunk vers un port en accès. Ce mécanisme explique la notion de VLAN natif : c'est le domaine dont les trames circulent sans étiquette sur le trunk, faute de quoi le récepteur n'aurait aucun moyen de savoir à quel VLAN les rattacher. Par défaut, ce rôle revient au VLAN 1, ce qui est dangereux. En cas de divergence de configuration entre les deux extrémités, les trames non étiquetées sont attribuées au mauvais domaine, et l'on assiste alors à des communications fantômes entre des services censés être isolés.
+
+La parade combine trois réglages : un VLAN natif dédié, vide et inutilisé ; la suppression explicite du VLAN 1 de la liste des VLAN autorisés ; et l'interdiction du trafic non étiqueté sur tout port qui n'est pas en mode accès. La configuration suivante illustre le trunk attendu entre le commutateur d'accès du bâtiment B et le cœur.
+
+```ios
+access-sw-b(config)# interface TenGigabitEthernet1/0/1
+access-sw-b(config-if)# description Lien montant vers coeur
+access-sw-b(config-if)# switchport mode trunk
+access-sw-b(config-if)# switchport nonegotiate
+access-sw-b(config-if)# switchport trunk native vlan 99
+access-sw-b(config-if)# switchport trunk allowed vlan 10,20,30,60,99
+access-sw-b(config-if)# switchport trunk allowed vlan remove 1
+access-sw-b(config-if)# spanning-tree link-type point-to-point
+access-sw-b(config-if)# no shutdown
+```
+
+La commande switchport nonegotiate empêche l'échange de protocoles de négociation dynamique : le mode est imposé, donc prévisible. La liste des VLAN autorisés agit comme un filtre d'entrée : un VLAN absent de cette liste ne franchit pas le lien, même si les deux commutateurs le connaissent. Cette mécanique est précieuse pour la sécurité, mais elle est aussi une cause fréquente d'incident : ajouter un VLAN côté cœur sans l'ajouter côté accès isole silencieusement tout un bâtiment.
+
+Vérifiez systématiquement avec les commandes suivantes. La première confirme l'affectation des ports, la seconde détaille l'état réel des trunks, la troisième rappelle le mode négocié de chaque interface.
+
+```ios
+access-sw-b# show vlan brief
+access-sw-b# show interfaces trunk
+access-sw-b# show interfaces GigabitEthernet1/0/1 switchport
+```
+
+Sortie caractéristique d'un trunk sain, où la colonne de droite indique les VLANs réellement transitant sur le lien.
+
+```ios
+access-sw-b# show interfaces trunk
+Port        Mode         Encapsulation  Status        Native vlan
+Te1/0/1     on           802.1q         trunking      99
+
+Port        Vlans allowed on trunk
+Te1/0/1     10,20,30,60,99
+
+Port        Vlans allowed and active in management domain
+Te1/0/1     10,20,30,60,99
+
+Port        Vlans in spanning tree forwarding state and not pruned
+Te1/0/1     10,20,30,60,99
+```
+
+Deux attaques historiques tirent parti du trunking, et connaître leur mécanisme vous rendra immunisé contre les mauvaises surprises. La première, le saut d'étiquette simple, exploite le VLAN natif : l'attaquant émet une trame déjà étiquetée avec le VLAN cible, et le commutateur, croyant traiter un VLAN natif, retire la première étiquette et transmet la seconde dans le domaine visé. La seconde, le saut d'étiquette double, insère deux étiquettes : le premier trunk en retire une, le second livre la trame au VLAN choisi. À cela s'ajoute l'exploitation du protocole de négociation dynamique, qui peut faire basculer un port simple en trunk sans authentification. Les contre-mesures sont simples et peu coûteuses : VLAN natif sur un domaine vide, mode trunk imposé, négociation dynamique désactivée, et liste des VLAN autorisés restrictive. Aucune de ces mesures ne demande de matériel supplémentaire.
+
+Le Wi-Fi mérite une note particulière. Un point d'accès moderne transporte plusieurs réseaux : le réseau invité, le réseau interne et parfois celui des caméras. Plutôt que de dédier un câble à chaque réseau, on relie le point d'accès en trunk et l'on laisse l'appareil répartir les trames. Chaque SSID est alors associé à un VLAN côté commutateur. La consigne reste la même : liste des VLAN autorisés étroite, VLAN natif vide, et vérification après chaque changement de configuration.
+
+Pour finir, une distinction couramment confondue : le domaine de diffusion et le domaine de routage ne coïncident pas. Un VLAN définit un domaine de diffusion et, en général, un sous-réseau. La communication entre deux VLAN exige une décision de couche 3, donc une adresse IP de passerelle et une table de routage. Inversement, deux VLAN distincts peuvent partager le même domaine de routage si une politique le décide, mais ils ne partageront jamais un domaine de diffusion. Gardez cette phrase : la couche 2 relie des ports, la couche 3 relie des réseaux. ARP fait le lien entre les deux mondes, et c'est à lui que nous passons maintenant.
+
+Une communication réseau commence toujours par une question que le logiciel ne sait pas résoudre seul. Votre navigateur a l'adresse IP du serveur, mais la carte réseau ne sait émettre qu'une trame Ethernet, laquelle exige une adresse MAC de destination. Il faut donc traduire l'une dans l'autre, à chaque passage de frontière de réseau local, et cette traduction est le rôle d'ARP, le protocole de résolution d'adresses défini par la RFC 826 en 1982. ARP est l'un de ces protocoles discrets qui fonctionnent si bien que personne n'y pense, jusqu'au jour où il cesse de fonctionner et où plus rien ne joint.
+$lesson$),
+  ('net-c2-p4', 'net-c2', 4, $lesson$ARP : le pont entre adresses IP et adresses MAC$lesson$, $lesson$
+Le principe tient en une phrase : avant d'émettre n'importe quel paquet IP vers un hôte du même réseau local, la station doit connaître l'adresse MAC correspondante. Pour l'obtenir, elle diffuse une requête portant la question « qui possède l'adresse IP 10.20.10.25 ? Faites-le savoir à 10.20.10.14 ». Cette requête est une trame Ethernet de destination FF:FF:FF:FF:FF:FF, donc reçue par toutes les interfaces du VLAN. La station qui reconnaît son adresse IP dans le champ cible répond, en unicast cette fois, avec son adresse MAC. L'émetteur mémorise le couple obtenu et émet enfin son paquet. Le dialogue complet tient en deux trames, comme le montre le schéma suivant.
+
+```
+   Poste A (10.20.10.14 / 001a.2b3c.4d5e)              Serveur (10.20.10.25 / 0025.90aa.bbcc)
+            |                                                        |
+            |  1. ARP Request  dst=FF:FF:FF:FF:FF:FF                 |
+            |     "Qui a 10.20.10.25 ? Réponds à 10.20.10.14"        |
+            |  ----------------------------------------------------> |
+            |                                                        |
+            |  2. ARP Reply  dst=001a.2b3c.4d5e (unicast)            |
+            |     "10.20.10.25 est chez 0025.90aa.bbcc"              |
+            |  <---------------------------------------------------- |
+            |                                                        |
+            |  3. Trame IP classique, destination 0025.90aa.bbcc     |
+            |  ----------------------------------------------------> |
+```
+
+Remarquez trois détails qui échappent souvent au débutant. La requête contient déjà l'adresse MAC et l'adresse IP de l'émetteur, sans quoi le destinataire ne pourrait pas répondre. La réponse est envoyée en unicast, elle ne redivise donc pas le réseau. Et le protocole ne vérifie rien : n'importe qui peut répondre à n'importe quelle question, ce qui est la faille structurelle d'ARP et la raison d'être des mécanismes de contrôle décrits plus loin.
+
+Les réponses sont rangées dans une table, le cache ARP, qui porte une durée de vie limitée. Sur Windows, la commande arp -a affiche le contenu de cette table ; sur Linux, la commande ip neigh show remplace avantageusement l'ancien arp -a ; sur un commutateur ou un routeur Cisco, c'est show ip arp.
+
+```bash
+# Windows
+arp -a
+
+# Linux
+ip neigh show
+ip neigh show to 10.20.10.25
+
+# affichage filtré par interface
+ip neigh show dev eth0 nud reachable
+```
+
+Le cache évolue en permanence. Une entrée dynamique est purgée au bout de quelques minutes d'inactivité, ce qui évite qu'une table ne grossisse indéfiniment et permet de suivre les machines qui changent d'adresse. Une entrée statique, saisie à la main, ne expire jamais : elle est utile pour un équipement critique dont on veut interdire tout changement, mais elle devient un piège si l'adresse réelle bouge. Sur un poste de travail, on crée une entrée statique avec arp -s 10.20.10.25 00:25:90:aa:bb:cc, et on la supprime avec arp -d. Sur un commutateur, la syntaxe est ip arp 10.20.10.25 0025.90aa.bbcc arpa Vlan10.
+
+Il existe un cas particulier remarquable : l'ARP gratuitor, ou ARP non sollicité. Une station y annonce spontanément son couple adresse IP et adresse MAC, sans que personne n'ait posé la question. Ce message sert à trois usages. D'abord la détection de conflit d'adresse : avant de prendre un bail, un client envoie un ARP gratuit et écoute s'il obtient une réponse, preuve qu'un autre héberge déjà cette adresse. Ensuite la bascule de redondance : quand un routeur de secours prend la place du routeur principal, il annonce gratuitement l'adresse MAC de la passerelle virtuelle pour que tous les postes mettent leur cache à jour instantanément. Enfin l'apprentissage : les commutateurs et les pare-feux se servent de ces annonces pour mettre à jour leurs tables sans échange préalable.
+
+On observe facilement ces échanges. La capture suivante isole ARP dans un VLAN donné et affiche les adresses matérielles, ce qui suffit souvent à révéler un conflit ou une machine qui répond à la place d'une autre.
+
+```bash
+sudo tcpdump -i eth0 -e -nn arp and host 10.20.10.25
+```
+
+Deux variantes d'ARP complètent le tableau. Le proxy ARP permet à un routeur de répondre à la place d'une machine distante : il reçoit la question, constate qu'il connaît la route, et renvoie sa propre adresse MAC. Pratique sur un réseau non segmenté, il devient pénible au dépannage, car il masque les erreurs de masque de sous-réseau. L'ARP inverse, lui, associe une adresse MAC à une adresse IP plutôt que l'inverse, et sert surtout dans des protocoles de couche 2. Notez enfin que l'IPv6 ne fonctionne pas ainsi : il remplace ARP par le protocole de voisinage, exécuté par-dessus ICMPv6, qui interroge les adresses cibles par multidiffusion de voisinage plutôt que par diffusion, un gain d'efficience notable sur les réseaux de grande taille.
+
+La contrepartie de la simplicité d'ARP, c'est sa vulnérabilité. Une machine malveillante peut émettre en continu des ARP gratuitors affirmant que l'adresse de la passerelle, par exemple 10.20.10.1, se trouve chez elle. Les postes du VLAN mettent leur cache à jour, leurs trames partent vers l'attaquant, qui les relaie vers l'extérieur en les inspectant : c'est l'empoisonnement d'ARP, cause la plus fréquente d'interception dans un réseau local non contrôlé. Les symptômes sont discrets : perte de connectivité intermittent, changement d'adresse MAC de la passerelle vu par arp -a, certificat HTTPS invalide quand l'attaquant casse la chaîne TLS.
+
+La parade s'appelle inspection ARP dynamique. Le commutateur croise chaque trame ARP avec la table d'espionnage DHCP, qui associe adresse IP, adresse MAC et port, alimentée par les réponses des serveurs DHCP fiables. Toute annonce discordante est jetée et journalisée. Comme beaucoup de protections, elle se retourne contre vous si elle est activée sans préparation : les équipements à adresse fixe, imprimantes, serveurs, caméras, doivent être déclarés en entrées statiques dans la table d'espionnage.
+
+```ios
+access-sw-b(config)# ip dhcp snooping
+access-sw-b(config)# ip dhcp snooping vlan 10,20,30,40,50,60
+access-sw-b(config)# ip arp inspection vlan 10,20,30,40,50,60
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# ip dhcp snooping limit rate 15
+access-sw-b(config)# ip arp inspection vlan 50 static 10.20.50.10 0025.90aa.bbcc
+```
+$lesson$),
+  ('net-c2-p5', 'net-c2', 5, $lesson$Tempêtes de broadcast : comprendre, mesurer et parer$lesson$, $lesson$
+Le domaine de diffusion est l'ensemble des équipements qui entendent les trames de diffusion et de multidiffusion. Dans un réseau non segmenté, il coïncide avec le réseau tout entier. Le problème, c'est que la diffusion est la mécanique par défaut d'une foule de protocoles : ARP pour résoudre une adresse, les annonces de découverte de serveurs, les appels de résolution de noms, les messages de certains protocoles de redondance, les requêtes de surveillance. Chacune de ces trames est reçue, parsémée et traitée par chaque interface du domaine, qui doit l'examiner avant de décider de l'ignorer. Multipliez par le nombre de machines et vous obtenez une consommation de processeur et de bande passante sans rapport avec le trafic utile.
+
+C'est le scénario bien pire qui nous intéresse ici : la tempête de broadcast. Elle se produit quand des trames diffusées se retrouvent amplifiées indéfiniment. Ethernet ne comporte aucun champ de durée de vie, aucune trame ne devient obsolète par elle-même. Si deux ports d'un même commutateur sont reliés par un câble, ou si deux liens parallèles créent une boucle non maîtrisée par l'arbre couvrant, une diffusion y circule en boucle et se multiplie à chaque tour. En quelques secondes, la bande passante est saturée, les tampons débordent, les trames légitimes sont jetées et le processeur du commutateur passe son temps à traiter du trafic sans destination.
+
+```
+              Boucle physique : deux liaisons entre les mêmes commutateurs
+   poste A ---- S1 ==================== S2 ---- poste B
+                  \                    /
+                   +------------------+
+                        lien en double
+
+   Diffusion émise par A :
+   tour 1 : 1 copie traverse chaque liaison        -> 2 trames
+   tour 2 : chacune repart dans l'autre sens       -> 4 trames
+   tour 3 : explosion exponentielle                -> 8, 16, 32 ...
+   Résultat : ports saturés, CPU à 100 %, pings en timeout, trames légitimes perdues
+```
+
+Les symptômes ont une signature reconnaissable. La latence devient aléatoire, les déconnexions se succèdent, la console d'un commutateur répond au ralenti ou plus du tout, les compteurs d'erreurs et les drops augmentent sur tous les ports simultanément, et les journaux mentionnent des changements d'état de port provoqués par l'arbre couvrant. Le premier réflexe de diagnostic consiste à relever la charge processeur et les compteurs de diffusions, puis à comparer avant et après.
+
+```ios
+core-sw# show processes cpu | exclude 0.0
+core-sw# show interfaces status | include err-disabled
+core-sw# show spanning-tree detail | include topology change
+core-sw# show storm-control broadcast
+core-sw# show interfaces counters | include Bcast
+```
+
+L'arbre couvrant, défini par la norme IEEE 802.1D et ses déclinaisons rapid-pvst et mstp, est le mécanisme qui empêche ces boucles d'exister. Les commutateurs échangent des BPDU, des trames de signalisation propres, pour élire un pont racine et mettre en blocking tous les liens redondants qui créeraient une boucle. Le lien de secours reste inactif jusqu'à la panne du lien principal, puis se réactive en quelques centaines de millisecondes avec le mode rapide. Comprenez bien le compromis : l'arbre couvrant achète la redondance au prix d'une complexité, et une erreur de priorité peut faire converger le racine vers un équipement inadapté, par exemple un commutateur d'accès mal positionné.
+
+Trois réglages durcissent le dispositif. Le PortFast place immédiatement un port d'accès en état de transmission, sans attendre la négociation, ce qui évite les coupures de service au démarrage d'un poste ; il n'est toléré que sur des branches finales. Le BPDU guard met le port en erreur dès qu'une BPDU y apparaît, ce qui isole instantanément un appareil qui tenterait de s'intercaler dans la topologie. Le root guard interdit à un port de devenir racine, protégeant ainsi l'élection contre un équipement non maîtrisé.
+
+```ios
+access-sw-b(config)# spanning-tree mode rapid-pvst
+access-sw-b(config)# spanning-tree portfast bpduguard default
+access-sw-b(config)# spanning-tree root guard  (par interface)
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# spanning-tree portfast
+access-sw-b(config-if-range)# spanning-tree bpduguard enable
+```
+
+La seconde parade est le storm-control, un filtre de débit appliqué port par port. Il mesure la proportion de trames de diffusion, de multidiffusion et parfois d'unicast inconnu, et au-delà du seuil il jette les trames excédentaires, voire met le port en état d'erreur. Le choix du seuil demande du discernement : trop bas, il sacrifie du trafic légitime pendant un pic d'activité ; trop haut, il laisse la tempête monter. Un pourcentage faible, de l'ordre d'un pour cent pour la diffusion et de deux pour cent pour la multidiffusion, convient à la plupart des ports d'accès, car le trafic de diffusion normal y reste très faible.
+
+```ios
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# storm-control broadcast level 1.00
+access-sw-b(config-if-range)# storm-control multicast level 2.00
+access-sw-b(config-if-range)# storm-control action shutdown
+```
+
+Trois causes reviennent dans la majorité des incidents. Une boucle physique, souvent créée par un double câble posé par précaution ou par un pont logique dans une machine qui dispose de deux cartes réseau. Une négociation dynamique laissée active, qui transforme un port en trunk et relie alors plusieurs domaines de diffusion entre eux. Enfin un équipement défaillant, carte réseau saturée ou logiciel mal configuré, qui émet des diffusions en rafale. La méthode de dépannage consiste à remonter le flux : relever les ports les plus émetteurs en diffusions, mettre un port hors service, observer si l'incident cesse, puis isoler physiquement la source.
+
+La multidiffusion mérite une note, car elle échappe en apparence au problème. Un flux vidéo envoyé en multidiffusion ne devrait être dupliqué que vers les ports intéressés, et c'est exactement le rôle de l'espionnage IGMP, activé par défaut sur les commutateurs modernes. Il construit une table reliant les groupes multidiffusion aux ports de membres. Désactiver ce mécanisme, ou le voir mal fonctionner, revient à transformer chaque flux en diffusion massive, avec les mêmes conséquences qu'une tempête.
+
+La segmentation reste enfin le remède structurel. Un domaine de diffusion par service, des seuils de tempête sur chaque port, un arbre couvrant stable et vérifié, l'espionnage IGMP actif : ces quatre mesures, appliquées ensemble, transforment une panne globale en incident localisé. Un site ainsi segmenté perd un VLAN, jamais le réseau entier. Reste à protéger les ports eux-mêmes contre les appareils non autorisés, ce que la section suivante met en pratique.
+
+Les VLAN isolent les trafics et l'inspection ARP protège les résolutions, mais il reste une porte ouverte : le port physique lui-même. N'importe quel câble branché dans une prise libre rejoint immédiatement le domaine configuré sur cette prise, hérite de sa bande passante et accède aux ressources du VLAN. La sécurisation de port consiste donc à transformer chaque prise en point de contrôle : combien d'adresses MAC y sont tolérées, quels baux DHCP y sont acceptés, quel trafic y circule, et que faire dès qu'une règle est enfreinte.
+$lesson$),
+  ('net-c2-p6', 'net-c2', 6, $lesson$Sécuriser les ports : sécurité de port, espionnage DHCP, contrôle de tempête$lesson$, $lesson$
+La sécurité de port repose sur une idée simple : chaque port d'accès n'autorise qu'un nombre limité d'adresses MAC, au-delà duquel il réagit. La configuration courante réserve cinq adresses à un serveur ou à un point d'accès, deux à un poste équipé d'un téléphone IP en cascade, une seule à une imprimante. Le mode d'apprentissage automatique, dit sticky, mémorise les premières adresses vues et les range en configuration, ce qui évite de saisir à la main des adresses MAC parfois illisibles.
+
+Trois réactions sont disponibles en cas de dépassement. Le mode protect jette silencieusement le trafic des adresses non reconnues sans rien journaliser. Le mode restrict jette et comptabilise les violations, ce qui laisse des traces utiles. Le mode shutdown place le port en état d'erreur, visible avec show interfaces status comme err-disabled, et l'incident devient immédiatement visible sur la console. Le choix dépend de la criticité : restrict pour un réseau administré, shutdown pour une zone sensible, protect pour un accès public où le silence vaut mieux qu'un encombrement de journaux.
+
+```ios
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 24
+access-sw-b(config-if-range)# switchport mode access
+access-sw-b(config-if-range)# switchport access vlan 10
+access-sw-b(config-if-range)# switchport port-security
+access-sw-b(config-if-range)# switchport port-security maximum 2
+access-sw-b(config-if-range)# switchport port-security violation restrict
+access-sw-b(config-if-range)# switchport port-security mac-address sticky
+access-sw-b(config-if-range)# switchport port-security aging time 60
+access-sw-b(config-if-range)# switchport port-security aging type inactivity
+```
+
+L'espionnage DHCP complète la protection en contrôléant les messages de bail. Une attaque par starvation consiste à réclamer tous les baux disponibles avec des adresses MAC fabriquées, privant ainsi les postes légitimes d'adressage. Le commutateur distingue alors les ports fiables, ceux qui reçoivent les réponses du serveur, des ports non fiables, qui ne doivent émettre que des demandes. La table d'espionnage qui en résulte, associant adresse IP, adresse MAC, port et durée du bail, devient la source de vérité utilisée par l'inspection ARP dynamique et par la garde de source IP.
+
+```ios
+access-sw-b(config)# ip dhcp snooping
+access-sw-b(config)# ip dhcp snooping vlan 10,20,30,40,50,60
+access-sw-b(config)# ip dhcp snooping trust
+access-sw-b(config)# interface TenGigabitEthernet1/0/1
+access-sw-b(config-if)# ip dhcp snooping trust
+access-sw-b(config)# interface range GigabitEthernet1/0/1 - 34
+access-sw-b(config-if-range)# ip source binding 10.20.10.14 001a.2b3c.4d5e vlan 10 interface Gi1/0/12
+```
+
+Le contrôle de tempête vu au chapitre précédent appartient au même répertoire de protections : il borne le trafic de diffusion, la sécurité de port borne le nombre de machines, l'espionnage DHCP borne les baux, l'inspection ARP borne les annonces. Aucune de ces mesures n'est magique, et toutes peuvent paralyser un réseau si elles sont activées d'un coup sans inventaire préalable. La règle professionnelle est d'inventorier d'abord, de configurer en observation, puis de basculer en stricte.
+$lesson$),
+  ('net-c2-p7', 'net-c2', 7, $lesson$Exemple guidé : configurer le commutateur d'accès du bâtiment B$lesson$, $lesson$
+Réunissons maintenant tout ce que ce chapitre a enseigné. Le commutateur d'accès du bâtiment B dessert vingt-quatre postes du public, quatre imprimantes, deux points d'accès Wi-Fi, deux serveurs locaux, une caméra et un poste d'agent équipé d'un téléphone IP. Le lien montant part vers le cœur en trunk. Le plan de VLAN du début de leçon s'applique à la lettre.
+
+```ios
+! ===== Commutateur d'accès Batiment B =====
+hostname access-sw-b
+vtp mode transparent
+spanning-tree mode rapid-pvst
+spanning-tree portfast bpduguard default
+
+vlan 10
+ name Publics
+vlan 20
+ name WiFi-Visiteurs
+vlan 30
+ name Imprimantes
+vlan 40
+ name Serveurs
+vlan 60
+ name Gestion
+vlan 99
+ name Natif-Inutilise
+vlan 210
+ name Cameras
+vlan 220
+ name Telephonie
+
+! ----- Lien montant -----
+interface TenGigabitEthernet1/0/1
+ description Uplink vers coeur Lilas
+ switchport mode trunk
+ switchport nonegotiate
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 10,20,30,60,99
+ switchport trunk allowed vlan remove 1
+ storm-control broadcast level 1.00
+ storm-control multicast level 2.00
+ spanning-tree link-type point-to-point
+ no shutdown
+
+! ----- Postes du public -----
+interface range GigabitEthernet1/0/1 - 24
+ description Postes publics VLAN 10
+ switchport mode access
+ switchport access vlan 10
+ switchport port-security
+ switchport port-security maximum 2
+ switchport port-security violation restrict
+ switchport port-security mac-address sticky
+ spanning-tree portfast
+ storm-control broadcast level 1.00
+ ip dhcp snooping limit rate 15
+
+! ----- Imprimantes -----
+interface range GigabitEthernet1/0/25 - 28
+ description Imprimantes VLAN 30
+ switchport mode access
+ switchport access vlan 30
+ switchport port-security maximum 1
+ spanning-tree portfast
+
+! ----- Points d'acces Wi-Fi -----
+interface range GigabitEthernet1/0/29 - 30
+ description Points d'acces, trunk vers coeur
+ switchport mode trunk
+ switchport nonegotiate
+ switchport trunk native vlan 99
+ switchport trunk allowed vlan 20,210
+ storm-control broadcast level 1.00
+
+! ----- Serveurs locaux -----
+interface range GigabitEthernet1/0/31 - 32
+ description Serveurs VLAN 40
+ switchport mode access
+ switchport access vlan 40
+ switchport port-security maximum 5
+ switchport port-security violation restrict
+ spanning-tree portfast
+
+! ----- Camera -----
+interface GigabitEthernet1/0/33
+ description Camera VLAN 210
+ switchport mode access
+ switchport access vlan 210
+ switchport port-security maximum 1
+ spanning-tree portfast
+
+! ----- Telephone IP et poste agent -----
+interface GigabitEthernet1/0/34
+ description Agent + telephone IP
+ switchport mode access
+ switchport access vlan 50
+ switchport voice vlan 220
+ switchport port-security maximum 3
+ spanning-tree portfast
+
+! ----- Gestion -----
+interface Vlan60
+ description Gestion locale
+ ip address 10.20.60.2 255.255.255.192
+ no shutdown
+
+ip dhcp snooping
+ip dhcp snooping vlan 10,20,30,40,50,60
+ip arp inspection vlan 10,20,30,40,50,60
+ntp server 10.20.60.1
+logging host 10.20.60.1
+end
+write memory
+```
+
+L'ordre des commandes n'est pas neutre. On déclare d'abord les VLAN, puis les liens montants, puis les ports d'accès, enfin la gestion : chaque bloc se lit indépendamment et peut être relu isolément. Notez le port 34, où le téléphone IP consomme une adresse MAC supplémentaire, d'où le plafond à trois. Notez aussi la suppression explicite du VLAN 1 sur le trunk, mesure qui vous sauvera peut-être un jour.
+
+Le déploiement se valide toujours avec les commandes suivantes, idéalement enregistrées dans un fichier de recette.
+
+```ios
+access-sw-b# show vlan brief
+access-sw-b# show interfaces trunk
+access-sw-b# show mac address-table
+access-sw-b# show port-security
+access-sw-b# show ip arp inspection statistics
+access-sw-b# show dhcp snooping binding
+access-sw-b# show spanning-tree summary
+access-sw-b# show interfaces status
+```
+
+Chaque commande répond à une question précise : les VLAN existent-ils et portent-ils les bons noms ? Le trunk transporte-t-il la liste attendue avec le bon VLAN natif ? La table MAC apprend-elle sur les bons ports ? Combien de violations de sécurité ont été enregistrées ? L'inspection ARP jette-t-elle des trames, signe d'une configuration à revoir ? L'arbre couvrant est-il en état d'emploi normal ? Enfin, tous les ports sont-ils dans le bon état, sans err-disabled ?
+$lesson$),
+  ('net-c2-p8', 'net-c2', 8, $lesson$Diagnostiquer une panne de couche 2 : sept contrôles dans l'ordre$lesson$, $lesson$
+La méthode vaut plus que la mémoire. Face à un utilisateur qui ne parvient plus à joindre un service, procédez du plus matériel au plus logique, et ne sautez jamais une étape sous peine de passer une heure à chercher une erreur de VLAN dans un câble débranché.
+
+```text
+Panne signalée
+     |
+     +--> 1. Lien physique : voyants, show interfaces status, erreurs CRC
+     |         |
+     |         +-- lien down --> câble, transceiver, port en erreur
+     |
+     +--> 2. Appartenance : show interfaces switchport, show vlan brief
+     |         |
+     |         +-- mauvais VLAN --> switchport access vlan
+     |
+     +--> 3. Trunk : show interfaces trunk, VLAN natif et allowed
+     |         |
+     |         +-- VLAN absent --> switchport trunk allowed vlan
+     |
+     +--> 4. Table MAC : show mac address-table, apprentissage
+     |         |
+     |         +-- entrée absente --> port non transmis, port security
+     |
+     +--> 5. ARP et passerelle : arp -a, ip neigh, ping passerelle
+     |         |
+     |         +-- MAC fausse --> empoisonnement, inspection ARP
+     |
+     +--> 6. Arbre couvrant et tempête : show spanning-tree, CPU
+     |         |
+     |         +-- boucle --> câble en double, port sans PortFast
+     |
+     +--> 7. Compteurs : show interfaces counters errors, drops
+               |
+               +-- erreurs physiques --> câble, connecteur, longueur
+```
+
+Les commandes du cinquième contrôle méritent d'être détaillées, car c'est là que la couche 2 rencontre la couche 3. Depuis le poste défaillant, pinguez la passerelle du VLAN ; si cela fonctionne, vérifiez avec arp -a que l'adresse MAC annoncée pour la passerelle est bien celle configurée sur l'équipement. Si elle change en plein fonctionnement, vous êtes en présence d'un empoisonnement ARP. Si le ping échoue mais que l'adresse MAC est correcte, cherchez du côté de l'appartenance au VLAN et du trunk.
+
+```bash
+# poste : passerelle joignable ?
+ping -c 4 10.20.10.1
+
+# poste : adresse MAC réellement apprise pour la passerelle
+ip neigh show to 10.20.10.1
+
+# poste : vérification d'une entrée statique éventuelle
+arp -a | grep 10.20.10.1
+```
+
+Les erreurs de couche 2 ont une signature dans les compteurs. Les erreurs CRC et les truncations signalent un problème de support ; les collisions en régime full-duplex signalent une négociation incomplète ; les pics de diffusions signalent une tempête naissante ; les ports en état d'erreur signalent une règle de sécurité déclenchée. Un dépanneur commence toujours par ces chiffres, parce qu'ils transforment une intuition en preuve.
+$lesson$),
+  ('net-c2-p9', 'net-c2', 9, $lesson$Trois cas concrets : téléphonie, points d'accès, documentation$lesson$, $lesson$
+Le voice VLAN illustre parfaitement la cohabitation de plusieurs flux sur un même port. Un téléphone IP moderne se comporte comme un petit commutateur à trois interfaces : une prise réseau vers le commutateur, une prise vers le poste de l'agent, et une logique interne qui étiquette lui-même le trafic audio. Lorsqu'on lui associe un voice VLAN, le téléphone découvre ce VLAN par les protocoles de voisinage, étiquette ses propres paquets audio avec la priorité correspondante et laisse passer le trafic de l'agent sans étiquette, celui-ci restant dans le VLAN de données. Le commutateur reçoit donc deux flux distincts sur un seul câble et applique à chacun sa politique : file prioritaire et latence maîtrisée pour la voix, bande passante standard pour les applications.
+
+```ios
+access-sw-b(config)# interface GigabitEthernet1/0/34
+access-sw-b(config-if)# switchport mode access
+access-sw-b(config-if)# switchport access vlan 50
+access-sw-b(config-if)# switchport voice vlan 220
+access-sw-b(config-if)# mls qos trust cos
+access-sw-b(config-if)# auto qos voip cisco-phone
+access-sw-b(config-if)# spanning-tree portfast
+```
+
+Le point de confiance de qualité de service se situe au plus près de l'utilisateur : on ne fait confiance aux marquages que sur les ports où un téléphone authentifiable est branché. Sur les autres ports, les paquets sont reclassés afin qu'un poste ne puisse pas s'octroyer indûment la priorité la plus élevée. Ce détail a son importance pendant un incident : si la voix devient saccadée alors que le débit global reste faible, vérifiez d'abord les files de sortie et les marquages, pas la bande passante.
+
+Les points d'accès Wi-Fi relèvent du même répertoire, avec une particularité : un seul câble porte plusieurs réseaux. Chaque réseau sans fil est associé côté commutateur à un VLAN, l'invité, le personnel, les caméras, et le point d'accès se charge d'insérer l'étiquette adéquate. Le port qui le dessert est donc un trunk étroit, limité aux seuls VLAN utiles, avec un domaine natif vide et un plafond de tempête. L'isolement des invités se traite ensuite dans la logique du point d'accès : filtrage entre clients, sortie directe vers l'Internet, interdiction d'atteindre les VLAN internes. Un oubli dans la liste des VLAN autorisés se manifeste par un réseau invité qui fonctionne mais dont les postes interviennent dans le VLAN des serveurs, ou l'inverse.
+
+La documentation constitue enfin la dernière protection du réseau, et elle est gratuite. Trois artefacts suffisent : un plan de VLAN tenu à jour, une liste des ports avec leur affectation réelle, et un voisinage enregistré à partir des annonces LLDP. Tant que ces documents restent exacts, un dépannage dure quelques minutes ; dès qu'ils dérivent, chaque incident devient une enquête. Complétez-les à chaque modification, archivez la configuration de référence et conservez la configuration en service : la comparaison entre les deux révèle souvent la modification accidentelle qui a coupé un bâtiment entier.
+
+```ios
+core-sw# show lldp neighbors detail
+core-sw# show running-config | include description
+core-sw# show interfaces status
+access-sw-b# show interfaces switchport | begin Name
+```
+
+Une habitude complémentaire vaut tous les outils : enregistrer la configuration après chaque intervention et conserver la précédente. L'écart entre deux versions raconte l'histoire de l'incident, ligne par ligne. Un VLAN retiré d'une liste autorisée, un port replacé en accès, une règle de sécurité activée sur un lien montant : ces trois erreurs représentent à elles seules la majorité des coupures observées sur des réseaux de taille moyenne, et toutes trois se retrouvent en une seconde dans un diff. Prenez enfin l'usage de noter, avant de toucher à un équipement, la commande exacte que vous allez exécuter et le résultat attendu. Cette discipline transforme une modification risquée en expérience reproductible, et elle distingue l'administrateur expérimenté du bricoleur chanceux.
+$lesson$),
+  ('net-c2-p10', 'net-c2', 10, $lesson$À retenir$lesson$, $lesson$
+- Une trame Ethernet porte des adresses MAC, une étiquette de protocole et une somme de contrôle ; l'adresse IP reste à l'intérieur de la charge utile.
+- Le commutateur apprend les adresses MAC sources, remplit sa table CAM et transmet, filtre ou inonde selon la destination.
+- Une entrée de table MAC vieillit en général après trois cents secondes ; une table saturée provoque des inondations permanentes.
+- Un port en accès appartient à un seul VLAN et n'étiquette pas ses trames ; un trunk en transporte plusieurs et les étiquette en 802.1Q.
+- L'étiquette 802.1Q ajoute quatre octets et permet 4094 VLANs ; trois bits portent la priorité de trafic.
+- Le VLAN natif traverse le trunk sans étiquette : réservez-lui un domaine vide et videz le VLAN 1 de la liste des VLAN autorisés.
+- Chaque VLAN correspond en général à un sous-réseau et à une passerelle ; sans ip routing, les SVI ne communiquent pas entre elles.
+- ARP diffuse une question et reçoit une réponse unicast ; le couple obtenu est conservé dans un cache à durée limitée.
+- L'ARP gratuitor sert à détecter les conflits et à basculer les passerelles redondantes.
+- L'inspection ARP dynamique jette les annonces incohérentes avec la table d'espionnage DHCP.
+- Une tempête de broadcast naît d'une boucle, Ethernet n'ayant aucun champ de durée de vie.
+- Rapid-PVST+ supprime les boucles, PortFast accélère les branches finales et BPDU guard isole les intrus.
+- Le storm-control borne la part de diffusions et de multidiffusions tolérée sur chaque port.
+- La sécurité de port limite le nombre d'adresses MAC et impose une réaction en cas de dépassement.
+$lesson$),
+  ('net-c2-p11', 'net-c2', 11, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Piège : configurer un trunk côté cœur mais oublier le VLAN côté accès → Correction : vérifiez avec show interfaces trunk des deux côtés après chaque changement.
+- Piège : laisser le VLAN natif par défaut en VLAN 1 → Correction : affectez un domaine vide, par exemple vlan 99, aux deux extrémités du trunk.
+- Piège : créer les SVI mais oublier la commande ip routing → Correction : activez le routage, sinon chaque VLAN reste isolé malgré des adresses correctes.
+- Piège : activer PortFast sur un lien inter-commutateurs → Correction : PortFast ne convient qu'aux branches finales, sans équipement derrière.
+- Piège : désactiver l'arbre couvrant pour gagner en performance → Correction : laissez-le actif et supprimez la boucle physique à la source.
+- Piège : voir un port en err-disabled et le réactiver immédiatement → Correction : identifiez d'abord la règle déclenchée, puis employez errdisable recovery.
+- Piège : confondre domaine de diffusion et domaine de routage → Correction : un VLAN sépare les diffusions, un routeur sépare les réseaux.
+- Piège : enregistrer une entrée ARP statique puis changer l'adresse de la machine → Correction : purgez l'entrée avec arp -d avant de reconfigurer.
+- Piège : activer l'inspection ARP dynamique alors que les serveurs ont des adresses fixes → Correction : déclarez ces adresses en entrées statiques dans la table.
+- Piège : conclure à une panne applicative sans regarder les compteurs → Correction : commencez par show interfaces status et les compteurs d'erreurs.
+$lesson$),
+  ('net-c2-p12', 'net-c2', 12, $lesson$Pour aller plus loin$lesson$, $lesson$
+La norme qui décrit l'étiquetage des trames reste la référence absolue pour approfondir le trunking : elle détaille la structure du tag, les règles de traitement du VLAN natif et les mécanismes de priorisation. Consultez-la sur https://www.ieee802.org/1/pages/802.1Q.html, et complétez avec la page de l'arbre couvrant sur https://www.ieee802.org/1/pages/802.1D.html, qui explique l'élection du pont racine, les états de port et les conditions de reprise après panne. Ces deux documents sont denses, mais même leur lecture partielle vous donnera une longueur d'avance sur la plupart des configurations que vous rencontrerez.
+
+Côté résolution d'adresses, la RFC 826 reste un texte court et remarquablement lisible, écrit à une époque où les protocoles tiennent en quelques pages : https://datatracker.ietf.org/doc/html/rfc826. Pour comprendre comment une station prend une adresse sans serveur et détecte les conflits, lisez ensuite la RFC 5227 sur les sondes et annonces ARP : https://datatracker.ietf.org/doc/html/rfc5227. Enfin, les documentations constructeurs détaillent les commandes employées dans ce chapitre ; recherchez les guides de configuration des plateformes que vous utilisez, par exemple les chapitres consacrés à la sécurité de port, à l'espionnage DHCP et à l'inspection ARP dynamique. Ouvrez ces pages le jour où une question précise se pose plutôt que de tenter de les apprendre par cœur.
+$lesson$),
+  ('net-c2-p13', 'net-c2', 13, $lesson$Et maintenant : la vidéo du chapitre puis l'exercice pratique$lesson$, $lesson$
+La vidéo du chapitre reprend les mêmes étapes à l'écran, en partant d'une capture Wireshark pour remonter jusqu'à la configuration d'un trunk : lecture de l'étiquette 802.1Q, observation d'un échange ARP complet, puis configuration pas à pas du commutateur d'accès. Regardez-la avec un terminal ouvert à côté de vous et rejouez chaque commande, en pause si nécessaire. Une fois le visionnage terminé, passez à l'exercice pratique : configurez seul le commutateur du bâtiment B selon le cahier des charges, validez chaque point de la recette, puis coupez volontairement un VLAN du trunk et constatez l'effet avant de le rétablir.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c3-p1', 'net-c3', 1, $lesson$Comprendre : la couche transport, les ports et les conversations$lesson$, $lesson$
+Bienvenue dans le troisième chapitre du parcours Réseaux et protocoles de routage. Les deux chapitres précédents vous ont appris à achemener des trames d'une machine à une autre sur un même réseau, à segmenter ce réseau en VLAN et à attribuer à chaque machine une adresse IP valide et bien calculée. Nous restons dans le même monde, mais nous changeons d'échelle : jusqu'ici, vous parliez de cartes réseau, de commutateurs, de trames Ethernet et de plages d'adresses ; désormais, vous allez parler de processus, de services et de conversations. Une adresse IP indique bien quelle machine doit recevoir un paquet, mais elle ne dit pas duquel de ses programmes il s'agit. C'est exactement le problème que résout la couche transport, et c'est le sujet de première moitié de ce chapitre avec ses deux grands protocoles, TCP et UDP. La seconde moitié est consacrée aux services applicatifs qui font tourner un réseau d'entreprise au quotidien : DNS qui traduit les noms, DHCP qui distribue les adresses, HTTP et TLS qui sécurisent le web.
+
+À la fin de cette leçon, vous saurez faire quatre choses très concrètes, et chacune d'elles vous sera déjà arrivée sous forme d'exercice ou d'analyse de capture. Premièrement, vous saurez comparer les mécanismes de TCP et de UDP, expliquer pourquoi la poignée de main en trois temps existe, décrire le rôle des numéros de séquence, de la fenêtre glissante et du contrôle de congestion, puis justifier le choix d'un protocole pour un service donné. Deuxièmement, vous saurez diagnostiquer une résolution DNS : isoler le client, le résolveur et la zone, interroger le bon serveur avec dig, distinguer une réponse NXDOMAIN d'un échec SERVFAIL ou d'un simple délai d'attente, et repérer les pièges des caches et des durées de vie. Troisièmement, vous saurez suivre un bail DHCP depuis le premier DISCOVER jusqu'au renouvellement de T1, lire les quatre messages du processus DORA dans une capture, identifier les options utiles et dépanner les pannes classiques comme une plage épuisée ou un serveur parasite. Quatrièmement, vous saurez suivre une session TLS de bout en bout : comprendre ce qui se passe entre le premier paquet TCP et le premier octet de données chiffrées, vérifier un certificat et sa chaîne de confiance, et distinguer les symptômes d'un certificat expiré de ceux d'une chaîne incomplète.
+
+Le fil rouge de tout le chapitre sera un exemple unique, repris d'un bout à l'autre, afin que vous ne perdiez jamais le lien entre les notions : le site web d'une médiathèque municipale, hébergé sur un serveur du VLAN des services, consulté depuis les postes publics du VLAN 10, le Wi-Fi des visiteurs du VLAN 20 et l'extérieur. Un usager tape un nom de domaine dans son navigateur, et en moins d'une seconde une dizaine d'étapes se déroulent invisibles : le poste demande son adresse au serveur DHCP s'il vient d'arriver, il interroge le résolveur DNS pour transformer le nom en adresse IP, il établit une connexion TCP sur le port 443 avec un serveur qui se trouve peut-être derrière plusieurs équipements, il négocie une session TLS, puis il envoie une requête HTTP et reçoit une réponse. Chaque étape peut échouer, et chacune échoue à sa manière, avec ses propres messages d'erreur et ses propres commandes de vérification. Apprendre le réseau, c'est apprendre à remonter cette chaîne dans le bon ordre.
+
+Un dernier conseil avant d'entrer dans le vif du sujet, sur la manière d'aborder ce cours. Comme pour la programmation, rien ne remplace l'observation du réel : les protocoles de ce chapitre sont parmi les plus faciles à observer, parce qu'ils transportent du texte et que leurs en-têtes sont courts. Installez Wireshark sur une machine de test ou ouvrez un terminal avec tcpdump, puis capturez une visite à un site que vous connaissez : vous verrez apparaître les segments SYN, SYN-ACK et ACK de la poignée de main, la requête DNS et sa réponse, l'échange ClientHello et ServerHello de TLS, la requête HTTP et la réponse. Chaque notion abstraitement expliquée dans les pages qui suivent correspondra alors à une ligne concrète dans votre capture. Les commandes de ce chapitre sont toutes du même type : dig, nslookup, ipconfig, dhclient, ss, netstat, curl, openssl, tcpdump. Elles sont courtes, disponibles sur tous les systèmes et se combinent en une méthode de diagnostic que vous réutiliserez toute votre carrière.
+
+
+
+Pour mesurer l'utilité de la couche transport, repartons d'un problème précis. Votre machine reçoit un paquet IP dont l'adresse de destination est la sienne : c'est très bien, le paquet est arrivé au bon endroit. Mais sur une machine contemporaine, plusieurs programmes attendent simultanément des données : un navigateur, un client de messagerie, une horloge qui synchronise l'heure, un agent de supervision, peut-être un serveur de fichiers. Lequel de ces programmes doit recevoir le paquet ? Aucun des en-têtes IP ne contient cette information. La couche transport la fournit, en ajoutant à chaque segment deux nombres de 16 bits appelés port source et port destination. On compare volontairement ce mécanisme à celui d'un immeuble : l'adresse IP est le numéro de l'immeuble, le port est le numéro de l'appartement, et le facteur distribue le courrier en fonction des deux. Sans numéro d'appartement, la lettre arrive dans le hall et personne ne sait à qui elle revient.
+
+Les ports vont de 0 à 65535, ce qui donne 65536 valeurs possibles pour chaque sens de communication. Par convention, on en découpe trois plages. Les ports de 0 à 1023 sont dits bien connus : ce sont ceux que les systèmes ont réservés historiquement aux services standardisés, et il faut généralement les privilèges d'administrateur pour les écouter. Les ports de 1024 à 49151 sont enregistrés, attribués par l'autorité de gestion des numéros pour éviter les collisions entre logiciels. Les ports de 49152 à 65535 sont dits éphémères : votre navigateur, lorsqu'il se connecte à un site, se voit attribuer aléatoirement l'un de ces ports pour identifier sa propre extrémité de la conversation. Cette distinction a un usage direct en diagnostic : quand vous regardez une table de connexions, un port élevé en colonne source vous indique qu'il s'agit d'une connexion initiée par ce poste, tandis qu'un port bas en colonne destination vous indique le service contacté.
+
+La notion complète qui relie les deux mondes est celle de socket. Une socket n'est pas seulement un numéro de port : c'est la combinaison d'une adresse IP locale, d'un port local, d'une adresse IP distante et d'un port distant. Cette quadruple d'identifiants suffit à distinguer sans ambiguïté n'importe quelle conversation en cours sur la machine. Concrètement, un serveur web écoute sur le port 443, en attente ; il peut simultanément servir cinquante clients, et chacun de ces cinquante clients occupe une socket différente malgré le même port serveur, car l'adresse et le port du client varient. C'est la raison pour laquelle une seule machine peut héberger des centaines de connexions simultanées sur un seul port sans jamais confondre deux échanges. Retenez la formule : une connexion TCP est identifiée par un couple de sockets, c'est-à-dire par quatre valeurs.
+
+Avant que les segments ne circulent, il faut que la couche transport et la couche réseau s'entendent sur le protocole employé. Dans l'en-tête IP, un champ nommé protocol porte ce choix : la valeur 6 désigne TCP, la valeur 17 désigne UDP, la valeur 1 ICMP. À la réception, la machine lit ce champ et remet le contenu au bon gestionnaire. On dit que la couche transport réalise un multiplexage à l'émission, en ajoutant des identifiants, et un démultiplexage à la réception, en les lisant. Ce mécanisme explique aussi un phénomène que vous rencontrerez dans vos pare-feu : pour autoriser un service, il faut ouvrir à la fois le bon port et le bon protocole. Autoriser le TCP 443 ne laisse passer aucun paquet UDP, et l'inverse est vrai également.
+
+Un dernier point technique, souvent négligé et pourtant fondateur : la segmentation. Les réseaux Ethernet manipulent des trames limitées en taille, typiquement 1500 octets de charge utile, et l'adresseur IP ne fragmente volontiers plus les paquets sur le chemin. La couche transport découpe donc le flux d'octets de l'application en morceaux qui tiendront dans une trame, en prenant soin de ne pas couper au milieu d'un mot si le protocole le demande, et elle annonce la taille maximale de segment utile dans la poignée de main. Un segment trop grand fragmenté en route est une cause classique de dégradation : le paquet voyage avec le drapeau du fragment interdit, et si un équipement en chemin refuse de le fragmenter sans renvoyer le message d'erreur, la connexion se bloque silencieusement. Vous reverrez ce scénario dans le mini-projet, car il produit exactement le symptôme d'un site web qui refuse de charger sur certains liens.
+
+| Service | Port | Protocole | Rôle rappelé en une phrase |
+| --- | --- | --- | --- |
+| SSH | 22 | TCP | Terminal distant chiffré, administration des équipements |
+| DNS | 53 | UDP puis TCP | Résolution des noms, UDP pour les échanges courts, TCP pour les grandes zones et les transferts |
+| DHCP | 67 et 68 | UDP | Serveur sur 67, client sur 68, diffusion pour trouver un serveur |
+| HTTP | 80 | TCP | Site web en clair, redirigé vers HTTPS aujourd'hui |
+| HTTPS | 443 | TCP | Site web chiffré par TLS, le port des sessions sécurisées |
+| NTP | 123 | UDP | Synchronisation d'horloge, messages courts et périodiques |
+| SNMP | 161 | UDP | Supervision des équipements, interrogations et trap |
+| MySQL | 3306 | TCP | Base de données, connexion fiable avec ordre garanti |
+
+Pour visualiser cette table sur votre propre machine, la commande ss du paquet iproute2 est la plus rapide sous Linux, et netstat reste disponible partout. L'option l affiche les services qui écoutent, l'option n évite la résolution inverse qui ralentirait l'affichage, et l'option p montre le programme propriétaire lorsque vous disposez des droits. Sous Windows, l'équivalent exact s'écrit netstat -ano et le résultat se lit de la même manière : colonnes état, adresse locale, adresse distante.
+
+```text
+$ ss -lntup
+Netid  State   Recv-Q  Send-Q  Local Address:Port   Peer Address:Port
+tcp    LISTEN  0       511     0.0.0.0:80           0.0.0.0:*      users:(("nginx",pid=612,fd=6))
+tcp    LISTEN  0       128     0.0.0.0:22           0.0.0.0:*      users:(("sshd",pid=701,fd=3))
+tcp    LISTEN  0       4096    10.10.0.53:53        0.0.0.0:*      users:(("named",pid=844,fd=5))
+udp    UNCONN  0       0       0.0.0.0:67           0.0.0.0:*      users:(("dhcpd",pid=910,fd=7))
+$ ss -tn state established
+State   Recv-Q  Send-Q  Local Address:Port        Peer Address:Port
+ESTAB   0       0       10.10.10.24:443           10.10.10.50:54321
+ESTAB   0       0       10.10.10.24:22            10.10.10.5:51204
+```
+$lesson$),
+  ('net-c3-p2', 'net-c3', 2, $lesson$TCP : établir une connexion fiable, étape par étape$lesson$, $lesson$
+TCP, l'acronyme de Transmission Control Protocol, est le protocole de couche transport que vous utiliserez la plupart du temps sans jamais le voir. Il fournit trois garanties que UDP ne donne pas : un service orienté connexion, une livraison sans perte ni duplication, et un ordre strict des octets. Sa définition formelle insiste sur un point capital : TCP ne livre pas des messages mais un flux d'octets. L'application n'a aucune raison de connaître la taille des segments qui ont servi à transporter ce flux : la couche transport a découpé, le récepteur a recomposé, et le programme reçoit exactement la suite d'octets qu'il a envoyée, dans le même ordre. Une comparaison familière aide à fixer l'idée : UDP expédie des cartes postales qui peuvent se perdre ou arriver dans le désordre, alors TCP organise un colis suivi, numéroté, dont chaque étape est confirmée par un reçu.
+
+La garantie commence par l'établissement de la connexion, réalisé par la célèbre poignée de main en trois temps, qu'on appelle aussi three-way handshake. L'idée sous-jacente est simple à énoncer mais essentielle à comprendre : les deux extrémités doivent se synchroniser sur un numéro de séquence initial, et aucune des deux ne peut deviner celui de l'autre. Le client envoie donc un premier segment portant le drapeau SYN et son numéro de séquence initial, souvent noté x. Le serveur répond par un segment portant à la fois SYN et ACK : il accepte la demande, donne son propre numéro de séquence initial y, et accuse réception du numéro x du client en annonçant qu'il attend x plus un. Le client accuse à son tour réception du numéro y du serveur. Trois segments ont circulé, deux numéros de séquence ont été échangés, et les deux paquets d'ouverture ont été confirmés : la connexion est en état établi. Un segment SYN perdu est simplement retransmis, un SYN-ACK perdu également ; le protocole ne suppose jamais qu'un message d'ouverture est arrivé.
+
+```text
+Capture Wireshark : poignée de main TCP vers le port 443
+No.   Time        Source          Destination     Protocol  Info
+1     0.000000    10.10.10.50     10.10.10.24     TCP       54321 → 443 [SYN] Seq=0 Win=64240 Len=0 MSS=1460 SACK_PERM=1
+2     0.001234    10.10.10.24     10.10.10.50     TCP       443 → 54321 [SYN, ACK] Seq=0 Ack=1 Win=65160 Len=0 MSS=1460 SACK_PERM=1
+3     0.001456    10.10.10.50     10.10.10.24     TCP       443 [ACK] Seq=1 Ack=1 Win=64240 Len=0
+4     0.001500    10.10.10.50     10.10.10.24     TLSv1.3   Client Hello (SNI=lilas-biblio.fr)
+5     0.004210    10.10.10.24     10.10.10.50     TLSv1.3   Server Hello, Change Cipher Spec, Application Data
+```
+
+Ce que vous lisez dans cette capture mérite qu'on s'y attarde, car vous le relirez des dizaines de fois. La première ligne montre le client qui annonce son port source 54321 et le MSS, c'est-à-dire la taille maximale de segment utile qu'il accepte de recevoir, ici 1460 octets, le poids utile classique d'une trame Ethernet de 1500 octets. La seconde ligne montre le serveur qui répond avec ses propres paramètres et accuse déjà réception, puisque la colonne Ack vaut 1 alors que la colonne Seq du client valait 0 : l'accusé de réception désigne toujours le prochain numéro attendu, donc celui-ci pointe juste après le numéro 0. La troisième ligne referme la poignée de main. Dès la quatrième ligne, le contenu n'est plus du TCP mais du TLS : la couche transport a fait son travail et se contente désormais de transporter des octets qui lui sont indifférents.
+
+Les drapeaux que vous rencontrerez dans vos captures tiennent en un mot : SYN signale l'ouverture, ACK confirme, FIN demande la fermeture propre, RST interrompt brutalement, PSH demande à l'application de traiter sans attendre, et URG signale des données prioritaires. Un drapeau rare mais décisif est le drapeau ACK qui n'est jamais seul dans un accusé : un segment sans ACK n'accuse rien. Cette grammaire vous permet de comprendre un symptôme avant même d'avoir identifié la cause : un flux fait de SYN répétés sans réponse signifie que le service n'écoute pas ou que quelque chose bloque ; des RST immédiats signifient que le service refuse la connexion ; un SYN suivi d'un SYN-ACK suivi d'un nouveau SYN indique une négociation de paramètres qui échoue.
+
+Le second pilier de la fiabilité est la numérotation. Chaque octet envoyé porte un numéro de séquence, et le récepteur acquitte en indiquant le numéro du prochain octet attendu. Si l'émetteur ne reçoit pas d'accusé pour une plage donnée dans le délai calculé, il renvoie les données. Le protocole tolère donc les accusations cumulatives : un seul accusé peut couvrir plusieurs segments reçus, ce qui économise le trafic. Il tolère aussi les accusations dupliquées, qui sont en réalité utiles : trois accusations identiques successives indiquent que les segments intermédiaires sont arrivés alors que l'un d'eux a été perdu, et déclenchent une retransmission anticipée sans attendre le délai d'expiration. Vous verrez ce phénomène apparaître dans les captures, sous la forme de trois ACK portant le même numéro.
+
+Enfin, TCP distingue soigneusement la fiabilité du débit. La fiabilité dit si les données arrivent ; le contrôle de flux et le contrôle de congestion disent à quelle vitesse on peut les envoyer sans submerger le récepteur ni le réseau. C'est le sujet de la section suivante, mais gardez déjà l'idée : une connexion TCP peut être parfaitement fiable et pourtant terriblement lente, et un réseau saturé n'est pas nécessairement un réseau défaillant. Savoir lire la taille de fenêtre dans une capture vous évitera de conclure à la hâte qu'un serveur est en panne alors qu'il met simplement en attente un récepteur débordé.
+$lesson$),
+  ('net-c3-p3', 'net-c3', 3, $lesson$Terminer une connexion : états, fermeture et diagnostics$lesson$, $lesson$
+Une connexion TCP a un début, une vie et une fin, et chacune de ces trois phases possède sa propre grammaire. La fermeture mérite autant d'attention que l'ouverture, parce qu'elle est la source de la majorité des anomalies observées sur des serveurs très sollicités. Là où la poignée de main occupait trois segments, la fermeture propre en occupe quatre : chaque côté, à son tour, envoie un segment portant le drapeau FIN pour annoncer qu'il n'a plus de données à émettre, et l'autre côté accuse réception. Le client envoie FIN, le serveur répond ACK, puis le serveur envoie à son tour son FIN et le client achève par un ACK. Deux demi-fermetures, deux accusés, et la conversation est close. Cette symétrie vient de la nature même du protocole : une connexion TCP est bidirectionnelle et chaque sens se ferme indépendamment, si bien qu'un côté peut avoir terminé l'envoi de ses données tout en continuant d'en recevoir.
+
+Cette mécanique produit un état qui intrigue souvent les débutants lorsqu'il apparaît dans une table de connexions : le client a envoyé FIN, le serveur a accusé réception, mais le serveur n'a pas encore fermé de son côté. Il reste dans un état nommé CLOSE_WAIT, qui se traduit littéralement par attente de fermeture, et il y demeure aussi longtemps que le processus applicatif ne referme pas sa socket. Quand vous voyez des centaines de connexions en CLOSE_WAIT sur un serveur, le réseau n'est pas en cause : c'est le programme qui fuit des descripteurs de fichiers. C'est un diagnostic purement applicatif, mais il se lit dans une commande de couche transport, et savoir le faire vous fera gagner une heure de recherche. L'opposé se produit également : si le client ferme et que le serveur tarde, le client reste dans FIN_WAIT_2, en attendant un FIN qui ne vient pas.
+
+Après le dernier accusé, la connexion n'est pas immédiatement oubliée. L'extrémité qui a fermé en premier demeure un temps dans un état nommé TIME_WAIT, d'une durée égale à deux fois le délai maximum de vie d'un segment, soit une cinquantaine de secondes dans la pratique. Cette attente a une raison précise : si le dernier accusé se perdait, l'autre côté renverrait son FIN, et la machine doit pouvoir répondre à nouveau sans confondre ce retour avec une nouvelle connexion portant les mêmes numéros. C'est aussi la raison pour laquelle un serveur qui accepte énormément de connexions courtes voit s'accumuler des entrées en TIME_WAIT et peut, à force, manquer de ports éphémères pour ses propres connexions sortantes. Les correctifs existent, mais le premier réflexe correct est de comprendre le phénomène avant de modifier des paramètres du noyau.
+
+```text
+Fermeture propre (quatre segments) puis états courants
+  client                                  serveur
+    |  FIN  (je n'ai plus rien à écrire)    |
+    | ----------------------------------->  |
+    |  ACK  (reçu)                          |
+    | <-----------------------------------  |
+    |                                     |  le processus applicatif
+    |  FIN  (à mon tour, plus rien)        |  referme enfin sa socket
+    | <-----------------------------------  |
+    |  ACK                                   |
+    | ----------------------------------->  |
+    |  TIME_WAIT environ 60 s               |
+
+$ ss -tan | awk '{print $1}' | sort | uniq -c | sort -rn
+     142 ESTAB
+      60 TIME-WAIT
+       4 CLOSE-WAIT
+       1 LISTEN
+```
+
+Il existe une alternative brutale à cette fermeture gracieuse, le drapeau RST. Un segment RST met fin à la connexion sans acquittement, sans délai d'attente, sans état intermédiaire. Il apparaît quand une machine reçoit un paquet pour un port où plus personne n'écoute, quand un processus est tué alors qu'une connexion était ouverte, ou quand un pare-feu veut couper net une session. Lire un RST ne signifie donc pas que le réseau est cassé, mais que quelqu'un a décidé de refermer brutalement. Un cas classique mérite d'être signalé : lorsqu'un serveur redémarre, les clients qui possédaient encore une connexion en mémoire envoient des données, reçoivent un RST, et doivent ouvrir une nouvelle connexion. Si l'application n'est pas prévue pour réessayer, l'utilisateur voit une erreur au moment précis du redémarrage. Enfin, gardez l'existence du keep-alive : TCP peut envoyer des sondes pour détecter qu'un pair a disparu, mais cette fonctionnalité est désactivée par défaut et ses délais sont souvent très longs ; ne comptez pas sur elle pour déceler rapidement un poste qui a quitté le réseau.
+$lesson$),
+  ('net-c3-p4', 'net-c3', 4, $lesson$Contrôle de flux et contrôle de congestion : la vitesse mesurée$lesson$, $lesson$
+Le second grand mécanisme de TCP répond à une question différente de la fiabilité : combien d'octets peut-on envoyer avant d'avoir la preuve que le précédent lot est arrivé ? Sans régulation, un émetteur rapide submergerait un récepteur lent, qui verrait son tampon déborder et ses données jetées. La couche transport introduit donc une fenêtre, annonce sa taille à chaque accusé de réception, et refuse d'avancer au-delà. On parle de fenêtre glissante : à chaque accusé reçu, la fenêtre se décale d'autant, autorisant de nouveaux octets à partir du numéro de séquence confirmé. Quand la fenêtre tombe à zéro, l'émetteur s'arrête proprement et attend qu'elle soit réouverte. C'est le contrôle de flux, et il se lit directement dans la colonne Win d'une capture : une fenêtre à zéro n'est pas une panne, c'est un récepteur qui demande du temps.
+
+Le contrôle de congestion traite d'un autre obstacle : le réseau lui-même, dont les équipements intermédiaires disposent de tampons finis. Si l'émetteur injecte plus vite que les routeurs ne peuvent évacuer, des paquets sont perdus, et chaque perte déclenche des retransmissions qui aggravent encore la congestion. TCP règle le problème avec une logique de réaction progressive, décrite par l'algorithme de lancement progressif, ou slow start. Au début de la connexion, une variable appelée fenêtre de congestion, notée cwnd, vaut un seul segment ; elle double à chaque tour aller-retour complet, c'est-à-dire à chaque accusé qui revient. La croissance est donc exponentielle mais prudente. Quand elle atteint un seuil appelé ssthresh, ou lorsqu'une perte est détectée, la croissance passe à une augmentation linéaire d'un segment par aller-retour. Le but est d'occuper rapidement le lien disponible sans dépasser brutalement ce que le chemin peut absorber.
+
+À la perte, TCP ne se contente pas d'attendre l'expiration du délai : il distingue deux réactions. Le retransmettement rapide, ou fast retransmit, se déclenche dès trois accusés dupliqués : l'émetteur en déduit que le segment intermédiaire a disparu et le renvoie immédiatement, sans attendre le chronomètre, puis bascule en récupération rapide où il divise la fenêtre de congestion au lieu de repartir de zéro. Le cas plus lent est l'expiration du délai de retransmission, calculé dynamiquement à partir d'un aller-retour lissé et de sa variance : le premier échantillon dure un aller-retour complet, les suivants se rapprochent de la valeur mesurée. Un délai trop court provoque des retransmissions inutiles, un délai trop long laisse la connexion inerte. Quand une connexion est lente, la bonne question n'est donc pas seulement quel est le débit, mais quelle réaction TCP met en œuvre : accusés dupliqués, expiration, ou fenêtre à zéro.
+
+| Étape | Déclencheur | Effet sur la fenêtre de congestion | Ce que cela indique dans une capture |
+| --- | --- | --- | --- |
+| Lancement progressif | Début de connexion | Doublement à chaque aller-retour à partir d'un segment | Accélérations rapides puis ralentissement |
+| Évitement de congestion | Dépassement du seuil ssthresh | Croissance linéaire d'un segment par aller-retour | Phase régulière et stable |
+| Réduction mi-voie | Trois accusés dupliqués | Division par deux, passage en récupération rapide | Trois ACK identiques puis retransmission |
+| Expiration | Délai de retransmission dépassé | Retour au lancement progressif, seuil divisé par deux | Silences d'environ 200 à 400 ms |
+| Fenêtre à zéro | Tampon du récepteur plein | Envoi suspendu jusqu'à réouverture | ACK avec Win 0 puis sondes de réouverture |
+
+Un exemple concret vous fixera l'ensemble. Un poste télécharge un gros fichier depuis un serveur local : la fenêtre de congestion croît exponentiellement, la liaison devient saturée, les accusés se bousculent, puis un tampon de commutateur déborde et un segment se perd. TCP détecte trois accusés dupliqués, renvoie le segment manquant, divise la fenêtre par deux, et repart en croissance linéaire. Sur une capture, vous observerez la séquence caractéristique : une phase d'accélération, une coupure nette, une reprise régulière. Si en revanche le ralentissement se produit sans accusé dupliqué et avec Win 0, le réseau n'est pas en cause : c'est le récepteur qui est lent. Savoir distinguer ces deux situations à la seule lecture des accusés est la compétence qui sépare un diagnostic précis d'une devinette.
+
+```text
+Fenêtre glissante vue par l'émetteur, fenêtre de 4 segments
+ numéros de séquence :   1   2   3   4   5   6   7   8   9  10  11  12
+ fenêtre initiale       [   4 segments autorisés            ]
+ accusé reçu = 2        [   4 segments autorisés            ]  (glisse de 2)
+ accusé reçu = 5              [   4 segments               ]
+ accusé reçu = 9 Win 0                              [ vide : attente ]
+
+$ ss -ti dst 10.10.10.24
+ESTAB  cwnd:10  ssthresh:20  bytes_acked:524288  rtt:12.4/1.2  rcv_space:65535
+```
+$lesson$),
+  ('net-c3-p5', 'net-c3', 5, $lesson$UDP : la voie rapide, sans garantie$lesson$, $lesson$
+UDP, User Datagram Protocol, tient dans un en-tête de huit octets, ce qui en fait le protocole de transport le plus minimaliste du réseau IP. Ces huit octets contiennent quatre champs seulement : le port source, le port destination, la longueur totale du datagramme et une somme de contrôle destinée à détecter une altération. Rien d'autre. Il n'y a pas de numéro de séquence, pas d'accusé de réception, pas de fenêtre, pas de chronomètre de retransmission, pas de drapeau, pas de poignée de main. L'application émet un datagramme, le réseau le transporte s'il le peut, et personne ne rend de compte. Cette simplicité n'est pas un défaut d'ambition : c'est un choix délibéré, celui de ne pas faire payer à tous les usages le coût d'une garantie que certains n'attendent pas. Le datagramme peut contenir jusqu'à 65 507 octets utiles en IPv4, mais en pratique on reste très en deçà pour tenir dans une trame sans fragmentation.
+
+Tout ce que TCP apporte, UDP l'ignore, et les conséquences doivent être claires avant de choisir. Un datagramme peut se perdre : UDP n'enverra jamais de retransmission, l'application verra simplement une requête sans réponse. Il peut arriver deux fois, ou arriver après un autre émis plus tard, et le protocole ne déordera rien. Il peut même être altéré en route sans que le détecteur ne signale quoi que ce soit, sauf si la somme de contrôle est renseignée. Cette dernière est facultative en IPv4, où elle était historiquement souvent omise pour alléger le calcul, et obligatoire en IPv6, où la détection d'erreur est considérée comme indispensable. Aucune de ces faiblesses n'est dramatique quand l'application sait ce qu'elle fait, et c'est précisément le contrat : UDP fournit la transmission, l'application fournit la logique.
+
+Alors pourquoi tant de services y ont recours ? Trois raisons reviennent systématiquement. La première est la latence : sans poignée de main, sans accusé, sans attente de retransmission, le premier octet part immédiatement et un datagramme perdu n'entraîne aucune pause, contrairement à TCP où la perte bloque l'envoi suivant en attendant l'accusé retardé. On appelle ce phénomène le blocage en tête de file, et il est fatal pour la voix ou la vidéo : vingt millisecondes de silence se remarquent, la perte d'une image ne se remarque pas. La seconde raison est la simplicité des échanges ponctuels : une requête DNS ou une interrogation d'horloge tient en un message et sa réponse, établir une connexion entière serait du luxe. La troisième est la diffusion : UDP transporte naturellement les adresses de diffusion et de multidiffusion, ce qui permet de parler à plusieurs destinataires d'un coup, une capacité que TCP ne possède pas.
+
+Ces choix ont un revers qu'il faut énoncer sans détour. Un service UDP qui débite beaucoup, sans mécanisme de régulation, peut saturer un lien alors même que chaque émetteur se croit raisonnable : personne ne contrôle la congestion au niveau transport. C'est la raison pour laquelle les protocoles contemporains réimplémentent une partie de TCP au-dessus d'UDP. QUIC, la base de HTTP/3, fournit accusés, ordre, retransmission et contrôle de congestion dans son propre code, tout en gardant la latence de démarrage faible d'UDP. RTP, utilisé pour la VoIP et le streaming, ajoute numérotation et horodatage, accompagné de RTCP qui remonte des statistiques de perte. Le point à retenir n'est donc pas que UDP remplace TCP, mais que la frontière de responsabilité se déplace : moins de travail dans le protocole, plus de travail dans l'application.
+
+```text
+En-tête UDP : 8 octets seulement (chacun fait 16 bits)
+ +----------------+----------------+
+ |  Port source   | Port destin.   |
+ +----------------+----------------+
+ |   Longueur     | Somme contrôle |
+ +----------------+----------------+
+ |        Données applicatives     |
+ +---------------------------------+
+
+Requête DNS typique échangée sur UDP 53 (capture Wireshark)
+No.   Time      Source         Destination    Protocol  Info
+1     0.000000  10.10.10.50    10.10.0.53     DNS       Standard query 0x1f2a A www.lilas-biblio.fr
+2     0.004120  10.10.0.53     10.10.10.50    DNS       Standard query response 0x1f2a A 10.10.10.24
+```
+
+Voici, résumé en quelques lignes, comment arbitrer au quotidien. Choisissez TCP quand l'ordre et l'absence de perte sont indispensables, quand l'échange comporte plusieurs allers-retours, quand le volume est important ou quand il faut une connexion fiable avec un service précis. Choisissez UDP quand la réactivité prime, quand l'échange tient en un ou deux messages, quand vous avez besoin de diffusion, ou quand votre application est conçue pour gérer elle-même les pertes. Retenez que beaucoup de services utilisent les deux : DNS sollicite UDP pour ses requêtes courtes et bascule sur TCP pour les réponses longues ou les transferts de zone, et un même port peut servir les deux protocoles sans confusion, car ils sont identifiés séparément dans l'en-tête IP.
+
+- UDP ajoute seulement ports, longueur et somme de contrôle, pour huit octets d'en-tête.
+- Aucune retransmission, aucun ordre garanti, aucun contrôle de congestion : l'application décide.
+- Latence minimale et absence de blocage en tête de file en font le choix de la voix, du temps réel et des requêtes ponctuelles.
+- QUIC et RTP montrent la bonne méthode : ajouter la fiabilité au-dessus d'UDP quand elle est nécessaire.
+- Un service sans régulation peut saturer un lien : surveillez-le avec les mêmes outils qu'un service TCP.
+$lesson$),
+  ('net-c3-p6', 'net-c3', 6, $lesson$Choisir entre TCP et UDP : une décision d'usage$lesson$, $lesson$
+La question se pose toujours de la même façon dans un projet : quel service allons-nous faire tourner, et qu'attend-on de lui ? Quatre critères tranchent presque à eux seuls. Le premier est la tolérance aux pertes : si perdre un message corrompt le résultat, il faut TCP ; si une perte se rattrape à la couche suivante ou se voit à l'écran, UDP suffit. Le second est la réactivité : un échange qui doit démarrer en quelques millisecondes ne supporte pas l'aller-retour supplémentaire de la poignée de main. Le troisième est le nombre de destinataires : parler à une centaine de machines en même temps relève de la diffusion, donc d'UDP. Le quatrième est le volume : un flux long et structuré se décompose mal en datagrammes indépendants, alors qu'un échange en deux messages s'y prête parfaitement.
+
+De ce découpage naissent des habitudes stables qu'il vaut mieux connaître par cœur. Le web, la messagerie, les terminaux distants, les transferts de fichiers et les bases de données passent par TCP, car ils exigent l'intégrité octet par octet et l'ordre strict. Le temps réel — la voix, la vidéo en direct, les jeux multijoueurs — passe par UDP, car une retransmission arrive trop tard pour être utile et bloque en chemin les données suivantes. Les services d'infrastructure comme l'horloge, la supervision ou la découverte de pairs utilisent eux aussi UDP, parce qu'ils émettent des messages courts et périodiques dont la perte d'un exemplaire est sans conséquence. Le cas particulier du DNS mérite d'être retenu : les requêtes ordinaires voyagent en UDP sur le port 53 pour gagner du temps, mais le protocole bascule sur TCP quand la réponse dépasse la taille admise, notamment lors des transferts de zone entre serveurs autoritatifs.
+
+Un troisième genre de solutions est apparu plus récemment, et il illustre la bonne manière d'évoluer : réimplémenter la fiabilité là où elle est utile, sans en payer le coût partout. QUIC, qui sert de socle à HTTP/3, conserve UDP comme couche de transport mais ajoute ses propres accusés, son propre ordre et son propre contrôle de congestion, tout en établissant une session chiffrée dès le premier échange. Le résultat combine la simplicité de démarrage d'UDP et les garanties de TCP, avec en plus la possibilité de faire migrer une connexion d'un réseau à un autre sans la perdre, par exemple en passant du Wi-Fi à la 4G. Retenez donc la leçon de méthode : face à un besoin de fiabilité très particulier, on n'écrit pas un nouveau protocole de transport, on ajoute la logique manquante au-dessus d'UDP.
+
+| Critère | TCP | UDP |
+| --- | --- | --- |
+| Connexion | Poignée de main en trois temps avant les données | Aucune, les données partent immédiatement |
+| Fiabilité | Accusés et retransmission, aucun octet perdu en silence | Pertes, doublons et réordonnancement possibles |
+| Ordre | Séquence stricte des octets | Arrivée dans l'ordre du réseau, pas de l'émission |
+| Débit | Régulé par le contrôle de congestion | Non régulé, l'application s'en charge |
+| Diffusion | Un seul destinataire par connexion | Diffusion et multidiffusion naturelles |
+| Coût d'en-tête | Au moins 20 octets par segment | 8 octets par datagramme |
+| Usages types | Web, SSH, messagerie, bases de données, fichiers | DNS, DHCP, NTP, SNMP, VoIP, streaming, jeux |
+$lesson$),
+  ('net-c3-p7', 'net-c3', 7, $lesson$DNS : comment les noms deviennent des adresses$lesson$, $lesson$
+Aucun humain ne retient d'adresses IP, et aucun administrateur ne devrait les figer dans une configuration : elles changent quand on déplace un serveur, quand on remplace une machine, quand un service migre vers un autre site. Le Domain Name System résout ce problème en introduisant une indirection stable : on interroge un nom, et une infrastructure distribuée répond par l'adresse du moment. Au-delà de la commodité, DNS apporte un niveau d'abstraction indispensable à l'exploitation : vos liens, vos certificats et vos règles de pare-feu peuvent citer des noms, tandis que les adresses restent libres de bouger derrière. Comprendre DNS, c'est donc comprendre le système de coordonnées dans lequel vos applications vivent.
+
+L'organisation est hiérarchique et gérée collectivement. Tout en haut, le domaine racine, noté par un simple point, délègue les extensions génériques comme com ou org et les extensions nationales comme fr à des serveurs de noms dédiés, qu'on appelle les serveurs de top niveau. Ceux-ci délèguent à leur tour chaque domaine, comme lilas-biblio.fr, vers les serveurs de noms que son propriétaire a déclarés. Chaque niveau ne connaît donc que son voisin direct : c'est ce qui rend l'ensemble scalable, car aucune base centrale ne contient toutes les adresses du monde. Les zones gérées par un niveau donné sont décrites par des enregistrements NS, et le serveur qui les porte est dit autoritatif : lui seul détient la vérité pour les noms de sa zone, les autres ne font que la relayer.
+
+```text
+Hiérarchie DNS et délégations, puis trajet d'une résolution
+                         (racine)
+                            |
+        +-------------------+-------------------+
+      com.                                     fr.
+        |                                        |
+  exemples.com.                              nic.fr.
+                                               |
+                                    lilas-biblio.fr.  (autoritatif interne)
+                                               |
+                            www.lilas-biblio.fr.  →  A 10.10.10.24
+
+Trajet d'une requête récursive depuis un poste du VLAN 10
+poste → résolveur local (cache ?) → serveur racine → serveur TLD .fr
+      → serveur autoritatif de la zone → réponse remontée et mise en cache
+```
+
+La plupart du temps, votre machine ne réalise pas ce parcours elle-même : elle délègue à un résolveur, configuré par DHCP ou par l'administrateur, qui interroge les niveaux successifs au nom de tous ses clients et met les réponses en cache. On appelle cette première approche une résolution récursive, du point de vue du client, qui se contente d'envoyer une question et d'attendre. L'approche inverse est dite itérative : interpellé, un serveur répond non pas par l'adresse finale mais par une adresse de renvoi vers le niveau suivant, et c'est le demandeur qui continue. En pratique, le résolveur alterne les deux : il travaille de façon itérative avec les serveurs du monde entier, et de façon récursive avec les postes qu'il dessert. Les réponses sont mises en cache avec une durée de vie appelée TTL, indiquée par enregistrement ; un TTL court se propage vite mais charge davantage les serveurs, un TTL long soulage les serveurs mais retarde la prise en compte d'un changement.
+
+Le vocabulaire des enregistrements est court mais complet, et le connaître vous fera gagner un temps considérable en diagnostic. L'enregistrement A donne l'adresse IPv4 d'un nom, son homologue AAAA donne l'adresse IPv6, et les deux coexistent souvent pour le même nom, ce qui explique que certains postes choisissent une voie et d'autres l'autre. CNAME crée un alias pointant vers un autre nom, pratique pour un domaine nu qui renvoie vers www, mais incompatible avec les enregistrements de type MX sur le même nom. MX indique les serveurs de messagerie d'un domaine, TXT transporte des informations textuelles variées — les déclarations d'autorisation d'envoi de courrier, des vérifications de propriété, des fichiers de politique —, NS désigne les serveurs de noms d'une zone et SOA décrit les paramètres de la zone elle-même. Enfin PTR fait l'inverse des autres : il mappe une adresse vers un nom, et il est indispensable aux outils qui refusent les connexions venues d'anonymes.
+
+Un dernier détail d'implémentation a des conséquences directes sur le réseau : les échanges par défaut se font sur le port 53 en UDP, parce qu'ils sont courts ; mais dès que la réponse dépasse quelques centaines d'octets, ou qu'un transfert de zone a lieu entre deux serveurs autoritatifs, le protocole bascule sur TCP. Les grands fournisseurs utilisent aussi des extensions qui augmentent la taille de message acceptable au-dessus du premier échange, sans bascule immédiate. Sachez enfin que d'autres services parlent le même langage sur d'autres ports : la découverte automatique d'équipements domestiques utilise le port 5353, la résolution de noms de travail Windows le port 5355. Quand un pare-feu bloque l'une de ces variantes, le symptôme ressemble à un défaut de réseau alors que le service fonctionne parfaitement ailleurs.
+$lesson$),
+  ('net-c3-p8', 'net-c3', 8, $lesson$Diagnostiquer une résolution DNS pas à pas$lesson$, $lesson$
+Une démarche efficace commence toujours par isoler la couche fautive. Posez-vous trois questions dans l'ordre : le nom se résout-il du tout, quel serveur a répondu, et la réponse est-elle la bonne ? La première question sépare les pannes de nom des pannes de connexion : si le nom ne résout pas, inutile de tester le port 443. La deuxième question sépare le client du service : le même nom interrogé auprès du résolveur interne et auprès d'un résolveur public peut donner deux réponses, ce qui arrive fréquemment quand une vue interne et une vue externe coexistent dans la même zone. La troisième question protège des réponses périmées : un cache qui conserve encore l'ancienne adresse d'un serveur migré produit un symptôme bizarre, où la moitié du trafic part au mauvais endroit.
+
+L'outil de référence s'appelle dig, et quelques de ses options suffisent à tout faire. Dig interroge un serveur précis quand vous lui indiquez une adresse après le symbole arobase, affiche la réponse brute quand vous ajoutez le raccourci court, et déroule la résolution complète niveau par niveau quand vous demandez le suivi. La même commande avec l'option qui affiche uniquement les enregistrements de réponse donne un résultat propre, exploitable dans un script. nslookup reste disponible partout et convient à un contrôle rapide, mais son format d'affichage et ses avertissements induisent souvent en erreur les débutants ; préférez dig pour tout diagnostic sérieux, et complétez avec les outils du système : getenthosts sous Linux, la commande d'affichage du cache DNS sous Windows, et la commande de purge du même cache après un changement de configuration.
+
+```text
+Contrôle méthodique de la résolution d'un nom interne
+$ dig www.lilas-biblio.fr A +short
+10.10.10.24
+
+$ dig @10.10.0.53 www.lilas-biblio.fr A +noall +answer
+www.lilas-biblio.fr.  300  IN  A  10.10.10.24
+
+$ dig @8.8.8.8 www.lilas-biblio.fr A +noall +answer
+www.lilas-biblio.fr.  300  IN  A  203.0.113.10
+
+$ dig +trace lilas-biblio.fr NS
+.            172800  IN  NS  a.root-servers.net.
+fr.          172800  IN  NS  d.nic.fr.
+lilas-biblio.fr. 3600 IN NS  ns1.lilas-biblio.fr.
+
+$ dig -x 10.10.10.24 +short
+www.lilas-biblio.fr.
+```
+
+L'interprétation des résultats se résume à quelques situations. Un délai d'attente au lieu d'une réponse signale que le serveur consulté n'est pas joignable ou ne répond pas : vérifiez la route, le pare-feu et le port. NXDOMAIN signifie que le nom n'existe pas, point : c'est une réponse valide et non une erreur réseau, souvent causée par une faute de frappe ou un enregistrement absent. SERVFAIL signale que le résolveur n'a pas réussi à obtenir ou à valider la réponse finale, par exemple à cause d'une signature invalide lorsque la vérification de sécurité est activée, ou d'un serveur autoritatif injoignable. REFUSED indique que le serveur accepte les requêtes mais refuse celles provenant de vous, ce qui arrive vite quand un client pointe vers le mauvais serveur. Enfin, une réponse correcte mais ancienne révèle un cache : regardez alors la durée de vie restante, car elle vous dit combien de temps le problème peut encore durer.
+
+Les pannes les plus fréquentes se rangent en cinq catégories. La première est la configuration du client : un poste qui conserve un ancien serveur après une migration continuera de l'interroger tant que sa configuration n'est pas renouvelée ; le renouvellement du bail apporte souvent le correctif. La deuxième est la vue partagée : la zone répond différemment selon l'origine de la requête, et comparer le résultat interne au résultat public est le seul moyen de le constater. La troisième est la sécurité : si la validation échoue, la réponse devient SERVFAIL même si les enregistrements sont justes, et il faut alors examiner les signatures et les délégations. La quatrième est la protection contre les abus : certains serveurs limitent le nombre de requêtes par unité de temps et répondent par des refus quand le seuil est franchi, typiquement après un incident de type tempête de requêtes. La cinquième est la taille : une réponse trop volumineuse pour le chemin emprunté, avec fragmentation bloquée, se traduit par un silence ou un échec alors que la même interrogation en TCP réussit.
+
+- Isolez toujours : client, résolveur, autoritatif — un test par niveau, pas un mélange.
+- Comparez deux résolveurs différents pour mettre en évidence une vue ou un cache divergent.
+- Lisez le code de réponse : NXDOMAIN, SERVFAIL, REFUSED et délai d'attente n'ont pas la même cause.
+- Vérifiez la durée de vie restante avant de conclure à une panne durable.
+- Après un changement, videz le cache du client, sinon l'ancienne réponse persiste encore.
+$lesson$),
+  ('net-c3-p9', 'net-c3', 9, $lesson$DHCP : obtenir une adresse automatiquement$lesson$, $lesson$
+Attribuer une adresse à la main fonctionne tant que le parc est réduit, puis devient ingérable : une erreur de saisie produit un conflit, un poste déplacé garde une configuration inadaptée, et personne ne sait plus quelle adresse est réellement libre. Le Dynamic Host Configuration Protocol règle le problème en centralisant la décision. Un serveur dispose de plages d'adresses dites étendues, découpées par VLAN ou par plage de commutateurs, et les clients qui en réclament une la reçoivent avec tout le lot d'informations nécessaires à leur communication : masque de sous-réseau, adresse de la passerelle, serveurs de noms, serveur d'horloge, parfois un serveur de fichiers ou une URL de configuration. Le client, lui, ne connaît rien à l'avance et passe le premier temps de sa vie réseau en quête d'un serveur prêt à lui répondre.
+
+Cette quête suit un scénario en quatre messages dont l'acronyme DORA a fait toute la renommée du protocole. Le client émet d'abord une diffusion générale portant la demande DISCOVER, depuis l'adresse zéro puisque le poste n'en possède pas encore, avec un numéro de transaction qu'il conservera pendant tout l'échange. Tous les serveurs du réseau entendent la demande ; ceux qui disposent d'une adresse disponible répondent par un OFFER contenant une proposition. Le client choisit généralement la première offre reçue et l'accepte par un message REQUEST, envoyé de nouveau en diffusion générale afin que tous les serveurs — y compris ceux dont la proposition a été écartée — sachent qu'ils peuvent retirer leur réservation. Le serveur retenu confirme par un ACK : le bail est ouvert, le client configure son interface et peut communiquer. Quatre messages, deux diffusions, et une entente entre acteurs qui ne se sont jamais parlé.
+
+```text
+Bail complet capturé sur le VLAN 10 (Wireshark)
+No.   Time      Source           Destination        Protocol  Info
+1     0.000000  0.0.0.0          255.255.255.255    DHCP      DHCP Discover   - Transaction ID 0x6a3b12f4
+2     0.001400  10.10.0.1        255.255.255.255    DHCP      DHCP Offer      - Transaction ID 0x6a3b12f4 (10.10.10.50)
+3     0.001520  0.0.0.0          255.255.255.255    DHCP      DHCP Request    - Transaction ID 0x6a3b12f4 (10.10.10.50)
+4     0.001700  10.10.0.1        10.10.10.50        DHCP      DHCP ACK        - Transaction ID 0x6a3b12f4 (10.10.10.50)
+
+Transitions visibles sur le client juste après l'ACK
+$ ip address show dev eth0
+inet 10.10.10.50/22 brd 10.10.3.255 scope global dynamic eth0
+   valid_lft 86400sec preferred_lft 75600sec
+```
+
+La puissance de DHCP tient aux options, ces coupleurs nommés-numéro qui accompagnent chaque message. Quelques-unes suffisent à configurer entièrement un poste : l'option portant le masque de sous-réseau, celle désignant la passerelle par défaut, celle listant les serveurs de noms, celle précisant le nom de domaine local, celle donnant la durée du bail, et celle qui indique l'adresse du serveur lui-même quand la réponse traverse un relais. D'autres ouvrent des usages plus avancés : la fourniture d'horloges pour la synchronisation, la distribution d'une URL de configuration, ou la préparation au démarrage sans disque des postes, où les options dédiées signalent le serveur de fichiers et le script à charger. Un mécanisme de réservation permet enfin d'offrir la même adresse à une machine donnée en la liant à son identifiant matériel, ce qui combine la stabilité d'une configuration manuelle et la centralisation de l'attribution.
+
+| Option | Rôle pratique | Valeur typique observée |
+| --- | --- | --- |
+| Masque du sous-réseau | Définit l'étendue locale du poste | 255.255.252.0 pour un /22 |
+| Routeur par défaut | Indique la passerelle de sortie du VLAN | 10.10.0.1 |
+| Serveurs de noms | Fournit la liste des résolveurs utilisés | 10.10.0.53 et 10.10.0.54 |
+| Nom de domaine local | Complète les noms courts résolus par le poste | lilas-biblio.fr |
+| Durée du bail | Fixe la validité de l'attribution | 86400 secondes, soit 24 heures |
+| Serveur d'horloge | Synchronise l'heure des machines | 10.10.0.2 |
+| Informations du relais | Signale le VLAN et le port d'origine du client | Circuit identifier, Remote ID |
+
+Un arrangement fréquent dans les réseaux d'entreprise mérite d'être compris parce qu'il contre-intuitif au départ : le serveur DHCP n'est presque jamais sur le VLAN des clients. Pour éviter de multiplier les serveurs, on équipe les routeurs ou les commutateurs de couche 3 d'une directive d'aiguillage vers le serveur central. Cette commande convertit la diffusion reçue sur un VLAN en une requête unicast adressée au serveur, en y ajoutant une option qui précise d'où vient la demande, avec le numéro de VLAN et l'interface d'entrée. Le serveur, qui ne connaît pas le réseau par expérience directe, en déduit l'étendue à utiliser et répond ; le relais renvoie la réponse au client en diffusion sur le VLAN d'origine. Tant que cette chaîne est rompue — directive absente sur une interface, pare-feu bloquant les ports dédiés, option retirée par un équipement —, aucun client du VLAN ne reçoit d'adresse, alors même que le serveur fonctionne parfaitement pour les autres.
+
+Les choses changent en IPv6, où l'adressage peut se faire sans aucun serveur. Le routeur diffuse des messages d'annonce de routeur qui contiennent le préfixe du lien ; le poste en dérive alors une adresse selon une méthode d'autoconfiguration sans état, à partir de son identifiant matériel ou d'une valeur aléatoire qu'il vérifie par une demande de duplication d'adresse. Comme cette méthode ne transmet aucune configuration complémentaire, on l'associe fréquemment à un serveur de configuration sans état qui fournit au moins les serveurs de noms. Le mode entièrement piloté par serveur existe également, avec un échange court entre le client et le serveur et une durée de vie qui tient compte du préfixe, et c'est la méthode recommandée dès que l'on veut tracer les attributions. Une différence notable apparaît côté identité : là où IPv4 identifiait la machine par son adresse matérielle, IPv6 utilise un identifiant unique de périphérique incorporant la façon dont la machine a obtenu sa configuration, ce qui suit le poste lorsqu'il change de réseau sans trahir autant d'informations.
+$lesson$),
+  ('net-c3-p10', 'net-c3', 10, $lesson$Suivre un bail et dépanner DHCP$lesson$, $lesson$
+Le bail est une location : il a une durée, des moments de renouvellement et une fin. Sur la ligne renseignée après l'attribution, la durée totale apparaît à côté d'une durée préférée plus courte ; c'est que le client sait qu'il doit demander l'autorisation de conserver son adresse avant l'échéance. Il tente un renouvellement à mi-parcours, en s'adressant directement en unicast au serveur qui lui a tout donné, puis, s'il n'a pas obtenu de réponse, à un moment ultérieur, en rediffusant pour toucher n'importe quel serveur disponible. Si l'échéance passe sans confirmation, le client abandonne son adresse, recommence le processus complet depuis la découverte et, sur un réseau où aucun serveur ne répond, finit souvent par s'attribuer une adresse de secours de la plage réservée au lien local. Cette dernière situation produit un symptôme immédiatement reconnaissable : la machine est connectée au câble, elle a une adresse, mais elle ne parle à personne.
+
+Le diagnostic d'un problème DHCP suit la même logique de cloisonnement que le diagnostic DNS : vérifier d'abord le client, puis le chemin, puis le serveur. Côté client, deux commandes suffisent : l'une affiche la configuration actuelle en indiquant si elle provient bien d'un bail ou d'une saisie manuelle, l'autre relance l'obtention et affiche en clair les quatre messages échangés, avec les refus éventuels. Un renouvellement qui échoue alors qu'une autre machine du même VLAN obtient une adresse oriente immédiatement vers le poste : câble, commutateur, plage, filtre. Côté serveur, les journaux indiquent chaque accord et chaque refus avec l'adresse proposée et le identifiant du client ; croiser l'heure d'un refus avec l'heure de l'incident chez l'utilisateur est souvent la preuve attendue. Enfin, contrôlez l'étendue : un pool épuisé ne produit pas d'erreur spectaculaire, simplement des refus successifs.
+
+Les pannes de DHCP ont une catalogue bref et très régulier. L'étendue épuisée arrive en premier, typiquement après un événement qui fait revenir beaucoup de machines à la fois ou après un bail beaucoup trop long pour le nombre d'adresses disponibles ; l'allongement du bail double mécaniquement la consommation, la diminution le réduit. Le conflit d'adresse survient quand une machine utilise une adresse hors de tout bail, par exemple parce qu'elle était configurée à la main ; le client détecte le doublon lors de son auto-vérification et refuse l'attribution, ce qui se voit dans les journaux du serveur. Le serveur parasite est plus insidieux : un routeur domestique branché par erreur ou un ordinateur portable configuré en partage de connexion répond au DISCOVER avant le serveur officiel, et le client accepte sa proposition. Une communication inter-vlan mal dimensionnée ou une directive de relais manquante produit le même résultat pour tout un segment.
+
+La défense s'organise sur le commutateur. Le filtrage DHCP autorise les messages de serveur uniquement sur les liaisons menant vers le serveur réel, ce qui élimine le serveur parasite dès l'entrée sur le réseau. Ce même filtrage limite le nombre de messages de requête acceptés par seconde sur chaque port d'accès, ce qui neutralise les tempêtes générées par un client défectueux ou par un attaquant. En complément, la base de connaissances alimentée par les baux enregistrés permet de refuser toute adresse qui n'a pas été accordée par le serveur. À cela s'ajoutent des durées adaptées au contexte : courtes pour un réseau sans fil où les stations tournent, plus longues pour des postes filaires stables, avec une marge d'étendue surveillée par une alerte quand l'occupation dépasse un seuil raisonnable.
+
+```text
+Enchaînement de diagnostic quand un poste n'obtient pas d'adresse
+$ ipconfig /all          (Windows)  ou  $ ip addr show        (Linux)
+  → Adresse 169.254.x.x  : aucun bail, le client est en attente d'un serveur
+
+$ ipconfig /renew        (Windows)  ou  $ dhclient -v eth0     (Linux)
+  → Discover envoyé, aucun Offer reçu en 30 s : chemin ou serveur en cause
+  → Refus reçu         : étendue épuisée ou identifiant refusé
+  → Offer + ACK reçus   : le problème est ailleurs, vérifiez la configuration
+
+$ tcpdump -i eth0 -n udp port 67 or udp port 68 -c 20
+  → Les quatre messages voyagent-ils sur le lien ? Le relais répond-il ?
+
+Contrôle côté serveur (journal typique)
+Mar 12 14:07:21 dhcpd DHCPREQUEST for 10.10.10.50 from 00:1a:2b:3c:4d:5e
+Mar 12 14:07:21 dhcpd DHCPACK on 10.10.10.50 to 00:1a:2b:3c:4d:5e via 10.10.10.1
+Mar 12 14:07:44 dhcpd DHCPDISCOVER from 00:1a:2b:3c:4d:5f via eth1 : no free leases
+```
+
+Trois réflexes de prévention valent mieux que n'importe quelle intervention d'urgence : dimensionner l'étendue avec une marge calculée sur la durée du bail plutôt que sur le nombre de machines, surveiller son taux d'occupation et alerter avant saturation, et documenter quel serveur est responsable de quelle étendue, quel est l'état de la directive de relais sur chaque interface, et quelles options sont transmises à chaque VLAN. Un problème DHCP bien documenté se règle en quelques minutes ; le même problème découvert dans l'urgence, un matin où la moitié du service public n'a plus d'accès, coûte une matinée entière.
+$lesson$),
+  ('net-c3-p11', 'net-c3', 11, $lesson$HTTP et TLS : de la requête à la session chiffrée$lesson$, $lesson$
+HTTP est un protocole simple dont la logique tient en une phrase : le client envoie une requête composée d'une méthode, d'une adresse de ressource et d'une liste d'informations complémentaires, le serveur répond par un état, ses propres informations et un contenu. Les méthodes courantes disent l'intention : obtenir une ressource, en envoyer une nouvelle, la remplacer, la supprimer, ou seulement connaître ses caractéristiques. Les codes de réponse racontent l'issue en trois chiffres : succès, redirection, erreur du client, erreur du serveur. Le version 1.1 a introduit une amélioration décisive en conservant la connexion ouverte après chaque échange, de sorte que plusieurs requêtes se suivent sur le même canal TCP sans refaire la poignée de main, et qu'elle devient la règle plutôt que l'exception. Le version suivante a rendu le transport binaire et permis de superposer plusieurs échanges simultanément, évitant qu'une réponse lente ne bloque celles qui arrivent derrière ; la version la plus récente déplace l'ensemble vers un transport sans connexion pour gagner en réactivité.
+
+TLS, acronyme de Transport Layer Security, s'intercale entre la couche transport et l'application pour fournir trois garanties : personne d'autre ne lit les échanges, personne ne les modifie sans que cela soit détecté, et le serveur bien identifié est bien celui qu'il prétend être. Le service écoute sur le port dédié au web sécurisé et la connexion commence par une négociation : le client annonce les algorithmes qu'il sait utiliser et propose une graine d'échange de clés, le serveur choisit, répond avec son certificat et sa propre graine, puis les deux dérivent par calcul les clés qui serviront à chiffrer tout ce qui suivra. Le protocole actuel réduit cet échange à un seul aller-retour, et propose en plus un mode de reprise qui permet de transmettre des données dès le premier message lors d'une visite suivante, au prix d'une confiance renforcée dans le fait que la première session s'est bien déroulée.
+
+```text
+Séquence complète, du SYN TCP aux données chiffrées (TLS 1.3)
+ client                                    serveur
+   |  TCP SYN                                   |
+   | ----------------------------------------> |
+   |  TCP SYN-ACK                               |
+   | <----------------------------------------- |
+   |  TCP ACK                                   |
+   | ----------------------------------------> |
+   |  ClientHello : versions, suites, graine,   |
+   |                nom de ressource demandé    |
+   | ----------------------------------------> |
+   |  ServerHello : suite retenue, graine       |
+   |  Certificat : feuille et intermédiaires    |
+   |  Finished : preuve du calcul des clés      |
+   | <----------------------------------------- |
+   |  Finished : preuve côté client             |
+   | ----------------------------------------> |
+   |  Application Data : la requête HTTP        |
+   | ----------------------------------------> |
+   |  Application Data : la réponse HTTP        |
+   | <----------------------------------------- |
+```
+
+Le certificat mérite une attention particulière, car il est le seul élément de la chaîne que l'utilisateur peut voir. Il s'agit d'un fichier signé par une autorité reconnue, contenant le nom du site, la période de validité, les noms alternatifs couverts — c'est la liste qui détermine si votre adresse exacte est acceptée — et la clé publique servant à l'échange. Le navigateur vérifie la signature en remontant d'autorité en autorité jusqu'à une autorité de confiance présente dans le système, contrôle les dates, puis regarde si le nom consulté figure parmi les noms couverts. Un défaut quelconque dans cette chaîne se traduit par un avertissement : date dépassée, nom non couvert, autorité intermédiaire absente de la configuration du serveur. Les certificats gratuits délivrés par des organisations reconnues ont considérablement démocratisé le chiffrement, et leur renouvellement automatique s'inscrit dans une tâche périodique dont la défaillance constitue l'une des causes les plus fréquentes d'incident sur un site.
+
+```text
+Échange HTTP visible une fois la session ouverte (déchiffré côté client)
+GET /catalogue HTTP/1.1
+Host: www.lilas-biblio.fr
+User-Agent: Mozilla/5.0
+Accept: text/html
+
+HTTP/1.1 200 OK
+Content-Type: text/html; charset=utf-8
+Content-Length: 14207
+Strict-Transport-Security: max-age=31536000
+```
+
+```text
+Contrôle d'une session depuis un poste de test
+$ openssl s_client -connect 10.10.10.24:443 -servername www.lilas-biblio.fr -tls1_3 < /dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
+subject=CN = www.lilas-biblio.fr
+issuer=C = US, O = Let's Encrypt, CN = R3
+notBefore=Jun 15 00:00:00 2026 GMT
+notAfter=Sep 13 00:00:00 2026 GMT
+subjectAltName = DNS:www.lilas-biblio.fr, DNS:lilas-biblio.fr
+
+$ curl -sv -o /dev/null https://www.lilas-biblio.fr/ 2>&1 | grep -E 'subject:|expire|SSL connection using'
+*  subject: CN=www.lilas-biblio.fr
+*  expire date: Sep 13 00:00:00 2026 GMT
+*  SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384
+```
+
+La lecture d'une capture complète relie enfin toutes les parties du chapitre. Vous verrez la poignée de main TCP, puis le ClientHello avec le nom de ressource qui permet au serveur de choisir le bon certificat, puis la réponse contenant les certificats, puis une série de messages désormais chiffrés que vous ne pourrez pas déchiffrer sans les clés de session, enfin les octets de la requête et de la réponse. Un point de vigilance s'impose à ce sujet : depuis l'extérieur, un proxy de filtrage ne lit pas le contenu, mais il lit le nom de ressource transmis pendant la négociation, ce qui lui suffit pour appliquer une politique d'accès. Si vous devez analyser le décodage réel d'une session sur un équipement que vous maîtrisez, il faut exporter les clés depuis le client et les fournir à l'analyseur — une technique légale et courante en supervision interne. Enfin, ne confondez pas chiffrement et authentification : une connexion chiffrée avec un certificat non vérifié protège contre l'écoute mais pas contre l'usurpation.
+
+| Symptôme observé | Cause probable | Contrôle à exécuter |
+| --- | --- | --- |
+| Avertissement de certificat expiré | Renouvellement automatique défaillant | Vérifier les dates avec l'utilitaire d'examen de certificat |
+| Certificat réputé non valide sans date dépassée | Nom consulté absent des noms couverts | Lister les noms alternatifs du certificat présenté |
+| Erreur de chaîne de confiance côté serveur | Certificat intermédiaire non envoyé | Reconstituer la chaîne et l'inspecter avec l'utilitaire du système |
+| Négociation refusée entièrement | Version obsolète ou algorithmes retirés | Forcer la version attendue et comparer les réponses |
+| Connexion établie puis coupée après quelques secondes | Coupe au niveau du pare-feu ou de l'équilibreur | Observer les segments avec l'outil de capture du système |
+$lesson$),
+  ('net-c3-p12', 'net-c3', 12, $lesson$Mini-projet : diagnostic complet de l'accès web intermittent$lesson$, $lesson$
+Le chapitre se clôt sur la mise en œuvre réunie de tout ce qui précède. Le site de la médiathèque se Charge mal, par intermittence, depuis deux réseaux différents, et l'intervenant ne dispose d'aucune capture préalable. La consigne de travail reste la même que celle que vous appliquerez en poste : partir des symptômes observés, formuler plusieurs hypothèses classées par probabilité, concevoir un test discriminant pour chacune, exécuter les tests avec des commandes dont la sortie est conservée, remonter jusqu'à la cause racine, corriger, valider sur une période suffisamment longue, puis mettre en place les mesures qui empêcheront le retour du problème. L'objectif n'est pas de trouver vite, mais de produire une preuve que quelqu'un d'autre pourra relire sans être présent pendant l'intervention.
+
+Le rapport attendu comporte sept parties dans cet ordre : les symptômes avec leur fréquence mesurée, les hypothèses avec leur probabilité estimée, les tests avec les commandes exactes et leurs résultats, la cause racine justifiée par les captures, la correction appliquée, la validation obtenue après un cycle complet d'utilisation, et les mesures préventives qui transforment l'incident en connaissance partagée. Prenez particulièrement soin des tests : chacun doit pouvoir écarter au moins une hypothèse, et une commande dont la sortie n'est pas interprétée ne sert à rien. C'est cette rigueur, plus que le choix de l'outil, qui fait la différence entre un diagnostic et une supposition.
+
+```text
+Squelette de rapport — accès web intermittent, site de la médiathèque
+SYMPTOMES       qui, quand, quoi, fréquence mesurée
+HYPOTHESES      au moins cinq pistes classées, chacune avec son test
+TESTS           commande, sortie commentée, hypothèse écartée ou confirmée
+CAUSE RACINE    le mécanisme expliqué en une phrase, preuve à l'appui
+CORRECTION      ce qui a changé, où, quand, par qui
+VALIDATION      durée d'observation, indicateurs suivis, résultat
+PRÉVENTION      surveillance, alertes, documentation mise à jour
+```
+$lesson$),
+  ('net-c3-p13', 'net-c3', 13, $lesson$À retenir$lesson$, $lesson$
+- TCP fournit une connexion fiable et ordonnée : poignée de main en trois temps, numéros de séquence, accusés cumulatifs, retransmission.
+- La fenêtre de réception régule le flux, la fenêtre de congestion régule le débit ; slow start puis évitement, réduction à trois accusés dupliqués.
+- Les états d'une connexion se lisent avec ss ou netstat ; CLOSE_WAIT signale une fuite applicative, TIME_WAIT est normal après une fermeture.
+- UDP ajoute huit octets d'en-tête et rien d'autre : ni accusé, ni ordre, ni régulation ; l'application décide de tout.
+- Le choix entre les deux suit trois critères : tolérance à la perte, besoin de réactivité, besoin de diffusion.
+- DNS transforme un nom en adresse selon une hiérarchie racine, top niveau, domaine, zone ; les réponses se mettent en cache avec une durée de vie.
+- Un diagnostic DNS isole le niveau : client, résolveur, autoritatif ; NXDOMAIN, SERVFAIL et délai d'attente n'ont pas la même cause.
+- DHCP déroule quatre messages, diffuse au départ, prolonge le bail à mi-parcours, et se protège contre les serveurs parasites par le filtrage sur le commutateur.
+- TLS authentifie le serveur par son certificat, dérive des clés en un seul aller-retour, puis chiffre tout l'échange HTTP.
+- La méthode de diagnostic reste invariable : hypothèses, tests, preuves, cause, correction, validation, prévention.
+$lesson$),
+  ('net-c3-p14', 'net-c3', 14, $lesson$Erreurs fréquentes$lesson$, $lesson$
+La première erreur consiste à confondre fiabilité et rapidité, et à croire qu'un protocole garanti est toujours plus rapide. Une perte chez TCP bloque l'envoi suivant et fait chuter le débit, alors qu'UDP continue ; c'est pourquoi un débit mesuré faible ne désigne pas nécessairement un lien saturé. Vérifiez la réaction du protocole avant de conclure sur l'état de la liaison.
+
+La deuxième erreur est de lire un résultat DNS sans regarder qui l'a produit. Une réponse identique obtenue auprès du résolveur interne et d'un résolveur public ne prouve pas grand-chose si l'un met en cache et pas l'autre ; comparez toujours l'adresse interrogee, le nom complet avec son point final, et la durée de vie restante. Une troisième erreur fréquente est de conclure à une panne de serveur alors que le nom ne résout pas du tout : dans ce cas, aucun test de port n'a de sens, et la séquence des couches impose de revenir en arrière.
+
+Du côté DHCP, les deux pièges classiques sont l'étendue mal dimensionnée, qui se manifeste par des refus successifs et non par une alerte, et le serveur parasite, qui répond depuis un équipement non maîtrisé ; le filtrage sur le port d'accès tranche les deux cas. Côté TLS, un avertissement affiché par le navigateur ne dit jamais tout : lisez la raison exacte, car date dépassée, nom non couvert et chaîne incomplète se corrigent de trois manières différentes. Enfin, ne modifiez jamais un paramètre de congestion ou de temporisation sans avoir observé le comportement précédent : une valeur changée sans mesure ne se valide pas.
+$lesson$),
+  ('net-c3-p15', 'net-c3', 15, $lesson$Pour aller plus loin$lesson$, $lesson$
+Les spécifications restent la référence la plus fiable, et elles sont plus lisibles qu'on ne le croit : la définition de TCP s'écrit en trois documents que l'on peut lire sélectivement, la résolution des noms tient en deux, et la négociation de sécurité se lit en un seul. Elles se trouvent gratuitement à l'adresse https://datatracker.ietf.org/doc/html/rfc9293 pour la couche transport, https://datatracker.ietf.org/doc/html/rfc1035 pour le système de noms et https://datatracker.ietf.org/doc/html/rfc8446 pour la version la plus récente de la sécurité des transports.
+
+Pour la pratique, équipez-vous d'un analyseur de trames et refaites sur votre propre machine les captures décrites dans ce chapitre : ouvrez un site, observez la poignée de main, filtrez sur le port du service, suivez la requête de nom et la négociation de sécurité. Les ressources de l'outil se lisent sur le site https://www.wireshark.org/docs/ et les contrôles complets d'une configuration de sécurité se lancent avec le projet https://testssl.sh/. Avant de terminer, relisez les objectifs du chapitre et demandez-vous, pour chacun, quelles commandes exactes vous enverriez.
+$lesson$),
+  ('net-c3-p16', 'net-c3', 16, $lesson$Et maintenant : lancez votre première capture$lesson$, $lesson$
+Lancez votre première capture avec Wireshark sur une requête que vous venez de provoquer (un appel DNS, l'ouverture d'une page, le renouvellement d'un bail DHCP) et suivez les échanges couche par couche : la résolution de nom, la poignée de main TCP, puis celle de TLS. C'est exactement le raisonnement que l'exercice pratique attend de vous. Une fois la capture lue, refaites l'exercice de mémoire sur un autre service : cette répétition, plus que la lecture, fixe la mécanique de bout en bout.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c4-p1', 'net-c4', 1, $lesson$Routage statique : contrôle total, pas de surprise$lesson$, $lesson$
+Bienvenue dans le quatrième chapitre du parcours Réseaux, celui du routage. Les trois chapitres précédents vous ont appris à achemener des trames d'un bout à l'autre d'un réseau local, à segmenter ce réseau en VLAN, puis à faire dialoguer les postes et les serveurs grâce aux ports, au DNS, au DHCP et à TLS. Toutes ces étapes restaient cependant confinées à l'intérieur d'un même domaine. À partir de maintenant, la question change de nature : comment un paquet destiné à un réseau que vous ne connaissez pas trouve-t-il sa route, qui décide de cette route, et que se passe-t-il lorsque la route choisie tombe en panne ? Ce chapitre répond à ces questions en traitant deux approches complémentaires : le routage statique, que vous écrivez à la main, et OSPF (Open Shortest Path First), protocole à état de lien qui calcule tout seul les meilleurs chemins et se reconstruit quand un lien disparaît.
+
+Les objectifs sont très concrets et chacun d'eux sera manipulé dans du code de configuration réel. Vous saurez écrire des routes statiques précises : une route par défaut vers l'Internet, une route spécifique vers un réseau distant, une route flottante qui ne prend le relais qu'en cas de panne. Vous saurez lire une table de routage et expliquer chaque caractère qui la compose, depuis le code de protocole jusqu'au prochain saut, en passant par la distance administrative et la métrique. Vous saurez activer OSPF sur un routeur, choisir un identifiant de routeur, déclarer des interfaces dans des zones, puis vérifier qu'une adjacence est bien montée jusqu'à l'état Full. Vous saurez enfin diagnostiquer les pannes classiques d'adjacence et valider une configuration complète sur les trois routeurs du site Lilas qui sert de fil rouge à tout le parcours.
+
+Le fil rouge du chapitre est le suivant. Le site Lilas comprend trois routeurs : R1, installé dans le local technique et qui porte le cœur du réseau, R2, routeur de redondance situé dans le bâtiment C, et FW, le pare-feu de bordure qui donne accès à l'Internet. Ces trois routeurs sont reliés entre eux par trois liaisons en /30 : 10.10.1.128/30 relie R1 à R2, 10.10.1.132/30 relie R2 à FW, et 10.10.1.136/30 relie directement R1 à FW. Les réseaux utilisateurs sont répartis en trois zones OSPF : la zone 10 pour le bâtiment A (10.10.0.0/22), la zone 20 pour le bâtiment B (10.10.4.0/22) et la zone 30 pour le bâtiment C (10.10.8.0/22), la zone 0 réservée aux liaisons entre routeurs. Tout au long de la leçon, vous reviendrez à cette topologie pour ancrer les concepts dans un cas tangible.
+
+Voici le schéma du site, que vous garderez sous les yeux pendant toute la lecture. Il tient dans un bloc de code afin que les traits restent alignés quel que soit votre éditeur.
+
+```text
+                    +----------------------+
+                    |   Internet           |
+                    +----------+-----------+
+                               |
+                        10.10.1.136/30 (zone 0)
+                               |
+   +---------------------------+---------------------------+
+   |                             |                           |
++--v---------+            +------v------+            +------v------+
+|  FW        |            |     R1      |            |     R2      |
+|  bordure   |<---------->|  coeur      |<---------->|  redondance |
+|  ASBR      | 132/30     |  ABR+ASBR   | 128/30     |  ABR        |
++------------+   zone 0   +------+------+   zone 0   +------+------+
+                              |     |                       |
+                       zone 10|     |zone 20           zone 30|
+                              |     |                       |
+                     +--------v-+ +-v---------+      +--------v--------+
+                     | Bat. A   | | Bat. B    |      | Bat. C          |
+                     | 10.10.0.0| | 10.10.4.0 |      | 10.10.8.0/22    |
+                     | /22      | | /22       |      |                 |
+                     +----------+ +-----------+      +-----------------+
+```
+
+
+
+Une route statique est une entrée de table de routage écrite à la main par un opérateur. Elle décrit trois choses au minimum : la destination que l'on veut atteindre, le masque qui délimite cette destination, et le prochain saut vers lequel les paquets doivent être envoyés. Le prochain saut, qu'on appelle next-hop, est l'adresse IP du routeur voisin qui, lui aussi, saura quoi faire du paquet. Parfois on préfère indiquer une interface de sortie plutôt qu'une adresse IP, notamment sur les liaisons point à point où il n'y a qu'un seul interlocuteur possible. Dans les deux cas, l'idée reste la même : le routeur local n'a aucune intelligence à déployer, il se contente de recopier une décision déjà prise.
+
+Cette approche a des avantages décisifs. La première est la prévisibilité : une route statique ne change jamais toute seule, elle ne dépend d'aucun voisin, d'aucun timer, d'aucun échange de paquets. Ce que vous avez écrit ce matin sera encore vrai ce soir, ce qui simplifie considérablement l'audit d'une configuration. La deuxième est la légèreté : un routeur qui ne parle aucun protocole dynamique ne consomme ni bande passante ni cycle processeur pour maintenir des adjacences, et il reste parfaitement utilisable sur du matériel modeste. La troisième est le contrôle : vous décidez exactement quel trafic part vers quelle sortie, ce qui est indispensable à la bordure d'un réseau ou pour forcer un chemin chiffré.
+
+Les inconvénients, eux, sont tout aussi nets. Aucune route statique ne se répare : si le lien qu'elle désigne tombe, elle continue de pointer vers un prochain saut devenu inaccessible, et le routeur ne s'en aperçoit pas toujours. Aucune route statique ne se propage non plus : chaque routeur du chemin doit recevoir sa propre ligne, à la main, et cette corvée devient ingérable dès que le réseau grandit. Enfin, aucune route statique ne se rééquilibre : si un second chemin existe, il ne sera utilisé que si vous l'avez explicitement prévu. Le routage statique est donc parfait pour une bordure, une redirection de paquets, un réseau de taille modeste ou une route de secours, et inadapté à un réseau d'entreprise en croissance.
+
+La syntaxe sur Cisco IOS tient en une seule commande, ip route, suivie du réseau de destination, du masque, du prochain saut, puis d'options facultatives. Parmi ces options, quatre reviendront souvent. Le mot distance permet de modifier la distance administrative de la route, c'est-à-dire le niveau de confiance qu'on lui accorde par rapport aux autres sources de routes. Le mot name donne un libellé lisible à la route, précieux pour l'audit. Le mot permanent empêche la route de disparaître de la table quand l'interface associée tombe. Enfin, le mot track relie la route à un objet de suivi : la route n'existera que tant que l'objet reste en état de succès.
+
+```text
+EXEMPLE : routes statiques sur le routeur R1 (Cisco IOS)
+
+! Route par défaut : tout trafic sans destination connue part vers le pare-feu
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 name DEFAULT_VIA_FW
+
+! Route spécifique : le réseau serveurs du bâtiment C est derrière R2
+ip route 10.10.8.0 255.255.252.0 10.10.1.130 name BAT_C_VIA_R2
+
+! Route flottante : elle ne prend vie que si la route principale disparaît
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10 name DEFAULT_VIA_R2_FLOATING
+
+! Route par défaut conditionnée à un test de portée vers l'Internet
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1
+
+! Route permanente : reste affichée même si l'interface est en panne
+ip route 10.10.4.0 255.255.252.0 10.10.1.130 permanent
+```
+
+La route par défaut mérite une explication particulière, car elle est la route la plus utilisée et la plus mal comprise. Sa destination s'écrit 0.0.0.0 0.0.0.0, ce qui signifie littéralement n'importe quelle adresse avec n'importe quel masque. C'est le filet de sécurité de la table : quand aucune autre ligne ne correspond au paquet reçu, c'est celle-ci qui s'applique. On la surnomme gateway of last resort, la passerelle du dernier recours. Dans notre site, R1 l'envoie vers FW, car FW est le seul routeur connecté à l'Internet. Sans elle, tout paquet vers une adresse publique serait détruit faute de correspondance.
+
+La route spécifique, elle, repose sur une règle qui gouverne l'ensemble du routage IP : la correspondance par préfixe le plus long, longest prefix match. Lorsqu'une adresse correspond à plusieurs entrées de table, ce n'est pas la première trouvée qui gagne, ni celle du protocole le plus rapide, mais celle dont le masque est le plus long, donc la plus précise. Si votre table contient 10.10.0.0/16 et 10.10.8.0/22, un paquet destiné à 10.10.8.50 suivra la seconde route, plus spécifique, tandis qu'un paquet destiné à 10.10.9.50 suivra la première. Cette règle s'applique à tous les protocoles, statiques comme dynamiques, et elle explique pourquoi une route par défaut ne casse jamais une route précise.
+
+La route flottante est le troisième cas de figure, et le plus malin. On lui donne la même destination qu'une route déjà présente, mais une distance administrative volontairement supérieure, par exemple 10 quand la route principale en a 1. Une route n'est installée dans la table que si elle est meilleure que celles qui existent déjà pour le même préfixe, compte tenu de la distance administrative puis de la métrique. Tant que la route principale existe, la flottante reste en attente dans l'arrière-boutique et n'apparaît pas dans show ip route. Dès que la principale disparaît, la flottante devient la meilleure candidates et s'installe, sans qu'aucun protocole n'ait eu besoin de converger. C'est le mécanisme de secours le plus rapide et le plus simple qui existe.
+
+Il existe une variante plus évoluée de cette idée, la route conditionnée par un objet de suivi. Plutôt que de laisser la route principale exister à tort quand le lien est physically présent mais que le service est absent, on la soumet à un test. L'objet de suivi, track, est alimenté par une sonde IP SLA qui envoie périodiquement un echo ICMP vers une adresse de référence, par exemple 8.8.8.8. Si les échos échouent plusieurs fois de suite, l'objet bascule en échec et la route qui dépend de lui est retirée de la table, ce qui déclenche immédiatement la route flottante. On obtient ainsi une bascule non pas basée sur l'état d'un câble, mais sur la capacité réelle à joindre l'Internet.
+
+```text
+EXEMPLE : sonde IP SLA et objet de suivi sur R1
+
+ip sla 1
+ icmp-echo 8.8.8.8 source-interface GigabitEthernet0/1
+ frequency 10
+ timeout 5000
+ threshold 1000
+ip sla schedule 1 life forever start-time now
+
+track 1 ip sla 1 reachability
+
+! La route principale n'existe que si la sonde réussit
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1
+! La route flottante prend le relais dès que track 1 échoue
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10
+```
+$lesson$),
+  ('net-c4-p2', 'net-c4', 2, $lesson$Lire et comprendre une table de routage$lesson$, $lesson$
+La table de routage est le document le plus important d'un routeur : elle résume, à un instant donné, toutes les décisions d'acheminement prises par la machine. Sur Cisco IOS, elle s'affiche avec show ip route. Chaque ligne commence par un code de protocole qui indique d'où vient l'information, suivi du préfixe de destination et du masque, puis du prochain saut ou de l'interface de sortie, et enfin d'informations complémentaires comme la distance administrative, la métrique ou l'âge de la route. Apprendre à lire cette sortie, c'est apprendre à lire la pensée du routeur.
+
+Les codes de protocole sont peu nombreux et se retiennent vite. C signifie connecté : le réseau est directement attaché à une interface du routeur, il n'y a donc aucun prochain saut. L signifie local : c'est l'adresse de l'interface elle-même, atteignable par le routeur. S désigne une route statique, O une route apprise par OSPF, et l'astérisque qui suit parfois le code signifie que cette route est un candidat pour devenir la passerelle par défaut. D appartient à EIGRP, B à BGP, R à RIP, i à IS-IS. Lors d'un dépannage, le premier réflexe consiste à regarder ce code : il vous dit immédiatement si le routeur a appris la route par lui-même, par un pair, ou si personne ne la lui a donnée.
+
+```text
+EXEMPLE : sortie de show ip route sur R1
+
+Gateway of last resort is 10.10.1.138 to network 0.0.0.0
+
+S*    0.0.0.0/0 [1/0] via 10.10.1.138
+      1.1.1.1/32 is directly connected, Loopback0
+C     10.10.0.0/22 is directly connected, Vlan10
+O IA  10.10.4.0/22 [110/101] via 10.10.1.130, 00:12:44, GigabitEthernet0/0
+O IA  10.10.8.0/22 [110/101] via 10.10.1.130, 00:12:44, GigabitEthernet0/0
+O     10.10.1.128/30 is directly connected, GigabitEthernet0/0
+O E2  172.16.0.0/16 [110/20] via 10.10.1.138, 00:05:10, GigabitEthernet0/1
+```
+
+Le bloc entre crochets mérite une attention particulière, car il contient les deux nombres qui départagent les routes concurrentes. Le premier est la distance administrative, le second la métrique. La distance administrative traduit la confiance accordée à la source : plus elle est basse, plus la route est préférée. Sur les équipements Cisco, une interface connectée vaut 0, une route statique 1, un voisin eBGP 20, OSPF 110, IS-IS 115, RIP 120, EIGRP 90 pour les routes internes et 170 pour les routes redistribuées, iBGP 200. La métrique, elle, mesure le coût du chemin au sein d'un même protocole ; elle n'est comparable qu'à l'intérieur du même protocole, car chaque protocole la définit à sa manière.
+
+Le tableau suivant récapitule les distances administratives que l'on rencontre le plus souvent dans un réseau d'entreprise. Gardez-le en tête : il explique la quasi-totalité des priorités observées dans une table.
+
+| Source de la route | Distance administrative | Remarque |
+| --- | --- | --- |
+| Interface connectée | 0 | Toujours préférée, c'est le réseau local |
+| Route statique | 1 | Contrôle total, préférée à OSPF |
+| eBGP | 20 | Routage inter-domaines |
+| EIGRP interne | 90 | Ancien protocole Cisco |
+| OSPF | 110 | Le standard des réseaux d'entreprise |
+| IS-IS | 115 | Très utilisé dans les réseaux opérateurs |
+| RIP | 120 | Pédagogique, à éviter en production |
+| EIGRP redistribué | 170 | Routes injectées depuis un autre protocole |
+| iBGP | 200 | Le moins préféré des chemins BGP internes |
+
+Quand deux routes concourent pour la même destination, le routeur compare d'abord les distances administratives : la plus petite l'emporte, et la métrique n'est même pas examinée. Si les distances sont égales, c'est-à-dire si les deux routes viennent du même protocole, la métrique départage. Cette hiérarchie est essentielle : elle explique pourquoi une route statique masque une route OSPF pour la même destination, et pourquoi deux routes OSPF peuvent être utilisées simultanément si leurs métriques sont identiques, auquel cas le trafic est réparti entre elles.
+
+La règle du préfixe le plus long passe avant tout le reste. Si votre table contient une route statique 10.10.0.0/16 et une route OSPF 10.10.8.0/22, c'est la seconde qui s'applique pour tout paquet destiné à 10.10.8.0/22, et ce alors même que la première vient d'un protocole a priori moins prioritaire. La distance administrative et la métrique ne servent qu'à départager des routes de longueur identique. Ne renversez jamais cet ordre dans votre tête : la précision du masque prime, ensuite seulement vient la confiance accordée à la source.
+
+Une route n'apparaît dans la table que si elle est la meilleure pour son préfixe. Les routes concurrentes qui perdent ne sont pas nécessairement perdues : elles restent connues du routeur, et certaines protocoles les conservent dans une base interne pour basculer instantanément si la meilleure disparaît. C'est le cas d'OSPF, qui conserve dans sa base d'état de lien l'ensemble des chemins possibles, même ceux qu'il n'a pas retenus. Cette propriété est la clé de la convergence rapide : lorsqu'une route tombe, le routeur n'a pas besoin de tout réapprendre, il se contente de recalculer avec ce qu'il possède déjà.
+
+Pour creuser, trois commandes suffisent. show ip route avec un préfixe précis, par exemple show ip route 10.10.8.0, affiche uniquement les entrées qui concernent cette destination et le détail du chemin suivi. show ip route protocole, comme show ip route ospf, filtre par source et permet de vérifier que toutes les routes attendues sont bien présentes. show ip route summary donne un décompte par protocole, très pratique pour repérer une explosion du nombre de routes après une redistribution mal filtrée. Ces trois lectures, répétées avant et après chaque changement, forment la colonne vertébrale de toute méthode de dépannage.
+
+- Une route statique se décrit par destination, masque, prochain saut et options.
+- La route par défaut 0.0.0.0/0 est le dernier recours, jamais un choix parmi d'autres.
+- Le préfixe le plus long gagne toujours, avant toute considération de protocole.
+- La distance administrative départage les protocoles, la métrique départage à l'intérieur d'un protocole.
+- La route flottante attend patiemment une distance administrative plus élevée pour prendre le relais.
+- Une sonde IP SLA et un objet de suivi transforment une bascule mécanique en bascule de service.
+- show ip route est la première commande à lancer, avant comme après un changement.
+$lesson$),
+  ('net-c4-p3', 'net-c4', 3, $lesson$OSPF : le protocole à état de lien$lesson$, $lesson$
+OSPF, Open Shortest Path First, est un protocole de routage à état de lien standardisé par la RFC 2328 pour IPv4 et par la RFC 5340 pour IPv6. Le mot important est état de lien : chaque routeur ne se contente pas d'écouter ses voisins lui dire je peux atteindre tel réseau, il recueille au contraire une description complète de tous les liens du domaine, en déduit une carte du réseau, puis calcule lui-même le meilleur chemin vers chaque destination. Cette différence de philosophie est immense, et elle explique à elle seule la domination d'OSPF dans les réseaux d'entreprise.
+
+Une fois la LSDB complète, OSPF exécute l'algorithme de Dijkstra, aussi appelé algorithme des plus courts chemins ou SPF (Shortest Path First). Partant du routeur lui-même comme racine, il explore la carte et construit un arbre couvrant où chaque destination est atteinte par le chemin de coût minimal. Les branches de cet arbre qui concernent le routeur local deviennent alors les entrées de sa table de routage. L'algorithme est déterministe : deux routeurs dotés de la même LSDB calculent exactement le même arbre. C'est pourquoi il est si précieux en dépannage, et pourquoi la moindre incohérence entre deux LSDB produit des boucles ou des trous noirs.
+
+La métrique OSPF s'appelle le coût (cost) et elle est liée à la bande passante de l'interface. Sur les équipements Cisco, la formule par défaut est cost égale à 100 Mbit/s divisé par la bande passante de l'interface, le résultat étant arrondi à l'entier supérieur, avec un minimum de 1. Une interface de 10 Mbit/s vaut donc 10, une interface de 100 Mbit/s vaut 1, une interface de 1 Gbit/s vaut aussi 1 car le quotient 0,1 est arrondi à 1. Le coût d'un chemin est la somme des coûts de tous les liens qui le composent. Cette définition a une conséquence pratique utile : OSPF préfère naturellement les liens rapides, mais il ne peut pas distinguer deux liens de même débit ayant des latences différentes, et c'est pourquoi on ajuste parfois le coût à la main pour contraindre un chemin.
+
+```text
+EXEMPLE : activation d'OSPF sur un routeur (Cisco IOS)
+
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ no passive-interface GigabitEthernet0/1
+
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+ ip ospf 1 area 0
+```
+
+Trois éléments de cette configuration méritent d'être décortiqués. Le numéro qui suit router ospf est l'identifiant de processus OSPF : il est purement local et n'a aucun lien avec les voisins, mais il permet de faire coexister deux instances distinctes sur un même routeur. Le router-id est, lui, une adresse IP fictive de format 32 bits qui identifie le routeur dans le domaine ; elle doit être unique, et une fois l'établi, elle ne change plus, sous peine de provoquer une remise à zéro complète des adjacences. Enfin, la commande network associe des adresses à des zones en utilisant une forme abrégée : le masque inversé 0.0.0.3 correspond à un préfixe /30, et le masque inversé 0.0.3.255 correspond à un préfixe /22. Chaque interface dont l'adresse tombe dans la plage déclarée rejoint la zone indiquée.
+
+L'alternative à la commande network est la déclaration directement sur l'interface, avec ip ospf numéro-de-processus area numéro-de-zone. Cette seconde écriture est souvent préférée aujourd'hui, car elle évite les erreurs de masques inversés et rend la configuration lisible ligne à ligne. Quelle que soit la forme retenue, une seule règle ne se négocie pas : les deux extrémités d'une liaison doivent déclarer la même zone. Une divergence de zone empêche toute adjacence et reste l'une des causes les plus fréquentes d'échec à l'installation.
+
+La commande passive-interface mérite également une attention soutenue. Une interface en mode passif n'envoie aucun paquet Hello et n'en accepte aucun : elle ne formera donc jamais d'adjacence, tout en continuant d'annoncer son réseau dans la LSDB. Le motif est double. Sur une interface utilisateur branchée sur des postes, un Hello OSPF reçu par un poste compromis permettrait à l'attaquant de rejoindre le domaine de routage ; sur un VLAN serveur, des Hello inutiles consommeraient de la bande passante et des cycles processeur. L'usage recommandé est donc d'inverser la logique : passive-interface default pour tout couper, puis no passive-interface sur les seules liaisons inter-routeurs.
+
+Passons maintenant aux cas particuliers de topologie. Sur un réseau de diffusion multi-accès comme un Ethernet avec plusieurs routeurs, OSPF évite d'établir une pleine adjacence entre chaque couple : ce serait quatre adjacences pour quatre routeurs, soit six échanges de LSA redondants. Il élit donc un routeur maître appelé DR (Designated Router) et un remplaçant BDR (Backup Designated Router), et tous les routeurs ne deviennent pleinement adjacents qu'avec eux deux. Les autres se contentent de l'état 2-Way et s'échangent leurs LSA via le DR. Sur une liaison point à point, cette élection n'a pas lieu : il n'y a que deux participants, et ils deviennent voisins directs.
+
+```text
+SCHÉMA : les états d'une adjacence OSPF
+
+   Down                                                       Full
+   |                                                           ^
+   |  Hello reçu                                               |  LSA synchronisés
+   v                                                           |
+   Init  -------->  2-Way  -------->  ExStart  -------->  Exchange
+                     |                  |                    |
+                     |  (DR/BDR seulement)                   |  DD échangés
+                     v                  v                    v
+                 (pause)            Loading  <----------  (LSAs manquants)
+                                       |
+                                       |  Request / Update / Ack
+                                       v
+                                     (Full)
+```
+
+Le passage de Down à Full suit un enchaînement strict de sept états, et chaque transition a un symptôme observable. En Down, aucun voisin n'est connu. Dès qu'un Hello est reçu, l'état passe à Init, ce qui signifie que le routeur distant nous a mentionné dans son propre Hello. L'état 2-Way indique qu'un Hello échangé contient bien l'identité de l'autre : la relation est confirmée dans les deux sens, et sur un réseau multi-accès c'est à ce moment que se termine l'élection du DR. L'état ExStart ouvre la négociation de la base : les deux routeurs conviennent de qui maîtrise l'échange et vérifient que leurs tailles de paquet maximum sont compatibles. L'état Exchange échange les résumés de la LSDB sous forme de Database Description. L'état Loading envoie les demandes LSR pour les LSA manquants et les réponses LSU qui les apportent. L'état Full signifie que les deux bases sont identiques et que les routeurs sont prêts à calculer.
+
+Les temporisations sont l'autre pilier de l'adjacence. Sur un réseau de diffusion, le Hello est envoyé toutes les 10 secondes et l'expiration du compteur de disparition intervient après 40 secondes, soit quatre Hello manqués. Sur une liaison de type non broadcast, ces valeurs deviennent 30 et 120 secondes. Ces deux nombres doivent être rigoureusement identiques sur les deux extrémités : OSPF vérifie leur concordance dès les premiers Hello et refuse l'adjacence en cas de divergence, car des timers incompatibles produiraient des coupures intempestives. Réduire les timers accélère la détection de panne, mais augmente proportionnellement le trafic de contrôle : on ne descend pas sous quelques secondes sans raison mesurée.
+
+```text
+EXEMPLE : vérification d'une adjacence sur R1
+
+R1# show ip ospf neighbor
+
+Neighbor ID     Pri   State           Dead Time   Address         Interface
+2.2.2.2           1   FULL/BDR        00:00:34    10.10.1.130     GigabitEthernet0/0
+10.10.1.137       1   FULL/DROTHER    00:00:38    10.10.1.138     GigabitEthernet0/1
+
+R1# show ip ospf interface brief
+
+Interface    PID   Area   IP Address      Mask     State     Cost  Type
+Gi0/0        1     0      10.10.1.129     0.0.0.3  POINT_TO_POINT  1  NONE
+Gi0/1        1     0      10.10.1.137     0.0.0.3  POINT_TO_POINT  1  NONE
+Vlan10       1     10     10.10.0.1       0.0.255.255  DROTHER    1  BROADCAST
+```
+
+L'authentification est la dernière pièce de ce premier assemblage. OSPF accepte de signer ses paquets avec un mot de passe, ce qui empêche quiconque de se brancher sur un lien et d'injecter de fausses LSA. Les modes historiques sont none, simple avec un mot de passe en clair, et message-digest basé sur MD5 ; les équipements récents ajoutent SHA-256, recommandé aujourd'hui car MD5 est considéré comme trop faible. La clé est configurée séparément sur chaque extrémité et l'algorithme doit correspondre au caractère près. Une erreur d'authentification ne produit pas d'erreur explicite : la commande show ip ospf neighbor affiche simplement rien, ce qui rend ce défaut particulièrement trompeur pour un débutant.
+
+Voici un exemple complet de liaison chiffrée entre R1 et R2, avec le type de réseau déclaré explicitement.
+
+```text
+EXEMPLE : liaison cœur R1-R2 sécurisée
+
+interface GigabitEthernet0/0
+ description Lien R1-R2 zone 0
+ ip address 10.10.1.129 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_R2
+ ip ospf hello-interval 10
+ ip ospf dead-interval 40
+```
+
+- OSPF est à état de lien : chaque routeur construit la même carte du réseau, puis calcule seul.
+- Le coût vaut 100 Mbit/s divisé par la bande passante, sommé sur tout le chemin.
+- L'algorithme de Dijkstra part du routeur et dessine l'arbre des plus courts chemins.
+- Le router-id identifie le routeur de façon stable et unique dans le domaine.
+- passive-interface default ferme les interfaces utilisateur, no passive-interface rouvre les liaisons.
+- L'adjacence suit sept états, de Down à Full, en passant par ExStart et Loading.
+- Les temporisations Hello et Dead doivent être identiques des deux côtés, sous peine d'échec silencieux.
+$lesson$),
+  ('net-c4-p4', 'net-c4', 4, $lesson$Établir une adjacence OSPF, étape par étape$lesson$, $lesson$
+Savoir ce qu'est une adjacence ne suffit pas : encore faut-il savoir la construire méthodiquement, la vérifier, puis savoir quel levier actionner lorsqu'elle refuse de monter. Cette section transforme les concepts précédents en procédure opérable, en suivant un ordre immuable : préparer les interfaces, activer le processus, déclarer les zones, ouvrir les liaisons, puis contrôler chaque étape.
+
+La première étape est la préparation des interfaces, et elle se fait avant même de prononcer le mot ospf. Chaque interface doit avoir une adresse IP valide, un masque cohérent avec son voisin, et surtout être administrativement active. Une interface en état down ne participera jamais à OSPF, quelle que soit la configuration par-dessus. Vérifiez donc avec show ip interface brief que l'interface est up et that l'adresse est celle attendue. Un détail fréquent : sur une liaison en /30, les deux routeurs doivent utiliser les deux adresses utilisables de la plage, à savoir la première et la deuxième, jamais la troisième qui est l'adresse de réseau elle-même.
+
+La deuxième étape consiste à créer le processus OSPF et à lui donner un identifiant. Le choix du router-id suit une règle de priorité bien définie : OSPF retient d'abord un router-id configuré explicitement avec la commande router-id ; à défaut, il prend l'adresse de loopback la plus élevée ; à défaut encore, l'adresse de loopback physique la plus élevée ; en dernier recours, l'adresse de port série la plus élevée. La leçon pratique est qu'il ne faut jamais laisser le routeur choisir au hasard, car l'ajout d'une interface de loopback après coup modifierait l'identifiant et forcerait une remise à zéro de toutes les adjacences. Configurez toujours un router-id explicite et la séquence ordonnée.
+
+```text
+EXEMPLE : mise en service complète d'une liaison OSPF
+
+! Étape 1 : interfaces et adresses
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+interface GigabitEthernet0/0
+ ip address 10.10.1.129 255.255.255.252
+ no shutdown
+
+! Étape 2 : processus et zones
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+
+! Étape 3 : contrôle
+show ip protocols | section OSPF
+show ip ospf neighbor
+```
+
+La troisième étape est la déclaration des zones. Pour chaque interface, il faut décider dans quelle zone elle tombe, et cette décision engage l'architecture tout entière. La zone 0, dite backbone, est obligatoire : c'est la zone de transit par laquelle tout trafic inter-zones doit passer. Les autres zones, numérotées de 1 à 16 millions, relient leurs routeurs bordures à la zone 0. Un routeur dont toutes les interfaces appartiennent à une même zone est un routeur interne ; un routeur ayant des interfaces à la fois en zone 0 et dans une zone non zéro est un routeur de bordure de zone, ou ABR ; un routeur qui redistribue des routes extérieures à OSPF est un routeur de frontière d'autonome, ou ASBR.
+
+La quatrième étape est l'ouverture explicite des liaisons, ce qui consiste à choisir le bon type de réseau. Sur notre site, chaque lien entre routeurs sera déclaré en point à point. Ce choix supprime l'élection du DR, réduit le nombre d'échanges et fait gagner plusieurs secondes à la montée en état Full. Il faut l'appliquer des deux côtés, car une dissymétrie de type de réseau produit des comportements inattendus. Sur un VLAN qui regroupe plusieurs routeurs, en revanche, on conserve le type broadcast et on laisse OSPF élire son DR.
+
+La cinquième étape, et la seule qui soit réellement un contrôle, consiste à vérifier. On commence par confirmer que le routeur voit bien son voisin, puis que l'état est Full, puis que la base d'état de lien contient les LSA attendus, et enfin que la table de routage porte les routes désirées. Cette séquence en quatre temps est importante : elle localise le défaut dans une couche précise. Pas de voisin du tout, le problème est au niveau des Hello ou de la couche 2. Voisin en ExStart, le problème est au niveau de la négociation MTU. Voisin Full mais base vide, le problème est au niveau de la synchronisation des LSA. Base complète mais table incomplète, le problème est au niveau de l'algorithme ou des filtres.
+
+```text
+EXEMPLE : sortie détaillée d'un voisin OSPF
+
+R1# show ip ospf neighbor 2.2.2.2 detail
+
+  Neighbor 2.2.2.2, interface address 10.10.1.130
+    In the area 0 via interface GigabitEthernet0/0
+    Neighbor priority is 1, State is FULL, 6 state changes
+    Last neighbor hello received 00:00:07 ago
+    Dead timer interval is 40
+      Neighbor is up for 01:12:45
+    Options are 72 0x0 0x4 (LSASign, EC-capable, Opaque)
+    Message digest authentication enabled with key 1, algorithm sha256
+```
+
+Les tableaux markdown qui suivent résument d'une part les états d'adjacence et leur signification, d'autre part les quatre types de paquets OSPF et leur rôle. Servez-vous-en comme d'une aide-mémoire pendant vos premiers dépannages.
+
+| État | Ce qu'il signifie | Action attendue |
+| --- | --- | --- |
+| Down | Aucun Hello reçu ou émis | Vérifier la couche 2, l'adresse IP et le processus |
+| Init | Un Hello distant contient notre identité | Le trafic est à sens unique, vérifier filtres et ACL |
+| 2-Way | Relations confirmées dans les deux sens | Normal sur un réseau multi-accès, anormal sur point à point |
+| ExStart | Négociation du maître et de la taille de paquet | Vérifier l'MTU des deux interfaces |
+| Exchange | Échange des résumés de LSA | Vérifier que les zones correspondent |
+| Loading | Demandes et livraisons des LSA manquants | Vérifier l'authentification et les timers |
+| Full | Bases synchronisées | Adjacence opérationnelle |
+
+| Paquet | Rôle | Moment |
+| --- | --- | --- |
+| Hello | Découverte, confirmation de présence, négociation des timers | Périodique, toutes les 10 secondes |
+| Database Description | Résumé des en-têtes de LSA que l'on possède | Au début de l'échange |
+| Link State Request | Demande explicite d'un LSA précis | Pendant l'état Loading |
+| Link State Update | Livraison du contenu complet d'un ou plusieurs LSA | Réponse aux demandes, aussi en diffusion |
+| Link State Ack | Accusé de réception d'un Update | Immédiatement après un Update |
+
+Un mot sur la relation entre OSPF et le MTU, car elle est source de confusion. Le MTU est la taille maximale d'une trame, généralement 1500 octets sur Ethernet. Lors de l'échange des Database Description, OSPF annonce la taille de paquet qu'il accepte, et si les deux routeurs n'annoncent pas la même valeur, la négociation échoue et l'état reste bloqué en ExStart indéfiniment. C'est un défaut typique lorsqu'une liaison traverse un tunnel, une liaison PPP ou un équipement qui fragmente différemment. La correction propre consiste à aligner le MTU sur les deux interfaces ; la correction de contournement, ip ospf mtu-ignore, doit être utilisée en connaissance de cause et documentée, car elle masque la cause sans la réparer.
+
+L'authentification mérite la même rigueur. Voici comment la configurer en SHA-256 sur les deux extrémités, en veillant à ce que l'identifiant de clé et l'algorithme soient identiques.
+
+```text
+EXEMPLE : authentification OSPF en SHA-256
+
+! Sur R1
+interface GigabitEthernet0/0
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 MA_CLE_SECRETE
+
+! Sur R2
+interface GigabitEthernet0/0
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 MA_CLE_SECRETE
+
+! Contrôle : la clé et l'algorithme doivent apparaître dans la sortie
+show ip ospf interface GigabitEthernet0/0
+```
+
+Les commandes de débogage viennent en dernier recours, quand les show ne suffisent plus. debug ip ospf hello affiche en temps réel chaque Hello émis et reçu, avec l'identité de l'émetteur : si rien ne s'affiche alors que le voisin devrait parler, le paquet n'arrive tout simplement pas. debug ip ospf adjacences détaille l'enchaînement des états et signale la raison exacte d'un rejet, par exemple mismatch en dead time. Ces commandes produisent beaucoup de sortie et consomment du processeur : activez-les sur un lien calme, enregistrez la sortie, puis désactivez-les immédiatement avec undebug all.
+
+- Préparez les interfaces avant d'activer OSPF : up, adresse correcte, masque cohérent.
+- Configurez un router-id explicite pour éviter toute remise à zéro des adjacences.
+- Déclarez le type de réseau point à point sur les liaisons inter-routeurs.
+- Dépannez par strates : voisin, état, base d'état de lien, table de routage.
+- Un état bloqué en ExStart désigne presque toujours une incompatibilité de MTU.
+- Une sortie neighbor vide après authentification ne signifie pas un câble coupé.
+- Utilisez debug avec parcimonie : c'est une loupe, pas un outil de surveillance.
+$lesson$),
+  ('net-c4-p5', 'net-c4', 5, $lesson$OSPF multi-zones : backbone, ABR et résumés$lesson$, $lesson$
+Une zone OSPF est un périmètre de synchronisation : à l'intérieur d'une zone, tous les routeurs partagent exactement la même base d'état de lien, tandis que l'extérieur n'est connu que sous forme de résumés. Ce découpage répond à deux besoins contradictoires qu'il faut absolument comprendre. D'un côté, la connaissance complète de la topologie est ce qui rend OSPF fiable et rapide ; de l'autre, cette connaissance coûte de la mémoire, de la bande passante et du processeur, et elle explose dès que le réseau grandit. Les zones permettent de garder le meilleur des deux mondes : la précision locale, la simplicité globale.
+
+Concrètement, la règle est la suivante. À l'intérieur d'une zone, les routeurs échangent des LSA de type 1 et 2 qui décrivent leurs liens et les réseaux de diffusion : c'est la cartographie détaillée, la plus lourde. Les routeurs de bordure de zone, les ABR, résument ensuite l'ensemble de la zone en un ou plusieurs LSA de type 3 annonçant des préfixes de réseau avec un coût. Les routeurs des autres zones ne voient donc jamais l'intérieur de la zone voisine : ils savent juste qu'un préfixe est atteignable via un ABR à tel coût. La conséquence pratique est que la panne d'un lien à l'intérieur d'une zone ne provoque un recalcul complet que dans cette zone-là ; les autres se contentent de conserver le résumé de sortie.
+
+Le périmètre le plus important reste la zone 0, le backbone, obligatoire et unique. Toutes les zones non zéro doivent y être connectées, directement par un ABR ou, dans les cas tordus, par une liaison virtuelle. Cette contrainte a une raison historique et technique : OSPF a été conçu pour que les routeurs du backbone sachent toujours comment atteindre chaque zone, ce qui interdit toute boucle de transit entre zones. Si vous dessinez un réseau où la zone 10 et la zone 20 communiquent uniquement en traversant la zone 30, vous avez fait une erreur de conception : le trafic devra transiter par le backbone.
+
+```text
+SCHÉMA : hiérarchie des zones sur le site Lilas
+
+   +---------------------------+---------------------------+
+   |                        ZONE 0                          |
+   |            backbone : liaisons entre routeurs          |
+   |     10.10.1.128/30   10.10.1.132/30   10.10.1.136/30   |
+   +----------+----------------+---------------+------------+
+              |                |               |
+              |            +---v---+           |
+              |            |  R1   | ABR       |
+              |            | ASBR  |           |
+              |            +---+---+           |
+              |        ______|_______          |
+   +----------v--+   +-------v-----+  +--------v---------+
+   |   ZONE 10   |   |  ZONE 20    |  |    ZONE 30       |
+   |  Bat. A     |   |  Bat. B     |  |    Bat. C        |
+   | 10.10.0.0/22|   | 10.10.4.0/22|  | 10.10.8.0/22    |
+   | abonnés     |   | WiFi        |  | postes + R2 ABR  |
+   +-------------+   +-------------+  +------------------+
+```
+
+Pour maîtriser le trafic inter-zones, l'ABR dispose de deux leviers. Le premier est la commande area range, qui fusionne plusieurs préfixes en un seul avant de l'annoncer dans la zone 0. Sans elle, chaque sous-réseau de la zone 10 produirait sa propre ligne de résumé, et la zone 0 finirait par contenir des milliers d'entrées. Avec area range 10.10.0.0 255.255.252.0, l'ABR n'annonce plus qu'un seul /22. L'option cost permet d'ajuster le coût annoncé, ce qui donne un contrôle simple sur la préférence entre deux ABR : si R1 annonce le /22 avec un coût de 100 et R2 avec un coût de 200, tout le monde préférera R1, et R2 ne servira qu'en secours.
+
+Le second levier est la réduction du trafic par des zones spéciales. Une zone stub refuse les LSA de type 5, c'est-à-dire les routes externes, et reçoit en échange une route par défaut injectée par l'ABR : elle suffit pour tout ce qui sort de la zone. Une zone totally stubby refuse aussi les résumés de type 3 venant des autres zones, ne gardant qu'une route par défaut et ses propres réseaux : c'est la forme la plus économique pour une zone d'accès. Une zone NSSA, Not-So-Stubby Area, accepte d'abriter un ASBR local tout en restant fermée aux routes externes du reste du domaine : ses routes locales circulent en LSA de type 7, converties en type 5 par l'ABR à la frontière.
+
+```text
+EXEMPLE : configuration d'un ABR multi-zones sur R1
+
+router ospf 1
+ router-id 1.1.1.1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ network 10.10.4.0 0.0.3.255 area 20
+ network 10.10.8.0 0.0.3.255 area 30
+ area 10 range 10.10.0.0 255.255.252.0 cost 100
+ area 20 range 10.10.4.0 255.255.252.0 cost 100
+ area 30 range 10.10.8.0 255.255.252.0 cost 100
+ area 10 stub default-cost 10
+ area 20 stub default-cost 10
+ area 30 nssa
+```
+
+Le coût d'un chemin inter-zones s'obtient en additionnant le coût local jusqu'à l'ABR et le coût annoncé dans le résumé de type 3. C'est une somme de deux termes indépendants, et c'est la raison pour laquelle area range cost influence réellement la préférence globale. Lorsque vous concevez un réseau à plusieurs sites, écrivez toujours à la main le calcul du coût pour chaque couple zone source et zone destination : ce tableau vaut mieux que n'importe quelle intuition, et il révèle immédiatement un chemin de transit inattendu.
+
+Voici le récapitulatif des types de LSA que vous rencontrerez. Connaître leur portée, c'est savoir instantanément dans quelle base les chercher avec show ip ospf database.
+
+| Type | Nom | Portée | Contenu |
+| --- | --- | --- | --- |
+| 1 | Router LSA | Zone | Les liens du routeur et leurs coûts, décrits pour la zone |
+| 2 | Network LSA | Zone | Les routeurs présents sur un réseau de diffusion, publié par le DR |
+| 3 | Summary LSA | Inter-zones | Les préfixes d'une zone annoncés dans une autre, publié par l'ABR |
+| 4 | ASBR Summary | Inter-zones | Le chemin pour rejoindre un ASBR, publié par l'ABR |
+| 5 | AS External | Domaine | Les routes redistribuées depuis l'extérieur d'OSPF, publiées par l'ASBR |
+| 7 | NSSA External | Zone NSSA | Les routes externes locales d'une zone NSSA, converties en type 5 à la sortie |
+
+Une erreur classique mérite d'être signalée, car elle trompe beaucoup de monde. Configurer area 10 stub d'un seul côté seulement ne provoque aucun message d'erreur : l'ABR accepte d'envoyer des résumés, l'autre routeur les accepte de recevoir, et l'adjacence monte même jusqu'à Full. Le problème apparaît plus tard, quand l'ABR se demande si la zone est stub et finit par injecter ou non la route par défaut. Les deux extrémités d'une zone doivent porter les mêmes attributs de zone, stub, totally stubby, nssa, no-summary, et la même authentification de zone. C'est la règle d'or du multi-zones : les attributs de zone sont un contrat, pas une préférence.
+$lesson$),
+  ('net-c4-p6', 'net-c4', 6, $lesson$Redistribution et routes externes$lesson$, $lesson$
+La redistribution est l'opération qui injecte dans OSPF des routes apprises par une autre source : une route statique, un réseau directement connecté, un autre protocole de routage, ou la table complète d'un autre domaine. Elle est indispensable dans la réalité, car aucun réseau ne se résume à OSPF : il y a toujours une liaison série vers un prestataire, un segment de maintenance qui parle RIP, un VPN, ou des interfaces de loopback qui ne doivent pas être annoncées telles quelles. Elle est aussi l'opération la plus risquée du routage, car elle peut créer des boucles et des réinjections en cascade.
+
+Sur les équipements Cisco, la syntaxe se place sous router ospf et se lit redistribute protocole, suivi d'options. Le mot-clé subnets est crucial : sans lui, OSPF ne redistribue que les réseaux classful, c'est-à-dire ceux qui correspondent exactement à un /8, /16 ou /24, et ignore tous les sous-réseaux. Sur un réseau moderne entièrement en /22 ou en /30, l'oubli de subnets produit l'impression la plus étrange du monde : la commande est acceptée, la commande show conf le confirme, et pourtant aucune route n'apparaît chez les voisins.
+
+```text
+EXEMPLE : redistribution complète sur R1, l'ASBR
+
+ip prefix-list LISTE_STATIQUES seq 5 permit 0.0.0.0/0
+ip prefix-list LISTE_STATIQUES seq 10 permit 10.10.8.0/22
+ip prefix-list LISTE_LOOPBACKS seq 5 permit 1.1.1.1/32
+ip prefix-list LISTE_LOOPBACKS seq 10 permit 2.2.2.2/32
+
+route-map VERS_OSPF_STATIQUE permit 10
+ match ip address prefix-list LISTE_STATIQUES
+ set metric 100
+ set metric-type 1
+ set tag 100
+
+route-map VERS_OSPF_CONNECTE permit 10
+ match ip address prefix-list LISTE_LOOPBACKS
+ set metric 10
+ set metric-type 1
+
+router ospf 1
+ redistribute static subnets route-map VERS_OSPF_STATIQUE
+ redistribute connected subnets route-map VERS_OSPF_CONNECTE
+```
+
+Le type de métrique externe mérite une explication approfondie, car il change complètement le comportement du réseau. Un type 2, qui est le défaut, signifie que le coût affiché chez les routeurs internes est uniquement le coût attribué par l'ASBR lors de l'injection : le chemin interne jusqu'à l'ASBR est ignoré dans le calcul. Un type 1 signifie que le coût affiché est la somme du coût interne jusqu'à l'ASBR et du coût attribué à l'injection. En pratique, le type 1 donne des chemins cohérents quand plusieurs ASBR injectent la même destination, car il tient compte du chemin réel ; le type 2 convient mieux aux routes par défaut, où l'on souhaite que tous les routeurs partagent la même référence sans additionner des coûts variables.
+
+Les tags constituent la protection la plus efficace contre les boucles de redistribution. L'idée est mécanique : à l'injection, on marque la route avec un nombre ; à l'autre bout du domaine, on refuse de réinjecter une route porteuse de ce marqueur. Sans tag, deux routeurs qui se redistribuent mutuellement finissent par répéter indéfiniment la même annonce, et la table enfle jusqu'à l'épuisement des ressources. Avec un tag et une route-map qui fait match tag à l'entrée, le cycle est brisé à la première tentative. Les autres parade consistent à utiliser une distance administrative différente pour la route réinjectée, ou à filtrer avec une prefix-list restrictive.
+
+```text
+EXEMPLE : injection de la route par défaut et vérification
+
+router ospf 1
+ default-information originate always metric-type 1 metric 10
+
+! Vérification côté ASBR
+show ip route | include gateway
+show ip ospf database external
+
+! Vérification sur un routeur interne
+show ip route ospf | include 0.0.0.0
+```
+
+La commande default-information originate injecte 0.0.0.0/0 dans OSPF sous forme de LSA de type 5. Elle n'injecte cette route que si une route par défaut existe déjà dans la table du routeur, sauf si on ajoute le mot-clé always, qui force l'annonce même en l'absence de route locale. Le choix entre les deux formes n'est pas anodin : avec always, les autres routeurs croient toujours disposer d'un accès au monde extérieur, même si l'ASBR a perdu sa propre route. Sans always, l'annonce disparaît en même temps que la panne, ce qui est plus honnête mais plus perturbant pour le domaine. Dans notre site, nous utiliserons always pour garantir que R1 distribue un défaut stable, et nous confierons la détection réelle de la panne à une sonde et à une route flottante.
+
+- La zone est un périmètre de synchronisation, pas un simple regroupement d'interfaces.
+- La zone 0 est unique et obligatoire, et toutes les zones non zéro s'y rattachent.
+- area range fusionne les préfixes avant leur annonce et fixe le coût annoncé.
+- Stub, totally stubby et NSSA réduisent la LSDB au prix d'une route par défaut.
+- Les attributs de zone doivent être identiques sur toutes les interfaces de la zone.
+- La redistribution exige subnets, un route-map explicite et un tag anti-boucle.
+- default-information originate always diffuse un défaut même si l'ASBR perd la sienne.
+$lesson$),
+  ('net-c4-p7', 'net-c4', 7, $lesson$Diagnostiquer les pannes de convergence$lesson$, $lesson$
+La convergence est l'intervalle entre la disparition d'un lien et le moment où tous les routeurs ont intégré cette nouvelle réalité. Dans un réseau sain, cette fenêtre se compte en secondes ; dans un réseau mal réglé, elle peut durer des dizaines de secondes, voire ne jamais se produire. Le dépannage de la convergence repose sur une distinction fondamentale : il faut savoir si le routeur ignore un événement, s'il le connaît mais refuse d'en tirer parti, ou s'il agit mais vers une mauvaise destination.
+
+Commencez toujours par la couche la plus basse. Une adjacence OSPF ne peut pas exister sans une couche 2 fonctionnelle : commencez donc par pinguer le voisin, puis vérifiez show ip interface brief pour confirmer que l'interface est up et up. Si le ping échoue, OSPF n'est même pas à examiner : le défaut est sur le câble, le VLAN, le port switch ou le masque. Beaucoup d'heures perdues viennent d'administrateurs qui scrutent des commandes OSPF alors qu'un simple test de portée aurait tout de suite montré que le voisin était injoignable.
+
+Une fois la couche 2 confirmée, vérifiez que les Hello circulent réellement. La commande show ip ospf statistiques montre les paquets reçus par type : si le compteur de Hello progresse alors que aucun voisin n'apparaît, le paquet arrive mais est rejeté, et la cause la plus fréquente est une divergence de temporisation ou d'authentification. Si le compteur ne bouge pas, le paquet n'arrive pas, et l'on retombe sur la couche 2, un filtre de paquet, une interface en mode passif, ou un processus OSPF qui ne tourne tout simplement pas sur l'autre routeur.
+
+```text
+EXEMPLE : ordre de dépannage d'une adjacence qui ne monte pas
+
+R1# ping 10.10.1.130
+R1# show ip interface brief | include 10.10.1.129
+R1# show ip ospf statistiques
+R1# show ip ospf neighbor
+R1# show ip ospf interface GigabitEthernet0/0
+R1# show ip ospf database | begin Area 0
+R1# show ip route ospf
+```
+
+L'interprétation de cette séquence suit une logique d'élimination. Ping sans réponse : problème de couche 2 ou d'adresse. Ping OK mais aucun Hello reçu : problème de configuration OSPF, interface passif, zone absente du processus, ou routeur qui n'a pas de processus actif. Hello reçus mais aucun voisin : divergence de timers, d'authentification ou de type de réseau. Voisin présent mais état bloqué : problème de MTU ou de synchronisation des LSA. Voisin Full mais routes manquantes : problème de zones, de filtres ou de redistribution.
+
+Le tableau suivant regroupe les symptômes les plus courants avec leur cause probable et la correction correspondante. Imprimez-le mentalement : il couvre l'immense majorité des incidents d'adjacence rencontrés en production.
+
+| Symptôme | Cause la plus fréquente | Correction |
+| --- | --- | --- |
+| Aucun voisin, aucun Hello reçu | Interface en mode passif ou processus absent | no passive-interface, vérifier router ospf |
+| Hello reçus, toujours aucun voisin | Identifiants de zone ou timers différents | Aligner la zone et les intervalles Hello et Dead |
+| État bloqué en ExStart | MTU incohérent entre les deux interfaces | Aligner le MTU ou utiliser ip ospf mtu-ignore |
+| État bloqué en Loading | Authentification ou LSA corrompus | Vérifier clé et algorithme, réinitialiser le processus |
+| État 2-Way sur une liaison point à point | Type de réseau non déclaré | ip ospf network point-to-point des deux côtés |
+| Adjacence qui monte puis retombe sans cesse | Lien physique instable ou router-id changeant | Contrôler le compteur state changes et fixer le router-id |
+| Voisin Full mais aucune route inter-zone | ABR absent ou area range mal placé | show ip ospf border-routers et show ip ospf database summary |
+
+L'instabilité chronique mérite une attention particulière, car elle est plus insidieuse qu'une panne franche. Dans show ip ospf neighbor, le champ state changes augmente à chaque rétablissement : une valeur qui grimpe de plusieurs unités par heure signale que l'adjacence est en train de retomber. Les coupures courtes passent inaperçues pour les utilisateurs mais produisent des pertes de paquets et des ralentissements ; elles proviennent le plus souvent d'un lien physique défaillant, d'une négociation de débit en boucle, d'un arbitrage de port switch, ou d'un routeur dont le router-id dérive parce qu'une interface de loopback a été ajoutée en cours de route.
+
+Un mot sur le débogage ciblé. La commande debug ip ospf adjacences affiche en clair la raison d'un rejet : elle écrit par exemple mismatch en dead time ou authentication failed, ce qui vous donne immédiatement la commande correctrice à taper. Elle s'active avec debug ip ospf adjacences, se coupe avec undebug all, et ne doit jamais rester allumée sur un routeur de production, car le flux de messages peut dépasser la capacité du processeur et provoquer un incident plus grave que celui que vous cherchiez à résoudre.
+
+- Dépannez par strates : couche 2, Hello, état, LSDB, table de routage.
+- Un compteur de Hello qui progresse sans voisin révèle un rejet, pas une coupure.
+- Un état bloqué en ExStart est presque toujours un problème de MTU.
+- Le champ state changes mesure l'instabilité, pas seulement l'état courant.
+- debug ip ospf adjacences donne la raison exacte d'un rejet, à utiliser brièvement.
+- Une LSDB trop grosse allonge le calcul SPF, donc la convergence elle-même.
+- Consignez symptôme, cause et correction : le dépannage s'apprend aussi en relisant.
+$lesson$),
+  ('net-c4-p8', 'net-c4', 8, $lesson$Exemple guidé : configuration du site Lilas$lesson$, $lesson$
+Nous voici arrivés au moment d'assembler toutes les pièces. Le site Lilas doit disposer d'une configuration de routage complète et cohérente : des routes statiques vers l'Internet, OSPF multi-zones à l'intérieur, de la redondance si un routeur de bordure tombe, et une méthode de validation qui prouve que chaque exigence est remplie. Nous allons procéder dans l'ordre où l'on travaille réellement sur un chantier : d'abord les fondations, puis les interfaces, ensuite le protocole, enfin les politiques et les secours.
+
+Rappelons les données du problème. R1 est le routeur cœur installé dans le local technique ; il est à la fois ABR pour les zones 0, 10, 20 et 30, et ASBR pour la redistribution. R2 est le routeur de redondance du bâtiment C, ABR des zones 0 et 30. FW est le pare-feu de bordure, connecté à l'Internet et à la fois ASBR pour la route par défaut. Les liaisons sont 10.10.1.128/30 entre R1 et R2, 10.10.1.132/30 entre R2 et FW, 10.10.1.136/30 entre R1 et FW. Les zones utilisateurs sont la zone 10 pour 10.10.0.0/22, la zone 20 pour 10.10.4.0/22 et la zone 30 pour 10.10.8.0/22.
+
+Les exigences sont les suivantes : processus OSPF numéro 1 sur les trois routeurs, identifiant de routeur pris sur une interface de loopback, authentification SHA-256 sur toutes les liaisons cœur, interfaces utilisateur en mode passif par défaut, agrégation des préfixes par zone avec un coût annoncé de 100, redistribution des routes statiques et des réseaux connectés, injection d'une route par défaut de type 1 avec une métrique de 10, une route flottante statique sur R1 avec une distance administrative de 10 pour survivre à la panne de FW, et une sonde IP SLA qui surveille réellement l'accès à l'Internet.
+
+Commençons par R1, le routeur le plus chargé. La configuration ci-dessous est un extrait commenté, prêt à être adapté à vos propres adresses.
+
+```text
+EXEMPLE : configuration de R1, routeur cœur, ABR et ASBR
+
+! --- Identification ---
+hostname R1
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+ ip ospf 1 area 0
+
+! --- Liaison vers R2, zone 0 ---
+interface GigabitEthernet0/0
+ description Lien R1-R2 vers zone 0
+ ip address 10.10.1.129 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_R2
+
+! --- Liaison vers FW, zone 0 ---
+interface GigabitEthernet0/1
+ description Lien R1-FW vers zone 0
+ ip address 10.10.1.137 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_FW
+
+! --- Réseaux utilisateurs, interfaces passives ---
+interface Vlan10
+ description Abonnes batiment A
+ ip address 10.10.0.1 255.255.252.0
+ ip ospf 1 area 10
+
+interface Vlan20
+ description WiFi batiment B
+ ip address 10.10.4.1 255.255.252.0
+ ip ospf 1 area 20
+
+interface Vlan30
+ description Postes batiment C
+ ip address 10.10.8.1 255.255.252.0
+ ip ospf 1 area 30
+
+! --- Processus OSPF ---
+router ospf 1
+ router-id 1.1.1.1
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ no passive-interface GigabitEthernet0/1
+ network 10.10.1.128 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ network 10.10.0.0 0.0.3.255 area 10
+ network 10.10.4.0 0.0.3.255 area 20
+ network 10.10.8.0 0.0.3.255 area 30
+ area 10 range 10.10.0.0 255.255.252.0 cost 100
+ area 20 range 10.10.4.0 255.255.252.0 cost 100
+ area 30 range 10.10.8.0 255.255.252.0 cost 100
+ area 10 stub default-cost 10
+ area 20 stub default-cost 10
+ area 30 stub default-cost 10
+ default-information originate always metric-type 1 metric 10
+ redistribute static subnets route-map VERS_OSPF_STATIQUE
+ redistribute connected subnets route-map VERS_OSPF_CONNECTE
+```
+
+Passons aux routes statiques et aux mécanismes de secours de R1. C'est ici que la partie théorique sur les distances administratives et le suivi d'objets devient tangible.
+
+```text
+EXEMPLE : routes statiques, sonde et bascule sur R1
+
+! Route principale vers l'Internet, conditionnée à la sonde
+ip route 0.0.0.0 0.0.0.0 10.10.1.138 track 1 name DEF_VIA_FW
+
+! Route flottante : distance administrative 10, elle prend le relais
+ip route 0.0.0.0 0.0.0.0 10.10.1.130 10 name DEF_VIA_R2_SECOURS
+
+! Sonde vers l'Internet, évaluée toutes les 10 secondes
+ip sla 1
+ icmp-echo 8.8.8.8 source-interface GigabitEthernet0/1
+ frequency 10
+ timeout 5000
+ threshold 1000
+ip sla schedule 1 life forever start-time now
+track 1 ip sla 1 reachability
+```
+
+Le raisonnement à retenir est le suivant. Tant que la sonde reçoit des réponses de 8.8.8.8, l'objet track 1 reste en état de succès, la route principale existe, et la route flottante, de distance administrative supérieure, reste hors table. Dès que trois échos consécutifs échouent, l'objet bascule en échec, la route principale est retirée, et la flottante devient la meilleure candidates pour le préfixe 0.0.0.0/0 : elle s'installe en une fraction de seconde, sans aucun échange OSPF. Le retour se fait naturellement quand la sonde redevient satisfaisante.
+
+Voici maintenant la configuration de FW, le pare-feu de bordure, qui joue le rôle d'ASBR pour la route par défaut et qui doit être plus sobre que R1.
+
+```text
+EXEMPLE : configuration de FW, pare-feu de bordure
+
+interface Loopback0
+ ip address 3.3.3.3 255.255.255.255
+ ip ospf 1 area 0
+
+interface GigabitEthernet0/0
+ description Lien FW-R1 vers zone 0
+ ip address 10.10.1.138 255.255.255.252
+ ip ospf network point-to-point
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 sha256 CLE_R1_FW
+
+interface GigabitEthernet0/1
+ description Sortie Internet
+ ip address 203.0.113.2 255.255.255.252
+ ip nat outside
+
+router ospf 1
+ router-id 3.3.3.3
+ passive-interface default
+ no passive-interface GigabitEthernet0/0
+ network 10.10.1.132 0.0.0.3 area 0
+ network 10.10.1.136 0.0.0.3 area 0
+ default-information originate metric-type 1 metric 10
+ redistribute static subnets
+
+ip route 0.0.0.0 0.0.0.0 203.0.113.1 name DEF_VERS_FAIBLE_OPERATEUR
+```
+
+R2, enfin, est le plus simple des trois : il est ABR des zones 0 et 30, il reçoit les résumés de toutes les autres zones, et il n'a rien à redistribuer. Sa configuration tient en quelques lignes de réseau dans le processus, plus l'authentification sur ses deux liaisons. C'est volontairement le routeur de référence pour un débutant : il vous permet d'observer un ABR minimaliste et de lire la sortie de show ip ospf border-routers sans la surcharge des routes externes.
+
+Une fois les trois configurations en place, la validation suit un ordre strict que vous ne devez jamais dévier. Chaque étape prouve un point précis, et sauter une étape revient à parier sur ce que vous n'avez pas vérifié.
+
+```text
+EXEMPLE : séquence de validation après mise en service
+
+R1# show ip ospf neighbor
+R1# show ip ospf database | include Link ID
+R1# show ip ospf database summary
+R1# show ip ospf database external
+R1# show ip route ospf
+R1# show ip route 0.0.0.0
+R1# show ip ospf border-routers
+R1# show ip sla statistics
+R1# show track
+```
+
+Interprétons les résultats attendus. show ip ospf neighbor doit afficher deux voisins en état Full, un vers R2 et un vers FW, avec zéro ou un seul state change selon l'âge de la session. show ip ospf database doit lister des LSA de type 1 dans chaque zone, des LSA de type 3 en zone 0 venant des ABR, et un LSA de type 5 pour la route par défaut. show ip route ospf doit montrer les préfixes des trois zones en intercalant les codes O pour la zone locale et O IA pour les zones voisines. show ip route 0.0.0.0 doit afficher le défaut, avec le code S suivi de l'astérisque, via 10.10.1.138.
+
+La vérification de la redondance est la plus importante, car c'est elle qui transforme une configuration théorique en résilience réelle. Coupez la liaison R1-FW en simulation, puis observez : l'adjacence avec FW disparaît, la route statique track 1 tombe en échec, la route flottante s'installe, et show ip route 0.0.0.0 doit afficher désormais 10.10.1.130 au lieu de 10.10.1.138. Rétablissez la liaison et vérifiez le retour à la normale. Si la bascule ne se produit pas, vérifiez d'abord show track : si l'objet reste en succès alors que l'Internet est coupé, c'est la sonde qu'il faut examiner, pas le routage.
+
+```text
+SCHÉMA : comportement attendu lors de la panne de FW
+
+   Avant panne                          Après panne de FW
+
+   R1 ---- FW ---- Internet             R1 ---- (coupé) ---- Internet
+    |                                    |
+    +---- R2 ---- (secours dormant)      +---- R2 ---- Internet
+
+   show ip route 0.0.0.0                 show ip route 0.0.0.0
+   S* via 10.10.1.138  [1/0]            S* via 10.10.1.130  [10/0]
+   track 1 : succès                      track 1 : échec
+   route flottante hors table            route flottante installée
+```
+
+Pour rendre la preuve définitive, effectuez un test de bout en bout plutôt qu'une simple lecture de table. Depui un poste de la zone 10, lancez une commande de déplacement d'octets vers une adresse publique, puis ouvrez un tracé de chemin. Tant que FW est en service, le premier saut après R1 est 10.10.1.138 ; après la coupure, le tracé doit montrer 10.10.1.130 puis R2. Ce contraste, visible depuis un poste utilisateur, constitue la démonstration que la redondance fonctionne réellement et pas seulement sur le papier.
+
+- Configurez dans l'ordre : interfaces, loopback, processus OSPF, zones, politiques, secours.
+- Les zones stub sur les zones d'accès réduisent la LSDB sans rien perdre d'utile.
+- La route principale track et la route flottante forment un couple indissociable.
+- Validez par strates : voisin, LSDB, table, défaut, puis test de bout en bout.
+- Coupez réellement un lien pour prouver la bascule, ne vous fiez pas aux tables.
+- Documentez chaque règle notable : elle sera lue par quelqu'un d'autre, un jour.
+$lesson$),
+  ('net-c4-p9', 'net-c4', 9, $lesson$À retenir$lesson$, $lesson$
+Le routage statique vous donne un contrôle absolu mais aveugle : il ne détecte ni panne ni dégradation. Il s'écrit avec ip route, et trois variantes couvrent la quasi-totalité des besoins : la route par défaut pour sortir du réseau, la route spécifique pour gagner en précision, la route flottante pour prévoir l'imprévu. La correspondance par préfixe le plus long prime toujours sur la distance administrative, elle-même prioritaire sur la métrique. Ces trois règles, dans cet ordre, suffisent à expliquer toute table de routage que vous aurez à lire.
+
+OSPF apporte ce que la route statique ne peut pas offrir : la découverte automatique, le calcul des meilleurs chemins et la réparation de lui-même. C'est un protocole à état de lien, donc chaque routeur construit la même carte, exécute Dijkstra et en déduit sa table. La métrique reflète la bande passante, ce qui oriente naturellement le trafic vers les liens rapides. La hiérarchie en zones limite la taille de la base et la portée des recalculs, avec la zone 0 en colonne vertébrale obligatoire et les ABR en points de passage obligés.
+
+La mise en service d'une adjacence suit une procédure immuable : interfaces actives et correctement adressées, router-id explicite, zones identiques des deux côtés, type de réseau cohérent, authentification et temporisations alignées. La vérification suit la même logique inversée, de la couche 2 jusqu'à la table : ping, statistiques de Hello, voisin, état, base, table. Chaque étape élimine une famille entière de causes, et c'est cette discipline qui fait la différence entre un dépannage de dix minutes et une après-midi perdue.
+
+La redistribution est l'outil le plus puissant et le plus dangereux de ce chapitre. Elle exige le mot-clé subnets, un route-map qui déclare précisément ce qui passe, et un tag qui empêche les boucles. La route par défaut injectée par default-information originate doit être choisie en connaissance de cause entre la forme always, qui ment par omission, et la forme simple, qui disparaît avec la panne. Enfin, la résilience ne se déclare pas, elle se démontre : coupez un lien, regardez la table basculer, rétablissez, et ne considérez la configuration comme terminée que lorsque ce test a été passé.
+
+Voici les commandes qui reviendront dans votre quotidien, à retenir par cœur plutôt que par fiche.
+
+```text
+AIDE-MÉMOIRE : les commandes essentielles du chapitre
+
+show ip route                         lire la table de routage
+show ip route 10.10.8.0               détailler une destination
+show ip route ospf                    isoler les routes OSPF
+show ip ospf neighbor                 état des adjacences
+show ip ospf neighbor 2.2.2.2 detail  détails d'un voisin
+show ip ospf database                 résumé de la base d'état de lien
+show ip ospf database summary         LSA de type 3 entre zones
+show ip ospf database external        routes externes redistribuées
+show ip ospf border-routers           ABR et chemins inter-zones
+show ip ospf interface brief          coût, type de réseau, mode passif
+show ip sla statistics                état de la sonde de portée
+show track                            état des objets de suivi
+```
+$lesson$),
+  ('net-c4-p10', 'net-c4', 10, $lesson$Erreurs fréquentes$lesson$, $lesson$
+La première erreur, et de loin la plus répandue, est d'oublier le mot-clé subnets lors d'une redistribution. La commande est acceptée, la configuration sauvegardée, et pourtant aucune route n'apparaît chez les voisins, car OSPF ignore les réseaux qui ne sont pas classful. Le second réflexe doit être de vérifier show ip ospf database external avant de soupçonner quoi que ce soit d'autre : si le LSA de type 5 n'existe pas, le problème est côté ASBR, pas côté récepteur.
+
+La deuxième erreur consiste à configurer la même zone d'un seul côté, ou à faire diverger les attributs de zone. Une zone stub déclarée uniquement sur l'ABR ne provoque aucune alerte : l'adjacence monte, et le comportement devient simplement imprévisible. Toujours appliquer les attributs de zone de façon symétrique et le vérifier avec show ip ospf interface sur les deux routeurs concernés.
+
+La troisième erreur est le type de réseau mal déclaré. Sur une liaison Ethernet entre routeurs laissée en mode broadcast, OSPF élit un DR inutile et l'adjacence met plus de temps à se stabiliser ; en point à point, elle est directe. L'inverse, déclarer point à point un réseau où trois routeurs partagent le même segment, casse l'élection et empêche les adjacences. La correction tient en une ligne par interface, mais il faut penser à l'appliquer des deux côtés.
+
+La quatrième erreur concerne le MTU. Lorsque la liaison traverse un tunnel ou un équipement qui réduit la taille de paquet, l'échange des Database Description échoue et l'état reste bloqué en ExStart sans le moindre message d'erreur explicite. Vérifier le MTU affiché par show ip ospf interface des deux côtés avant d'envisager toute autre piste ; la solution propre est d'aligner les valeurs, la solution de contournement ip ospf mtu-ignore doit rester documentée comme telle.
+
+La cinquième erreur est de créer une route flottante qui ne bascule jamais, parce que sa distance administrative est inférieure ou égale à celle de la route principale, ou parce que les deux routes n'ont pas exactement le même préfixe. Une route flottante doit reprendre la destination au caractère près et porter une distance administrative franchement supérieure. Le test est simple : supprimez la route principale et regardez si la flottante apparaît ; si elle n'apparaît pas, elle ne vous sauvera jamais.
+$lesson$),
+  ('net-c4-p11', 'net-c4', 11, $lesson$Pour aller plus loin$lesson$, $lesson$
+La meilleure poursuite de ce chapitre est la lecture directe de la spécification. La RFC 2328 décrit OSPF version 2 dans son intégralité ; les sections sur les LSA et l'algorithme SPF sont d'une précision que aucun tutoriel n'égale, et vous y retrouverez mot pour mot les notions de zones, d'états d'adjacence et de calcul de coût abordées ici. L'adresse est https://datatracker.ietf.org/doc/html/rfc2328. Pour la version destinée à l'IPv6, la RFC 5340 se lit à https://datatracker.ietf.org/doc/html/rfc5340 ; les différences de format de LSA y sont détaillées, mais la logique de zones reste identique.
+
+Ensuite, les guides de configuration des constructeurs constituent la référence pratique. Cisco publie son guide OSPF à l'adresse https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_ospf/configuration/xe-16/iro-xe-16-book.html, avec des chapitres entiers consacrés aux zones stub, à l'authentification et à l'optimisation de la LSDB. Les documents équivalents existent chez Juniper, chez Arista et chez F5 : le vocabulaire change à peine, ce qui confirme que vous avez appris des concepts et pas seulement une syntaxe.
+
+Un terrain de pratique reste indispensable, et plusieurs options gratuites existent. GNS3 et EVE-NG acceptent les images des constructeurs et permettent de bâtir le site Lilas à l'identique ; Packet Tracer suffit amplement pour les exercices de routage statique et OSPF mono-zone. Quel que soit l'outil, le principe est le même : construisez la topologie, appliquez les configurations de ce chapitre, puis cassez méthodiquement chaque lien en observant les commandes de contrôle. C'est dans ces moments-là que le routage cesse d'être abstrait.
+$lesson$),
+  ('net-c4-p12', 'net-c4', 12, $lesson$Et maintenant : passez à la configuration du site Lilas$lesson$, $lesson$
+Vous avez désormais toutes les pièces du puzzle : le routage statique avec ses routes par défaut, spécifiques et flottantes, la lecture complète d'une table de routage, les fondements d'OSPF, la construction d'une adjacence, l'architecture multi-zones, la redistribution contrôlée et la méthode de dépannage. Il ne reste qu'une chose à faire, et elle est concrète : ouvrir un simulateur ou votre poste de travail, créer les trois routeurs du site Lilas, et produire les fichiers de configuration complets de R1, de R2 et de FW, commentés, cohérents et prêts à déployer. C'est exactement l'exercice pratique qui suit cette leçon, et vous le mènerez à bien en vous appuyant sur les extraits de configuration de l'exemple guidé.
+
+Une fois les trois configurations livrées et les tests de coupure passés, vous aurez terminé la partie fondations du parcours Réseaux. Le chapitre suivant franchit un palier : ACL, NAT et redondance avancée, c'est-à-dire le filtrage du trafic, la traduction d'adresses vers l'Internet et les techniques de bascule au-delà de la route flottante. Les bases que vous venez d'installer, tables de routage, adjacences, zones, redistribution, en sont le socle direct : tout ce que vous y aurez mis en pratique vous fera gagner un temps considérable. Rendez-vous donc au chapitre cinq, armé de vos trois fichiers de configuration et de la confiance que seule donne une topologie que vous avez vue basculer de vos propres yeux.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c5-p1', 'net-c5', 1, $lesson$Pourquoi filtrer, traduire et basculer$lesson$, $lesson$
+Bienvenue dans le cinquième chapitre du parcours Réseaux, consacré au routage avancé : listes de contrôle d'accès (ACL), traduction d'adresses (NAT et PAT) et redondance de passerelle (HSRP, VRRP, GLBP). Les chapitres précédents vous ont appris à acheminer les paquets (routage statique, OSPF) et à comprendre les couches basses (Ethernet, VLAN, ARP, TCP, UDP, DNS, DHCP) ; celui-ci ajoute les trois fonctions qui transforment un réseau laboratoire en réseau exploitable en production. Filtrer, c'est n'autoriser que le trafic attendu. Traduire, c'est faire coexister les adresses privées internes avec l'espace public d'Internet. Basculer, c'est supprimer le point de défaillance unique que constitue une passerelle par défaut isolée. Chacune de ces fonctions possède ses pièges : une ACL mal écrite bloque les utilisateurs légitimes ou laisse passer l'attaque ; un NAT mal configuré casse les connexions entrantes ou épuise ses ports ; une passerelle unique arrête tout le site quand un routeur s'éteint.
+
+À la fin de cette leçon, vous saurez faire un ensemble de choses très concrètes, toutes directement réutilisables en poste. Vous rédigerez une ACL étendue nommée qui autorise exactement le trafic nécessaire (HTTP et HTTPS vers le serveur web, DNS vers le résolveur, NTP pour l'horodatage, SSH pour l'administration, ICMP limité pour le diagnostic) et refuse tout le reste par le deny implicite final, en plaçant toujours les règles spécifiques avant les règles génériques. Vous configurerez un PAT avec surcharge vers Internet, un NAT statique pour publier le serveur web interne, et vous saurez vérifier les traductions avec les commandes de contrôle du plan de données. Vous déploierez HSRP ou VRRP avec adresse IP virtuelle, priorités, préemption, authentification et suivi d'interface, de sorte que la coupure d'une liaison WAN déclenche une bascule automatique vers le routeur secondaire. Vous comparerez HSRP, VRRP et GLBP pour choisir selon l'environnement, et vous assemblerez le tout dans un mini-projet : la configuration complète du périmètre et de la redondance du site Lilas.
+
+Le fil rouge de ce chapitre reste le même que dans les précédents : un site réel, nommé Lilas, avec un pare-feu de bordure FW (routeur ISR équipé du pare-feu à zones), un cœur composé de deux routeurs R1 et R2, six VLAN utilisateurs (10, 20, 30, 40, 50, 60) et une liaison Internet unique. FW possède l'adresse publique 203.0.113.10 en interface WAN et rejoint le cœur par un lien point à point. Le serveur web interne se trouve en 10.10.0.20 et doit rester accessible de l'extérieur en HTTPS, tandis que le PAT assure la sortie de tous les postes. R1 et R2 partagent une adresse virtuelle par VLAN pour que les postes aient toujours une passerelle vivante. Toutes les configurations de la leçon sont écrites dans ce décor : vous pourrez les recopier telles quelles dans un laboratoire Packet Tracer ou GNS3, les adapter à vos adresses, et observer les bascules et les traductions en direct.
+
+
+
+Sans filtrage, un routeur fait ce pour quoi il a été conçu : acheminer. Si un paquet arrive sur une interface et correspond à une route, il repart par une autre interface, sans autre question. Cette honnêteté est une faiblesse dès que l'une des interfaces est reliée à Internet. Un serveur compromis du réseau interne peut alors scanner vos machines, un attaquant peut joindre directement les postes des utilisateurs, et rien n'empêche un hôte externe d'ouvrir une session sur votre serveur de bases de données. La liste de contrôle d'accès est l'outil qui inverse la logique : au lieu de se demander ce qu'on refuse, on déclare ce qu'on autorise, et tout le reste tombe dans le panier du deny implicite. Le filtrage ne remplace ni l'antivirus ni la surveillance, mais il réduit la surface d'attaque exposée et il documente, ligne à ligne, le contrat de trafic de votre réseau.
+
+Sans traduction d'adresses, votre réseau interne serait coincé entre deux choix également mauvais. Utiliser des adresses publiques pour chaque poste est impossible depuis l'épuisement de l'espace IPv4, et de toute façon inadapté : vos adresses internes changent à chaque migration, chaque rachat d'entreprise, chaque nouveau site. Rester en adresses privées sans traduction interdit toute communication avec Internet, car les réseaux privés ne sont pas routés sur le plan mondial. Le NAT résout le dilemme en réécrivant les paquets à la frontière : les postes gardent des adresses privées stables, et le routeur de bordure substitue sa propre adresse publique lors de la sortie, en mémorisant la correspondance pour que la réponse puisse revenir. Le PAT pousse l'idée plus loin en faisant partager une seule adresse publique par des centaines de machines, grâce à la numérotation des ports.
+
+Sans redondance de passerelle, la moindre de ces belles configurations reste fragile. Chaque poste possède une passerelle par défaut, une seule adresse, écrite une fois pour toutes dans sa configuration. Si cette adresse appartient à un routeur unique et que ce routeur s'éteint, plus rien ne sort du VLAN, même si un second routeur parfaitement configuré est physiquement présent à côté. Le point de défaillance unique est ici : une adresse unique, un seul élément actif. Les protocoles de redondance de premier saut résolvent ce problème en partageant une adresse virtuelle entre plusieurs routeurs. Un routeur répond pour la VIP, les autres écoutent en veille ; si l'actif cesse d'envoyer ses messages, l'élection se déclenche en quelques secondes et l'un des pairs prend le relais. Les postes, eux, ne voient rien : leur passerelle n'a jamais changé.
+
+Le schéma suivant résume le décor du chapitre et l'emplacement des trois mécanismes : le filtrage vit à la frontière et sur le cœur, la traduction vit exclusivement sur l'interface de bordure, la redondance vit sur les routeurs qui servent de passerelle aux VLAN.
+
+```text
+                    Internet
+                       |
+                 [ 203.0.113.10 ]
+                       |  WAN (outside)
+                    +--+--+  FW : NAT/PAT + ACL + pare-feu a zones
+                    |     |
+                    +--+--+  LAN (inside)
+                       |
+        +--------------+--------------+
+        |                             |
+   +----+----+                   +----+----+
+   |   R1    |   HSRP/VRRP       |   R2    |
+   | actif   |<----------------->| standby |
+   +----+----+   VIP .254        +----+----+
+        |                             |
+   VLAN 10,20,30,40,50,60       VLAN 10,20,30,40,50,60
+   postes + serveurs            postes + serveurs
+```
+
+Les trois mécanismes n'interviennent ni au même endroit ni au même moment, et c'est ce qui les rend complémentaires plutôt que concurrents. Le tableau ci-dessous les replace dans le cycle de vie d'un paquet : l'ACL décide s'il a le droit d'exister, le NAT décide sous quelle identité il voyage, la redondance garantit qu'une passerelle existe toujours pour l'y envoyer.
+
+| Mécanisme | Question à laquelle il répond | Où il se configure | Commande de contrôle |
+| --- | --- | --- | --- |
+| ACL | Ce paquet a-t-il le droit de passer ? | Interface ou zone, en entrée ou en sortie | show access-lists |
+| NAT et PAT | Sous quelle adresse ce paquet voyage-t-il ? | Interfaces inside et outside de la bordure | show ip nat translations |
+| HSRP, VRRP, GLBP | Quelle passerelle répond aux postes du VLAN ? | Interface VLAN des routeurs du cœur | show standby brief |
+
+La méthode de travail que nous suivrons est volontairement la même pour les trois. On commence par écrire la matrice des flux : qui doit parler à qui, sur quel port, dans quel sens. On traduit cette matrice en règles, dans l'ordre où elles seront évaluées. On configure, on vérifie avec la commande de contrôle dédiée, puis on teste activement en coupant ce qui doit être coupé : une liaison, un service, un routeur. Un filtrage qui n'a jamais été testé en échec est un filtrage dont on ignore s'il fonctionne. Chaque section de cette leçon suit donc ce rythme : principe, configuration complète, commande de vérification, scénario de panne.
+
+- Filtrer : autoriser le trafic attendu, refuser tout le reste par défaut.
+- Traduire : partager l'espace public d'Internet tout en gardant des adresses internes stables.
+- Basculer : partager une passerelle virtuelle entre routeurs pour supprimer le point de défaillance unique.
+- Vérifier systématiquement avec la commande de contrôle du mécanisme, puis provoquer la panne.
+- Tester chaque règle en environment de laboratoire avant tout déploiement en production.
+$lesson$),
+  ('net-c5-p2', 'net-c5', 2, $lesson$ACL : le principe d'évaluation d'une liste$lesson$, $lesson$
+Une liste de contrôle d'accès est une suite ordonnée de règles, chacune écrite avec l'un des deux verbes autorisés : permit ou deny. Le routeur l'évalue règle par règle, de la première à la dernière, dans l'ordre exact où vous les avez écrites, et s'arrête dès qu'une règle correspond au paquet traité. Si la règle correspondante dit permit, le paquet poursuit son chemin ; si elle dit deny, le paquet est jeté silencieusement ; si aucune règle ne correspond, une règle invisible, toujours présente en fin de liste, jette le paquet. Cette dernière règle est le deny implicite : elle n'est pas écrite dans votre configuration, elle existe néanmoins, et elle explique pourquoi une ACL posée sans réflexion peut couper net une connectivité qui fonctionnait. L'ordre n'est donc pas un détail de style, il fait partie de la sémantique.
+
+Prenons l'exemple le plus simple qui soit, une ACL standard numérotée. Ce type de liste ne regarde qu'une seule chose : l'adresse IP d'origine. Elle ne sait ni quel protocole est utilisé, ni quel port est concerné, ni dans quel sens le paquet circule. Elle suffit pour interdire un réseau précis, ou pour l'autoriser dans un contexte très maîtrisé, mais elle est trop grossière pour protéger une frontière.
+
+```text
+! ACL standard numérotée : refuser le réseau de test, autoriser le reste
+access-list 10 deny   192.0.2.0 0.0.0.255
+access-list 10 permit any
+
+interface GigabitEthernet0/1
+ ip access-group 10 in
+!
+! Lecture dans l'ordre :
+!  paquet source 192.0.2.55  -> regle 1 match -> deny  -> jete
+!  paquet source 10.10.0.7   -> regle 1 non   -> regle 2 match -> permit -> suite
+!  paquet source 8.8.8.8     -> regle 1 non   -> regle 2 match -> permit -> suite
+```
+
+L'ACL étendue élargit le champ de l'analyse. Elle examine l'adresse source, l'adresse de destination, le protocole (TCP, UDP, ICMP, IP brut ou un autre), le port ou le type de message, et pour TCP même les drapeaux de connexion. C'est cette finesse qui permet d'écrire des règles du type : depuis le VLAN administration, destination n'importe où, protocole TCP, port destination 22, autorisé. Les plages numérotées codent cette différence de capacité : de 1 à 99 et de 1300 à 1999 pour les ACL standard, de 100 à 199 et de 2000 à 2699 pour les ACL étendues. Au-delà de ces numéros, il existe les ACL nommées, qui portent un nom au lieu d'un nombre et que l'on préfère aujourd'hui dans toutes les configurations neuves.
+
+| Type de ACL | Numéros | Ce qu'elle examine | Usage typique |
+| --- | --- | --- | --- |
+| Standard | 1 à 99 et 1300 à 1999 | Adresse IP source seule | Exclusion rapide d'un réseau |
+| Étendue | 100 à 199 et 2000 à 2699 | Source, destination, protocole, ports, flags | Filtrage de frontière |
+| Nommée | nom textuel | Identique à l'étendue, avec séquences | Toute configuration moderne |
+| Control-plane | sur le plan de contrôle | Trafic destiné au routeur lui-même | Protection du routeur |
+
+Les ACL nommées apportent trois avantages mécaniques que l'on ressent dès la première maintenance. Leur nom décrit leur intention (LAN_TO_INTERNET se comprend au bout de six mois, 101 ne se comprend plus). Elles acceptent des numéros de séquence internes, 10, 20, 30, qui laissent des trous pour insérer une règle entre deux existantes sans tout réécrire. Et elles acceptent les commentaires remark, seules lignes qui ne produisent aucun effet sur le trafic mais qui sauvent l'administrateur suivant. Un ACL de production sans remark est un livre sans chapitres : tout y est, rien ne se retrouve.
+
+```text
+ip access-list extended SERVEUR_WEB_IN
+ remark --- HTTPS public vers le serveur interne ---
+ 10 permit tcp any host 10.10.0.20 eq 443
+ remark --- HTTP uniquement pour la redirection ---
+ 20 permit tcp any host 10.10.0.20 eq 80
+ remark --- Le reste est rejete par le deny implicite ---
+```
+
+La commande show access-lists est votre œil sur la vie réelle de la liste. Elle affiche les règles dans leur ordre d'évaluation, précédées de leur numéro de séquence, et surtout elle ajoute entre parenthèses le compteur de correspondances de chaque règle. Ce compteur répond à la question que tout administrateur finit par poser : est-ce que cette règle sert encore ? Une règle deny dont le compteur grimpe continûment est le symptôme d'un trafic anormal ou d'une règle mal placée ; une règle permit à zéro pendant trois semaines est candidate au retrait. Les compteurs ne se remettent à zéro qu'après un clear, et leur lecture avant/après un test est la preuve que votre modification a bien eu l'effet attendu.
+
+```text
+R1# show access-lists LAN_TO_INTERNET
+Extended IP access list LAN_TO_INTERNET
+ 10 permit tcp host 10.10.0.146 any eq 443 (245 matches)
+ 20 permit tcp host 10.10.0.146 any eq 80 (12 matches)
+ 30 permit udp host 10.10.0.146 any eq 53 (1873 matches)
+ 70 permit udp any any eq 53 (98214 matches)
+ 90 permit icmp any any echo-request (415 matches)
+```
+
+Le placement de l'ACL est la seconde décision structurante. Une ACL sortante s'applique au moment où le paquet quitte une interface : on la pose donc près de la source, ce qui économise le travail des interfaces suivantes et du plan de données, puisque le trafic refusé n'est jamais transmis. Une ACL entrante s'applique à l'entrée : on la pose près de la destination, ce qui protège la cible au plus près. Pour une bordure, la règle est presque mécanique : filtrage entrant sur l'interface qui regarde Internet, filtrage sortant sur l'interface qui rejoint le cœur. Une troisième catégorie existe pour la protection du routeur lui-même, appelée control-plane policing, qui filtre le trafic destiné à l'équipement (SSH, SNMP, protocoles de routage) plutôt que le trafic transite ; elle complète l'ACL d'interface sans la remplacer.
+
+Deux mécanismes de l'ACL étendue méritent d'être connus avant d'écrire une frontière, parce qu'ils font gagner des lignes et qu'ils sont parfois la source de confusions. Le mot-clé established reconnaît les paquets TCP porteurs des drapeaux ACK ou RST, c'est-à-dire les réponses à une connexion déjà ouverte depuis l'intérieur : avec une seule règle, on autorise tout le retour sans lister les ports. Il ne convient qu'à ce rôle, car il ne distingue pas une vraie réponse d'un paquet frauduleux qui arbore ces mêmes drapeaux. Le mot-clé fragment concerne les paquets fragmentés, qui portent un en-tête allégé et ne contiennent pas les ports : sans lui, une ACL expélicitant un port risque de ne pas voir les fragments comme on l'attendait. Aucun des deux n'existe dans les ACL standard, qui restent aveugles à tout ce qui n'est pas une adresse.
+
+```text
+Evaluation pas a pas d'un paquet entrant sur la bordure
+Paquet : TCP 198.51.100.7:51234 -> 10.10.0.20:443, flags ACK
+Regle  10 permit tcp any host 10.10.0.20 eq 443  -> MATCH, permit, arret
+Paquet : TCP 198.51.100.7:51234 -> 10.10.0.33:3306, flags SYN
+Regle  10 permit tcp any host 10.10.0.20 eq 443  -> non
+Regle  20 permit tcp any host 10.10.0.20 eq 80   -> non
+Fin de liste -> deny implicite -> paquet jete, non logue
+```
+
+- Les règles sont évaluées dans l'ordre, la première correspondance gagne.
+- Le deny implicite final jette tout paquet que vous n'avez pas explicitement autorisé.
+- Standard : source seule. Étendue : source, destination, protocole, ports, flags, ICMP.
+- Nommées avec séquences et remark : à préférer pour toute configuration appelée à évoluer.
+- show access-lists affiche l'ordre réel et les compteurs de correspondances.
+- Sortant près de la source (économie), entrant près de la destination (protection).
+- Placement et ordre se conçoivent ensemble : on décide le chemin, puis on écrit la liste.
+$lesson$),
+  ('net-c5-p3', 'net-c5', 3, $lesson$ACL étendues et nommées : les rédiger$lesson$, $lesson$
+La rédaction d'une ACL ne commence pas par la configuration, elle commence par le papier. Avant d'ouvrir la console, dressez la matrice des flux : une ligne par flux légitime, avec la source, la destination, le protocole, le port et le sens. Pour un site d'entreprise typique, la matrice tient en dix lignes : les postes sortent vers Internet en HTTP et HTTPS, tout le monde résout les noms en DNS, tous les postes synchronisent l'heure en NTP, l'administration atteint les équipements en SSH, le serveur web reçoit le HTTPS depuis l'extérieur, et le ICMP est autorisé uniquement pour le diagnostic. Tout ce qui n'apparaît pas dans cette liste n'a pas à traverser l'ACL, et c'est précisément l'objet du exercice. Cette étape prend dix minutes et vous évite les trois heures de dépannage qui suivent toujours une ACL écrite directement à la va-vite sur un routeur de production.
+
+La syntaxe d'une règle étendue se lit comme une phrase, de gauche à droite. On commence par le verbe (permit ou deny), puis le protocole (tcp, udp, icmp ou ip pour tout le reste), puis la source, puis la destination, et enfin l'information de port ou de type quand le protocole le permet. La source et la destination prennent trois formes : le mot any (n'importe quelle adresse), le mot-clé host suivi d'une adresse (cette adresse seule), ou une adresse suivie de son masque en forme inversée (la fameuse wildcard, où un bit à 1 signifie « ce bit ne m'intéresse pas »). Le port se note avec eq pour une égalité, gt et lt pour les comparaisons, range pour une plage, et any pour tous les ports. Cette régularité de lecture est ce qui rend une ACL vérifiable d'un coup d'œil, à condition de toujours l'écrire avec la même mise en forme.
+
+```text
+ip access-list extended LAN_TO_INTERNET
+ remark === SERVEURS DU VLAN 40 (10.10.0.144/29) ===
+ 10 permit tcp host 10.10.0.146 any eq 443
+ 20 permit tcp host 10.10.0.146 any eq 80
+ 30 permit udp host 10.10.0.146 any eq 53
+ 40 permit udp host 10.10.0.146 any eq 123
+ remark === ADMINISTRATION DEPUIS LE VLAN 50 ===
+ 50 permit tcp 10.10.8.0 0.0.0.255 any eq 22
+ 60 permit tcp 10.10.8.0 0.0.0.255 any eq 443
+ remark === TOUS LES VLAN UTILISATEURS ===
+ 70 permit udp any any eq 53
+ 80 permit udp any any eq 123
+ 90 permit icmp any any echo-request
+100 permit icmp any any echo-reply
+110 permit icmp any any time-exceeded
+120 permit icmp any any packet-too-big
+ remark === LE RESTE TOMBE SUR LE DENY IMPLICITE ===
+interface GigabitEthernet0/1
+ ip access-group LAN_TO_INTERNET out
+```
+
+Lis cette liste comme le ferait un paquet. Le serveur 10.10.0.146 est traité en premier par les règles 10 à 40, qui le nomment individuellement : il peut joindre les services web et se synchroniser, mais rien d'autre. Un poste quelconque du VLAN 50 est pris par les règles 50 et 60 pour l'administration, puis retombe, comme tout le monde, sur les règles 70 à 120 qui ouvrent le DNS, l'heure, le ping et les messages indispensables au traceroute et à la découverte de MTU. Un poste du VLAN 10 qui tente une connexion SSH vers l'extérieur n'est couvert par aucune règle : il est jeté par le deny implicite. Notez que les règles 10 à 40 sont surlignées par des remark : elles ne filtrent rien de plus, mais elles transforment un bloc de chiffres en document lisible, et c'est ce qui permet de faire relire une ACL à un pair avant déploiement.
+
+Les opérateurs de port offrent une précision qu'il faut savoir doser. La forme eq 443 est la plus stricte : un seul port. La forme gt 1023 ou range 1024 65535 sert aux services qui négocient un port négocié, comme le mode passif du FTP. Le mot any en position de port ouvre tout, et dans une ACL de frontière il doit rester exceptionnel : une règle du type permit tcp any any any signifie « tout TCP est ouvert », ce qui annule en une ligne le travail de toutes les lignes précédentes. Pour ICMP, ce n'est pas un port que l'on précise mais un type : echo-request pour le ping sortant, echo-reply pour la réponse, time-exceeded pour le retour du traceroute, packet-too-big pour la découverte de MTU en IPv6 et pour la PMTUD en IPv4. Un ICMP totalement ouvert n'est généralement pas nécessaire, mais un ICMP totalement bloqué casse le diagnostic et casse certaines négociations de taille de paquet.
+
+```text
+! Port source et port destination se distinguent par la position
+permit tcp any any eq 443            ! destination 443 uniquement
+permit tcp any gt 1023 any            ! source > 1023, destination quelconque
+permit tcp any any range 8000 8080    ! destination dans la plage
+permit udp any any neq 53             ! destination differente de 53
+
+! Wildcard : 0 = bit significatif, 1 = bit ignore
+permit ip 10.10.0.0 0.0.3.255 any     ! 10.10.0.0 a 10.10.3.255
+permit ip 192.168.1.0 0.0.0.255 any   ! 192.168.1.0/24 en forme inversée
+```
+
+La face entrante de la bordure obéit à la même méthode, avec un objectif inversé : on ne protège plus la sortie des postes, on protège l'intérieur contre l'extérieur. Pour le site Lilas, l'ACL entrante n'ouvre que ce qui doit l'être : HTTPS et HTTP vers le serveur web, un ICMP limité pour que les opérateurs puissent vérifier la joignabilité, et rien d'autre. Le serveur de base de données en 10.10.0.33, le partage de fichiers en 10.10.0.44 et les postes des utilisateurs ne doivent recevoir aucune connexion directe depuis Internet, et le fait de ne pas écrire de règle pour eux produit exactement ce résultat. C'est la vertu du deny implicite : l'oubli devient un refus, à condition de vérifier cet oubli par les compteurs et par un test négatif.
+
+```text
+ip access-list extended INTERNET_VERS_DMZ
+ remark --- Seule destination publiquement exposee ---
+ 10 permit tcp any host 10.10.0.20 eq 443
+ 20 permit tcp any host 10.10.0.20 eq 80
+ remark --- Diagnostic ICMP limite ---
+ 30 permit icmp any host 10.10.0.20 echo-request
+ 40 permit icmp any host 10.10.0.20 echo-reply
+ remark --- Refus explicite et journalise du reste ---
+ 50 deny   ip any any log
+```
+
+L'ordre des règles est là où se joue la qualité du travail. La règle d'or tient en une phrase : toujours la règle spécifique avant la règle générique. Si vous placez permit ip any any en premier, aucune règle suivante ne sera jamais examinée, puisque la première correspondance arrête l'évaluation ; la liste devient décorative. À l'inverse, une règle deny explicite suivie d'un mot-clé log, placée avant une règle permit large, sert de garde-fou documenté : tout ce que vous refusez nommément est tracé dans les journaux, le reste suit. Il faut cependant mesurer le coût : journaliser une règle qui correspond à des milliers de paquets par seconde sature le plan de contrôle et peut ralentir le routeur. On log donc les refus inattendus, ciblés, à volume maîtrisé, et jamais le torrent.
+
+```text
+! A FAIRE : l'ordre rend la deuxieme regle inutile
+permit ip any any
+deny   tcp any any eq 23
+
+! BON : la regle stricte est examinee en premier
+deny   tcp any any eq 23 log
+permit ip any any
+```
+
+- Commencez par la matrice des flux, jamais par la console.
+- Écrivez chaque règle comme une phrase : verbe, protocole, source, destination, port.
+- Privilégiez host et any explicites, gardez la wildcard pour les réseaux entiers.
+- Specific avant générique, et surtout jamais permit large en tête de liste.
+- Utilisez remark abondamment : une ACL relue est une ACL maintenable.
+- Limitez le log aux refus à faible volume, sous peine de saturer le CPU.
+- Validez avec show access-lists et un test négatif : tentez le trafic interdit.
+$lesson$),
+  ('net-c5-p4', 'net-c5', 4, $lesson$Tactiques de filtrage : placement, ordre et périmètres$lesson$, $lesson$
+L'anti-spoofing est le filtrage que l'on oublie parce qu'il ne protège pas un service, il protège l'adresse elle-même. Depuis Internet, aucun paquet ne devrait porter une adresse d'origine privée (10, 172.16 à 172.31, 192.168), une adresse de bouclage, une adresse de diffusion ou une adresse multicast de routage : ces adresses n'ont pas de sens à l'entrée du réseau public, et un paquet qui en porte une est soit une erreur de configuration, soit une tentative d'usurpation visant à se faire passer pour une machine de l'intérieur. Le document de bonnes pratiques RFC 2827, aussi appelé BCP 38, demande de les refuser dès l'entrée. Appliquée sur l'interface WAN de la bordure, cette règle coûte deux lignes et écarte une famille entière d'attaques par usurpation d'adresse.
+
+```text
+ip access-list extended WAN_INGRESS
+ remark --- Anti-spoofing RFC 2827 : pas d'adresse privee en entree ---
+ 10 deny   ip 10.0.0.0 0.255.255.255 any log
+ 20 deny   ip 172.16.0.0 0.15.255.255 any log
+ 30 deny   ip 192.168.0.0 0.0.255.255 any log
+ 40 deny   ip 127.0.0.0 0.255.255.255 any log
+ 50 permit ip any any
+```
+
+Une ACL reste un outil sans état : elle examine chaque paquet isolément, sans se souvenir qu'une connexion a été ouverte de l'intérieur. C'est pourquoi les listes sortantes doivent à la fois autoriser la requête et autoriser la réponse, avec des règles par port pour chaque sens, ou avec le mot-clé established qui reconnaît les accusés de réception. C'est aussi la limite fondamentale du mécanisme : il ne comprend pas le contenu des échanges, il ne sait pas qu'une requête DNS appartient à une session, il ne voit qu'une adresse, un protocole et un nombre. Le pare-feu à zones que nous étudierons plus loin ajoute exactement cette mémoire d'état, et c'est pour cela qu'il complète les ACL plutôt qu'il ne les concurrence. En attendant, une ACL bien écrite reste le premier rempart et le plus simple à auditer.
+
+Le journal (log) et son cousin plus précis (log-input) sont des instruments de diagnostic, pas des fonctionnalités de routine. Le premier inscrit dans les journaux système la ligne d'ACL correspondante et le compteur, le second ajoute l'adresse MAC et l'interface d'entrée, ce qui est précieux pour retrouver la machine responsable sur un réseau local. Tous deux ont un coût CPU réel, proportionnel au nombre de correspondances, et les journaux ont une capacité limitée : surchargez-les et vous perdrez les événements importants, y compris ceux des autres mécanismes du routeur. La pratique consiste à activer le log sur les règles deny d'une ACL de test, à observer quelques minutes, puis à le retirer avant la mise en production, en ne le conservant que sur les refus rares que l'on souhaite documenter.
+
+Certaines ACL savent aussi travailler dans le temps. Un time-range définit une plage horaire, récurrente ou ponctuelle, et une règle peut y être attachée pour n'être active que pendant cette plage. On l'utilise pour ouvrir l'accès SSH à un prestenaire de 22 heures à 2 heures les vendredis, pour autoriser un flux de sauvegarde seulement la nuit, ou pour interdire une application pendant les heures de travail. Le time-range ajoute une dimension temporelle à une décision jusque-là purement spatiale, et il se vérifie avec les mêmes commandes que l'ACL, à condition de penser à contrôler l'heure du routeur, car une horloge déréglée rend la règle aveugle.
+
+```text
+time-range MAINTENANCE
+ periodic weekdays 22:00 to 23:59
+ absolute start 20:00 5 June end 06:00 6 June
+
+ip access-list extended ADMIN_HORAIRE
+ 10 permit tcp 10.10.8.0 0.0.0.255 any eq 22 time-range MAINTENANCE
+ 20 deny tcp 10.10.8.0 0.0.0.255 any eq 22
+```
+
+La méthode de validation d'un filtrage tient en quatre gestes, et aucun n'est facultatif. D'abord, compter : relevez les compteurs de l'ACL avant le test, exécutez le trafic autorisé, relevez-les encore, et vérifiez que la règle attendue a bien bougé. Ensuite, tester l'interdit : tentez expressément le flux que l'ACL doit refuser, de l'intérieur comme de l'extérieur selon le cas, et confirmez son échec. Puis tester le retour : une session ouverte de l'intérieur doit pouvoir recevoir sa réponse, sinon votre ACL casse la communication même en autorisant la sortie. Enfin, journaliser le résultat dans un tableau de recette que vous pourrez rejouer à chaque modification ; c'est ce tableau, et non votre mémoire, qui fait la preuve que le filtrage est en place.
+
+```text
+Recette ACL de bordure (a rejouer a chaque changement)
+1. show access-lists          -> releve des compteurs
+2. postes -> HTTPS Internet   -> autorise, compteurs augmentent
+3. postes -> SSH Internet      -> refuse, regle SSH hors plage
+4. Internet -> 10.10.0.20:443 -> autorise depuis l'exterieur
+5. Internet -> 10.10.0.33:3306-> refuse, deny log si active
+6. traceroute interne externe  -> ICMP time-exceeded fonctionne
+7. show access-lists           -> second releve archive
+```
+
+La maintenance vaut configuration. Une ACL est un organisme vivant : les serveurs changent d'adresse, les prestataires partent, les projets ajoutent des plages puis les retirent. Tous les six mois, parcourez les règles dont le compteur est resté à zéro, celles dont les remark ne décrivent plus rien, et celles qui font référence à des hôtes qui n'existent plus. Cette élagage n'est pas de l'esthétique : chaque règle en trop est une règle que l'auditeur devra comprendre, que le dépanneur devra interroger, et que l'attaquant potentiel pourra utiliser si elle est devenue trop large par fatigue. Une ACL courte, commentée et testée vaut mieux qu'une ACL exhaustive et périmée.
+
+- L'anti-spoofing RFC 2827 refuse les adresses privées en entrée : deux lignes, un gain réel.
+- Une ACL est sans état : elle doit autoriser séparément la requête et la réponse.
+- Le log coûte du CPU et des journaux : réservé aux refus rares et ciblés.
+- Le time-range rend une règle active selon l'heure, sous réserve d'une horloge juste.
+- Recette systématique : compteurs, test autorisé, test refus, test de retour.
+- Élagage périodique des règles mortes : moins de règles, plus de lisibilité.
+$lesson$),
+  ('net-c5-p5', 'net-c5', 5, $lesson$NAT et PAT : les principes$lesson$, $lesson$
+L'espace d'adressage IPv4 a été conçu comme une ressource abondante, puis il s'est avéré épuisé bien avant la fin de l'adoption d'Internet. La réponse de court terme, publiée au début des années 1990, a été de réserver des plages d'adresses à usage privé, documentées par RFC 1918 : 10.0.0.0 à 10.255.255.255, 172.16.0.0 à 172.31.255.255 et 192.168.0.0 à 192.168.255.255. Ces adresses sont utilisables librement à l'intérieur de toute organisation, à la condition expresse de ne jamais être routées sur Internet. Elles donnent à chaque entreprise autant d'adresses qu'elle veut, gratuites et stables, mais elles créent un problème nouveau : comment un poste en 10.10.0.55 peut-il dialoguer avec un serveur public dont l'adresse n'existe qu'une seule fois dans le monde ?
+
+La traduction d'adresses répond en modifiant les paquets à la frontière. Quand un poste privé émet vers Internet, le routeur de bordure remplace l'adresse d'origine privée par sa propre adresse publique, inscrit la correspondance dans une table de traduction, puis laisse le paquet partir. La réponse arrive chez le routeur, qui consulte la table, restaure l'adresse privée d'origine dans le champ de destination, et réachemine le paquet vers le poste. À aucun moment les machines d'Internet ne connaissent l'adresse réelle du poste, et celui-ci ignore même que sa carte réseau a changé d'identité en traversant la frontière. Le routeur ne se contente pas de réécrire les adresses : il recalcule les sommes de contrôle de l'en-tête IP, et pour TCP et UDP il intervient aussi sur les en-têtes de transport, car le couple adresse et port est ce qui permet de retrouver la session.
+
+```text
+Sortie : poste prive -> serveur public
+Avant : IP src 10.10.0.55:51000  -> IP dst 93.184.216.34:443
+Apres : IP src 203.0.113.10:51000 -> IP dst 93.184.216.34:443
+Table : (inside local 10.10.0.55:51000) <-> (inside global 203.0.113.10:51000)
+
+Retour : serveur public -> poste prive
+Avant : IP src 93.184.216.34:443  -> IP dst 203.0.113.10:51000
+Apres : IP src 93.184.216.34:443  -> IP dst 10.10.0.55:51000
+```
+
+Quatre termes décrivent toute situation de traduction, et les confondre est la première cause d'incompréhension. L'expression inside désigne toujours le réseau que l'on considère comme interne, généralement le LAN ; outside désigne le reste du monde. Local décrit l'adresse telle que la voit le réseau interne, global telle que la voit le réseau externe. Un même paquet porte donc deux adresses d'origine selon l'endroit où on le regarde, et la table de traduction est le dictionnaire qui relie les deux lectures. Ces termes ne sont pas de la terminologie d'examen : ce sont les mots que vous employerez pour expliquer un incident à un collègue, par exemple quand vous direz que l'entrée inside local du serveur a disparu de la table.
+
+| Terme | Réseau concerné | Vue | Exemple du site Lilas |
+| --- | --- | --- | --- |
+| Inside local | Interne | Adresse réelle de la machine | 10.10.0.20 |
+| Inside global | Interne vue de l'extérieur | Adresse publique après traduction | 203.0.113.10 |
+| Outside global | Externe | Adresse réelle de la destination | 93.184.216.34 |
+| Outside local | Interne | Destination réécrite pour le LAN | rare, usage spécial |
+
+Le NAT possède trois régimes de fonctionnement, qui se distinguent par la durée et l'unicité de la correspondance. Le NAT statique maintient une règle permanente, établie une fois pour toutes : telle adresse privée, tel port, toujours publiés sous telle adresse publique, telle adresse publique. C'est le régime du serveur, celui qui doit être joignable à tout moment depuis l'extérieur, indépendamment de toute activité interne. Le NAT dynamique tire au sort une adresse d'un pool prédéfini pour chaque session, puis la restitue : il est économique en ports, mais il impose que le pool soit dimensionné au nombre maximal de sessions simultanées. Le PAT, appelé aussi overload, est le régime par défaut de toute entreprise : une seule adresse publique sert des centaines de postes, la discrimination se faisant par numéro de port source, le routeur maintenant une table pouvant compter des dizaines de milliers d'entrées simultanées.
+
+La sélection de la traduction suit un chemin déterministe qu'il faut connaître pour dépanner. Le routeur identifie d'abord les interfaces : celles qui portent ip nat inside, celles qui portent ip nat outside. Il examine ensuite les paquets qui entrent par une interface inside et sortent par une interface outside, et pour chacun il consulte la liste de contrôle d'accès de mise en correspondance, celle que cite la commande ip nat inside source list. Si le paquet correspond, il est traduit selon le régime choisi (interface, pool ou overload) ; s'il ne correspond pas, il traverse sans changement. Cette logique explique deux observations courantes : un paquet qui ne passe pas par une interface marquée inside n'est jamais traduit, et une adresse absente de la ACL de mise en correspondance sort avec son adresse privée, ce qui échoue silencieusement sur Internet.
+
+- Le NAT réécrit les adresses à la frontière et restaure la réponse via sa table.
+- RFC 1918 fournit les adresses privées, jamais routées sur Internet.
+- Statique : correspondance permanente et exclusive, pour les serveurs.
+- Dynamique : attribution depuis un pool pour la durée des sessions.
+- PAT : une adresse publique pour tous, différenciation par port source.
+- Inside local, inside global, outside global, outside local : les quatre lectures d'un paquet.
+- Seuls les paquets entrant par une interface inside et sortant par outside sont traduits.
+$lesson$),
+  ('net-c5-p6', 'net-c5', 6, $lesson$NAT en pratique : configuration, vérification, dépannage$lesson$, $lesson$
+La configuration Cisco se déploie en trois gestes : marquer les interfaces, déclarer ce qui doit être traduit, choisir le régime. Les interfaces se marquent avec ip nat inside sur le LAN et ip nat outside sur la WAN ; l'ordre n'a pas d'importance, mais l'oubli d'une des deux marqueurs empêche toute traduction. Le périmètre se déclare avec une ACL, nommée de préférence, qui liste les réseaux autorisés à sortir ; c'est cette ACL qui joue le rôle de filtre de sélection. Le régime s'exprime en une seule commande qui se lit de gauche à droite : la liste des adresses intérieures, puis la façon dont elles sont réécrites, soit une interface (PAT), soit un pool (dynamique). La même commande, avec ou sans le mot-clé overload, fait basculer le fonctionnement du tout-puissant PAT vers le simple dynamique.
+
+```text
+! --- Interfaces de la bordure FW ---
+interface GigabitEthernet0/0
+ description WAN - Internet
+ ip address 203.0.113.10 255.255.255.252
+ ip nat outside
+!
+interface GigabitEthernet0/1
+ description LAN - Vers le coeur R1/R2
+ ip address 10.10.1.138 255.255.255.252
+ ip nat inside
+!
+! --- Perimetre traduisible ---
+ip access-list extended NAT_LAN
+ permit ip 10.10.0.0 0.0.3.255 any
+ permit ip 10.10.4.0 0.0.3.255 any
+ permit ip 10.10.8.0 0.0.3.255 any
+ permit ip 10.10.1.128 0.0.0.3 any
+!
+! --- PAT : une seule adresse publique pour tout le site ---
+ip nat inside source list NAT_LAN interface GigabitEthernet0/0 overload
+```
+
+La publication d'un service interne obéit à la logique inverse : au lieu de traduire l'adresse d'origine à la sortie, on traduit l'adresse de destination à l'entrée. Un paquet destiné à 203.0.113.10, port 443, arrive sur l'interface outside ; la règle statique réécrit la destination en 10.10.0.20, port 443 ; le paquet rejoint le serveur comme s'il avait été adressé directement à lui. Cette règle est permanente et ne dépend d'aucune activité : elle est là même quand le serveur est éteint, et c'est normal, car elle décrit une topologie, pas une session. Les deux commandes statiques les plus utiles sont donc celles qui ouvrent HTTPS et HTTP vers le serveur web du site Lilas, et l'ajout de extendable permet de publier plusieurs ports ou plusieurs adresses pour une même règle sans conflit de duplication.
+
+```text
+! --- Port forwarding : Internet -> serveur web ---
+ip nat inside source static tcp 10.10.0.20 443 203.0.113.10 443 extendable
+ip nat inside source static tcp 10.10.0.20 80  203.0.113.10 80  extendable
+!
+! --- Variante : publier un service sur une autre adresse publique ---
+ip nat inside source static tcp 10.10.0.33 5432 203.0.113.11 5432 extendable
+!
+! --- Version compacte, un pool dynamique sans surcharge ---
+ip nat pool BUREAU 203.0.113.17 203.0.113.30 netmask 255.255.255.240
+ip nat inside source list NAT_LAN pool BUREAU
+```
+
+La vérification se fait avec deux commandes et un réflexe : regarder la table avant le test, effectuer l'action, regarder la table après. La commande show ip nat translations affiche les entrées statiques (toujours présentes, sous la forme protocole, adresse privée, adresse publique) et les entrées dynamiques (avec leur temps de vie restant). La commande show ip nat statistics résume la configuration et les compteurs : interfaces inside et outside vues par le routeur, ACL de sélection, pool et son taux d'utilisation, et surtout les totaux de traductions créées, échouées et supprimées. Un compteur d'échecs qui augmente signale une adresse de destination inatteignable ou un pool épuisé ; un total de traductions qui n'augmente plus pendant une activité normale signale que la sélection ne correspond plus au trafic réel.
+
+```text
+FW# show ip nat translations
+Pro  Inside global     Inside local      Outside local     Outside global
+tcp  203.0.113.10:443  10.10.0.20:443    ---               ---
+tcp  203.0.113.10:51000 10.10.0.55:51000 93.184.216.34:443 93.184.216.34:443
+udp  203.0.113.10:53001 10.10.0.62:53001 8.8.8.8:53        8.8.8.8:53
+
+FW# show ip nat statistics
+Total active translations: 142 (1 static, 141 dynamic, 0 extended)
+Outside interface: GigabitEthernet0/0
+Inside interfaces: GigabitEthernet0/1
+Hits: 918274  Misses: 412
+```
+
+Les pannes du NAT ont cinq causes dominantes, et chacune possède un symptôme reconnaissable. L'overlap survient quand un réseau privé choisi entre en conflit avec un réseau réellement utilisé à l'autre bout : la machine distante reçoit des paquets dont la source appartient à son propre réseau et les traite localement au lieu de les répondre ; la solution consiste à changer de plage privée ou à traduire aussi la source. L'épuisement des ports du PAT se manifeste par des sessions qui ne s'ouvrent plus alors que la bande passante est libre : chaque adresse publique offre environ 64 000 ports, déduits de chaque connexion, et une application qui ouvre des milliers de connexions simultanées peut suffire à saturer ; l'ajout d'adresses dans le pool étend la capacité. La fragmentation pose un problème de logique : un paquet fragmenté ne contient plus les ports, donc le routeur ne peut pas le faire correspondre à une session ; la commande ip virtual-reassembly lui permet de réassembler temporairement avant traduction. Les passerelles de couche applicative, les ALG, réécrivent les flux qui embarquent des adresses comme FTP ou SIP, et peuvent perturber les flux chiffrés : elles se désactivent quand le comportement devient incompréhensible. Enfin les durées de vie, fixes par défaut (trois jours pour TCP, cinq minutes pour UDP), peuvent être raccourcies pour libérer la table ou rallongées pour des applications longues.
+
+```text
+! --- Diagnostic et réglages cibles ---
+show ip nat translations verbose
+show ip nat statistics
+clear ip nat translation *            ! vider les entrees dynamiques (attention)
+ip virtual-reassembly                 ! fragments avant traduction
+ip nat translation tcp-timeout 86400  ! duree d'une session TCP
+ip nat translation udp-timeout 300    ! duree d'un flux UDP
+ip nat translation max-entries 20000  ! plafond de la table
+no ip nat service ftp                 ! desactiver l'ALG FTP si besoin
+```
+
+Deux situations restent classiques et méritent d'être anticipées. La première est le NAT loopback, ou hairpin : un poste interne qui tente d'atteindre le serveur par l'adresse publique reçoit son propre paquet traduit, et sans règle dédiée la connexion échoue, faute de chemin de retour. On le résout soit en interdisant ce chemin et en imposant les noms internes, soit en ajoutant une traduction explicite interne vers l'adresse publique. La seconde est l'interaction avec le nom de domaine : la partie publique du serveur doit être enregistrée en DNS vers l'adresse publique, sa partie privée vers l'adresse privée, et un enregistrement unique écrasé par l'autre provoque l'erreur classique où le serveur est joignable de l'extérieur mais plus de l'intérieur, ou l'inverse. Ces deux cas ne sont pas des bugs du NAT, ce sont les conséquences directes du fait qu'une même machine porte deux identités.
+
+- Marquez les interfaces ip nat inside et ip nat outside, l'oubli de l'une bloque tout.
+- L'ACL list est le filtre de sélection : hors de la liste, pas de traduction.
+- overload bascule le régime en PAT, sans lui vous obtenez un pool dynamique.
+- Publiez les serveurs avec une règle statique, vérifiez avec show ip nat translations.
+- Symptômes : overlap (réponse jamais reçue), épuisement de ports, fragments perdus.
+- Ajustez les timeouts et désactivez les ALG qui gênent vos applications.
+- Anticipez le hairpin et l'écart entre enregistrements DNS publics et internes.
+$lesson$),
+  ('net-c5-p7', 'net-c5', 7, $lesson$Redondance de passerelle : HSRP, VRRP, GLBP$lesson$, $lesson$
+Une passerelle par défaut est une adresse, et une adresse est un lien fragile : elle ne dit rien de la machine qui répond derrière. Dans le site Lilas, chaque poste du VLAN 10 possède 10.10.0.254 comme passerelle, mais 10.10.0.254 n'appartient physiquement ni à R1 ni à R2 : c'est une adresse virtuelle, qui n'est configurée nulle part en tant qu'adresse d'interface, et pourtant c'est elle que les postes utilisent. Les protocoles de redondance de premier saut consistent à faire concourir plusieurs routeurs autour de cette même adresse virtuelle. Un d'entre eux l'assume réellement, répond aux requêtes ARP qui la réclament et forward le trafic ; les autres écoutent en silence et attendent. Le poste, lui, ne voit qu'une adresse et un cache ARP : tant qu'un routeur répond, la panne est invisible.
+
+L'élection repose sur des messages périodiques, appelés hello, échangés entre les routeurs du groupe. Tant que l'actif envoie ses hellos dans les délais, il conserve son rôle ; dès que les hellos cessent pendant le temps de maintien (hold time), les autres déclarent l'actif défaillant et s'électent entre eux selon la priorité la plus élevée. Ce mécanisme est passif : aucun message n'est échangé avec les postes, qui continuent d'adresser leurs paquets vers la MAC virtuelle. Lors de la première émission, le routeur actif répond à la requête ARP en donnant une adresse MAC virtuelle particulière, attribuée par le protocole, de sorte que la table ARP de tous les postes pointe vers une adresse qui bascule d'un routeur à l'autre sans jamais être réécrite. C'est là toute l'élégance de la solution : le changement se produit sous la couche 2, invisiblement.
+
+```text
+Chronologie d'une panne de passerelle
+t=0s    R1 actif envoie des hello toutes les 3 s, R2 standby ecoute
+t=0s    postes ARP : qui a 10.10.0.254 ? -> R1 repond MAC virtuelle
+t=9s    R1 s'eteint, plus de hello
+t=10s   R2 n'a plus rien recu depuis le hold time (10 s) -> R1 declare down
+t=10s   R2 passe en etat actif, envoie gratuit ARP -> postes mettent a jour
+t=10s   le trafic reprend, aucun poste n'a change sa configuration
+```
+
+HSRP, le protocole propriétaire de Cisco, offre le jeu de réglages le plus riche. Il organise les routeurs en groupes numérotés, de 0 à 4095 en version 2, chaque groupe ayant sa propre adresse virtuelle et sa propre MAC virtuelle de la forme 0000.0c9f.fxxx, où xxx désigne le groupe en hexadécimal. La priorité va de 1 à 255, avec 100 par défaut : l'actif est celui qui a la priorité la plus élevée, et à priorité égale c'est l'adresse IP du routeur qui tranche. Les temporisations se règlent à la seconde ou à la milliseconde, ce qui permet des bascules très rapides dans les environnements exigeants. L'authentification MD5 ou SHA empêche qu'un routeur étranger ou un poste malveillant ne rejoigne le groupe en annonçant une priorité supérieure. Enfin la préemption, optionnelle mais recommandée, rend le rôle à un routeur de priorité supérieure dès que celui-ci redevient opérationnel.
+
+VRRP est la réponse de la communauté au même besoin, publiée sous forme de standard (RFC 5798) et implémentée par de nombreux constructeurs. Les groupes s'appellent des VRID et vont de 1 à 255. Le routeur qui détient l'adresse réelle du groupe (celle configurée sur son interface) devient maître avec la priorité maximale 255, qu'on appelle propriétaire ; les autres sont des sauvegardes. L'authentification et la préemption existent aussi, mais la préemption est activée par défaut, contrairement à HSRP. Les temporisations s'expriment en centièmes de seconde. VRRPv3 étend le protocole à l'IPv6, ce qui en fait le choix naturel dès que le réseau dual-stack ; il conserve le même état d'esprit que HSRP, un actif et un ou plusieurs en attente, si bien que la rédaction d'une configuration VRRP après une configuration HSRP ne demande qu'un changement de vocabulaire.
+
+GLBP, également propriété de Cisco, répond à une objection que l'on peut faire à HSRP et VRRP : si un seul routeur forward, le second ne sert que de secours et sa bande passante reste idle. GLBP fait voter les routeurs pour élire un passerel virtuel actif, qui distribue les adresses MAC virtuelles ; chaque routeur devient alors forwarder actif et reçoit une part des postes du VLAN. L'équilibrage se règle par des poids : un routeur de poids 100 et un de poids 50 recevront approximativement deux tiers et un tiers du trafic. Si un forwarder tombe, son poids est retiré et ses postes sont repris par les autres, de la même façon invisible que dans HSRP. Le nombre de forwarders est limité à quatre, et la charge n'est jamais parfaitement égale, puisqu'elle dépend du nombre de machines ayant déjà résolu la MAC virtuelle correspondante.
+
+| Protocole | Nature | Rôles | Particularité | IPv6 |
+| --- | --- | --- | --- | --- |
+| HSRPv2 | Propriétaire Cisco | Un actif, un ou plusieurs en attente | Timers à la milliseconde, priorité 1-255 | Non |
+| VRRPv3 | Standard RFC 5798 | Un maître, des sauvegardes | Propriétaire à priorité 255, préemption par défaut | Oui |
+| GLBP | Propriétaire Cisco | Un passerel actif, jusqu'à quatre forwarders | Équilibrage de charge pondéré | Non |
+
+Le choix entre les trois suit une logique simple. Sur un cœur entièrement composé d'équipements Cisco, HSRPv2 donne l'accès aux réglages les plus fins et reste le choix par défaut documenté par le constructeur. Dès que deux marques coexistent, ou que l'IPv6 fait partie du périmètre, VRRPv3 s'impose, car il est implémenté par à peu près tous les fabricants et couvre les deux familles d'adresses. GLBP ne se choisit que pour une raison précise : le besoin d'utiliser réellement les deux routeurs en permanence sur un VLAN à fort trafic. Dans les trois cas, on retient la même discipline : une priorité claire qui désigne l'actif souhaité, une préemption activée, une authentification obligatoire en production, et un suivi de lien pour que la décision tienne compte de l'état réel du réseau, pas seulement de l'état du routeur.
+
+- Un protocole de premier saut partage une adresse virtuelle et une MAC virtuelle.
+- L'élection se joue sur les hello et le hold time, sans intervention des postes.
+- HSRP : propriétaire Cisco, groupes 0-4095, priorité jusqu'à 255, timers au millième.
+- VRRP : standard RFC 5798, VRID 1-255, propriétaire à priorité 255, IPv6 avec v3.
+- GLBP : actif-actif, un passerel élu qui répartit les MAC entre jusqu'à quatre forwarders.
+- Choix : Cisco seul vers HSRPv2, multi-vendeur ou IPv6 vers VRRPv3, charge vers GLBP.
+$lesson$),
+  ('net-c5-p8', 'net-c5', 8, $lesson$Suivi de lien, préemption et équilibrage$lesson$, $lesson$
+La préemption est la règle qui rend à un routeur son rôle. Sans elle, si l'actif tombe, le second prend la place et la conserve indéfiniment, même quand l'actif d'origine revient : le réseau fonctionne, mais l'organisation prioritaire choisie est oubliée, et un an plus tard personne ne sait plus pourquoi R2 forward le trafic du VLAN 10. Avec la préemption activée, le routeur de priorité supérieure reprend l'actif dès que ses conditions sont réunies, généralement après un délai de stabilisation qui évite les bascules en rafale lorsque la liaison revient de justesse. Ce délai est utile : il laisse le temps aux protocoles de routage de converger, de sorte que le routeur ne redevienne actif qu'au moment où il peut réellement forwarder.
+
+Le suivi de lien, ou track, apporte la pièce manquante de la décision. Un routeur peut être en parfaite santé alors que sa liaison opérateur est coupée : il répond aux hello, il est élu, et pourtant tout le trafic qu'il forward part dans le vide. L'objet de suivi observe une condition externe, l'état d'une interface, d'une route ou d'un script, et agit sur la priorité du groupe quand cette condition échoue. La configuration tient en deux lignes : on déclare l'objet, puis on demande à la règle de le prendre en compte avec un décrément. Ici R1, priorité 110, perd 20 unités quand sa liaison WAN tombe : il descend à 90, sous les 100 de R2, et R2 devient actif. Quand la liaison revient, la priorité remonte, et la préemption rend à R1 son rôle initial.
+
+```text
+! --- R1 : actif desire du site Lilas, VLAN 10 ---
+interface Vlan10
+ ip address 10.10.0.1 255.255.252.0
+ standby version 2
+ standby 10 ip 10.10.0.254
+ standby 10 priority 110
+ standby 10 preempt delay minimum 30
+ standby 10 authentication md5 key-string SITE_LILAS_VLAN10
+ standby 10 track 10 decrement 20
+!
+! --- R2 : secours, memes regles, priorite inferieure ---
+interface Vlan10
+ ip address 10.10.0.2 255.255.252.0
+ standby version 2
+ standby 10 ip 10.10.0.254
+ standby 10 priority 100
+ standby 10 preempt delay minimum 30
+ standby 10 authentication md5 key-string SITE_LILAS_VLAN10
+ standby 10 track 11 decrement 20
+!
+! --- Les objets de suivi pointent vers la sortie reelle ---
+track 10 interface GigabitEthernet0/0 line-protocol
+track 11 interface GigabitEthernet0/0 line-protocol
+```
+
+La vérification commence par la commande show standby brief, qui résume en une ligne par groupe le routeur concerné, son groupe, sa priorité, son état (actif, en attente, initial), l'adresse virtuelle et le routeur voisin connu. Elle se lit avant et après chaque test : l'état de R1 doit être actif et celui de R2 en attente sur tous les VLAN, puis l'inverse au moment de la panne. Deux autres commandes complètent le tableau : show standby pour le détail d'un groupe, y compris les temps restants et les compteurs de hello, et show track pour connaître l'état exact des objets de suivi, souvent la clé d'une bascule qui ne se produit pas. Si la bascule n'a pas lieu, l'ordre de dépannage est presque toujours le suivant : l'objet de suivi est-il bien en échec, la préemption est-elle activée, les deux routeurs partagent-ils bien la même adresse virtuelle et la même version ?
+
+```text
+R1# show standby brief
+  Interface   Grp  Pri  State        Addr Virtual      Active router
+  Vlan10      10   110  Active       10.10.0.254       local
+  Vlan20      20   110  Active       10.10.4.254       local
+  Vlan50      50   110  Active       10.10.8.254       local
+R2# show standby brief
+  Interface   Grp  Pri  State        Addr Virtual      Active router
+  Vlan10      10   100  Standby      10.10.0.254       10.10.0.1
+  Vlan20      20   100  Standby      10.10.4.254       10.10.4.1
+  Vlan50      50   100  Standby      10.10.8.254       10.10.8.1
+```
+
+Le scénario de test, lui, se déroule en quatre temps et se raconte en une phrase : on coupe, on observe, on rétablit, on observe encore. Coupez la liaison WAN de R1 : l'objet track bascule en échec, la priorité de R1 passe à 90, R2 remporte l'élection et devient actif, un gratuit ARP republie la MAC virtuelle, et les postes continuent sans interruption perceptible. Rétablissez la liaison : la priorité de R1 remonte à 110, la préemption, après son délai, lui rend le rôle d'actif, et R2 redevient en attente. Ce second temps est aussi important que le premier : une redondance qui bascule mais ne revient jamais est une redondance incomplète, et c'est l'état dans lequel on découvre souvent les configurations oubliées un an après leur installation.
+
+VRRP s'écrit avec le même principe et un autre vocabulaire. La configuration se déclare sous forme de famille d'adresses, ce qui permet de gérer l'IPv4 et l'IPv6 dans le même groupe, et la priorité se règle avec le même souci d'expliciter l'actif souhaité. On retiendra deux différences pratiques : la préemption est active par défaut, ce qui supprime une ligne mais impose de la désactiver volontairement si l'on veut le contraire, et le routeur qui détient l'adresse réelle du groupe prend automatiquement la priorité 255. Le suivi de lien existe aussi, avec la même syntaxe de décrément, si bien qu'une migration de HSRP vers VRRP sur un site existant est avant tout un travail de remplacement de mots-clés, à condition de revérifier les états affichés après la bascule.
+
+```text
+! --- Equivalence VRRPv3 pour le meme VLAN 10 ---
+interface Vlan10
+ ip address 10.10.0.1 255.255.252.0
+ vrrp 10 address-family ipv4
+  address 10.10.0.254
+  priority 110
+  preempt delay minimum 30
+  authentication md5 key-string SITE_LILAS_VLAN10
+  track 10 decrement 20
+```
+
+GLBP se configure presque comme HSRP, avec en plus le réglage des poids et l'élection du passerel virtuel actif. Chaque routeur déclare le même numéro de groupe, la même adresse virtuelle, et une priorité qui détermine qui sera l'élu. Les routeurs non élus restent disponibles comme forwarders et reçoivent une part du trafic, réglable par le poids. Le contrôle se fait avec show glbp summary, qui montre l'élu, les forwarders actifs et leurs poids respectifs. Attention à un point de vigilance : l'équilibrage GLBP concerne les adresses MAC annoncées aux postes, pas le trafic qui transite par le lien montant ; un VLAN qui se plaint de congestion ne sera pas soulagé par GLBP si le goulot se trouve ailleurs, par exemple sur le lien vers la bordure.
+
+```text
+! --- GLBP : equilibrage actif-actif sur le VLAN 20 ---
+interface Vlan20
+ ip address 10.10.4.1 255.255.252.0
+ glbp 20 ip 10.10.4.254
+ glbp 20 priority 110
+ glbp 20 preempt delay minimum 30
+ glbp 20 weighting 110
+ glbp 20 track 10 decrement 30
+```
+
+Les pièges de la redondance se comptent sur les doigts et reviennent tous les uns des autres. Deux routeurs qui s'affirment actifs en même temps (scénario de partition) viennent presque toujours d'une authentification différente ou d'un réseau de hello qui n'est pas partagé : vérifiez la clé et le VLAN. Une bascule qui ne se produit jamais vient d'un objet de suivi qui ne tombe jamais en échec, ou d'une préemption désactivée. Une bascule en boucle vient de timers incohérents entre les pairs, ou d'un délai de préemption nul alors que la liaison oscille. Une adresse virtuelle mal positionnée, par exemple en dehors du sous-réseau du VLAN, empêche les postes de joindre leur passerelle. Enfin, l'oubli le plus fréquent consiste à configurer soigneusement le premier VLAN puis à copier-coller les autres sans changer les numéros de groupe : deux groupes identiques sur deux VLAN différents produisent une table de routage incohérente qu'il faut du temps à diagnostiquer.
+
+- Activez toujours la préemption avec un délai raisonnable de stabilisation.
+- Associez un objet track à la liaison qui sort réellement du site.
+- R1 priorité 110, track moins 20 : il descend à 90 et cède le rôle à R2.
+- Vérifiez avec show standby brief, show track et show glbp summary.
+- Testez les deux sens : la panne, puis le rétablissement avec retour de l'actif.
+- Une clé d'authentification identique et un numéro de groupe unique par VLAN.
+- Sur multi-vendeur ou IPv6, écrivez directement en VRRPv3.
+$lesson$),
+  ('net-c5-p9', 'net-c5', 9, $lesson$Zone-Based Firewall : filtrage d'état par zones$lesson$, $lesson$
+Les ACL d'interface restent parfaites pour le filtrage simple, mais elles traitent chaque paquet comme un événement isolé. Le pare-feu à zones, disponible sur les routeurs Cisco IOS-XE, organise le filtrage en quatre étapes qui rétablissent la mémoire du flux. On déclare d'abord des zones (interne, externe, démilitarisée, gestion), on rattache chaque interface à une zone, on regroupe les protocoles autorisés dans des classes de correspondance, puis on décrit des politiques par paire de zones : ce que la zone A a le droit d'envoyer à la zone B. L'avantage décisif est l'état : quand une connexion légitime est ouverte de l'intérieur vers l'extérieur, le retour est autorisé automatiquement, sans écrire de règle inverse, et le pare-feu suit la session jusqu'à sa fermeture.
+
+Les actions de politique se limitent à trois. Inspect ouvre la session et la suit, c'est l'action normale pour un flux autorisé. Pass autorise sans suivre, utile pour un trafic qui ne supporte pas d'être tenu ou qui circule entre zones de confiance équivalente. Drop rejette, avec ou sans journalisation selon qu'on souhaite tracer les tentatives. À la différence d'une ACL, la politique par défaut d'une paire de zones non déclarée est le refus : tant que vous n'avez pas écrit de paire de zones, rien ne circule, ce qui fournit un point de départ sûr pour une mise en place progressive, une zone à la fois.
+
+```text
+zone security INSIDE
+zone security OUTSIDE
+zone security DMZ
+!
+class-map type inspect match-any FLUX_SORTANTS
+ match protocol http
+ match protocol https
+ match protocol dns
+ match protocol ntp
+ match protocol icmp
+!
+policy-map type inspect INSIDE_VERS_OUTSIDE
+ class FLUX_SORTANTS
+  inspect
+ class class-default
+  drop log
+!
+zone-pair security INSIDE_OUTSIDE source INSIDE destination OUTSIDE
+ service-policy type inspect INSIDE_VERS_OUTSIDE
+!
+interface GigabitEthernet0/1
+ zone-member security INSIDE
+interface GigabitEthernet0/0
+ zone-member security OUTSIDE
+```
+
+La migration vers un pare-feu à zones se fait en trois temps, sans interruption. On commence par écrire les paires de zones avec l'action pass et la journalisation, ce qui laisse le trafic passer tout en prouvant, journaux à l'appui, que l'on a bien identifié les flux réels. On remplace ensuite pass par inspect pour les flux qui doivent être suivis, et on laisse class-default assurer le drop. Enfin on supprime les journaisons devenues inutiles et on conserve un déni explicite et tracé sur les paires sensibles. Les commandes de contrôle, show zone-pair security, show policy-map type inspect zone-pair et show policy-firewall sessions, montrent les paires configurées, les compteurs de politique et les sessions réellement ouvertes : c'est votre preuve, à chaque audit, que la politique correspond au trafic observé.
+
+- Déclarez des zones, rattachez-y les interfaces, puis écrivez des paires de zones.
+- La politique par défaut entre zones non appariées est le refus.
+- inspect suit l'état du flux, pass autorise sans état, drop rejette.
+- Migrez par étapes : pass avec log, puis inspect, puis nettoyage.
+- Contrôlez avec show zone-pair security et show policy-firewall sessions.
+- Gardez des ACL simples pour l'anti-spoofing et le filtrage de sous-réseau.
+$lesson$),
+  ('net-c5-p10', 'net-c5', 10, $lesson$Mini-projet : configuration complète du site Lilas$lesson$, $lesson$
+Vous voici au terme du chapitre, avec toutes les pièces sur la table. Le rendu attendu est composé de trois fichiers : la configuration de FW (bordure), celle de R1 et celle de R2 (cœur). FW porte le PAT vers Internet, la publication du serveur web, l'anti-spoofing en entrée et le pare-feu à zones entre INSIDE, OUTSIDE et DMZ. R1 et R2 portent les interfaces VLAN, HSRPv2 avec priorités 110 et 100, préemption, authentification par VLAN et objet de suivi sur la liaison qui rejoint la bordure. Chaque bloc doit être commenté, chaque adresse justifiée, et la recette finale doit être écrite dans le fichier de livraison, pas seulement exécutée de mémoire.
+
+```text
+! --- FW : le coeur du filtrage et de la traduction ---
+ip access-list extended WAN_INGRESS
+ deny   ip 10.0.0.0 0.255.255.255 any log
+ deny   ip 172.16.0.0 0.15.255.255 any log
+ deny   ip 192.168.0.0 0.0.255.255 any log
+ permit ip any any
+!
+ip access-list extended NAT_LAN
+ permit ip 10.10.0.0 0.0.3.255 any
+ permit ip 10.10.4.0 0.0.3.255 any
+ permit ip 10.10.8.0 0.0.3.255 any
+!
+ip nat inside source list NAT_LAN interface GigabitEthernet0/0 overload
+ip nat inside source static tcp 10.10.0.20 443 203.0.113.10 443 extendable
+ip nat inside source static tcp 10.10.0.20 80 203.0.113.10 80 extendable
+!
+zone security INSIDE
+zone security OUTSIDE
+zone security DMZ
+class-map type inspect match-any SORTANTS
+ match protocol http
+ match protocol https
+ match protocol dns
+ match protocol ntp
+ match protocol icmp
+class-map type inspect match-any VERS_DMZ
+ match protocol https
+ match protocol http
+policy-map type inspect POL_SORTANTS
+ class SORTANTS
+  inspect
+ class class-default
+  drop log
+policy-map type inspect POL_DMZ
+ class VERS_DMZ
+  inspect
+ class class-default
+  drop log
+zone-pair security INSIDE_OUTSIDE source INSIDE destination OUTSIDE
+ service-policy type inspect POL_SORTANTS
+zone-pair security OUTSIDE_DMZ source OUTSIDE destination DMZ
+ service-policy type inspect POL_DMZ
+```
+
+La recette se joue en six points, dont deux portent sur la redondance et trois sur la sécurité. Vérifiez la table de traduction avant et après une sortie HTTPS : l'entrée PAT doit apparaître avec l'adresse 203.0.113.10 et un port élevé. Tentez depuis Internet une connexion au port 3306 du serveur : elle doit échouer, tandis que le 443 doit aboutir. Confirmez l'anti-spoofing en injectant, depuis le labo, un paquet source 192.168.1.1 sur l'interface WAN : il doit être journalisé puis jeté. Sur le cœur, contrôlez que R1 est actif sur tous les VLAN avec show standby brief, coupez la liaison WAN de R1 et revoyez R2 passer en actif, puis rétablissez et vérifiez le retour de R1 grâce à la préemption. Enfin, relevez les compteurs des politiques de zones pour confirmer que les flux attendus sont comptés et que la classe par défaut ne remonte que les refus voulus.
+$lesson$),
+  ('net-c5-p11', 'net-c5', 11, $lesson$À retenir$lesson$, $lesson$
+- Une ACL s'évalue dans l'ordre, la première correspondance gagne, le deny implicite ferme la liste.
+- Étendue et nommée, avec séquences et remark : source, destination, protocole, ports, flags.
+- Specific avant générique, sortant près de la source, entrant près de la destination.
+- Anti-spoofing RFC 2827 : les adresses privées n'ont pas à arriver du côté WAN.
+- Le NAT réécrit les adresses ; le PAT fait partager une adresse publique grâce aux ports.
+- Statique pour publier, overload pour sortir, ACL de sélection pour choisir ce qui se traduit.
+- show ip nat translations et show ip nat statistics sont les deux commandes de référence.
+- HSRP, VRRP et GLBP partagent une VIP et une MAC virtuelle pour supprimer le SPOF.
+- Priorité, préemption et objet de suivi forment le trio qui décide qui est actif.
+- VRRPv3 est le standard RFC 5798 et le seul des trois à couvrir l'IPv6.
+- Le pare-feu à zones ajoute l'état et la politique par paire de zones, avec refus par défaut.
+$lesson$),
+  ('net-c5-p12', 'net-c5', 12, $lesson$Erreurs fréquentes$lesson$, $lesson$
+- Oublier le deny implicite et écrire une première règle permit ip any any qui neutralise tout.
+- Inverser l'ordre des règles, si bien que la règle spécifique n'est jamais atteinte.
+- Poser l'ACL sur la mauvaise interface ou dans le mauvais sens, in et out se confondant vite.
+- Oublier une marque ip nat inside ou ip nat outside, ce qui supprime silencieusement toute traduction.
+- Écrire une ACL de sélection qui oublie un réseau du site, dont les postes ne sortent plus.
+- Publier un serveur en NAT statique mais oublier la règle de pare-feu qui autorise le port.
+- Laisser la préemption désactivée : la redondance bascule mais ne revient jamais.
+- Oublier le suivi de liaison, ce qui laisse un routeur sans Internet continuer d'être actif.
+- Réutiliser le même numéro de groupe HSRP sur deux VLAN par copier-coller.
+- Configurer des clés d'authentification différentes entre les pairs, qui ne se voient alors plus.
+$lesson$),
+  ('net-c5-p13', 'net-c5', 13, $lesson$Pour aller plus loin$lesson$, $lesson$
+La documentation Cisco reste la référence pour les trois mécanismes, et se lit utilement en ciblant d'abord la page de commande qui vous intéresse. Les guides suivants couvrent l'essentiel de ce chapitre : https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/sec_data_acl/configuration/xe-16/sec-data-acl-xe-16-book.html pour les ACL, https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipaddr_nat/configuration/xe-16/nat-xe-16-book.html pour le NAT et le PAT, et https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipapp_fhrp/configuration/xe-16/fhp-xe-16-book.html pour HSRP, VRRP et GLBP. Du côté des normes, RFC 1918 décrit les adresses privées, RFC 3021 traite de l'adressage point à point en 31 bits, RFC 2827 impose l'anti-spoofing en entrée, et RFC 5798 définit VRRP en version 3. Pour approfondir, montez un laboratoire de trois routeurs dans GNS3 ou Packet Tracer, rejouez la recette du site Lilas, puis retirez une règle à la fois pour observer précisément ce qui casse : c'est la meilleure façon de graver l'ordre d'évaluation dans la mémoire.
+$lesson$),
+  ('net-c5-p14', 'net-c5', 14, $lesson$Et maintenant : passez au chapitre supervision et dépannage, où ces ACL, ces NAT et ces bascules seront mesurés, tracés et diagnostiqués en conditions réelles$lesson$, $lesson$
+ACL, NAT et redondance forment le trio qui transforme un réseau correct en réseau exploitable. Dans l'exercice pratique, suivez l'ordre des étapes : écrivez d'abord les règles filtrantes et testez-les avec un paquet à la fois, traduisez ensuite une plage d'adresses complète, enfin bascoulez la passerelle sans coupure. Passez ensuite au chapitre supervision et dépannage, où ces ACL, ces NAT et ces bascules seront mesurées, tracées et diagnostiquées en conditions réelles.
+$lesson$);
+
+insert into public.chapter_pages (id, chapter_id, position, title, content) values
+  ('net-c6-p1', 'net-c6', 1, $lesson$Pourquoi superviser : les quatre piliers de l'observation$lesson$, $lesson$
+Bienvenue dans le sixième chapitre du parcours Réseaux. Les cinq chapitres précédents ont construit une infrastructure : des adresses et des masques, des VLAN et de la commutation, des protocoles de transport et de résolution de noms, des routes statiques et un protocole de routage dynamique, enfin des ACL et du NAT pour tenir le périmètre. Une fois mise en service, cette infrastructure devient invisible : elle fonctionne, personne n'y pense, jusqu'au matin où les usagers n'arrivent plus à ouvrir leur session. Ce chapitre change de registre : il ne s'agit plus de concevoir, mais d'observer, de mesurer, d'alerter et de réparer. Un réseau non supervisé est un réseau qui tombe en panne sans que personne ne le sache, et qui se répare au gré des intuitions du moment. La supervision et le dépannage sont deux faces d'une même discipline : la première produit les indices que la seconde transforme en décisions rapides. C'est cette discipline que vous allez apprendre ici, d'abord outil par outil, puis méthode par méthode, avec des commandes que vous pouvez exécuter telles quelles dans un laboratoire ou sur un équipement de test.
+
+À la fin de cette leçon, vous saurez faire des choses très précises. Vous utiliserez ping pour éprouver l'atteignabilité, mesurer la latence et sonder la MTU du chemin, traceroute pour découvrir le chemin emprunté et repérer où le trafic se bloque, tcpdump pour capturer des paquets sur un serveur sans interface graphique, Wireshark pour les examiner avec des filtres d'affichage, des graphiques de débit et une analyse experte des anomalies. Vous configurerez SNMP en version 3 pour récolter les métriques des équipements, vous définirez des seuils d'alerte assortis d'une action réelle, vous centraliserez les journaux avec des niveaux et une durée de rétention, et vous exporterez des traces de flux avec NetFlow, IPFIX ou sFlow pour savoir qui parle à qui, à quelle heure et à quel débit. Par-dessus tout, vous appliquerez une méthode de dépannage en sept étapes, aboutissant à un runbook reproductible, et vous concevrez des tests synthétiques qui mesurent le service du point de vue de l'usager. Le tout se rassemble dans un mini-projet : le plan de supervision complet d'un site et la résolution documentée d'un incident.
+
+Le fil rouge de ce chapitre est le site Lilas : deux routeurs de cœur nommés R1 et R2, un pare-feu en bordure, des commutateurs par bâtiment, des serveurs applicatifs, un service de noms et enfin un réseau sans fil réservé aux visiteurs. Les postes sont répartis en plusieurs VLAN : publics filaires en VLAN 10, sans fil en VLAN 20, serveurs en VLAN 40, équipements de gestion en VLAN 60. La supervision est centralisée sur une machine de collecte située en VLAN de gestion, à l'adresse 10.10.0.10, qui reçoit les métriques, les journaux et les traces. Tous les exemples de cette leçon se réfèrent à ce petit réseau : ils restent volontairement génériques, si bien que vous pourrez les transposer à votre propre environnement en changeant les adresses et les noms d'équipements.
+
+
+
+La supervision, au sens opérationnel du terme, est la collecte continue d'informations sur un système, leur mise en regard d'attentes explicites, et le déclenchement d'une action lorsqu'une attente n'est plus satisfaite. Trois conditions doivent être réunies pour qu'on puisse dire qu'un service est supervisé : la donnée existe, elle est conservée assez longtemps pour être comparée, et quelqu'un sait quoi faire quand elle franchit un seuil. Une équipe qui collecte mille métriques sans définir aucun seuil ne supervise rien, elle archive. Un autre équipe qui envoie cinquante alertes par minute sans les regrouper ne supervise pas non plus : ses membres finissent par ignorer toutes les notifications, phénomène connu sous le nom de fatigue des alertes. La supervision utile est donc un compromis entre la finesse de l'observation et la capacité de réaction réelle de l'équipe.
+
+On observe un réseau avec quatre familles d'outils, complémentaires plutôt que concurrentes. La première est la métrique : une valeur numérique mesurée à intervalle régulier, stockée avec son horodatage, ce qui permet de tracer une courbe et d'y poser des seuils. Exemples : l'utilisation processeur d'un routeur, le nombre d'octets traversant une interface, la température d'un châssis, le taux d'erreurs sur une liaison. La seconde famille est le journal : un événement textuel horodaté, émis par un équipement ou une application, qui raconte ce qui s'est passé plutôt que ce qui se mesure. Exemples : un compte rendu d'authentification refusée, un changement de configuration, une liaison qui se lève ou qui tombe. La troisième est la trace de flux : l'enregistrement agrégé de conversations réseau, qui dit qui a parlé à qui, pendant combien de temps et pour combien d'octets, sans stocker le contenu. La quatrième est le test actif, dit synthétique : on déclenche soi-même un parcours utilisateur typique, une résolution de noms, une connexion chiffrée, un téléchargement, et on mesure le résultat comme le ferait un visiteur.
+
+Ces quatre piliers répondent à des questions différentes, et aucun ne remplace les autres. Une métrique vous dira que le processeur du serveur monte à 90 pour cent, mais pas que les usagers attendent une réponse ; un test synthétique vous dira que la page ne s'ouvre pas, mais pas pourquoi ; un journal vous nommera le processus en cause ; une trace de flux vous montrera qu'un poste exfiltre un volume anormal vers l'extérieur. C'est leur recoupement qui fait la force du diagnostic : on part du symptôme constaté par le test, on remonte vers la métrique qui sature, on lit le journal de l'équipement concerné, puis on confirme avec une trace ou une capture de paquets. Le tableau ci-dessous récapitule la question, la granularité et l'espérance de vie typique de chaque famille.
+
+```text
+PILE D'OUTILS DE L'OBSERVATION RÉSEAU
+
+  usager
+    |  test synthétique (toutes les 60 s) : le service répond-il ?
+    v
+  application ----> journaux (événements, rétention 30 à 90 jours)
+    |
+    v
+  hôte -----------> métriques (CPU, mémoire, disque, 60 s)
+    |
+    v
+  réseau ----------> métriques d'interfaces + traps SNMP
+                \--> traces de flux (qui parle à qui, 1 à 60 s)
+                    |
+                    v
+              collecteur central (10.10.0.10)
+              + base temporelle + moteur d'alertes
+```
+
+| Pilier | Question à laquelle il répond | Granularité | Durée de conservation typique |
+| --- | --- | --- | --- |
+| Métriques | Combien, à quel rythme, est-ce que ça monte ? | Un point par équipement et par minute | 15 à 90 jours en base temporelle |
+| Journaux | Qu'est-ce qui s'est passé, à quelle seconde ? | Un événement textuel horodaté | 30 à 90 jours, puis archivage froid |
+| Traces de flux | Qui parle à qui, pour combien d'octets ? | Un enregistrement par conversation | 7 à 30 jours, volume élevé |
+| Tests synthétiques | Le service marche-t-il depuis le point de vue de l'usager ? | Un parcours complet toutes les 60 secondes | 15 à 30 jours pour la tendance |
+
+- La supervision exige trois choses : une donnée collectée, un historique exploitable et une action décidée à l'avance.
+- Quatre piliers complémentaires : métriques, journaux, traces de flux, tests synthétiques.
+- Un pilier ne remplace jamais un autre : on croise les indices pour localiser la cause.
+- Un superviseur se choisit sur des principes identiques partout : collecte, seuil, notification, historique.
+- Le logiciel est interchangeable, les principes ne le sont pas.
+$lesson$),
+  ('net-c6-p2', 'net-c6', 2, $lesson$Tester la connectivité : ping et ses usages réels$lesson$, $lesson$
+ping est le premier outil du dépanneur, et c'est à peine un outil : il envoie un message ICMP de type Echo Request et attend un Echo Reply du même type. Ce faisant, il mesure trois choses d'un coup : le paquet atteint-il la destination, combien de temps met-il pour aller et revenir, et quel chemin de décroissance du champ Time To Live emprunte-t-il. Le temps d'aller-retour, appelé RTT, se lit dans chaque ligne de réponse, avec un minimum, une moyenne, un écart type et un pourcentage de perte calculés à la fin. La valeur du TTL de retour indique de combien de sauts le paquet est descendu depuis son point de départ, ce qui donne un premier aperçu de la distance topologique sans même lancer un traceroute. Un RTT inférieur à une milliseconde signale un hôte voisin ; cent millisecondes indiquent une traversée de longue distance ou un chemin dégradé.
+
+Une exécution type affiche d'abord la cible et la taille de charge utile, puis une réponse par numéro de séquence avec le TTL observé et le temps de retour, enfin un récapitulatif : paquets envoyés et reçus, pourcentage de perte, temps minimum, moyen, maximum et écart type. C'est l'écart type qui parle le mieux : un temps moyen de 20 millisecondes avec un écart type de 15 révèle une latence instable, typique d'une liaison saturée ou d'un sans-fil en concurrence, là où une moyenne de 20 avec un écart type de 1 décrit un lien sain. Interprétez toujours les quatre valeurs ensemble, jamais la moyenne seule.
+
+Le premier réflexe avec ping est de penser qu'il vérifie « si ça marche ». C'est faux, ou du moins insuffisant. ping ne teste qu'une chose : la capacité de la couche réseau à acheminer un paquet ICMP entre deux adresses. Il ne dit rien sur un port, un service, une authentification ni sur une application. Un pare-feu peut parfaitement laisser passer Echo Request et bloquer ensuite tout le trafic vers le port 443 ; le ping sera vert pendant que le site sera hors service. Inversement, un serveur peut répondre ponctuellement à un ping trop rapide et sembler défaillant alors que le service fonctionne. La bonne discipline consiste à utiliser ping pour trancher une question précise, puis à remonter immédiatement vers un test de port ou de service quand la réponse est positive.
+
+Les options les plus utiles méritent d'être connues par cœur, car elles transforment un outil de vérification en instrument de mesure. Le compteur `-c` limite le nombre d'envois ; l'intervalle `-i` rapproche ou éloigne les échos ; le délai d'attente `-W` fixe combien de temps on accepte d'attendre une réponse avant de compter une perte ; les options `-4` et `-6` forcent la version du protocole, ce qui est précieux sur un hôte où les résolutions automatiques peuvent choisir l'adresse IPv6 par défaut ; le mode silencieux `-q` ne conserve que la ligne de synthèse, idéal pour un script. La combinaison la plus importante est décrite dans le bloc suivant : elle sert à mesurer la MTU du chemin sans jamais fragmenter le paquet.
+
+```text
+$ ping -c 4 -i 0.2 -W 1 10.10.0.20
+PING 10.10.0.20 (10.10.0.20) 56(84) bytes of data.
+64 bytes from 10.10.0.20: icmp_seq=1 ttl=64 time=0.412 ms
+64 bytes from 10.10.0.20: icmp_seq=2 ttl=64 time=0.398 ms
+64 bytes from 10.10.0.20: icmp_seq=3 ttl=64 time=0.455 ms
+64 bytes from 10.10.0.20: icmp_seq=4 ttl=64 time=0.401 ms
+
+--- 10.10.0.20 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss
+rtt min/avg/max/mdev = 0.398/0.416/0.455/0.021 ms
+
+# Recherche de la MTU du chemin (drapeau Don't Fragment posé)
+$ ping -c 2 -s 1472 -M do 10.10.0.20
+PING 10.10.0.20 (10.10.0.20) 1472(1500) bytes of data.
+1480 bytes from 10.10.0.20: icmp_seq=1 ttl=64 time=0.456 ms
+
+$ ping -c 2 -s 1473 -M do 10.10.0.20
+PING 10.10.0.20 (10.10.0.20) 1473(1501) bytes of data.
+ping: local error: message too long, mtu=1500
+```
+
+Le calcul à retenir est simple : la charge utile demandée par l'option `-s`, plus les 8 octets d'en-tête ICMP, plus les 20 octets d'en-tête IP en version 4, doit rester inférieure ou égale à la MTU du chemin. Avec une MTU de 1500 octets, la valeur maximale est donc de 1472. Si un test de 1473 échoue avec une erreur indiquant que le paquet est trop long, le chemin est bien en 1500 et aucune fragmentation n'est possible en route, parce que le drapeau Don't Fragment l'interdit. Ce test est indispensable dès que des tunnels, du sans-fil ou du transport de niveaux supérieurs entrent en jeu : une MTU mal négociée produit le symptôme le plus déroutant qui soit, un service qui fonctionne pour les petits messages et se fige pour les réponses volumineuses.
+
+Enfin, il faut savoir reconnaître un échec de ping et le classer. Trois situations se présentent. Aucune réponse avec une latence constante vers les autres hôtes du même réseau : la cible est hors service, son adresse est mal configurée, ou un pare-feu locale rejette silencieusement. Aucune réponse alors que les voisins répondent mais la passerelle ne répond pas : c'est souvent la couche deux, un câble, un port de commutateur ou un VLAN mal affecté. Enfin, une latence normale mais des pertes aléatoires sur toute une série : le chemin partagé est en surcharge, ou un équipement limite le débit des requêtes ICMP. Dans ce dernier cas, il faut aussitôt passer à un outil qui ne dépend pas d'ICMP.
+
+- ping prouve l'atteignabilité de la couche réseau, jamais la disponibilité d'un service.
+- Lisez toujours minimum, moyenne, maximum et écart type, pas la moyenne seule.
+- `-M do` avec `-s 1472` interroge la MTU du chemin sans fragmenter.
+- Une latence moyenne stable et faible est le signe d'un lien sain, même si elle n'est pas la plus basse possible.
+- Un ping bloqué n'est pas un diagnostic : c'est une information qu'il faut confirmer autrement.
+$lesson$),
+  ('net-c6-p3', 'net-c6', 3, $lesson$Tracer le chemin : traceroute, mtr et le multi-chemin$lesson$, $lesson$
+traceroute répond à une question que ping ne peut pas poser : par où le paquet passe-t-il, et à quel saut les choses se dégradent ? Le mécanisme est élégant. On envoie un paquet avec un champ Time To Live égal à 1 : le premier routeur décroît ce compteur, le voit arriver à zéro, renvoie une erreur ICMP de type Time Exceeded et laisse tomber le paquet. On réitère avec un TTL de 2, puis de 3, et ainsi de suite, jusqu'à atteindre la destination, qui répond par un message distinct. Chaque erreur reçue provient donc d'un routeur intermédiaire et nous donne son adresse. La séquence des adresses affichées constitue le chemin, ou plus exactement un chemin parmi ceux que la table de routage peut choisir.
+
+Le protocole utilisé pour initier les échanges varie selon les systèmes et les options. Sur Linux, la variante par défaut envoie des datagramas UDP vers des ports successifs, généralement à partir du port 33434 ; la destination répond par une erreur ICMP Port Unreachable, ce qui signale que le bout du chemin est atteint. L'option `-I` bascule vers des échos ICMP, utiles quand les pare-feux filtrent les ports UDP élevés. L'option `-T` envoie des segments TCP, typiquement vers le port 80 ou 443, ce qui permet de suivre exactement le chemin emprunté par le trafic applicatif et de traverser des filtrages qui n'autorisent ni l'ICMP ni les ports UDP inutilisés. Le choix n'est pas anodin : chaque variante peut révéler un chemin différent, parce que les équipements traitent prioritairement ou différemment ces catégories de paquets.
+
+```text
+$ traceroute -n -m 15 198.51.100.10
+traceroute to 198.51.100.10 (198.51.100.10), 15 hops max, 60 byte packets
+ 1  10.10.0.1   0.412 ms  0.398 ms  0.421 ms
+ 2  10.10.1.129 1.204 ms  1.188 ms  1.230 ms
+ 3  10.20.0.1   4.510 ms  4.487 ms  4.533 ms
+ 4  203.0.113.1 12.874 ms 12.901 ms 12.866 ms
+ 5  198.51.100.10 14.203 ms 14.190 ms 14.215 ms
+
+$ mtr -r -c 20 198.51.100.10
+       Start 12:04:02, hop 1    Loss%   Snt   Last   Avg  Best  Wrst StDev
+  1.|-- 10.10.0.1      0.0%    20    0.4   0.4   0.4   0.5   0.0
+  2.|-- 10.10.1.129    0.0%    20    1.2   1.2   1.1   1.4   0.1
+  3.|-- 10.20.0.1     10.0%    20    4.6   5.1   4.4   8.9   1.3
+  4.|-- 203.0.113.1    0.0%    20   12.9  12.9  12.7  13.2   0.1
+  5.|-- 198.51.100.10  0.0%    20   14.2  14.2  14.1  14.4   0.1
+```
+
+Le premier réflexe d'interprétation consiste à regarder où la série d'astérisques commence. Des étoiles dès le deuxième saut indiquent un équipement qui ne répond pas aux requêtes de décodage, pas nécessairement une panne : de nombreux routeurs filtrent l'ICMP de décroissance ou sont prévus pour ne jamais révéler leur position. Une perte totale et stable à partir d'un saut donné, alors que les suivants répondent, signale au contraire que le trafic est effectivement dégradé à cet endroit. Une perte partielle et intermittente sur un saut unique, avec le reste du chemin sain, est le plus souvent un artefact : les routeurs limitent le débit de réponses ICMP qu'ils émettent, et sous charge normale ils en jettent certaines. Cette nuance est essentielle : une perte affichée par traceroute n'est presque jamais la perte réellement subie par votre trafic.
+
+Un autre piège tient à la topologie moderne. Lorsque plusieurs routeurs partagent la charge sur un même lien ou vers une même destination, l'équilibrage en multipath choisit un chemin par paquet ou par flux. Un traceroute lancé d'un hôte peut alors montrer une route, un second traceroute lancé une seconde plus tard en montre une autre, et un outil mal conçu les superpose en une ligne incohérente. Des variantes comme paris-traceroute ou dublin-traceroute résolvent le problème en conservant constant l'identifiant de flux, c'est-à-dire les adresses et les ports, afin que tous les paquets du test prennent le même chemin. Si votre réseau utilise l'équilibrage de charge, préférez ces variantes, ou acceptez de lancer la commande plusieurs fois pour distinguer les chemins réels d'un bruit apparent.
+
+mtr, pour My Traceroute, fusionne ping et traceroute dans une exécution continue : il répète le parcours, accumule des statistiques par saut, et affiche pour chacun le taux de perte, le nombre d'échantillons, le dernier, la moyenne, le meilleur, le pire et l'écart type. C'est l'outil le plus pratique pour localiser une dégradation, car il montre simultanément où la latence augmente et où les réponses manquent. Utilisez-le en mode rapport après un nombre défini d'itérations, car un affichage interactif permanent sature la console et brouille la lecture.
+
+- traceroute découvre le chemin en faisant décroître le champ Time To Live saut après saut.
+- Chaque variante de protocole, ICMP, UDP ou TCP, peut révéler un chemin différent.
+- Des étoiles signifient souvent un filtrage de l'ICMP, pas une coupure.
+- Une perte partielle sur un seul saut est généralement un artefact de limitation de débit.
+- mtr donne, saut par saut, perte, latence moyenne et dispersion sur une série d'échantillons.
+- Avant de conclure, lancez le test une seconde fois vers une autre destination de contrôle.
+$lesson$),
+  ('net-c6-p4', 'net-c6', 4, $lesson$Capturer le trafic avec tcpdump$lesson$, $lesson$
+Les métriques disent qu'un problème existe, les journaux disent quand il est apparu, mais seul l'examen des paquets montre ce qui circule réellement sur le fil. tcpdump est l'outil de référence pour cette tâche sur un serveur : il s'exécute en ligne de commande, ne demande aucune interface graphique, fonctionne sur une machine en salle machine accessibilisée en SSH, et filtre le trafic avant même de l'écrire sur le disque, ce qui limite la charge et la place consommée. Il s'appuie sur les filtres du système de paquets Berkeley, les mêmes que l'on retrouve dans de nombreux outils, ce qui rend l'apprentissage immédiatement transposable. L'opération se décompose toujours en trois temps : choisir l'interface, poser un filtre, décider si l'on affiche les paquets sur le terminal ou si l'on les écrit dans un fichier pour les analyser plus tard.
+
+La syntaxe de base tient en quelques éléments. L'interface se sélectionne avec `-i`, en donnant son nom, ou en utilisant le mot réservé qui désigne toutes les interfaces à la fois. L'option `-n` désactive la résolution des noms d'hôtes et de ports, ce qui est indispensable : sans elle, une capture traîne derrière elle des requêtes de résolution inverses qui prennent des secondes et faussent l'horodatage. L'option `-c` limite le nombre de paquets capturés, `-v` ou `-vv` augmente le niveau de détail, `-A` affiche la charge utile en texte brut, et `-tttt` produit une date et une heure lisibles. Enfin, `-w` écrit la capture au format pcap, que l'on relira avec `-r` ou que l'on ouvrira dans Wireshark. Sur la plupart des systèmes, la capture exige les privilèges les plus élevés, car elle met la carte réseau en mode promiscuité.
+
+```text
+# Écriture d'une capture filtrée, rotation par taille, puis relecture
+$ sudo tcpdump -i eth0 -n -s 0 -C 100 -W 10 -w /var/tmp/capture.pcap \
+    'host 10.10.0.20 and tcp port 443'
+$ sudo tcpdump -nn -r /var/tmp/capture.pcap0 -A | head -40
+
+# Exemples de filtres de capture (syntaxe Berkeley Packet Filter)
+host 10.10.0.20                    # un hôte, source ou destination
+net 10.10.0.0/24                   # un réseau entier
+port 443                           # un port, source ou destination
+tcp port 443 and host 10.10.0.20   # combinaison logique
+src net 10.10.20.0/24 and not dst port 22
+icmp or icmp6                      # tout le trafic de contrôle
+'tcp[tcpflags] & (tcp-syn|tcp-fin) != 0'   # ouverture ou fermeture
+'udp[8:2] = 0x0035'                # requêtes DNS sur le port 53
+
+# Vérification instantanée de la charge applicative
+$ sudo tcpdump -i eth0 -nn -A 'tcp port 443' | grep -m 5 'GET /'
+```
+
+Les filtres Berkeley méritent une explication courte, car ils donnent un pouvoir considérable. Une expression compare des octets précis dans l'en-tête du paquet, à l'aide d'opérateurs logiques et de masques. On peut ainsi sélectionner les segments de synchronisation et d'accusé de réception, ce qui permet de filmer l'ouverture de chaque connexion ; filtrer sur le champ de drapeaux TCP pour repérer les fermetures anormales ; ou encore choisir un réseau source tout en excluant un service, comme la connexion d'administration distante. Le point crucial est que ce filtrage est appliqué par le système avant la copie des données : plus le filtre est précis, moins la capture coûte en processeur et en espace disque. Une capture filée sans filtre sur une liaison saturée reste le meilleur moyen de provoquer une seconde panne.
+
+Choisir entre l'affichage terminal et l'écriture d'un fichier dépend de la question posée. Pour vérifier en dix secondes si des requêtes atteignent un service, l'affichage direct suffit, éventuellement complété par un filtre de texte. Pour analyser une séquence d'échange, pour calculer des intervalles entre paquets, ou pour transmettre la preuve à un collègue, il faut un fichier pcap. Prévoyez alors la rotation : l'option qui fixe la taille maximale de chaque fichier, combinée au nombre de fichiers conservés, crée un tampon circulaire qui ne remplit jamais le disque. C'est la configuration à retenir sur un serveur de production, où une capture oubliée peut graver plusieurs gigaoctets avant que personne ne s'en aperçoive.
+
+L'interprétation d'une capture commence toujours par la même question : qui a parlé en premier ? Sur une connexion TCP, la séquence normale est un segment de synchronisation venu du client, un segment de synchronisation-accusé de réception venu du serveur, puis un accusé de réception final. Si le premier paquet vient du serveur, c'est qu'une connexion antérieure existe ou que la topologie est inattendue. Si le client envoie plusieurs synchronisations avant d'obtenir réponse, le délai d'ouverture est dégradé, ce qui oriente vers un pare-feu, une file d'attente ou une route lente. Si l'on observe plusieurs segments avec le même numéro de séquence, il y a retransmission, signe soit de perte, soit de fenêtre de réception fermée. Ce vocabulaire, une fois acquis, se lit sur n'importe quelle capture.
+
+Deux précautions d'usage évitent les fausses conclusions. La première concerne l'horodatage : si les horloges de la machine de capture et du serveur ne sont pas synchronisées, la corrélation entre un journal applicatif et un paquet devient impossible. Activez la synchronisation horaire sur tous les hôtes, et considérez un décalage supérieur à la seconde comme un défaut de supervision à part entière. La seconde concerne la résolution des noms : en mode lecture, certains outils relancent des recherches de noms d'hôtes, ce qui ralentit l'analyse et peut même injecter du trafic supplémentaire dans la mesure. On désactive donc ces résolutions quand on veut un résultat fidèle.
+
+- Une capture utile se prépare : interface choisie, filtre étroit, limite de taille, horloges synchronisées.
+- `-n` évite les résolutions de noms qui faussent les délais ; `-s 0` conserve les paquets complets.
+- La rotation par taille et par nombre de fichiers empêche de remplir le disque.
+- Commencez toujours par identifier qui a initié la connexion, puis cherchez les retransmissions.
+- Une capture sans filtre sur une liaison saturée aggrave le problème qu'elle cherche à observer.
+$lesson$),
+  ('net-c6-p5', 'net-c6', 5, $lesson$Analyser avec Wireshark : filtres, graphiques, analyse experte$lesson$, $lesson$
+Wireshark est le prolongement graphique de tcpdump : il ouvre le même format de fichier, décode chaque couche du modèle, affiche les en-têtes champ par champ et propose des outils de statistiques et de corrélation. Sa force principale réside dans la distinction fondamentale entre deux familles de filtres. Le filtre de capture est appliqué à la volée, pendant l'enregistrement, et limite ce qui est écrit sur le disque ; il joue le même rôle que la syntaxe de tcpdump. Le filtre d'affichage, en revanche, s'applique à une capture déjà réalisée et masque simplement les paquets qui ne nous intéressent pas. Confondre les deux conduit à des résultats déroutants : garder tout puis chercher, ou pire, ne capturer que ce que l'on croit important et rater la preuve du problème.
+
+Le langage de filtrage d'affichage s'exprime en termes de protocole et de champ. On compare des adresses, des numéros de port, des types de message, on recherche une chaîne de caractères dans la charge utile, on combine les critères avec les opérateurs logiques usuels. Les expressions les plus rentables à mémoriser sont celles qui ciblent les anomalies de transport : retransmission, accusé de réception dupliqué, paquet hors séquence, fenêtre de réception nulle, temps d'aller-retour anormal. Une capture chargée de milliers de trames se réduit ainsi en quelques secondes à la poignée de paquets qui racontent réellement l'incident.
+
+```text
+# Filtres d'affichage les plus utiles (panneau filtre de Wireshark)
+ip.addr == 10.10.0.20 and tcp.port == 443
+tcp.stream eq 12                 # toute une connexion, par son index
+dns or tls.handshake.type == 1   # résolution puis établissement du canal
+tcp.analysis.retransmission
+tcp.analysis.zero_window
+tcp.analysis.out_of_order
+frame contains "GET /"
+http.response.code >= 400
+
+# Suivi d'un flux applicatif : Analyse -> Suivre le flux TCP
+# Export pour automatisation : Fichier -> Exporter les paquets -> JSON ou CSV
+```
+
+Au-delà du filtre, Wireshark propose trois vues qui changent la nature de l'analyse. La vue tabulaire reste la plus rapide pour parcourir la chronologie. Le graphe d'entrées et de sorties, souvent appelé graphe de débit, trace l'évolution du volume échangé dans le temps, ce qui met en évidence une coupure, un palier ou une saturation bien plus vite que la lecture des trames. Le graphe de séquence, ou graphe de flux, représente visuellement les tours de rôle entre émetteur et récepteur, avec les retards verticaux qui correspondent aux temps d'attente. Un escalier régulier indique un échange sain ; un plateau horizontal révèle un interlocuteur qui ne répond pas ; une accumulation de barres de retransmission signale une perte ou une congestion.
+
+L'analyse experte automatise une grande partie de ce travail. Chaque paquet reçoit une classification : simple renseignement sur le protocole, message de conversation, avertissement, ou erreur. Lorsqu'une trame apparaît en rouge, c'est qu'elle entre dans la catégorie des erreurs graves : retransmission, fenêtre nulle, séquence rompue, somme de contrôle invalide. Le rouge attire l'œil et sert de point de départ ; il ne constitue pas à lui seul un diagnostic, car une retransmission peut être parfaitement normale sur un lien sans fil. La couleur jaune signale des avertissements, la bleue les échanges de routine de conversation, la grise les informations de protocole. Le bon réflexe consiste à filtrer d'abord sur les rouges, puis à remonter le contexte autour d'eux.
+
+Le suivi de flux est l'outil qui relie la vue paquet à la vue application. On sélectionne une connexion, on demande son suivi, et l'outil reconstruit la conversation complète dans l'ordre, en séparant les requêtes des réponses. On y voit immédiatement une page web dont la première partie arrive vite puis se fige, un échange de noms qui traîne, ou une authentification qui échoue silencieusement. Pour les protocoles chiffrés, le contenu reste illisible, mais la métrique utile n'est pas le contenu : c'est la taille des messages, leur direction et leurs intervalles, qui suffisent souvent à distinguer un problème d'application d'un problème de réseau. L'export vers des formats structurés permet enfin d'intégrer ces mesures dans un traitement automatisé.
+
+- Le filtre de capture limite l'enregistrement, le filtre d'affichage limite la lecture.
+- Apprenez d'abord les filtres d'anomalie de transport : retransmission, fenêtre nulle, séquence rompue.
+- Le graphe d'entrées-sorties montre les ruptures et les saturations d'un coup d'œil.
+- L'analyse experte en rouge signale des erreurs graves et oriente l'enquête, sans la conclure.
+- Le suivi de flux reconstruit la conversation applicative, même si le contenu est chiffré.
+$lesson$),
+  ('net-c6-p6', 'net-c6', 6, $lesson$Mesurer la performance : latence, débit, gigue et pertes$lesson$, $lesson$
+Un service perçu comme lent n'est pas forcément un service en panne, et c'est précisément ce qui rend les problèmes de performance difficiles à traiter : ils sont parfois intermittents, subjectifs et localisés à un réseau d'accès. Pour les rendre objectifs, on les décompose en quelques grandeurs mesurables. La latence est le temps mis par un message pour aller de l'émetteur au récepteur et revenir ; on la mesure en millisecondes et on la note alors temps d'aller-retour. Le débit est le volume de données effectivement transporté par unité de temps, exprimé en mégabits ou méga-octets par seconde. La gigue est la variabilité de la latence d'un échantillon à l'autre. Le taux de perte est la fraction de messages sans réponse. Enfin l'utilisation d'une liaison rapporte le volume transporté à la capacité disponible. Chacune de ces grandeurs raconte une partie de l'histoire, et seules elles ensemble permettent de distinguer un lien saturé d'un lien défaillant.
+
+Le premier piège consiste à confondre latence de bout en bout et latence par segment. Un ping vers une destination distante mesure la somme de tous les retards, traitement des routeurs compris, sans dire lequel est responsable. Seule une série de mesures saut par saut, ou des mesures lancées depuis plusieurs points de mesure, permet d'attribuer la latence à un segment. Le deuxième piège est de prendre la mesure depuis le mauvais endroit : tester depuis le réseau de gestion alors que le problème touche le réseau visiteur ne produit qu'une preuve inutile. La règle est de mesurer depuis le même lieu que l'usager, avec le même chemin, le même service et si possible le même appareil d'accès.
+
+```text
+# Mesure de débit et de latence entre deux hôtes du labo
+$ iperf3 -s                      # côté serveur, port 5201
+$ iperf3 -c 10.10.0.20 -t 30 -P 4 -R
+[SUM]  0.00-30.00 sec  3.42 GBytes  980 Mbits/sec  receiver
+[SUM]   RTT: 0.45/30.00 ms  (cwnd: 12/10)
+
+# Exigences de latence usuellement retenues pour référence
+# navigation web....... < 200 ms de bout en bout
+# postélectronique..... < 100 ms, gigue < 30 ms
+# voix sur IP........... < 150 ms, gigue < 20 ms, perte < 1 %
+# transfert de fichiers. débit soutenu > 80 % de la capacité nominale
+
+# Mesure de la gigue et des pertes sur une série longue
+$ ping -c 300 -i 0.2 10.10.0.20 | tail -3
+```
+
+La relation entre utilisation et latence mérite qu'on s'y arrête, car elle explique la majorité des plaintes de fin d'année. Tant que la charge reste modérée, la latence est stable : les paquets sont transmis presque immédiatement. À mesure que l'on approche de la capacité nominale, la file d'attente s'allonge et la latence croît de manière non linéaire ; un petit surcroît de charge produit alors une explosion du temps d'attente. Une liaison utilisée à 95 pour cent semble presque normale sur une mesure ponctuelle, mais elle devient extrêmement vulnérable à la moindre pointe. Le bon indicateur d'alerte n'est donc pas la saturation absolue, mais la combinaison d'une utilisation élevée soutenue et d'une latence en hausse.
+
+| Symptôme constaté | Mesure à effectuer | Outil adapté | Interprétation probable |
+| --- | --- | --- | --- |
+| La page met longtemps à s'afficher | Temps d'aller-retour par saut | traceroute ou mtr | Segment lent ou dégradation intermédiaire |
+| Le téléchargement est plus rapide sur un test que sur le service | Débit de bout en bout et puis de la file applicative | iperf3 puis mesures serveur | Capacité réseau suffisante, goulot applicatif |
+| La qualité audio se coupe sans raison | Gigue et taux de perte sur 300 échantillons | ping longue série | Dégradation intermittente du chemin ou du sans-fil |
+| Tout le réseau ralentit aux heures de pointe | Utilisation soutenue et courbe de latence | métriques d'interfaces | Saturation de capacité, charge à rééquilibrer |
+
+Le tableau précédent illustre la discipline du diagnostic de performance : partir du symptôme, choisir la mesure qui l'objective, puis n'accepter qu'une interprétation compatible avec l'ensemble des mesures. Un test de débit excellent n'infirme pas une plainte de latence, il la localise ailleurs. Une perte de un pour cent sur un lien filaire est un défaut grave ; sur un lien sans-fil, elle peut être ordinaire. La mesure ne prend un sens qu'une fois replacée dans son contexte : type de support, exigence du service, historique et charge au moment du test.
+
+- Latence, débit, gigue, perte et utilisation décrivent cinq facettes différentes d'une même performance.
+- Mesurez depuis le point de vue de l'usager, avec son chemin et son service.
+- La latence progresse de manière brutale quand l'utilisation approche de la capacité.
+- Comparez toujours une mesure à une exigence explicite et à l'historique du même service.
+- Un résultat isolé ne conclut jamais : deux mesures de contrôle éliminent la moitié des hypothèses.
+$lesson$),
+  ('net-c6-p7', 'net-c6', 7, $lesson$SNMP v3 : récolter les métriques des équipements$lesson$, $lesson$
+Le protocole de supervision du réseau repose sur un dialogue entre deux rôles. L'agent, logiciel intégré dans le routeur, le commutateur ou le pare-feu, expose des valeurs que l'équipement connaît déjà : charge processeur, occupation mémoire, état des interfaces, température, compteurs d'erreurs. Le gestionnaire, ou superviseur, interroge périodiquement ces valeurs et les range dans une base temporelle. L'agent peut aussi pousser une notification spontanée, appelée piège, lorsqu'un événement notable se produit : une liaison tombe, un seuil est franchi, l'équipement redémarre. L'interrogation permet la collecte régulière et ordonnée ; la notification permet de ne pas attendre l'interval suivant lorsqu'une panne survient. Un déploiement complet combine toujours les deux mécanismes.
+
+Les valeurs sont organisées dans une arborescence de descripteurs numériques, la base d'information de gestion. Chaque branche est standardisée, ce qui permet à un même superviseur d'interroger des équipements de marques différentes et d'y trouver les mêmes informations. Les identifiants d'objet les plus courants couvrent le temps de fonctionnement, les compteurs d'octets et de paquets entrants et sortis d'une interface, les erreurs et les troncatures, la vitesse déclarée, la charge processeur et l'occupation mémoire. Connaître une dizaine de ces identifiants suffit pour démarrer, car le reste se recherche dans la documentation du fabricant ou se découvre automatiquement lors de l'inventaire initial.
+
+La sécurité n'est pas optionnelle. Les versions 1 et 2c transmettent un mot de passe partagé, dit communauté, en clair dans chaque paquet : un simple écouteur de trafic le récupère et obtient l'accès complet, y compris en écriture si la communauté le permet. La version 3 ajoute l'authentification, qui garantit que la demande provient bien d'un émetteur connu, et la confidentialité, qui chiffre le contenu des échanges. Un troisième niveau existe, qui ne fait qu'authentifier, mais il ne convient pas à la production car les valeurs restent lisibles. En pratique, on retient deux exigences : authentification forte et chiffrement, sur tous les équipements, sans exception, y compris sur le réseau de gestion lui-même.
+
+```text
+Configuration de l'agent SNMPv3 sur un routeur Cisco IOS
+snmp-server group MONITOR_GRP v3 auth read MONITOR_VIEW write MONITOR_VIEW
+snmp-server user MONITOR_USER MONITOR_GRP v3 auth sha MotDePasseAuth priv aes MotDePassePriv
+snmp-server view MONITOR_VIEW iso included
+snmp-server host 10.10.0.10 informs version 3 auth MONITOR_USER
+snmp-server enable traps snmp linkdown linkup coldstart warmstart
+snmp-server enable traps cpu threshold
+snmp-server enable traps envmon temperature fan supply
+snmp-server enable traps ospf state-change
+process cpu threshold type total rising 80 interval 30 falling 70 interval 300
+
+Interrogation depuis le superviseur
+snmpget -v3 -u MONITOR_USER -a SHA -A MotDePasseAuth \
+  -x AES -X MotDePassePriv 10.10.1.1 1.3.6.1.2.1.1.3.0
+snmpwalk -v3 -u MONITOR_USER -a SHA -A MotDePasseAuth \
+  -x AES -X MotDePassePriv 10.10.1.1 1.3.6.1.2.1.2.2.1.10
+```
+
+La configuration se lit en quatre gestes : définir un groupe, créer un utilisateur rattaché à ce groupe avec ses secrets, limiter la vue à lire ce qui doit être lu, puis déclarer le destinataire des notifications. La vue mérite une attention particulière : elle détermine la partie de l'arborescence que l'utilisateur peut consulter. Un superviseur n'a aucun besoin d'écrire dans la configuration d'un routeur, et le fait de lui accorder une permission d'écriture constitue une surface d'attaque inutile. On accorde donc l'accès en lecture, on limite la vue aux sous-arbres utiles, et on inscrit le réseau de gestion dans une liste de contrôle qui n'accepte les requêtes que venant de la machine de collecte.
+
+```text
+Identifiants d'objet les plus utiles pour un réseau de campus
++--------------------------------------+---------------------------+------------+
+| Grandeur                             | Identifiant               | Fréquence  |
++--------------------------------------+---------------------------+------------+
+| Temps de fonctionnement              | 1.3.6.1.2.1.1.3.0         | 300 s      |
+| Débit entrant d'une interface        | 1.3.6.1.2.1.2.2.1.10.n    | 60 s       |
+| Débit sortant d'une interface        | 1.3.6.1.2.1.2.2.1.16.n    | 60 s       |
+| Erreurs d'entrée                     | 1.3.6.1.2.1.2.2.1.14.n    | 60 s       |
+| Troncatures de sortie                | 1.3.6.1.2.1.2.2.1.16.n    | 60 s       |
+| Vitesse déclarée de la liaison       | 1.3.6.1.2.1.2.2.1.5.n     | 60 s       |
+| Charge processeur, moyenne 1 minute  | 1.3.6.1.4.1.2021.10.1.3.1 | 60 s       |
+| Mémoire libre                        | 1.3.6.1.4.1.2021.4.6.0    | 120 s      |
++--------------------------------------+---------------------------+------------+
+```
+
+- SNMP version 3 combine authentification et chiffrement ; les versions antérieures exposent le mot de passe partagé.
+- L'agent expose, le gestionnaire interroge, l'agent peut pousser une notification.
+- Limitez la vue du superviseur en lecture seule et restreinte aux sous-arbres utiles.
+- Un intervalle de soixante secondes convient aux métriques réseau, davantage pour les grandeurs lentes.
+- L'inventaire, la découverte des interfaces et le périmètre de collecte conditionnent la qualité de toute la supervision.
+$lesson$),
+  ('net-c6-p8', 'net-c6', 8, $lesson$Concevoir des alertes qui déclenchent une action$lesson$, $lesson$
+Une alerte est une sollicitation adressée à un humain, et les humains ont une capacité de traitement limitée. La règle qui commande tout le reste tient en une phrase : une alerte doit correspondre à une action décidée à l'avance. Si personne n'a jamais rien fait de différent en recevant une notification, alors cette notification ne mérite pas d'être envoyée. Avant de définir un seuil, écrivez la phrase de l'action : « si le processeur dépasse ce seuil pendant cette durée, alors on augmente la capacité ou on examine la charge ». Si la phrase se termine par « alors on regarde », le seuil est probablement trop bas ou mal choisi. Cette discipline élimine d'emblée la majorité du bruit.
+
+On hiérarchise les notifications en niveaux, non pas pour classer la gravité abstraite, mais pour choisir le canal et la réactivité. Un niveau critique interrompt : message sur le téléphone d astreinte, prise en compte immédiate, ouverture automatique d'un incident. Un niveau d'avertissement est consigné et traité dans le courant de la journée ouvrée. Un niveau informatif alimente l'historique et les rapports, sans notification. Cette séparation empêche l'erreur la plus classique : utiliser le même canal pour une liaison tombée et pour un redémarrage planifié, au risque que les gens désactivent tout.
+
+```text
+Règles d'alerte et routage (extrait de configuration type)
+groups:
+  - name: reseau
+    rules:
+      - alert: LiaisonTombee
+        expr: ifOperStatus{site="lilas"} == 0
+        for: 1m
+          labels:   { severite: critique, equipe: reseau }
+        annotations:
+          message: "Liaison {{ $labels.ifname }} hors service depuis {{ $value }} min"
+          action:  "Verifier la topo, isoler si besoin, ouvrir incident"
+
+      - alert: ChargeProcesseurElevee
+        expr: rate(cpuBusy[5m]) > 0.85
+        for: 10m
+        labels:   { severite: avertissement, equipe: reseau }
+        annotations:
+          action:  "Identifier le processus, prevoir montee en charge"
+
+      - alert: ErreursInterface
+        expr: increase(ifInErrors[10m]) > 0
+        for: 2m
+        labels:   { severite: avertissement, equipe: reseau }
+        annotations:
+          action:  "Verifier cordon, optic, taux negociation, port commutateur"
+
+Routage et regroupement
+  *:critique      -> astreinte SMS + courriel, prise en compte < 15 min
+  *:avertissement -> file de suivi, tri quotidien a 9 h
+  maintenance     -> inhibition automatique pendant la fenetre declaree
+```
+
+Quatre mécanismes réduisent le bruit sans masquer les incidents. Le premier est la fenêtre de persistance : au lieu d'alerter dès le franchissement, on exige que la condition dure un certain temps, ce qui élimine les pics brefs liés à une rafale de requêtes. Le second est l'hystérésis : on déclenche à un niveau haut et on relâche à un niveau bas, ce qui évite une alternance permanente entre deux états autour du seuil. Le troisième est le regroupement : une liaison physique qui tombe produit des dizaines de sessions logiques perdues, et l'équipe doit recevoir un seul message décrivant la cause racine, pas cinquante doublons. Le quatrième est l'inhibition : toute fenêtre de maintenance déclarée suspend les alertes concernées, et l'annule automatiquement à la fin de l'intervention.
+
+Au-delà des seuils, il faut surveiller la qualité du système d'alerte lui-même. Deux indicateurs suffisent : le ratio d'alertes qui ont conduit à une action réelle, et le délai moyen entre le déclenchement et la prise en compte. Si le premier est faible, les seuils sont mal posés ou les informations manquent pour décider. Si le second est long, c'est que le routage ou la priorisation est défaillant. Ces deux chiffres, revus mensuellement, valent mieux qu'un long inventaire de métriques : ils mesurent la capacité réelle de l'équipe à réagir, qui est la finalité de toute la chaîne de supervision.
+
+Une alerte de qualité se reconnaît à six critères. Elle décrit la cause probable et non le symptôme brut, elle indique l'équipement et le site, elle porte une durée d'ouverture, elle est associée à une action explicite, elle est regroupée avec les doublons, et elle disparaît d'elle-même quand la condition revient à la normale. Une alerte qui reste affichée après résolution oblige à une clôture manuelle et finit par être ignorée. Une alerte qui ne porte aucun lien vers la courbe ou vers le runbook correspondant ajoute une étape de recherche au moment précis où le temps manque.
+
+- Une alerte sans action décidée doit être supprimée ou son seuil relevé.
+- Les niveaux choisissent le canal et la réactivité, pas seulement l'importance théorique.
+- Persistance, hystérésis, regroupement et inhibition sont les quatre remparts contre le bruit.
+- Mesurez le ratio alertes ayant conduit à une action et le délai de prise en compte.
+- Chaque alerte doit être reliée à son runbook et disparaître automatiquement à la résolution.
+$lesson$),
+  ('net-c6-p9', 'net-c6', 9, $lesson$Journaux : niveaux, centralisation et rétention$lesson$, $lesson$
+Les messages sont classés par niveaux de gravité, du plus grave au plus informel, et par provenance. Le niveau détermine ce que l'on conserve et ce que l'on traite en priorité : on n'indexe pas de la même manière un refus d'authentification répété et un message de démarrage. La provenance, dite facilité, permet de trier par origine : routage, commutation, pare-feu, hôte, application. Une règle de filtrage bien écrite au niveau du collecteur décharge le stockage et rend les recherches plus rapides : on conserve tout ce qui est digne d'attention, on archive le reste, et on ne purge jamais sans savoir ce que l'on perd.
+
+```text
+Envoi des journaux vers le collecteur central (rsyslog)
+module(load="imudp")
+input(type="imudp" port="514" ruleset="reseau")
+
+ruleset("reseau") {
+    action(type="omfwd"
+           target="10.10.0.10" port="514" protocol="udp"
+           template="RSYSLOG_SyslogFormat")
+    *.* action(type="omfile" file="/var/log/network-messages")
+}
+
+Côté équipement réseau (extrait)
+logging host 10.10.0.10 transport udp port 514
+logging trap warnings
+logging buffered 64000 informational
+service timestamps log datetime msec localtime show-timezone
+
+Rotation et conservation
+/var/log/network-messages   hebdomadaire, 12 exemplaires, compression
+archive froide              90 jours, puis effacement automatique
+```
+
+La synchronisation horaire est la condition sine qua non de toute corrélation. Si les journaux de quatre équipements ne partagent pas la même référence de temps, reconstituer l'ordre des événements relève de la devinette, et une enquête sur un incident de quelques secondes devient impossible. Activez une source de temps fiable sur chaque équipement, vérifiez le décalage affiché par les journaux eux-mêmes, et traitez tout écart notable comme un défaut de supervision. Le format horodatage lui-même doit inclure la milliseconde et le fuseau, car un fuseau implicite suffit à décaler une enquête d'une heure.
+
+La durée de conservation obéit à deux logiques différentes. L'une est opérationnelle : quelques semaines suffisent pour diagnostiquer l'instant présent et les jours qui ont précédé. L'autre est administrative : certaines obligations imposent de conserver des traces d'accès ou de modification de configuration pendant plusieurs mois, voire plusieurs années. On satisfait donc à la fois en conservant en base indexée les données récentes, faciles à interroger, et en archivant au format fiche ou compressé les données anciennes, rarement consultées mais incontournables. Le dimensionnement se fait à partir du volume quotidien réel : on mesure, on multiplie par la durée de rétention, on ajoute la marge, puis on surveille le remplissage.
+
+- Centralisez les journaux pour lire plusieurs équipements sur une seule ligne de temps.
+- La synchronisation horaire est une condition de toute corrélation fiable.
+- Séparez la conservation opérationnelle, courte et indexée, de l'archive administrative, longue et compressée.
+- Surveillez le taux de perte du collecteur : un journal jamais reçu est un angle mort.
+- Un message non structuré ne se compte pas : imposez un format commun autant que possible.
+$lesson$),
+  ('net-c6-p10', 'net-c6', 10, $lesson$Traces de flux : NetFlow, IPFIX et sFlow$lesson$, $lesson$
+Les captures de paquets montrent le détail, mais coûtent cher en stockage et en lecture. Les métriques d'interfaces montrent un volume total, mais pas ce qui le compose. Entre les deux se placent les traces de flux : chaque conversation réseau est résumée en un enregistrement comportant les adresses source et destination, les ports, le protocole, le nombre d'octets et de paquets, les horodatages de début et de fin, parfois les drapeaux de contrôle et l'autonomie système. On obtient ainsi la capacité de répondre à des questions comme « qui consomme la bande passante à 14 heures ? » ou « quel poste contacte un port inhabituel ? » sans conserver le moindre contenu applicatif.
+
+Trois familles coexistent, avec des principes distincts. La première, d'origine fabricant, a posé le standard de fait et évolué vers des modèles flexibles où l'enregistrement décrit lui-même les champs qu'il contient. La deuxième, normalisée par l'ingénierie internationale, reprend ce principe de modèle extensible et constitue la référence pour tout déploiement multi-fabricants. La troisième procède par échantillonnage statistique : au lieu de résumer chaque conversation, on ne retient qu'un paquet sur plusieurs milliers et on extrapolle, ce qui coûte beaucoup moins de processeur au prix d'une précision moindre pour les petits échanges. Le choix dépend du volume, de la finesse recherchée et de la puissance disponible sur l'équipement.
+
+```text
+Configuration d'export de flux (syntaxe type, commutateur de cœur)
+flow record NETFLOW_RECORD
+ match ipv4 source address
+ match ipv4 destination address
+ match transport source-port
+ match transport destination-port
+ match interface input
+ match interface output
+ collect counter bytes
+ collect counter packets
+ collect timestamp sys-uptime first
+ collect timestamp sys-uptime last
+ collect transport tcp flags
+!
+flow exporter NETFLOW_EXPORTER
+ destination 10.10.0.10
+ source 10.10.1.129
+ transport udp 2055
+ template refresh-rate 60
+!
+flow monitor NETFLOW_MONITOR
+ record NETFLOW_RECORD
+ exporter NETFLOW_EXPORTER
+ cache timeout active 60
+ cache timeout inactive 15
+!
+interface TenGigabitEthernet1/1
+ description Coeur R1-R2
+ ip flow monitor NETFLOW_MONITOR input
+ ip flow monitor NETFLOW_MONITOR output
+
+Vérifications
+ show flow monitor NETFLOW_MONITOR cache format table
+ show flow exporter NETFLOW_EXPORTER statistics
+```
+
+La configuration suit toujours la même structure en trois pièces : un enregistrement qui décrit ce que l'on retient, un exporteur qui dit où envoyer les données et avec quel protocole, et un moniteur que l'on accroche à une interface précise. Les deux durées de mise en cache sont importantes. La première concerne les conversations actives, qui sont envoyées périodiquement même si elles continuent : réduire cette valeur rend le retour plus rapide au prix d'un volume plus élevé. La seconde concerne les conversations terminées, envoyées dès leur clôture : l'augmenter laisse plus de temps aux échanges brefs d'être consolidés. Un exporteur qui n'arrive pas à joindre son collecteur continue de consommer de la mémoire : la supervision de l'exporteur lui-même est donc indispensable.
+
+L'analyse des flux fait apparaître quatre familles de questions. Les plus volumineuses parlants, ou ceux qui consomment le plus d'octets, répondent à la question de la répartition de charge. Les plus actives conversations mettent en évidence les échanges entre paires d'hôtes, utiles pour repérer une synchronisation anormale ou un sauvegarde mal planifiée. La répartition par service, déduite des ports et des protocoles, montre ce qui circule réellement. Enfin, les motifs anormaux se déclinent en quatre classes : un balayage de ports se voit à de nombreuses destinations touchées par très peu de paquets, une exfiltration à un volume soutenu vers une adresse rare, une attaque par déni de service à un pic de paquets minuscules convergent vers une cible, et une activité non autorisée à l'apparition de services que la politique interdit.
+
+L'échantillonnage introduit une notion qu'il ne faut jamais oublier : la mesure n'est plus exacte, elle est estimée. Si l'on ne conserve qu'un paquet sur mille, une conversation de trois paquets n'a aucune chance d'apparaître, tandis qu'un flux très important ne sera que légèrement sous-estimé. Le volume total reste une bonne approximation, les petits échecs, eux, deviennent invisibles. C'est pourquoi l'on combine souvent les deux approches : export exhaustif sur les liaisons cœur, où la finesse compte, et échantillonnage sur les liaisons d'accès, où le coût processeur primerait. Quelle que soit la solution retenue, conservez l'historique quelques semaines seulement : ces données pèsent lourd et leur valeur décroît vite.
+
+- Un flux résume une conversation, il ne contient jamais son contenu.
+- Enregistrement, exporteur et moniteur : la structure est la même d'un fabricant à l'autre.
+- Les durées de cache active et inactive commandent le délai de disponibilité des données.
+- Repérez les quatre motifs anormaux : balayage, exfiltration, déni de service, activité non autorisée.
+- L'échantillonnage sert aux totaux, pas à la détection des échanges brefs.
+$lesson$),
+  ('net-c6-p11', 'net-c6', 11, $lesson$La méthode de dépannage en sept étapes$lesson$, $lesson$
+Le dépannage improvisé coûte cher : on change plusieurs choses à la fois, on ne sait plus ce qui a résolu le problème, et l'incident revient la semaine suivante. La méthode en sept étapes existe pour contrer cela, ainsi que les biais cognitifs qui guettent chaque intervenant pressé : le biais de confirmation, qui fait chercher uniquement les preuves de son idée de départ, et l'ancrage, qui fait s'accrocher à la première explication apparue. La méthode ne rend pas plus intelligent, elle garantit simplement qu'aucune étape essentielle n'est sautée. Elle se pratique sur une feuille ou un ticket, pas dans la mémoire, et chaque étape produit un livrable écrit que l'on peut relire en fin d'intervention.
+
+La première étape consiste à définir le symptôme avec précision. Le mot d'ordre est de répondre à six questions : qui est affecté, quoi ne fonctionne pas, depuis quand, où géographiquement et topologiquement, à quelle fréquence, et avec quel impact mesurable. La formulation « ça ne marche pas sur le Wi-Fi » ne permet aucun test ; la formulation « les postes du VLAN 20 échouent sur 40 pour cent de leurs requêtes HTTPS vers le site de la bibliothèque depuis 10h00, le filaire du VLAN 10 est normal » est un objet d'enquête. Une définition qui contient déjà une cause présumée est mal formulée : écrivez l'observation, pas l'explication.
+
+La deuxième étape rassemble les faits disponibles avant toute hypothèse : journaux des équipements concernés, courbes de métriques sur les dernières heures, dernière capture de paquets, configuration en vigueur, et surtout historique des changements. Cette dernière pièce d'information est souvent décisive, car l'immense majorité des incidents suit une modification et non une usure. On consigne également ce qui ne pose pas problème : si le débit reste bon et que la latence est normale, ces faits négatifs éliminent des familles entières d'hypothèses et évitent des heures de vérifications inutiles.
+
+La troisième étape formule trois à cinq hypothèses, jamais davantage, chacune assortie d'une probabilité et d'un test décisif. La probabilité force à raisonner sur des raisons plausibles et non sur la première idée venue ; le test décisif garantit que l'on pourra trancher. La quatrième étape exécute ces tests un par un, en notant pour chacun la commande lancée, le résultat attendu, le résultat observé et la conclusion. L'ordre privilégie les vérifications peu coûteuses et non destructives : une lecture de configuration avant une reconfiguration, une capture avant un redémarrage. Si un test contredit une hypothèse, on la raye immédiatement et on ne revient pas en arrière par attachement.
+
+Les trois dernières étapes referment le cycle. La cinquième applique la correction minimale, documentée et réversible, avec un plan de retour explicite rédigé avant l'intervention, jamais pendant. La sixième valide : on rejoue exactement les tests de la quatrième étape, on observe pendant suffisamment longtemps, typiquement une journée complète couvrant les pics d'usage, et on vérifie que les indicateurs de service sont revenus dans leur fourchette. La septième tire les enseignements : cause racine, correction durable, mesure préventive, et mise à jour du runbook. Sans cette étape, l'incident a été résolu une fois ; avec elle, il l'est définitivement.
+
+```text
+Carnet de bord d'incident (à remplir pendant l'intervention)
+SYMPTOME   postes VLAN 20, HTTPS vers site biblio, depuis 10h00
+           40 % des requetes > 5 s, VLAN 10 normal, impact usagers
+FAITS      curl VLAN 20 : handshake OK puis 4 a 8 s avant 1re donnee
+           ping passerelle : 1 ms, 0 % perte ; DNS : 50 ms
+           capture : SYN/SYN-ACK rapides, puis 4 s de silence
+           changement le matin : aucun ; charge point d'acces : 45 clients
+HYP1 50 %  couche 2 sans-fil saturee -> test : taux de reessai 802.11
+H2 25 %    pare-feu : timeout court -> test : regle et timeout affiches
+H3 15 %    ressource serveur -> test : files et journaux applicatifs
+TESTS      taux de reessai = 12 % (normal < 2 %) -> H1 confirmee
+           regle identique filaire et sans-fil -> H2 eliminee
+           files serveur a 20 % -> H3 eliminee
+CAUSE      canal 2.4 GHz occupe a 80 % par un reseau voisin
+CORRECTION plan de canaux 1/6/11 + band steering 5 GHz
+VALIDATION reessai < 2 %, requetes > 5 s a 0 % pendant 24 h
+RUNBOOK    section Wi-Fi : ajouter taux de reessai et analyse de spectre
+```
+
+| Étape | Livrable attendu | Erreur classique à éviter |
+| --- | --- | --- |
+| Définir | Phrase de six éléments, sans cause présumée | Accepter un symptôme vague |
+| Rassembler les faits | Chronologie, courbes, captures, changements | Commencer à changer des réglages |
+| Hypothèses | Trois à cinq, classées par probabilité | N'en formuler qu'une seule |
+| Tester | Commande, résultat attendu, résultat observé | Tester plusieurs choses à la fois |
+| Corriger | Correctif minimal, documenté, réversible | Réécrire toute la configuration |
+| Valider | Rejeu des tests, observation sur 24 heures | Déclarer fini dès le premier test vert |
+| Capitaliser | Cause racine, mesure prévention, runbook | Clôturer le ticket sans trace écrite |
+$lesson$),
+  ('net-c6-p12', 'net-c6', 12, $lesson$Écrire un runbook qui sert vraiment$lesson$, $lesson$
+Un runbook est une procédure normalisée qui permet à n'importe quel membre de l'équipe, y compris celui qui n'a jamais vu l'incident, de le diagnostiquer et de le corriger dans les temps. Il ne s'agit ni d'une documentation technique exhaustive, ni d'un rapport de retour d'expérience : c'est un mode d'emploi opérationnel, ciblé, séquencé et testé. Sa structure gagne à rester identique d'un document à l'autre, afin que l'œil s'y retrouve à trois heures du matin : description des symptômes, diagnostic rapide en quelques commandes, causes fréquentes avec leur correction, validation, puis prévention.
+
+```text
+RUNBOOK - Latence HTTPS intermittente sur le reseau visiteur
+SYMPTOMES   navigateur ou curl qui bloquent vers le site, intermittent,
+            pics en milieu de journee, un seul segment reseau concerne
+DIAGNOSTIC  1) curl -v --max-time 10 https://site.example/ --resolve site.example:443:10.10.0.20
+               -> echec au SYN : pare-feu, routage ou service arrete
+               -> reponse lente apres TLS : application ou connexion etablie longue
+            2) dig @10.10.0.10 site.example A
+               -> delai > 500 ms ou echec : resolution de noms
+            3) ping -c 5 -M do -s 1472 10.10.0.20
+               -> erreur de taille : MTU correcte ; perte : chemin
+CAUSES       timeout de connexion court sur le pare-feu (correction : 3600 s)
+             cache de resolution de noms sature (correction : vider, prolonger)
+             saturation d'un pool applicatif (correction : dimensionner)
+             decouverte de chemin de MTU cassee (correction : autoriser l'ICMP)
+VALIDATION   test synthetique a 60 s depuis chaque segment, 0 % d'echec sur 24 h
+PREVENTION   seuil d'alerte sur le taux d'echec, revue trimestrielle des timeouts
+```
+
+Trois qualités distinguent un runbook qui sert vraiment d'un texte qui dort dans un annuaire. Il est exécutable : chaque ligne est une commande ou une action que l'on peut faire sans demander d'explication complémentaire. Il est localisé : il indique l'équipement, l'interface et l'adresse concernés plutôt que de renvoyer à un principe général. Il est daté : il porte un propriétaire, une dernière révision et un lien vers l'incident qui l'a fait naître. Un runbook qui n'a pas été relu depuis deux ans est présumé faux, car la topologie et les versions ont changé.
+
+La maintenance de ces documents suppose une discipline simple : tout incident résolu qui a demandé plus de quinze minutes de réflexion doit se transformer en mise à jour de runbook, ou en création s'il n'existe pas. Versionnez les fichiers, publiez-les dans un endroit accessible même quand la supervision est hors service, et imprimez les plus critiques : on n'a jamais besoin d'un procédé de récupération d'urgence plus que le jour où le réseau de l'entreprise ne répond plus. Enfin, pratiquez : un exercice trimestriel qui consiste à faire diagnostiquer un incident fabriqué par un collègue qui n'y a jamais été confronté mesure à lui seul la valeur réelle de toute la collection.
+
+- Un runbook est un mode d'emploi opérationnel, pas une documentation exhaustive.
+- Structure identique partout : symptômes, diagnostic en quelques commandes, causes, validation, prévention.
+- Chaque ligne doit être exécutable sans explication, avec l'équipement et l'adresse concernés.
+- Versionnez, rendez accessible hors ligne, imprimez le indispensable, datez et attribuez.
+- Tout incident long se transforme en runbook ; testez le runbook avec un exercice surprise.
+$lesson$),
+  ('net-c6-p13', 'net-c6', 13, $lesson$Tests synthétiques et expérience utilisateur$lesson$, $lesson$
+Les métriques internes décrivent l'infrastructure, jamais le service. Un test synthétique comble cet écart : il déclenche à intervalle régulier un parcours réel, tel qu'un visiteur le ferait, depuis un point de mesure choisi, et il mesure le résultat en temps de réponse, en code de statut et en contenu attendu. On vérifie ainsi que la résolution de noms fonctionne, que le certificat est encore valide, que la page renvoie le bon code et que le temps total reste sous un seuil. Le test doit se déclencher depuis chaque segment concerné, car un service accessible depuis le réseau interne peut être inaccessible depuis le réseau invité pour des raisons de filtrage ou de traduction d'adresses.
+
+```text
+Test synthétique minimal, mesuré depuis un segment donneur
+#!/bin/sh
+cible="https://site.example/"
+depart=$(date +%s%3N)
+code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$cible")
+fin=$(date +%s%3N)
+duree=$((fin - depart))
+if [ "$code" != "200" ] || [ "$duree" -gt 5000 ]; then
+  echo "ECHEC code=$code duree=$duree ms segment=$1"
+  exit 1
+fi
+echo "OK duree=$duree ms segment=$1"
+
+Exemple de seuils de service
+  code retour attendu....... 200
+  delai total.............. < 5000 ms en critique, < 2000 ms en avertissement
+  periodicite.............. 60 s depuis chaque segment mesure
+  alerte................... 2 echecs consecutifs, seule la reussite auto-cloture
+```
+
+Un test isolé ne suffit pas : il faut une série pour distinguer un incident d'une fluctuation, et il faut croiser avec les métriques pour localiser. Si le test échoue et que la métrique processeur du serveur est haute, la cause est côté application ; si la métrique est normale mais que la latence réseau augmente, elle est côté chemin ; si le test réussit depuis un segment et échoue depuis un autre, le problème est dans l'écart entre les deux. Ce croisement transforme une alerte en diagnostic préliminaire, ce qui réduit d'autant le temps de la première intervention.
+$lesson$),
+  ('net-c6-p14', 'net-c6', 14, $lesson$Mini-projet : plan de supervision du site Lilas$lesson$, $lesson$
+Vous voici au terme du chapitre, avec une mission complète : livrer pour le site Lilas un plan de supervision exploitable et la résolution documentée d'un incident. Le plan s'articule en cinq tableaux, métriques, alertes, journaux, traces et tests synthétiques, dont chacun porte ses seuils, ses fréquences et ses actions. La règle de rédaction reste la même tout du long : chaque seuil doit être suivi d'une action nommée, et chaque absence de seuil correspond à une donnée que l'on collecte pour rien. Mieux vaut quarante métriques réellement exploitées que quatre cents courbes que personne ne regarde.
+
+```text
+EXTRAIT DU PLAN DE SUPERVISION - LILAS
+METRIQUES
+  equipement | grandeur                 | periode | critique | avertis. | action
+  R1, R2     | charge processeur 5 min   | 60 s    | > 90 %   | > 70 %   | ticket
+  commutateurs | erreurs CRC par port    | 60 s    | > 0      | > 0/5 min| isolement port
+  pare-feu   | sessions et memoire       | 60 s    | > 90 %   | > 75 %   | mise a l'echelle
+  serveurs   | file applicative          | 60 s    | > 100    | > 50     | capacity
+  tous       | temps de fonctionnement   | 300 s   | variation| -        | investigation
+ALERTES
+  nom          | condition                  | niveau       | destinataire | inhibition
+  liaisonHors  | etat operationnel = 0      | critique     | astreinte    | fenetre maintenance
+  chargeCPU    | > 85 % pendant 10 min      | avertissement| file reseau  | fenetre maintenance
+  echecSynthese| 2 echecs consecutifs       | critique     | astreinte    | fenetre maintenance
+```
+
+Le second livrable suit la méthode en sept étapes sur le scénario du Wi-Fi, de la définition du symptôme jusqu'à la mise à jour du runbook. Gardez à l'esprit que la résolution la plus fréquente dans ce type de situation n'est pas matérielle : elle relève souvent de la qualité du milieu radio, d'un plan de canaux mal réparti ou d'une puissance d'émission inadaptée, ce qui se vérifie avec des mesures de taux de réessai et une analyse de spectre. Livrez deux documents écrits, versionnables, où chaque recommandation est reliée à une mesure.
+
+- Le plan de supervision tient en cinq tableaux : métriques, alertes, journaux, traces, tests synthétiques.
+- Chaque seuil est suivi d'une action nommée ; chaque donnée sans seuil est candidate à la suppression.
+- L'incident se résout avec les sept étapes, puis se capitalise dans le runbook.
+- Les documents doivent être versionnés, relus et testables par un tiers.
+$lesson$),
+  ('net-c6-p15', 'net-c6', 15, $lesson$À retenir$lesson$, $lesson$
+Le cœur de ce chapitre tient en une idée : voir avant que cela casse, mesurer pour décider, réparer avec méthode, puis capitaliser pour que l'incident ne se reproduise pas. Les quatre piliers de l'observation, métriques, journaux, traces et tests synthétiques, se complètent sans se remplacer ; aucun ne dispense des autres, et c'est leur recoupement qui localise une cause. ping, traceroute, tcpdump et Wireshark forment la boîte à outils du diagnostic, de la vérification d'atteignabilité jusqu'à l'examen des paquets. SNMP en version 3, les alertes actionnables, la journalisation centralisée et l'export de flux constituent la collecte. La méthode en sept étapes et le runbook forment la discipline qui transforme ces données en résolution.
+
+- ping mesure l'atteignabilité, la latence et la MTU du chemin, jamais la disponibilité d'un service.
+- traceroute et mtr localisent le saut où la latence augmente ou où les réponses manquent.
+- tcpdump filtre avant d'écrire ; Wireshark filtre pour lire, grapher et faire parler l'analyse experte.
+- SNMP version 3 exige authentification et chiffrement ; les versions antérieures exposent la communauté.
+- Une alerte qui n'entraîne aucune action doit être supprimée ou son seuil relevé.
+- Centraliser les journaux impose l'heure partagée et une rétention décidée à l'avance.
+- NetFlow et IPFIX résument les conversations, sFlow les échantillonne : à chacun son périmètre.
+- Sept étapes : définir, rassembler les faits, hypotheser, tester, corriger, valider, capitaliser.
+- Un runbook est daté, attribué, exécutable sans explication et accessible même hors ligne.
+$lesson$),
+  ('net-c6-p16', 'net-c6', 16, $lesson$Erreurs fréquentes$lesson$, $lesson$
+La première erreur consiste à confondre atteignabilité et disponibilité : le ping répond, donc tout va bien. C'est le piège le plus répandu et le plus coûteux, car il conduit à clore un incident qui persiste côté application ou côté pare-feu. Dès qu'un test positif apparaît, enchaînez immédiatement sur un test de port ou de service, de préférence identique à celui que l'usager exécute réellement. La deuxième erreur est de capturer sans filtre, sur une liaison déjà chargée : on remplit le disque, on ralentit l'équipement et on obtient une capture si volumineuse que personne ne la relira. La troisième est de modifier plusieurs réglages d'un coup, ce qui rend la correction impossible à attribuer et le retour en arrière impraticable.
+
+```text
+Signes avant-coureurs d'une mauvaise pratique de diagnostic
+  - on redemarre avant d'avoir regarde un journal ou une capture
+  - la phrase de probleme contient deja une cause ("c'est le pare-feu")
+  - aucun chiffre : ni pourcentage, ni horodatage, ni duree
+  - la correction modifie trois choses a la fois, sans plan de retour
+  - personne ne sait quelle commande prouverait que le probleme est resolu
+  - l'incident se clot sans mise a jour de runbook ni mesure preventive
+```
+
+Vient ensuite la fatigue des alertes, qui finit par neutraliser toute la supervision : trop de seuils, trop sensibles, sans hystérésis ni regroupement. Le remède est brutal mais efficace : pendant un mois, comptez les notifications réellement suivies d'une action, puis supprimez ou remontez tout ce qui n'a rien produit. La cinquième erreur est la collecte sans rétention décidée, qui sature le stockage et finit par faire disparaître les données au pire moment. Enfin, la sixième est de valider une correction sur le champ : un problème intermittent se juge sur une journée complète, pas sur les trente secondes qui suivent le changement.
+$lesson$),
+  ('net-c6-p17', 'net-c6', 17, $lesson$Pour aller plus loin$lesson$, $lesson$
+La documentation des outils de capture reste la référence pour approfondir : le guide d'utilisation de Wireshark, en anglais, détaille les filtres d'affichage, les graphiques de séquence et l'analyse experte, et se lit chapitre par chapitre à mesure des besoins. Il est accessible à l'adresse https://www.wireshark.org/docs/wsug_html_chunked/. Pour la partie sécurité du protocole de supervision, la proposition 3414 de l'ingénierie internationale décrit le modèle d'usager de la version 3, authentification et chiffrement compris, et vaut la peine d'être lue avant de concevoir un réseau de gestion : https://datatracker.ietf.org/doc/html/rfc3414. L'export de flux normalisé est décrit dans la proposition 7011 : https://datatracker.ietf.org/doc/html/rfc7011.
+
+Au-delà des textes officiels, deux pratiques feront progresser plus vite que n'importe quelle lecture : installer une pile d'observation complète sur un laboratoire, un superviseur, un collecteur de journaux, un exporteur de flux et quelques équipements virtuels, puis provoquer délibérément des pannes, une liaison coupée, une route retirée, une interface saturée, un certificat expiré ; et relire vos propres incidents passés pour transformer chacun d'entre eux en une ligne de runbook ou en un seuil d'alerte.
+$lesson$),
+  ('net-c6-p18', 'net-c6', 18, $lesson$Et maintenant : vous êtes prêt à superviser$lesson$, $lesson$
+Vous disposez à présent de l'essentiel du métier d'exploitation : une méthode qui tient debout, des outils qui produisent des preuves et une chaîne de collecte qui transforme ces preuves en décisions. Le prochain chapitre changera d'échelle et s'intéressera à l'aspect opérationnel de la sécurité : le contrôle d'accès en port, les tunnels de niveau site à site et le durcissement des équipements que vous venez d'apprendre à superviser. Les notions de journalisation, de seuils et de réactivité vous y seront directement utiles, car sécuriser un réseau sans pouvoir l'observer revient à verrouiller une porte dont on ignore si elle est ouverte.
+
+Avant de poursuivre, consacrez une heure à un exercice simple et décisif : prenez un réseau que vous connaissez, écrivez sur une page les six éléments de votre symptôme type, identifiez les quatre métriques qui vous permettraient de le détecter en moins d'une minute, et notez l'action que vous prendriez. Si vous parvenez à cette page sans hésiter, le chapitre a fait son travail. Sinon, reprenez la section sur la conception des alertes, puis celle sur les tests synthétiques : c'est là que se joue la différence entre une supervision qui rassure et une supervision qui sert.
+$lesson$);
