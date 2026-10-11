@@ -15,6 +15,9 @@ if (!url || !key) {
   process.exit(1);
 }
 
+// Les vidéos doivent rester cohérentes avec la progression pédagogique du chapitre.
+// On ne génère jamais de faux liens ni de contenu hors sujet : si un parcours n'a
+// pas de vidéo validée, on ne remplace pas l'array par un placeholder générique.
 const TRACK_VIDEO_MAP = {
   'mobile-flutter-react-native': [
     {
@@ -142,13 +145,13 @@ async function main() {
   }
 
   for (const chapter of toUpdate) {
-    const videos = TRACK_VIDEO_MAP[chapter.track_id] ?? [
-      {
-        title: `Cours ${chapter.level} : ${chapter.slug}`,
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        channel: 'EasyLearn',
-      },
-    ];
+    const curated = TRACK_VIDEO_MAP[chapter.track_id];
+    if (!curated || curated.length === 0) {
+      console.log(`↷ skip ${chapter.id} (${chapter.track_id}) : aucune vidéo pédagogique validée pour ce parcours, on ne remplace pas par un faux lien.`);
+      continue;
+    }
+
+    const videos = curated;
 
     const patch = await fetch(`${url}/rest/v1/chapters?id=eq.${encodeURIComponent(chapter.id)}`, {
       method: 'PATCH',
@@ -162,7 +165,7 @@ async function main() {
     }
 
     statements.push(`update public.chapters set videos = '${JSON.stringify(videos).replace(/'/g, "''")}'::jsonb where id = '${chapter.id}';`);
-    console.log(`✓ ${chapter.id} (${chapter.track_id}) -> ${videos.length} vidéos`);
+    console.log(`✓ ${chapter.id} (${chapter.track_id}) -> ${videos.length} vidéos pédagogiques`);
   }
 
   writeFileSync(sqlFile, `-- easyLearn — correction des vidéos manquantes sur les parcours ajoutés\n-- Généré par scripts/repair-missing-track-videos.mjs\n\n${statements.join('\n')}\n`, 'utf8');

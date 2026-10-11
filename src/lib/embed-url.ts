@@ -17,8 +17,8 @@ export function extractYouTubeId(url: string): string | null {
     const host = parsed.hostname.replace(/^www\./, "");
 
     if (host === "youtu.be") {
-      const id = parsed.pathname.slice(1);
-      return id || null;
+      const id = parsed.searchParams.get("v") ?? parsed.pathname.split("/").filter(Boolean).at(0);
+      return id && id.length > 0 ? id : null;
     }
 
     if (
@@ -27,15 +27,19 @@ export function extractYouTubeId(url: string): string | null {
       host === "music.youtube.com"
     ) {
       const id = parsed.searchParams.get("v");
-      if (id) return id;
+      if (id && id.length > 0) return id;
+
       const parts = parsed.pathname.split("/").filter(Boolean);
       if (parts[0] === "shorts" && parts[1]) return parts[1];
+      if (parts[0] === "live" && parts[1]) return parts[1];
+      if (parts[0] === "embed" && parts[1]) return parts[1];
       return null;
     }
 
     if (host.endsWith("youtube-nocookie.com")) {
       const parts = parsed.pathname.split("/").filter(Boolean);
       if (parts[0] === "embed" && parts[1]) return parts[1];
+      if (parts[0] === "live" && parts[1]) return parts[1];
       return null;
     }
 

@@ -15,35 +15,19 @@ export function canonicalStepOrder(hasVideos: boolean): string[] {
   return hasVideos ? [...DOC_STEPS_WITH_VIDEOS] : [...DOC_STEPS];
 }
 
-function hashString(value: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return Math.abs(hash);
-}
-
 /**
  * Ordre des étapes d'un chapitre.
  *
- * Les chapitres sans vidéo suivent toujours l'ordre document
- * (Objectifs → Cours → Exercice → Ressources). Ceux qui ont des vidéos
- * alternent aléatoirement entre « Vidéos avant le Cours » et « Cours avant
- * les Vidéos » : le tirage dépend du chapitre et du jour (UTC), donc l'ordre
- * varie d'un chapitre à l'autre et d'un jour à l'autre, tout en restant
- * stable pendant la journée (rendu serveur et client identiques).
+ * La progression pédagogique doit rester cohérente : on explique d'abord le
+ * concept dans le cours, puis on propose les vidéos associées, ensuite l'exercice
+ * et enfin les ressources. Les chapitres sans vidéo gardent l'ordre document.
  */
 export function chapterStepOrder(
   hasVideos: boolean,
-  chapterId: string,
+  _chapterId: string,
 ): string[] {
   if (!hasVideos) return [...DOC_STEPS];
-  const day = new Date().toISOString().slice(0, 10);
-  const videosFirst = hashString(`${chapterId}|${day}`) % 2 === 0;
-  return videosFirst
-    ? ["objectifs", "videos", "cours", "exercice", "ressources"]
-    : ["objectifs", "cours", "videos", "exercice", "ressources"];
+  return ["objectifs", "cours", "videos", "exercice", "ressources"];
 }
 
 /**
