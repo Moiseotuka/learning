@@ -26,7 +26,9 @@ export async function sendCertificateEmail(input: {
   code: string;
   issuedAt: string;
 }): Promise<void> {
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const base = (process.env.NEXT_PUBLIC_SITE_URL && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(process.env.NEXT_PUBLIC_SITE_URL)
+    ? process.env.NEXT_PUBLIC_SITE_URL
+    : (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://elearning-three-phi.vercel.app"));
   const profileUrl = `${base}/app/profil`;
   const verifyUrl = `${base}/verifier?code=${encodeURIComponent(input.code)}`;
   const date = formatDate(input.issuedAt);

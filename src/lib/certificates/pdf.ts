@@ -111,7 +111,9 @@ export async function renderCertificatePdf(
     color: NUMBER_COLOR,
   });
 
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+  const base = (process.env.NEXT_PUBLIC_SITE_URL && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(process.env.NEXT_PUBLIC_SITE_URL)
+    ? process.env.NEXT_PUBLIC_SITE_URL
+    : (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "https://elearning-three-phi.vercel.app"));
   const qrUrl = `${base}/verifier?code=${encodeURIComponent(data.code)}`;
   const qrPng = await QRCode.toBuffer(qrUrl, {
     type: "png",

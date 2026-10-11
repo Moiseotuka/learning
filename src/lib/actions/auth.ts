@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { links, site } from "@/config/site";
+import { links, resolveSiteUrl } from "@/config/site";
 import { messages } from "@/i18n";
 import {
   isStrongPassword,
@@ -119,12 +119,14 @@ export async function signup(
     return { status: "error", message: t.errors.emailTaken };
   }
 
+  const publicUrl = resolveSiteUrl();
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: `${site.url}/auth/confirm`,
+      emailRedirectTo: `${publicUrl}/auth/confirm`,
     },
   });
 
@@ -159,11 +161,13 @@ export async function loginWithGoogle(formData: FormData): Promise<void> {
   const supabase = await createServerSupabase();
   if (!supabase) redirect(links.login);
 
+  const publicUrl = resolveSiteUrl();
+
   let destination: string;
   try {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${site.url}/auth/callback?next=${encodeURIComponent(next)}` },
+      options: { redirectTo: `${publicUrl}/auth/callback?next=${encodeURIComponent(next)}` },
     });
     if (error) throw error;
     destination = data.url;
@@ -205,8 +209,10 @@ export async function requestPasswordReset(
     return { status: "error", message: t.errors.notConfigured };
   }
 
+  const publicUrl = resolveSiteUrl();
+
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${site.url}${links.resetPassword}`,
+    redirectTo: `${publicUrl}${links.resetPassword}`,
   });
 
   if (error) {

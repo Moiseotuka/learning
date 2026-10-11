@@ -20,7 +20,8 @@ export type LoginNotice =
   | "confirm-failed"
   | "login-failed"
   | "password-updated"
-  | "google-unavailable";
+  | "google-unavailable"
+  | "oauth-state-used";
 
 export function LoginForm({ next, notice }: { next?: string; notice?: LoginNotice }) {
   const [state, action, pending] = useActionState(login, undefined);
@@ -36,7 +37,9 @@ export function LoginForm({ next, notice }: { next?: string; notice?: LoginNotic
             ? t.noticeLoginFailed
             : notice === "google-unavailable"
               ? t.noticeGoogleUnavailable
-              : null;
+              : notice === "oauth-state-used"
+                ? t.noticeGoogleStateUsed
+                : null;
 
   const emailError = state?.fieldErrors?.email;
   const passwordError = state?.fieldErrors?.password;

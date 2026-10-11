@@ -33,8 +33,16 @@ function GoogleMark() {
 export function GoogleButton({ next }: { next?: string }) {
   const [pending, setPending] = useState(false);
 
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    if (pending) {
+      event.preventDefault();
+      return;
+    }
+    setPending(true);
+  };
+
   return (
-    <form action={loginWithGoogle} onSubmit={() => setPending(true)}>
+    <form action={loginWithGoogle} onSubmit={handleSubmit}>
       <input type="hidden" name="next" value={next ?? ""} />
       <Button
         type="submit"

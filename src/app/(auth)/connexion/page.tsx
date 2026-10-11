@@ -31,7 +31,9 @@ export default async function LoginPage(props: PageProps<"/connexion">) {
             ? "login-failed"
             : searchParams.erreur === "google"
               ? "google-unavailable"
-              : undefined;
+              : searchParams.erreur === "oauth-state"
+                ? "oauth-state-used"
+                : undefined;
 
   return (
     <AuthCard

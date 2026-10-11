@@ -593,6 +593,8 @@ export const fr = {
       "La connexion a échoué. Vérifiez vos identifiants puis réessayez.",
     noticeGoogleUnavailable:
       "La connexion Google n'est pas encore activée sur ce projet Supabase : à configurer dans Authentication → Providers → Google.",
+    noticeGoogleStateUsed:
+      "Le lien de connexion Google a déjà été utilisé. Merci de réessayer une seule fois, sans double-clic, puis videz les cookies du site si nécessaire.",
     confirmationTitle: "E-mail confirmé",
     confirmationFailedTitle: "Confirmation impossible",
     confirmationText:

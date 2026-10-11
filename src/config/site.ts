@@ -2,22 +2,50 @@ const normalizeSiteUrl = (value: string | undefined | null) => {
   if (!value || !value.trim()) return null;
 
   const trimmed = value.trim().replace(/\/$/, "");
-  if (!trimmed) return null;
+  if (!trimmed || trimmed.includes("[SENSITIVE]") || trimmed.includes("VOTRE_") || trimmed.includes("YOUR_")) {
+    return null;
+  }
 
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  try {
+    const parsed = new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 };
 
-const resolveSiteUrl = () => {
-  const explicit =
-    process.env.NEXT_PUBLIC_SITE_URL ??
-    process.env.APP_URL ??
-    process.env.SITE_URL ??
-    process.env.NEXT_PUBLIC_APP_URL ??
-    null;
+const isLocalhostUrl = (value: string | null | undefined) => {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+};
 
-  const explicitUrl = normalizeSiteUrl(explicit);
-  if (explicitUrl) return explicitUrl;
+export const resolveSiteUrl = (requestOrigin?: string) => {
+  const isProductionLike = Boolean(process.env.VERCEL || process.env.NODE_ENV === "production");
+
+  const pickPublicCandidate = (candidate: string | undefined | null) => {
+    const normalized = normalizeSiteUrl(candidate);
+    if (!normalized) return null;
+    if (isProductionLike && isLocalhostUrl(normalized)) return null;
+    return normalized;
+  };
+
+  const configuredCandidates = [
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.APP_URL,
+    process.env.SITE_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+  ];
+
+  for (const candidate of configuredCandidates) {
+    const normalized = pickPublicCandidate(candidate);
+    if (normalized) return normalized;
+  }
 
   const vercelCandidates = [
     process.env.VERCEL_PROJECT_PRODUCTION_URL,
@@ -29,8 +57,34 @@ const resolveSiteUrl = () => {
   ];
 
   for (const candidate of vercelCandidates) {
-    const normalized = normalizeSiteUrl(candidate);
+    const normalized = pickPublicCandidate(candidate);
     if (normalized) return normalized;
+  }
+
+  const requestOriginUrl = normalizeSiteUrl(requestOrigin);
+  if (requestOriginUrl && !isLocalhostUrl(requestOriginUrl)) {
+    return requestOriginUrl;
+  }
+
+  try {
+    const { headers } = require("next/headers");
+    const h = headers();
+    const forwardedProto = h.get("x-forwarded-proto") ?? "https";
+    const forwardedHost = h.get("x-forwarded-host") ?? h.get("host");
+    if (forwardedHost) {
+      const hostUrl = `${forwardedProto}://${forwardedHost.replace(/\/$/, "")}`;
+      if (!isLocalhostUrl(hostUrl)) {
+        return hostUrl;
+      }
+    }
+  } catch {
+    // Ignored: no request headers available in this runtime.
+  }
+
+  if (isProductionLike) {
+    return process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : "https://elearning-three-phi.vercel.app";
   }
 
   return "http://localhost:3000";
