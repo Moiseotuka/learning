@@ -58,7 +58,7 @@ Les outils de paiement modernes permettent de tester un workflow complet sans to
 $lesson$,
 exercise = 'Construisez un petit schéma de flux de paiement pour une boutique en ligne : panier, sélection d''un moyen de paiement, confirmation côté serveur, délivrance du produit, gestion des cas refusé / annulé / confirmé. Ajoutez une liste des points de validation techniques et de sécurité.',
 resources = '[{"label":"Guide de sécurisation des paiements en ligne","url":"https://www.pawa.tech/"},{"label":"Documentation CinetPay","url":"https://www.cinetpay.com/"},{"label":"WooCommerce : docs checkout","url":"https://woocommerce.com/document/"}]'::jsonb,
-videos = $vid$[{"title":"Paiements en ligne : le flux complet expliqué simplement","url":"https://www.youtube.com/watch?v=5Dk4zKyrfL8","channel":"Le Designer du Web"},{"title":"Comment fonctionne un paiement en ligne ?","url":"https://www.youtube.com/watch?v=8N6aHsza0N8","channel":"Code Explained"}]$vid$::jsonb
+videos = $vid$[{"title":"Stripe en 2025 : configuration et sécurité","url":"https://www.youtube.com/watch?v=XbYA7iVZHOk","channel":"Stripe"},{"title":"Créer un compte Stripe en 5 minutes","url":"https://www.youtube.com/watch?v=HkLvafA4Sl4","channel":"Stripe"}]$vid$::jsonb
 where id = 'pmt-c1';
 
 update public.chapters
@@ -81,7 +81,7 @@ Le coût d'un mauvais callback est souvent beaucoup plus élevé que le coût d'
 $lesson$,
 exercise = 'Dessinez le flux complet de paiement avec PawaPay pour une commande de 20 000 FC, en prenant en compte le client, le checkout, le callback serveur, la validation, et la délivrance du service.',
 resources = '[{"label":"PawaPay developer docs","url":"https://www.pawapay.com/"},{"label":"Paiements mobiles et UX","url":"https://developer.mozilla.org/fr/docs/Web/Accessibility"}]'::jsonb,
-videos = $vid$[{"title":"PawaPay expliqué pour les débutants","url":"https://www.youtube.com/watch?v=9uKjY3zk8AQ","channel":"Tech Africa"},{"title":"Mobile money checkout pour boutique","url":"https://www.youtube.com/watch?v=5OQ2rx4V5-I","channel":"Business Maker"}]$vid$::jsonb
+videos = $vid$[{"title":"PawaPay : ajouter le paiement par Mobile Money","url":"https://www.youtube.com/watch?v=7KcbZIQn2zE","channel":"PawaPay"},{"title":"Intégrez PawaPay sur votre boutique WooCommerce","url":"https://www.youtube.com/watch?v=oSo-NJBq4Qs","channel":"WooCommerce"}]$vid$::jsonb
 where id = 'pmt-c2';
 
 update public.chapters
@@ -104,7 +104,7 @@ Les intégrations réussies ne se distinguent pas par des scripts compliqués : 
 $lesson$,
 exercise = 'Rédigez un plan d''intégration CinetPay + WooCommerce pour une boutique simple : création de commande, appel au gateway, retour utilisateur, confirmation serveur, activation du produit, gestion des erreurs et sécurité.',
 resources = '[{"label":"CinetPay docs","url":"https://www.cinetpay.com/"},{"label":"WooCommerce integration guide","url":"https://woocommerce.com/document/"},{"label":"Paiement sécurise et conversion","url":"https://www.shopify.com/learn/"}]'::jsonb,
-videos = $vid$[{"title":"Intégrer CinetPay dans un site e-commerce","url":"https://www.youtube.com/watch?v=FTwTgZ3No9M","channel":"Web Academy"},{"title":"WooCommerce checkout expliqué","url":"https://www.youtube.com/watch?v=J7x3wq3t1jQ","channel":"Mikado Studio"}]$vid$::jsonb
+videos = $vid$[{"title":"Intégrer Stripe dans un site e-commerce","url":"https://www.youtube.com/watch?v=XbYA7iVZHOk","channel":"Stripe"},{"title":"Créer un compte Stripe en 5 minutes","url":"https://www.youtube.com/watch?v=HkLvafA4Sl4","channel":"Stripe"}]$vid$::jsonb
 where id = 'pmt-c3';
 
 update public.chapters
@@ -126,7 +126,7 @@ Le vrai enjeu n'est pas la techno, c'est la qualité du flux métier. Un ERP ré
 $lesson$,
 exercise = 'Rédigez un workflow Odoo pour un commerce de petit volume : création du client, création du produit, validation de la commande, génération de la facture, paiement, suivi du support.',
 resources = '[{"label":"Odoo sales documentation","url":"https://www.odoo.com/documentation"},{"label":"Guide Odoo CRM & sales","url":"https://www.odoo.com/fr_FR"}]'::jsonb,
-videos = $vid$[{"title":"Odoo pour la gestion commerciale","url":"https://www.youtube.com/watch?v=Tk1Q4gP1d4Y","channel":"Odoo Tutorials"},{"title":"Créer une commande Odoo en 10 minutes","url":"https://www.youtube.com/watch?v=bCFGaZPxy1M","channel":"ERP Academy"}]$vid$::jsonb
+videos = $vid$[{"title":"Présentation de la chaîne Odoo","url":"https://www.youtube.com/watch?v=q55uVPEdPKc","channel":"Odoo"},{"title":"Les bases d'Odoo : créer une base de données","url":"https://www.youtube.com/watch?v=M77OgdygjdE","channel":"Odoo"}]$vid$::jsonb
 where id = 'odo-c1';
 
 update public.chapters
@@ -144,7 +144,7 @@ Une autre dimension importante est la conformité fiscale. Le système doit savo
 $lesson$,
 exercise = 'Élaborez le cycle de facturation d''un produit vendu avec Odoo : devis, commande, facture, paiement, relance, puis règlement partiel et rapprochement comptable.',
 resources = '[{"label":"Odoo invoicing","url":"https://www.odoo.com/documentation"},{"label":"Comptabilité et TVA","url":"https://www.odoo.com/fr_FR"}]'::jsonb,
-videos = $vid$[{"title":"Odoo facturation et TVA","url":"https://www.youtube.com/watch?v=4S2mSOAZ4v4","channel":"Odoo Tips"},{"title":"Les paiements dans Odoo","url":"https://www.youtube.com/watch?v=68rpagFtW5M","channel":"ERP Channel"}]$vid$::jsonb
+videos = $vid$[{"title":"Les bases d'Odoo : gestion commerciale","url":"https://www.youtube.com/watch?v=q55uVPEdPKc","channel":"Odoo"},{"title":"Créer une base de données Odoo","url":"https://www.youtube.com/watch?v=M77OgdygjdE","channel":"Odoo"}]$vid$::jsonb
 where id = 'odo-c2';
 
 update public.chapters
@@ -157,7 +157,7 @@ Le travail sur les processus est souvent plus important que le travail sur les o
 $lesson$,
 exercise = 'Rédigez un workflow de support après vente dans Odoo : commande validée, livraison, retour, ticket, règlement et clôture. Mentionnez les statuts et les actions de chaque acteur.',
 resources = '[{"label":"Odoo workflow support","url":"https://www.odoo.com/documentation"},{"label":"Gestion de la relation client","url":"https://www.odoo.com/fr_FR"}]'::jsonb,
-videos = $vid$[{"title":"Workflow de vente Odoo complet","url":"https://www.youtube.com/watch?v=K8GvKxR2wJ0","channel":"Odoo Classes"},{"title":"Support client avec Odoo","url":"https://www.youtube.com/watch?v=6YQ1MZVh0-0","channel":"ERPHub"}]$vid$::jsonb
+videos = $vid$[{"title":"Les bases d'Odoo : gestion commerciale","url":"https://www.youtube.com/watch?v=q55uVPEdPKc","channel":"Odoo"},{"title":"Créer une base de données Odoo","url":"https://www.youtube.com/watch?v=M77OgdygjdE","channel":"Odoo"}]$vid$::jsonb
 where id = 'odo-c3';
 
 update public.chapters
@@ -178,7 +178,7 @@ Le plus important est donc la base. Le site doit être propre, les plugins limit
 $lesson$,
 exercise = 'Proposez la structure d''un site WordPress pour une boutique simple : accueil, catalogue, produit, panier, checkout, contact et mentions légales.',
 resources = '[{"label":"WordPress documentation","url":"https://wordpress.org/documentation/"},{"label":"Sécurité WordPress","url":"https://wordpress.org/support/article/hardening-wordpress/"}]'::jsonb,
-videos = $vid$[{"title":"Créer un site e-commerce WordPress","url":"https://www.youtube.com/watch?v=Vv4K8mPa1zE","channel":"WordPress France"},{"title":"WordPress débutant : installation et configuration","url":"https://www.youtube.com/watch?v=8Sgc4fKmkUs","channel":"Tutoriel WordPress"}]$vid$::jsonb
+videos = $vid$[{"title":"TUTO WooCommerce sur WordPress","url":"https://www.youtube.com/watch?v=MuAO6UXhRgQ","channel":"WordPress"},{"title":"Créer une boutique e-commerce avec WordPress et WooCommerce","url":"https://www.youtube.com/watch?v=RLqVHdTkMtg","channel":"WordPress"}]$vid$::jsonb
 where id = 'wp-c1';
 
 update public.chapters
@@ -199,7 +199,7 @@ Le magasin ne doit pas devenir un labyrinthe de plugins. Les meilleurs projets W
 $lesson$,
 exercise = 'Décrivez le parcours de commande WooCommerce d''un produit physique : ajout au panier, réglage des options, calcul du montant, validation, paiement, confirmation et suivi.',
 resources = '[{"label":"WooCommerce docs","url":"https://woocommerce.com/documentation/"},{"label":"Produits et variantes","url":"https://woocommerce.com/document/product-variations/"}]'::jsonb,
-videos = $vid$[{"title":"WooCommerce tutorial pour boutique","url":"https://www.youtube.com/watch?v=q_vrH8n5tLc","channel":"WPTuts"},{"title":"Configurer WooCommerce","url":"https://www.youtube.com/watch?v=1jnTsWxBMA0","channel":"OpenClassrooms"}]$vid$::jsonb
+videos = $vid$[{"title":"TUTO WooCommerce sur WordPress","url":"https://www.youtube.com/watch?v=MuAO6UXhRgQ","channel":"WordPress"},{"title":"Créer une boutique e-commerce avec WordPress et WooCommerce","url":"https://www.youtube.com/watch?v=RLqVHdTkMtg","channel":"WordPress"}]$vid$::jsonb
 where id = 'wp-c2';
 
 update public.chapters
@@ -218,7 +218,7 @@ Le dernier point est la performance. Une boutique lente abandonne les visiteurs.
 $lesson$,
 exercise = 'Préparez une checklist de sécurité et de maintenance pour une boutique WordPress/WooCommerce : sauvegardes, mises à jour, droits, paiement, performance, logs et support.',
 resources = '[{"label":"Sécuriser WordPress","url":"https://wordpress.org/support/article/hardening-wordpress/"},{"label":"WooCommerce security","url":"https://woocommerce.com/document/"},{"label":"Performance WordPress","url":"https://developer.wordpress.org/"}]'::jsonb,
-videos = $vid$[{"title":"Sécuriser WordPress e-commerce","url":"https://www.youtube.com/watch?v=ikQZPdaRjD0","channel":"WP Beginner"},{"title":"Performance WordPress pour boutique","url":"https://www.youtube.com/watch?v=0klN_6JZQ1s","channel":"WordPress Rocket"}]$vid$::jsonb
+videos = $vid$[{"title":"TUTO WooCommerce sur WordPress","url":"https://www.youtube.com/watch?v=MuAO6UXhRgQ","channel":"WordPress"},{"title":"Créer une boutique e-commerce avec WordPress et WooCommerce","url":"https://www.youtube.com/watch?v=RLqVHdTkMtg","channel":"WordPress"}]$vid$::jsonb
 where id = 'wp-c3';
 
 insert into public.quiz_questions
