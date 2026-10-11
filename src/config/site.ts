@@ -1,20 +1,36 @@
+const normalizeSiteUrl = (value: string | undefined | null) => {
+  if (!value || !value.trim()) return null;
+
+  const trimmed = value.trim().replace(/\/$/, "");
+  if (!trimmed) return null;
+
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+};
+
 const resolveSiteUrl = () => {
   const explicit =
     process.env.NEXT_PUBLIC_SITE_URL ??
     process.env.APP_URL ??
     process.env.SITE_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
     null;
 
-  if (explicit && explicit.trim().length > 0) {
-    return explicit.trim().replace(/\/$/, "");
-  }
+  const explicitUrl = normalizeSiteUrl(explicit);
+  if (explicitUrl) return explicitUrl;
 
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/$/, "");
-  }
+  const vercelCandidates = [
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL && `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`,
+    process.env.VERCEL_URL,
+    process.env.VERCEL_BRANCH_URL,
+    process.env.NEXT_PUBLIC_VERCEL_URL,
+    process.env.PUBLIC_URL,
+  ];
 
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`.replace(/\/$/, "");
+  for (const candidate of vercelCandidates) {
+    const normalized = normalizeSiteUrl(candidate);
+    if (normalized) return normalized;
   }
 
   return "http://localhost:3000";
