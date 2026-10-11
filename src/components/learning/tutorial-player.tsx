@@ -47,6 +47,7 @@ export function TutorialPlayer({
   const current = videos[active];
   const src = current ? toEmbedUrl(current.url) : null;
   const videoId = current ? extractYouTubeId(current.url) : null;
+  const hasEmbeddableVideo = Boolean(videoId || src);
   const watchedCount = tokens.filter((token) => watched.has(token)).length;
   const allDone =
     videos.length > 0 && tokens.every((token) => watched.has(token));
@@ -138,11 +139,27 @@ export function TutorialPlayer({
               className="absolute inset-0 h-full w-full"
             />
           </div>
-        ) : (
-          <div className="grid aspect-video w-full place-items-center bg-muted text-sm text-muted-foreground">
-            {current.url}
+        ) : current ? (
+          <div className="grid aspect-video w-full place-items-center bg-muted p-6 text-center text-sm text-muted-foreground">
+            <div className="max-w-md space-y-3">
+              <p className="text-base font-medium text-foreground">
+                Vidéo non intégrable directement.
+              </p>
+              <p>
+                Cette URL ne correspond pas à une vidéo YouTube exploitable par l’embed. Ouvrez-la dans un nouvel onglet.
+              </p>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-md bg-electric px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-95"
+                onClick={() => {
+                  window.open(current.url, "_blank", "noopener,noreferrer");
+                }}
+              >
+                Ouvrir la vidéo
+              </button>
+            </div>
           </div>
-        )}
+        ) : null}
 
         <div className="pt-3">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

@@ -33,6 +33,7 @@ export function extractYouTubeId(url: string): string | null {
       if (parts[0] === "shorts" && parts[1]) return parts[1];
       if (parts[0] === "live" && parts[1]) return parts[1];
       if (parts[0] === "embed" && parts[1]) return parts[1];
+      if (parts[0] === "search" || parts[0]?.startsWith("@")) return null;
       return null;
     }
 

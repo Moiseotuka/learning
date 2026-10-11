@@ -52,10 +52,9 @@ function ResourceFrame({
   resource: ResourceItem | null;
   onClose: () => void;
 }) {
-  const src = resource
-    ? (toEmbedUrl(resource.url) ?? resource.url)
-    : null;
+  const src = resource ? toEmbedUrl(resource.url) : null;
   const videoId = resource ? extractYouTubeId(resource.url) : null;
+  const hasEmbeddableContent = Boolean(videoId || src);
 
   return (
     <Dialog
@@ -128,6 +127,25 @@ function ResourceFrame({
               loading="eager"
               className="absolute inset-0 size-full border-0 bg-background"
             />
+          ) : resource && !hasEmbeddableContent ? (
+            <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
+              <div className="max-w-md space-y-3">
+                <p className="text-base font-medium text-foreground">
+                  Cette ressource ne peut pas être intégrée directement.
+                </p>
+                <p>
+                  Elle ouvre dans un nouvel onglet pour éviter le chargement d’une page de recherche YouTube ou d’une URL non exploitable.
+                </p>
+                <Button
+                  variant="default"
+                  onClick={() => {
+                    window.open(resource.url, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Ouvrir la ressource
+                </Button>
+              </div>
+            </div>
           ) : null}
         </div>
       </DialogContent>
