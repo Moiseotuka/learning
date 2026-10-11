@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { QuoteIcon, StarIcon } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
@@ -5,6 +6,13 @@ import { Section, SectionHeading } from "@/components/section";
 import { messages } from "@/i18n";
 
 const t = messages;
+
+const studentPortraits = [
+  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=500&q=80",
+  "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=500&q=80",
+  "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?auto=format&fit=crop&w=500&q=80",
+  "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=500&q=80",
+];
 
 export function Testimonials() {
   return (
@@ -40,12 +48,15 @@ export function Testimonials() {
               </blockquote>
 
               <figcaption className="mt-5 flex items-center gap-3 border-t border-hairline pt-4">
-                <span
-                  className="grid size-10 shrink-0 place-items-center rounded-full bg-electric/12 text-sm font-semibold text-electric"
-                  aria-hidden
-                >
-                  {item.initials}
-                </span>
+                <div className="relative h-12 w-12 overflow-hidden rounded-full border border-hairline bg-muted">
+                  <Image
+                    src={studentPortraits[index % studentPortraits.length]}
+                    alt={item.name}
+                    fill
+                    sizes="48px"
+                    className="object-cover"
+                  />
+                </div>
                 <span>
                   <span className="block text-sm font-medium">{item.name}</span>
                   <span className="block text-xs text-muted-foreground">{item.role}</span>
