@@ -6,8 +6,11 @@ import { notFound } from "next/navigation";
 import { QuizErrorBoundary } from "@/components/learning/quiz-error-boundary";
 import { QuizPlayer } from "@/components/learning/quiz-player";
 import { Button } from "@/components/ui/button";
+import { links } from "@/config/site";
 import { messages } from "@/i18n";
+import { requireUser } from "@/lib/auth/dal";
 import { getLearnerChapter, getQuizQuestions } from "@/lib/learning/queries";
+import { createAssessmentToken } from "@/lib/security/assessment";
 
 const t = messages.learner;
 
@@ -22,6 +25,7 @@ export default async function QuizPage({
   params: Promise<{ slug: string; chapterSlug: string }>;
 }) {
   const { slug, chapterSlug } = await params;
+  const user = await requireUser(links.dashboard);
   const chapter = await getLearnerChapter(slug, chapterSlug);
   if (!chapter) notFound();
 
@@ -38,6 +42,10 @@ export default async function QuizPage({
   // réellement ouvert : aucun quiz d'un niveau non payé n'est chargé.
   const questions =
     locked || videosPending ? [] : await getQuizQuestions(chapter.id);
+  const assessmentToken =
+    questions.length > 0
+      ? createAssessmentToken(`quiz:${chapter.id}`, user.id, questions.map((question) => question.id))
+      : "";
   const empty = questions.length === 0;
   const attempts = chapter.progress?.attempts ?? 0;
 
@@ -151,6 +159,7 @@ export default async function QuizPage({
               passingScore={chapter.passingScore}
               attempts={chapter.progress?.attempts ?? 0}
               bestScore={chapter.progress?.bestScore ?? null}
+              assessmentToken={assessmentToken}
             />
           </QuizErrorBoundary>
         )}

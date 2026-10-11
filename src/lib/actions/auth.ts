@@ -205,9 +205,16 @@ export async function requestPasswordReset(
     return { status: "error", message: t.errors.notConfigured };
   }
 
-  await supabase.auth.resetPasswordForEmail(email, {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: `${site.url}${links.resetPassword}`,
   });
+
+  if (error) {
+    return {
+      status: "error",
+      message: authErrorMessage(error, t.errors.generic),
+    };
+  }
 
   return { status: "success", message: t.resetSent };
 }

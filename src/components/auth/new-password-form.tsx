@@ -32,17 +32,34 @@ export function NewPasswordForm() {
 
     let active = true;
 
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        if (active) setLinkState(data.session ? "ready" : "missing");
-      })
-      .catch(() => {
-        if (active) setLinkState("missing");
-      });
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const query = new URLSearchParams(window.location.search);
+    const hasRecoveryToken =
+      params.has("access_token") ||
+      params.has("refresh_token") ||
+      query.has("code") ||
+      query.get("type") === "recovery";
+
+    const resolveSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!active) return;
+        if (data.session || hasRecoveryToken) {
+          setLinkState("ready");
+          return;
+        }
+      } catch {
+        // ignore and fall through to invalid-link state below
+      }
+
+      if (active) setLinkState("missing");
+    };
+
+    void resolveSession();
 
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (active && session) setLinkState("ready");
+      if (active && !session && !hasRecoveryToken) setLinkState("missing");
     });
 
     return () => {

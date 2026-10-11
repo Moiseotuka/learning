@@ -11,6 +11,7 @@ import {
   getLevelGradedQuestions,
 } from "@/lib/learning/queries";
 import type { QuizState } from "@/lib/learning/types";
+import { verifyAssessmentToken } from "@/lib/security/assessment";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 const t = messages.learner;
@@ -81,13 +82,23 @@ async function runLevelExamSubmission(formData: FormData): Promise<QuizState> {
     return { status: "error", message: t.examEmpty };
   }
 
+  const assessmentToken = readTextValue(formData, "assessmentToken");
   const rawIds = readTextValue(formData, "questionIds")
     .split(",")
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
   const ids = [...new Set(rawIds)];
   const expected = Math.min(EXAM_SIZE, byId.size);
-  if (ids.length !== expected || ids.some((id) => !byId.has(id))) {
+  if (
+    ids.length !== expected ||
+    ids.some((id) => !byId.has(id)) ||
+    !verifyAssessmentToken(
+      assessmentToken,
+      `exam:${track.id}:${level}`,
+      user.id,
+      ids,
+    )
+  ) {
     return { status: "error", message: t.notConfigured };
   }
 

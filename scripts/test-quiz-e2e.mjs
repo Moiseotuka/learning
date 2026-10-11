@@ -11,6 +11,8 @@
 import { chromium } from "playwright-core";
 import { existsSync } from "node:fs";
 
+import { markChapterVideosWatched } from "./e2e-setup.mjs";
+
 const BASE = process.env.QUIZ_TEST_BASE ?? "http://localhost:3000";
 const EMAIL = process.env.QUIZ_TEST_EMAIL ?? "quiz-test@easylearn.dev";
 const PASSWORD = process.env.QUIZ_TEST_PASSWORD ?? "QuizTest2026!";
@@ -46,7 +48,20 @@ try {
   });
   check("redirigé vers la landing page (avant navigation)", true);
 
-  console.log("\n2. Quiz chapitre 1 — mauvaises réponses");
+  console.log("\n2. Quiz chapitre 1 — setup des vidéos pour débloquer la route");
+  const videosReady = await markChapterVideosWatched({
+    email: EMAIL,
+    chapterId: "py-c1",
+    trackId: "python-developpeur",
+  });
+  check(
+    "vidéos du chapitre 1 marquées comme vues",
+    videosReady.ok,
+    videosReady.ok
+      ? `${videosReady.tokens?.length ?? 0} vidéo(s)`
+      : `${videosReady.reason}${videosReady.detail ? ` — ${videosReady.detail}` : ""}`,
+  );
+
   await page.goto(
     `${BASE}/app/parcours/python-developpeur/chapitres/premiers-pas-variables/quiz`,
     { waitUntil: "networkidle" },
@@ -73,7 +88,15 @@ try {
   check("écran de score affiché après échec", true);
 
   console.log("\n3. Bouton « Recommencer le quiz »");
+  await page
+    .waitForSelector('button:has-text("Recommencer le quiz")', {
+      timeout: 20000,
+    })
+    .catch(() => null);
   await page.click('button:has-text("Recommencer le quiz")');
+  await page.waitForSelector('button:has-text("Valider mes réponses")', {
+    timeout: 20000,
+  });
   await sleep(800);
   const radiosBack = await page.locator('input[type="radio"]').count();
   const checkedBack = await page.locator('input[type="radio"]:checked').count();

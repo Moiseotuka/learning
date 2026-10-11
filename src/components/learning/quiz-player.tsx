@@ -8,7 +8,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { Notice } from "@/components/auth/notice";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ type QuizPlayerProps = {
   passingScore: number;
   attempts?: number;
   bestScore?: number | null;
+  assessmentToken: string;
 };
 
 export function QuizPlayer(props: QuizPlayerProps) {
@@ -49,10 +50,29 @@ function QuizAttempt({
   passingScore,
   attempts = 0,
   bestScore = null,
+  assessmentToken,
   onRetry,
 }: QuizPlayerProps & { onRetry: () => void }) {
   const [state, action, pending] = useActionState(submitQuiz, undefined);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [suspiciousActivity, setSuspiciousActivity] = useState(0);
+
+  useEffect(() => {
+    const handleBlur = () => setSuspiciousActivity((value) => value + 1);
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        setSuspiciousActivity((value) => value + 1);
+      }
+    };
+
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
 
   const results = state?.results;
   const chapterHref = `/app/parcours/${trackSlug}/chapitres/${chapterSlug}`;
@@ -201,9 +221,21 @@ function QuizAttempt({
   }
 
   return (
-    <form action={action} className="space-y-6">
+    <form
+      action={action}
+      className="space-y-6"
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <input type="hidden" name="chapterId" value={chapterId} />
       <input type="hidden" name="trackSlug" value={trackSlug} />
+      <input type="hidden" name="assessmentToken" value={assessmentToken} />
+
+      {suspiciousActivity > 0 ? (
+        <Notice tone="info">
+          Attention : la fenêtre a été mise en arrière-plan pendant le quiz. Une
+          tentative de triche ou de navigation hors du test peut être refusée.
+        </Notice>
+      ) : null}
 
       <p className="text-sm leading-relaxed text-muted-foreground">
         {t.quizIntro(passingScore, questions.length)}

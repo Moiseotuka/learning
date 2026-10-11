@@ -6,11 +6,14 @@ import { notFound } from "next/navigation";
 import { QuizErrorBoundary } from "@/components/learning/quiz-error-boundary";
 import { ExamPlayer } from "@/components/learning/exam-player";
 import { Button } from "@/components/ui/button";
+import { links } from "@/config/site";
 import { messages } from "@/i18n";
+import { requireUser } from "@/lib/auth/dal";
 import {
   getLearnerTrack,
   getLevelExamQuestions,
 } from "@/lib/learning/queries";
+import { createAssessmentToken } from "@/lib/security/assessment";
 
 const t = messages.learner;
 
@@ -25,6 +28,7 @@ export default async function LevelExamPage({
   params: Promise<{ slug: string; level: string }>;
 }) {
   const { slug, level } = await params;
+  const user = await requireUser(links.dashboard);
   const track = await getLearnerTrack(slug);
   if (!track) notFound();
 
@@ -41,6 +45,18 @@ export default async function LevelExamPage({
   const questions = ready
     ? await getLevelExamQuestions(levelChapters.map((chapter) => chapter.id))
     : [];
+  const examCount = Math.min(10, questions.length);
+  const examQuestions = [...questions]
+    .sort(() => Math.random() - 0.5)
+    .slice(0, examCount);
+  const assessmentToken =
+    examQuestions.length > 0
+      ? createAssessmentToken(
+          `exam:${track.id}:${level}`,
+          user.id,
+          examQuestions.map((question) => question.id),
+        )
+      : "";
   const empty = questions.length === 0;
 
   return (
@@ -137,11 +153,12 @@ export default async function LevelExamPage({
             <ExamPlayer
               trackSlug={track.slug}
               level={levelInfo.level}
-              questions={questions}
+              questions={examQuestions}
               passingScore={track.passingScore}
               attempts={levelInfo.exam.attempts}
               bestScore={levelInfo.exam.bestScore}
               passed={levelInfo.exam.status === "passed"}
+              assessmentToken={assessmentToken}
             />
           </QuizErrorBoundary>
         )}

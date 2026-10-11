@@ -6,8 +6,10 @@ import { links } from "@/config/site";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
-function destinationFor(type: string | null) {
-  if (type === "recovery") return links.resetPassword;
+function destinationFor(type: string | null, search: URLSearchParams, hash: URLSearchParams) {
+  if (type === "recovery" || hash.has("access_token") || search.has("code")) {
+    return links.resetPassword;
+  }
   if (type === "signup" || type === "email") return "/auth/confirmation?statut=reussie";
   return null;
 }
@@ -16,13 +18,18 @@ export function EmailLinkRedirect() {
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
-    const hash = window.location.hash.slice(1);
-    if (!hash) return;
-
-    const params = new URLSearchParams(hash);
-    const destination = destinationFor(params.get("type"));
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const search = new URLSearchParams(window.location.search);
+    const destination = destinationFor(
+      hash.get("type") ?? search.get("type"),
+      search,
+      hash,
+    );
     if (!destination) return;
-    if (window.location.pathname === new URL(destination, window.location.origin).pathname) {
+    if (
+      window.location.pathname ===
+      new URL(destination, window.location.origin).pathname
+    ) {
       return;
     }
 
@@ -32,7 +39,9 @@ export function EmailLinkRedirect() {
     supabase.auth
       .getSession()
       .then(({ data }) => {
-        if (data.session) window.location.replace(destination);
+        if (data.session || hash.has("access_token") || search.has("code")) {
+          window.location.replace(destination);
+        }
       })
       .catch(() => undefined);
   }, []);

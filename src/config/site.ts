@@ -1,9 +1,31 @@
+const resolveSiteUrl = () => {
+  const explicit =
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    process.env.APP_URL ??
+    process.env.SITE_URL ??
+    null;
+
+  if (explicit && explicit.trim().length > 0) {
+    return explicit.trim().replace(/\/$/, "");
+  }
+
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/$/, "");
+  }
+
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`.replace(/\/$/, "");
+  }
+
+  return "http://localhost:3000";
+};
+
 export const site = {
   name: "easyLearn",
   tagline: "Apprenez la technologie, prouvez-le",
   description:
     "Plateforme e-learning francophone : des parcours structurés du Débutant au Projet final, des exercices pratiques, des quiz corrigés et un certificat vérifiable.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+  url: resolveSiteUrl(),
   locale: "fr-FR",
   keywords: [
     "e-learning",

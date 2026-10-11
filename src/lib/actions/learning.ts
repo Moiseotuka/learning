@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/auth/dal";
 import { extractYouTubeId } from "@/lib/embed-url";
 import { getQuizQuestions } from "@/lib/learning/queries";
 import type { QuizQuestionResult, QuizState } from "@/lib/learning/types";
+import { verifyAssessmentToken } from "@/lib/security/assessment";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 const t = messages.learner;
@@ -462,6 +463,19 @@ async function runQuizSubmission(formData: FormData): Promise<QuizState> {
   const questions = await getQuizQuestions(chapterId);
   if (questions.length === 0) {
     return { status: "error", message: t.quizEmpty };
+  }
+
+  const assessmentToken = readTextValue(formData, "assessmentToken");
+  const expectedQuestionIds = questions.map((question) => question.id);
+  if (
+    !verifyAssessmentToken(
+      assessmentToken,
+      `quiz:${chapter.id}`,
+      user.id,
+      expectedQuestionIds,
+    )
+  ) {
+    return { status: "error", message: t.notConfigured };
   }
 
   let answered = 0;

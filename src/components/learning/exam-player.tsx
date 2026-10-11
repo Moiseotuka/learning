@@ -8,7 +8,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { Notice } from "@/components/auth/notice";
 import { Button } from "@/components/ui/button";
@@ -18,8 +18,6 @@ import type { QuizQuestion, QuizState } from "@/lib/learning/types";
 import { cn } from "cn";
 
 const t = messages.learner;
-
-const EXAM_SIZE = 10;
 
 function shuffle<T>(items: T[]): T[] {
   const pool = [...items];
@@ -31,21 +29,10 @@ function shuffle<T>(items: T[]): T[] {
 }
 
 /**
- * Tirage des questions + mélange des choix par question. `choiceOrder`
- * mappe la position affichée vers l'index d'origine : le champ radio soumet
- * l'index d'origine, seul le classement visuel est mélangé (le scoring
- * serveur compare à `answer_index`).
+ * Mélange des choix affichés pour chaque question, sans toucher à la
+ * sélection serveur des questions validées dans l’examen.
  */
 type DrawnQuestion = QuizQuestion & { choiceOrder: number[] };
-
-function drawQuestions(questions: QuizQuestion[]): DrawnQuestion[] {
-  return shuffle(questions)
-    .slice(0, Math.min(EXAM_SIZE, questions.length))
-    .map((question) => ({
-      ...question,
-      choiceOrder: shuffle(question.choices.map((_, index) => index)),
-    }));
-}
 
 type ExamPlayerProps = {
   trackSlug: string;
@@ -55,6 +42,7 @@ type ExamPlayerProps = {
   attempts?: number;
   bestScore?: number | null;
   passed?: boolean;
+  assessmentToken: string;
 };
 
 export function ExamPlayer(props: ExamPlayerProps) {
@@ -77,6 +65,7 @@ function ExamAttempt({
   attempts = 0,
   bestScore = null,
   passed = false,
+  assessmentToken,
   onRetry,
 }: ExamPlayerProps & { onRetry: () => void }) {
   const [state, action, pending] = useActionState(
@@ -84,7 +73,29 @@ function ExamAttempt({
     undefined as QuizState | undefined,
   );
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const drawn = useMemo(() => drawQuestions(questions), [questions]);
+  const [suspiciousActivity, setSuspiciousActivity] = useState(0);
+
+  useEffect(() => {
+    const handleBlur = () => setSuspiciousActivity((value) => value + 1);
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        setSuspiciousActivity((value) => value + 1);
+      }
+    };
+
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
+
+  const drawn: DrawnQuestion[] = questions.map((question) => ({
+    ...question,
+    choiceOrder: shuffle(question.choices.map((_, index) => index)),
+  }));
 
   const results = state?.results;
   const trackHref = `/app/parcours/${trackSlug}`;
@@ -228,14 +239,27 @@ function ExamAttempt({
   }
 
   return (
-    <form action={action} className="space-y-6">
+    <form
+      action={action}
+      className="space-y-6"
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <input type="hidden" name="trackSlug" value={trackSlug} />
       <input type="hidden" name="level" value={level} />
+      <input type="hidden" name="assessmentToken" value={assessmentToken} />
       <input
         type="hidden"
         name="questionIds"
-        value={drawn.map((question) => question.id).join(",")}
+        value={questions.map((question) => question.id).join(",")}
       />
+
+      {suspiciousActivity > 0 ? (
+        <Notice tone="info">
+          Attention : le navigateur a été détourné hors du test pendant l’examen.
+          Les tentatives de triche ou de consultation externe peuvent invalider la
+          soumission.
+        </Notice>
+      ) : null}
 
       <p className="text-sm leading-relaxed text-muted-foreground">
         {t.examIntro(passingScore, drawn.length)}
