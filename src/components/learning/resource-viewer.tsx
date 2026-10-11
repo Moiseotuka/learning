@@ -1,12 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import {
-  ExternalLinkIcon,
-  EyeIcon,
-  GlobeIcon,
-  XIcon,
-} from "lucide-react";
+import { EyeIcon, GlobeIcon, XIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -27,11 +22,7 @@ type ResourceItem = ChapterResource;
 
 type OpenResource = (resource: ResourceItem) => void;
 
-const ResourceViewerContext = createContext<OpenResource>((resource) => {
-  if (typeof window !== "undefined") {
-    window.open(resource.url, "_blank", "noopener,noreferrer");
-  }
-});
+const ResourceViewerContext = createContext<OpenResource>(() => undefined);
 
 export function useResourceViewer() {
   return useContext(ResourceViewerContext);
@@ -86,22 +77,6 @@ function ResourceFrame({
           </p>
 
           <Button
-            variant="outline"
-            size="sm"
-            className="h-8 shrink-0 px-3"
-            onClick={() => {
-              if (resource) {
-                window.open(resource.url, "_blank", "noopener,noreferrer");
-              }
-            }}
-          >
-            <ExternalLinkIcon aria-hidden />
-            <span className="hidden sm:inline">
-              {t.player.resourceOpen}
-            </span>
-          </Button>
-
-          <Button
             variant="ghost"
             size="icon-sm"
             aria-label={t.player.resourceClose}
@@ -131,19 +106,11 @@ function ResourceFrame({
             <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
               <div className="max-w-md space-y-3">
                 <p className="text-base font-medium text-foreground">
-                  Cette ressource ne peut pas être intégrée directement.
+                  Cette ressource ne peut pas être lue dans le lecteur intégré.
                 </p>
                 <p>
-                  Elle ouvre dans un nouvel onglet pour éviter le chargement d’une page de recherche YouTube ou d’une URL non exploitable.
+                  Le lien ne correspond pas à une vidéo exploitable dans la plateforme.
                 </p>
-                <Button
-                  variant="default"
-                  onClick={() => {
-                    window.open(resource.url, "_blank", "noopener,noreferrer");
-                  }}
-                >
-                  Ouvrir la ressource
-                </Button>
               </div>
             </div>
           ) : null}

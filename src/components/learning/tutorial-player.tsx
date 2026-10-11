@@ -143,20 +143,11 @@ export function TutorialPlayer({
           <div className="grid aspect-video w-full place-items-center bg-muted p-6 text-center text-sm text-muted-foreground">
             <div className="max-w-md space-y-3">
               <p className="text-base font-medium text-foreground">
-                Vidéo non intégrable directement.
+                Vidéo non intégrable dans ce lecteur.
               </p>
               <p>
-                Cette URL ne correspond pas à une vidéo YouTube exploitable par l’embed. Ouvrez-la dans un nouvel onglet.
+                Cette URL ne correspond pas à une vidéo YouTube valide pour l’intégration dans la plateforme.
               </p>
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-md bg-electric px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-95"
-                onClick={() => {
-                  window.open(current.url, "_blank", "noopener,noreferrer");
-                }}
-              >
-                Ouvrir la vidéo
-              </button>
             </div>
           </div>
         ) : null}
