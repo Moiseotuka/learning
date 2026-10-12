@@ -1,18 +1,26 @@
 import { cn } from "cn";
 
 function renderInline(text: string) {
-  return text.split(/(`[^`]+`)/g).map((part, index) =>
-    part.length > 2 && part.startsWith("`") && part.endsWith("`") ? (
-      <code
-        key={index}
-        className="rounded bg-muted px-1.5 py-0.5 font-mono text-[15px] text-foreground"
-      >
-        {part.slice(1, -1)}
-      </code>
-    ) : (
-      <span key={index}>{part}</span>
-    ),
-  );
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.length > 2 && part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code
+          key={index}
+          className="rounded bg-muted px-1.5 py-0.5 font-mono text-[15px] text-foreground"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.length > 4 && part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <strong key={index} className="font-semibold text-foreground">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={index}>{part}</span>;
+  });
 }
 
 /** Découpe en blocs séparés par une ligne vide, sans couper dans un ``` . */
