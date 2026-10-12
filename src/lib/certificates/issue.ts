@@ -1,7 +1,6 @@
 import { messages } from "@/i18n";
 import { sendCertificateEmail } from "@/lib/email/certificate";
 import { createServiceSupabase } from "@/lib/supabase/service";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type IssuedCertificate = {
   id: string;
@@ -31,23 +30,18 @@ function codePrefix(trackSlug: string): string {
   return letters.padEnd(3, "X");
 }
 
-async function nextCode(
-  supabase: SupabaseClient,
-  prefix: string,
-  year: number,
-): Promise<string> {
-  const { data } = await supabase
-    .from("certificates")
-    .select("code")
-    .like("code", `${prefix}-${year}-%`);
+/** Alphabet sans I, L, O, 0, 1 : le code est recopié à la main ou lu sur le PDF. */
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-  let max = 0;
-  for (const row of (data ?? []) as { code: string }[]) {
-    const suffix = Number.parseInt(row.code.split("-")[2] ?? "0", 10);
-    if (Number.isFinite(suffix) && suffix > max) max = suffix;
-  }
-
-  return `${prefix}-${year}-${String(max + 1).padStart(6, "0")}`;
+/**
+ * Code non séquentiel : un numéro incrémenté se devine, et la page de
+ * vérification publique affiche le nom du titulaire.
+ */
+function newCode(prefix: string, year: number): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+  return `${prefix}-${year}-${suffix}`;
 }
 
 /**
@@ -135,10 +129,8 @@ export async function ensureCertificates(
     full_name: string | null;
     email: string | null;
   } | null;
-  const fullName =
-    (profile?.full_name ?? "").trim() ||
-    (profile?.email ?? "").split("@")[0] ||
-    "Apprenant";
+  const realName = (profile?.full_name ?? "").trim();
+  const fullName = realName || (profile?.email ?? "").split("@")[0] || "Apprenant";
 
   const chaptersByTrack = new Map<string, ChapterRow[]>();
   for (const chapter of chapters) {
@@ -149,13 +141,30 @@ export async function ensureCertificates(
 
   const { data: existingRows } = await supabase
     .from("certificates")
-    .select("track_id,level")
+    .select("id,track_id,level,full_name")
     .eq("user_id", userId);
 
+  const rows = (existingRows ?? []) as {
+    id: string;
+    track_id: string;
+    level: string;
+    full_name: string;
+  }[];
+
+  // Le nom est figé à l'émission : un certificat créé avant que l'apprenant
+  // renseigne son nom (ou avec l'email en secours) est corrigé ici.
+  if (realName) {
+    for (const row of rows.filter((item) => item.full_name !== realName)) {
+      const { error } = await supabase
+        .from("certificates")
+        .update({ full_name: realName })
+        .eq("id", row.id);
+      if (error) console.error("[certificates] rename", error.message);
+    }
+  }
+
   const existing = new Set(
-    ((existingRows ?? []) as { track_id: string; level: string }[]).map(
-      (row) => `${row.track_id}:${row.level}`,
-    ),
+    rows.map((row) => `${row.track_id}:${row.level}`),
   );
 
   type Candidate = { track: TrackRow; level: string };
@@ -212,10 +221,10 @@ export async function ensureCertificates(
       issued_at: string;
     } | null = null;
 
-    // Deux rendus simultanés peuvent calculer le même code : en cas de
-    // collision on recompte (la ligne fautive est déjà en base).
+    // Deux rendus simultanés peuvent tirer le même code : on en regénère un
+    // autre (la ligne fautive est déjà en base).
     for (let attempt = 0; attempt < 5; attempt++) {
-      const code = await nextCode(supabase, prefix, year);
+      const code = newCode(prefix, year);
       const result = await supabase
         .from("certificates")
         .upsert(

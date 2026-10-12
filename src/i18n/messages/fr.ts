@@ -190,15 +190,15 @@ export const fr = {
     eyebrow: "Certifications",
     title: "Un certificat que l'on peut vérifier en ligne",
     description:
-      "Chaque certificat porte un numéro unique, le score obtenu, les compétences validées et la date de délivrance. N'importe qui peut le vérifier, sans compte.",
+      "Chaque certificat porte un numéro unique, l'intitulé de la formation, le niveau validé et la date de délivrance. N'importe qui peut le vérifier, sans compte.",
     features: [
       "PDF généré côté serveur, téléchargeable à vie",
-      "Numéro de vérification unique et révocable",
-      "Détail des niveaux et des projets validés",
+      "Numéro de vérification unique, non devinable",
+      "Un certificat par niveau validé, puis un certificat final du parcours",
       "Lien de partage vers la page de vérification publique",
     ],
     verifyLabel: "Vérifier un certificat",
-    verifyPlaceholder: "Ex. EL-2026-7K3Q-9F2M",
+    verifyPlaceholder: "Ex. PYT-2026-K7MHQ2JP",
     verifyCta: "Vérifier",
     verifyNote: "La vérification est publique et gratuite.",
     preview: {
@@ -268,7 +268,7 @@ export const fr = {
       },
       {
         q: "Le certificat a-t-il une valeur ?",
-        a: "C'est une attestation de compétences délivrée par easyLearn, avec score, compétences validées et numéro de vérification public. Vos réalisations et votre projet final restent consultables par le recruteur.",
+        a: "C'est une attestation de compétences délivrée par easyLearn, avec le niveau validé et un numéro de vérification public. Vos réalisations et votre projet final restent consultables par le recruteur.",
       },
       {
         q: "Qui peut créer un parcours ?",
@@ -525,11 +525,9 @@ export const fr = {
     signupTitle: "Créer un compte",
     verifyTitle: "Vérification de certificat",
     backHome: "Retour à l'accueil",
-    verifyArrival:
-      "La vérification publique par numéro de certificat sera disponible prochainement.",
     verifyForm: {
       label: "Numéro de certificat",
-      placeholder: "Ex. PYT-2026-000123",
+      placeholder: "Ex. PYT-2026-K7MHQ2JP",
       submit: "Vérifier",
       hint: "Le numéro figure en bas à droite de chaque certificat.",
     },

@@ -48,7 +48,10 @@ function scopeOf(level: string): "niveau" | "parcours" {
 export default async function ProfilePage() {
   const user = await requireUser(links.dashboard);
 
-  ensureCertificates(user.id).catch((error) => {
+  // Les certificats dus (examens réussis depuis la dernière visite) sont émis
+  // avant la lecture : sinon le tout nouveau certificat n'apparaît qu'à la
+  // visite suivante.
+  await ensureCertificates(user.id).catch((error) => {
     console.error("[certificates] profile sync", error);
   });
 
@@ -59,6 +62,7 @@ export default async function ProfilePage() {
     ? await supabase
         .from("certificates")
         .select("id,code,level,title,issued_at")
+        .eq("user_id", user.id)
         .order("issued_at", { ascending: false })
     : { data: [] as CertificateRow[] };
 

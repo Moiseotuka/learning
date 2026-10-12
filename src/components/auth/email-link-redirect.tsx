@@ -6,8 +6,8 @@ import { links } from "@/config/site";
 import { createBrowserSupabase } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
-function destinationFor(type: string | null, search: URLSearchParams, hash: URLSearchParams) {
-  if (type === "recovery" || hash.has("access_token") || search.has("code")) {
+function destinationFor(type: string | null, hash: URLSearchParams) {
+  if (type === "recovery" || hash.has("access_token")) {
     return links.resetPassword;
   }
   if (type === "signup" || type === "email") return "/auth/confirmation?statut=reussie";
@@ -22,7 +22,6 @@ export function EmailLinkRedirect() {
     const search = new URLSearchParams(window.location.search);
     const destination = destinationFor(
       hash.get("type") ?? search.get("type"),
-      search,
       hash,
     );
     if (!destination) return;
@@ -39,7 +38,7 @@ export function EmailLinkRedirect() {
     supabase.auth
       .getSession()
       .then(({ data }) => {
-        if (data.session || hash.has("access_token") || search.has("code")) {
+        if (data.session || hash.has("access_token")) {
           window.location.replace(destination);
         }
       })
