@@ -889,7 +889,7 @@ export const fr = {
       "Vous avez atteint la fin de cette leçon. Revoyez-la si besoin, puis passez à la suite du chapitre.",
     videoRewatch: "Revoir la leçon",
     reviewVideos: "Voir les leçons",
-    videoAutoNext: "La leçon suivante démarre automatiquement…",
+    videoAutoNext: "Une leçon terminée, la suivante se lance automatiquement.",
     videoPosterPlay: "Lire la leçon",
     videoPosterHint:
       "Appuyez sur l'image pour démarrer la leçon : rien ne se charge avant votre clic.",
