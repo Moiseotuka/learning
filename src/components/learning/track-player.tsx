@@ -164,8 +164,8 @@ export function TrackPlayer({
                     size="icon-sm"
                     aria-label={
                       isFullscreen
-                        ? t.player.exitFullscreen
-                        : t.player.fullscreen
+                        ? t.player.shellFullscreenExit
+                        : t.player.shellFullscreen
                     }
                     onClick={toggleFullscreen}
                   >
@@ -178,11 +178,11 @@ export function TrackPlayer({
                 </div>
               </div>
 
-              <main className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:py-8">
                   {children}
                 </div>
-              </main>
+              </div>
             </div>
           </div>
 

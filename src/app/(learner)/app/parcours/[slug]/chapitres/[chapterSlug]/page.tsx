@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { notFound } from "next/navigation";
 
-import { LessonBody } from "@/components/learning/video-embed";
+import { LessonBody } from "@/components/learning/lesson-body";
 import { LevelUpNotification } from "@/components/learning/level-up-banner";
 import { LessonEditor } from "@/components/learning/lesson-editor";
 import { PageResume } from "@/components/learning/page-resume";
@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { getLearnerChapter } from "@/lib/learning/queries";
 import {
-  canonicalStepOrder,
   chapterStepOrder,
   stepBlockedByVideos,
 } from "@/lib/learning/steps-order";
@@ -157,7 +156,7 @@ export default async function ChapterPage({
 
   const hasVideos = chapter.videos.length > 0;
   const videosBlocked = hasVideos && !chapter.videosDone;
-  const stepKeys = chapterStepOrder(hasVideos, chapter.id) as StepKey[];
+  const stepKeys = chapterStepOrder(hasVideos) as StepKey[];
 
   const requested = (stepKeys as string[]).includes(etape ?? "")
     ? (etape as StepKey)
@@ -195,7 +194,7 @@ export default async function ChapterPage({
         )
       : 0;
   const currentPage = pageCount > 0 ? pages[pageNo - 1] : null;
-  const coursStepNumber = canonicalStepOrder(hasVideos).indexOf("cours") + 1;
+  const coursStepNumber = stepKeys.indexOf("cours") + 1;
   const pageCode = `${chapter.position}.${coursStepNumber}.${pageNo}`;
 
   const onPagedCours = current === "cours" && currentPage !== null;
@@ -246,6 +245,7 @@ export default async function ChapterPage({
               <div className="mt-3">
                 <TutorialPlayer
                   chapterId={chapter.id}
+                  chapterPosition={chapter.position}
                   videos={chapter.videos}
                   initialWatched={chapter.videoWatched}
                   documentHref={`${chapterHref}?etape=cours`}

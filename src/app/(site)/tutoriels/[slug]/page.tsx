@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeftIcon, ExternalLinkIcon, PlayIcon } from "lucide-react";
+import { ArrowLeftIcon, PlayIcon } from "lucide-react";
 
 import { levelTone } from "@/components/catalog/level-tone";
 import { Badge } from "@/components/ui/badge";
@@ -113,16 +113,6 @@ export default async function TutorialViewerPage(
               <p className="mt-4 max-w-[70ch] text-sm leading-relaxed text-muted-foreground">
                 {tutorial.summary}
               </p>
-
-              <a
-                href={tutorial.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-electric transition-colors hover:underline"
-              >
-                <ExternalLinkIcon className="size-4" aria-hidden />
-                YouTube
-              </a>
             </div>
           </div>
         </div>

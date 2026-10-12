@@ -26,6 +26,58 @@ function normalizeIds(ids: Iterable<string>): string[] {
   return list;
 }
 
+function fnv1a(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Tire le sujet d'examen de façon stable pour un même
+ * (périmètre, apprenant, pool de questions). Un tirage aléatoire casserait
+ * l'examen : tout ré-rendu changerait la sélection alors que le jeton signé
+ * décrit la sélection précédente, et la vérification échouerait.
+ * Le pool est trié avant d'entrer dans la graine : l'ordre renvoyé par la base
+ * ne doit pas changer le sujet.
+ */
+export function drawExamQuestions<T extends { id: string }>(
+  questions: readonly T[],
+  scope: string,
+  userId: string,
+  count: number,
+): T[] {
+  if (count <= 0 || questions.length === 0) return [];
+
+  const byId = (a: T, b: T) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const pool = [...questions].sort(byId);
+  const random = mulberry32(
+    fnv1a(`${scope}:${userId}:${pool.map((question) => question.id).join(",")}`),
+  );
+
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    const current = pool[i] as T;
+    pool[i] = pool[j] as T;
+    pool[j] = current;
+  }
+
+  return pool.slice(0, Math.min(count, pool.length));
+}
+
 export function createAssessmentToken(
   scope: string,
   userId: string,

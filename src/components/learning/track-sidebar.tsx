@@ -72,7 +72,7 @@ function buildStepItems(
     exercice: t.stepLabels.exercise,
     ressources: t.stepLabels.resources,
   };
-  const order = chapterStepOrder(videoCount > 0, chapter.id);
+  const order = chapterStepOrder(videoCount > 0);
   const visitedPageSet = new Set(visitedPages);
   const pagesDone = Array.from({ length: pagesTotal }, (_, index) => index + 1)
     .filter((position) => visitedPageSet.has(position)).length;
@@ -353,10 +353,7 @@ export function TrackSidebar({
   const activeVideoCount = activeChapter
     ? videoCounts?.[activeChapter.slug] ?? 0
     : 0;
-  const stepKeys = chapterStepOrder(
-    activeVideoCount > 0,
-    activeChapter?.id ?? "",
-  );
+  const stepKeys = chapterStepOrder(activeVideoCount > 0);
   const requested = quizActive
     ? "quiz"
     : stepKeys.includes(etape ?? "")
@@ -534,7 +531,7 @@ export function TrackSidebar({
                 {t.player.searchEmpty}
               </p>
             ) : (
-              groups.map((group) => {
+              groups.map((group, groupIndex) => {
                 const chapterData = group.chapters.map((chapter) => {
                   const visited = new Set(visitedMap[chapter.slug] ?? []);
                   const items = buildStepItems(
@@ -564,7 +561,7 @@ export function TrackSidebar({
 
                 return (
                   <div
-                    key={group.label}
+                    key={`${group.label}-${groupIndex}`}
                     className="mb-4 border-t border-hairline pt-4 first:border-t-0 first:pt-0 last:mb-0"
                   >
                     <div className="flex items-start justify-between gap-2">

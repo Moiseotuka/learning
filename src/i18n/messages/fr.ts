@@ -85,7 +85,7 @@ export const fr = {
       avance: "Avancé",
       projet: "Projet",
     },
-    tracksLabel: (n: number) => (n > 1 ? `${n} parcours` : `${n} parcour`),
+    tracksLabel: (n: number) => `${n} parcours`,
     empty: "Aucune catégorie pour ce niveau pour le moment.",
     cta: "Voir la catégorie",
   },
@@ -272,7 +272,7 @@ export const fr = {
       },
       {
         q: "Qui peut créer un parcours ?",
-        a: "L'équipe easyLearn et les formateurs partenaires accrédités. Tout le contenu, les quiz et les projets sont hébergés sur la plateforme ; aucun compte YouTube n'est requis pour suivre une formation.",
+        a: "L'équipe easyLearn et les formateurs partenaires accrédités. Tout le contenu, les quiz et les projets sont diffusés depuis la plateforme ; aucun compte sur un site vidéo externe n'est requis pour suivre une formation.",
       },
       {
         q: "Puis-je essayer avant de payer ?",
@@ -507,6 +507,7 @@ export const fr = {
           { label: "CGU", href: "/cgu" },
           { label: "Confidentialité", href: "/confidentialite" },
           { label: "Accessibilité", href: "/accessibilite" },
+          { label: "Crédits des leçons", href: "/credits" },
         ],
       },
     ],
@@ -745,10 +746,8 @@ export const fr = {
     objectives: "Objectifs du chapitre",
     summary: "Résumé",
     video: "Vidéo du chapitre",
-    videoMissing:
-      "La vidéo de ce chapitre sera ajoutée par le formateur. Le texte de la leçon ci-dessous suffit pour avancer.",
     videoPlaybackFailed:
-      "Lecture impossible pour le moment : YouTube affiche une vérification (« vous n'êtes pas un robot ») ou refuse l'intégration. Réessayez, ouvrez la vidéo dans YouTube, ou marquez-la comme vue — le texte de la leçon ci-dessous suffit pour avancer.",
+      "Cette leçon vidéo refuse de se lancer sur votre poste. Réessayez, ou marquez-la comme vue pour continuer : le texte du cours ci-dessous suffit à progresser.",
     lesson: "Leçon",
     exercise: "Exercice pratique",
     exerciseEmpty:
@@ -869,23 +868,28 @@ export const fr = {
     videosDoneNotice:
       "Toutes les vidéos sont terminées. La suite du chapitre est débloquée.",
     videosProgress: (done: number, total: number) =>
-      `${done} / ${total} vidéo${total <= 1 ? "" : "s"} terminée${
+      `${done} / ${total} leçon${total <= 1 ? "" : "s"} terminée${
         total <= 1 ? "" : "s"
       }`,
-    markWatched: "Marquer la vidéo comme vue",
-    videoBlockedTitle: "La vidéo ne se lance pas ?",
+    markWatched: "Marquer la leçon comme vue",
+    videoBlockedTitle: "La leçon ne se lance pas ?",
     videoBlockedHint:
-      "YouTube bloque parfois la lecture intégrée (vérification « vous n'êtes pas un robot »). Ouvrez la vidéo dans YouTube pour la regarder, puis revenez ici et marquez-la comme vue pour continuer.",
+      "Il lui arrive de refuser la lecture intégrée (contrôle de sécurité ou connexion instable). Patientez quelques secondes puis réessayez ; vous pouvez aussi marquer la leçon comme vue pour poursuivre votre chapitre.",
     videoRetry: "Réessayer",
-    videoOpenTab: "Ouvrir dans YouTube",
-    reviewVideos: "Voir les vidéos",
-    videoAutoNext: "La vidéo suivante démarre automatiquement…",
+    videoFinished: "Leçon terminée",
+    videoFinishedHint:
+      "Vous avez atteint la fin de cette leçon. Revoyez-la si besoin, puis passez à la suite du chapitre.",
+    videoRewatch: "Revoir la leçon",
+    reviewVideos: "Voir les leçons",
+    videoAutoNext: "La leçon suivante démarre automatiquement…",
+    videoLabel: (position: number, index: number) =>
+      `Leçon ${position}.${index}`,
     tutorial: {
       title: "Tutoriel vidéo",
       playlist: "Dans ce chapitre",
-      nowPlaying: "Vidéo en cours",
+      nowPlaying: "Leçon en cours",
       empty:
-        "Aucune vidéo n'est encore publiée pour ce chapitre. Le document reste disponible pour apprendre.",
+        "Aucune leçon vidéo n'est encore publiée pour ce chapitre. Le document reste disponible pour apprendre.",
     },
     stepOf: (index: number, total: number) =>
       `Étape ${index} sur ${total}`,
@@ -896,7 +900,7 @@ export const fr = {
     previousPage: "Page précédente",
     nextPage: "Page suivante",
     stepLabels: {
-      videos: "Vidéos",
+      videos: "Leçons vidéo",
       objectives: "Objectifs",
       lesson: "Cours",
       exercise: "Exercice",
@@ -920,14 +924,20 @@ export const fr = {
       sidebarToggle: "Afficher ou masquer le sommaire",
       sidebarExpand: "Déplier la section",
       sidebarCollapse: "Replier la section",
-      fullscreen: "Plein écran",
-      exitFullscreen: "Quitter le plein écran",
+      fullscreen: "Agrandir la leçon",
+      exitFullscreen: "Réduire la leçon",
+      shellFullscreen: "Mode immersion",
+      shellFullscreenExit: "Quitter le mode immersion",
       quit: "Quitter le parcours",
       backToOverview: "Vue d'ensemble du parcours",
-      resourceOpen: "Ouvrir dans un nouvel onglet",
       resourceClose: "Fermer la ressource",
+      resourceVideo: "Leçon vidéo",
+      resourceNotPlayableTitle:
+        "Cette ressource ne peut pas s'afficher dans le lecteur.",
+      resourceNotPlayableHint:
+        "Le lien enregistré ne pointe vers aucune leçon exploitable depuis la plateforme.",
       resourceBlockedHint:
-        "Le site externe bloque parfois l'affichage intégré : utilisez alors « Ouvrir dans un nouvel onglet ».",
+        "Certaines ressources refusent l'affichage intégré : fermez et réessayez, ou revenez au chapitre.",
       play: "Lecture",
       pause: "Pause",
       seek: "Progression",

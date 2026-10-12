@@ -1,7 +1,7 @@
 import { cache } from "react";
 
 import type { LevelType } from "@/config/catalog";
-import { extractYouTubeId } from "@/lib/embed-url";
+import { playableVideos, videoTokens } from "@/lib/learning/video-playability";
 import type {
   ChapterPage,
   ChapterProgress,
@@ -153,9 +153,7 @@ function toLearnerTrack(
       nextChapterSlug = chapter.slug;
     }
 
-    const tokens = toVideos(chapter.videos)
-      .map((video) => extractYouTubeId(video.url) ?? video.url)
-      .filter((token) => token.length > 0);
+    const tokens = videoTokens(toVideos(chapter.videos));
     const watchedIds = new Set(watched.get(chapter.id) ?? []);
 
     return {
@@ -453,7 +451,7 @@ export async function getTrackVideoCounts(
   const rows = data as { slug: string; videos: ChapterVideo[] | null }[];
   const counts: Record<string, number> = {};
   for (const row of rows) {
-    counts[row.slug] = toVideos(row.videos).length;
+    counts[row.slug] = playableVideos(toVideos(row.videos)).length;
   }
   return counts;
 }
@@ -608,16 +606,14 @@ export async function getLearnerChapter(
       content: page.content,
     }));
 
-  const videos = toVideos(row.videos);
-  const videoTokens = videos
-    .map((video) => extractYouTubeId(video.url) ?? video.url)
-    .filter((token) => token.length > 0);
+  const videos = playableVideos(toVideos(row.videos));
+  const tokens = videoTokens(videos);
   const watchedIds = new Set(
     (watchedRow as { videos_watched?: string[] | null } | null)
       ?.videos_watched ?? [],
   );
-  const videosDone = videoTokens.every((token) => watchedIds.has(token));
-  const videoWatched = videoTokens.filter((token) => watchedIds.has(token));
+  const videosDone = tokens.every((token) => watchedIds.has(token));
+  const videoWatched = tokens.filter((token) => watchedIds.has(token));
 
   const levelIndex = track.levels.findIndex(
     (info) => info.level === summary.level,
@@ -642,7 +638,7 @@ export async function getLearnerChapter(
     position: row.position,
     objectives: row.objectives ?? [],
     videos,
-    videoTokens,
+    videoTokens: tokens,
     videoWatched,
     videosDone,
     content: row.content,

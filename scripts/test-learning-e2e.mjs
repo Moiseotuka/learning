@@ -184,8 +184,12 @@ try {
     .locator('aside ol[aria-label*="Étapes du chapitre"]')
     .first();
   await timeline.waitFor({ timeout: 20000 });
+  const videosStep = timeline
+    .locator("a")
+    .filter({ hasText: /le[çc]ons vid[ée]o|vid[ée]os/i })
+    .first();
   check(
-    "timeline sidebar : 6 étapes (Objectifs + Vidéos + 3 étapes + quiz)",
+    "timeline sidebar : 6 étapes (Objectifs + Leçons vidéo + 3 étapes + quiz)",
     (await timeline.locator("a").count()) === 6,
   );
   const stepLabels = await timeline
@@ -193,7 +197,7 @@ try {
     .evaluateAll((links) => links.map((a) => (a.textContent ?? "").trim()));
   const stepKeysObserved = stepLabels.map((label) => {
     if (/objectifs/i.test(label)) return "objectifs";
-    if (/vidéos/i.test(label)) return "videos";
+    if (/vid[ée]o/i.test(label)) return "videos";
     if (/exercice/i.test(label)) return "exercice";
     if (/ressources/i.test(label)) return "ressources";
     if (/quiz/i.test(label)) return "quiz";
@@ -215,12 +219,9 @@ try {
     includesCI(await page.innerText("main"), "Objectifs du chapitre"),
   );
 
-  await timeline
-    .locator('a:has-text("Vidéos")')
-    .first()
-    .click();
+  await videosStep.click();
   await page.waitForURL(/\?etape=videos$/, { timeout: 20000 });
-  check("ouverture de l'étape Vidéos via la sidebar", true);
+  check("ouverture de l'étape Leçons vidéo via la sidebar", true);
 
   await page.waitForSelector("main iframe", { timeout: 20000 });
   check(
@@ -229,7 +230,7 @@ try {
   );
   check(
     "progression vidéos 0 / 3",
-    includesCI(await page.innerText("main"), "0 / 3 vidéos terminées"),
+    includesCI(await page.innerText("main"), "0 / 3 leçons terminées"),
   );
   const playlistButtons = page.locator("main ul li button");
   const playlistCount = await playlistButtons.count();
@@ -240,7 +241,7 @@ try {
   );
 
   const titleBefore = await page
-    .innerText('main p:text-is("Vidéo en cours") + h2')
+    .innerText('main p:has-text("en cours") + h2')
     .catch(() => "");
   const secondVideo = playlistButtons.nth(1);
   check(
@@ -250,7 +251,7 @@ try {
   await secondVideo.click({ timeout: 2500 }).catch(() => null);
   await sleep(400);
   const titleAfter = await page
-    .innerText('main p:text-is("Vidéo en cours") + h2')
+    .innerText('main p:has-text("en cours") + h2')
     .catch(() => "");
   check(
     "clic bloqué sur une vidéo non regardée",
@@ -285,10 +286,10 @@ try {
     );
   } else {
     check(
-      "?etape=cours renvoyé vers l'étape Vidéos",
+      "?etape=cours renvoyé vers l'étape Leçons vidéo",
       includesCI(
         await page.locator('aside [aria-current="step"]').first().innerText(),
-        "Vidéos",
+        "vidéo",
       ),
     );
     check(
@@ -313,9 +314,9 @@ try {
       "Regardez toutes les vidéos du chapitre avant de passer le quiz.",
     ),
   );
-  await page.click('a:has-text("Voir les vidéos")');
+  await page.click('a:has-text("Voir les")');
   await page.waitForURL(/\?etape=videos$/, { timeout: 20000 });
-  check("lien 'Voir les vidéos' → étape Vidéos", true);
+  check("lien de révision → étape Leçons vidéo", true);
 
   console.log("\n6. Déblocage (setup videos_watched) puis navigation document");
   const setup = await markChapterVideosWatched({
@@ -412,7 +413,7 @@ try {
       videos: async () => {
         check(
           "progression 3 / 3 après setup",
-          includesCI(await page.innerText("main"), "3 / 3 vidéos terminées"),
+          includesCI(await page.innerText("main"), "3 / 3 leçons terminées"),
         );
       },
       cours: async () => {

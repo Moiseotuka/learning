@@ -132,4 +132,29 @@ export const legalDocs: LegalDoc[] = [
       },
     ],
   },
+  {
+    slug: "credits",
+    title: "Crédits des leçons vidéo",
+    updated: "12 octobre 2026",
+    intro:
+      "Dans le parcours d'apprentissage, les leçons vidéo sont lues dans notre lecteur : l'apprenant reste sur easyLearn, sans suggestion externe ni lien sortant. Cette intégration sobre ne transfère aucune propriété : les images, le son et la mise en scène restent la propriété de leurs auteurs.",
+    sections: [
+      {
+        heading: "Ce que nous faisons de la vidéo d'un tiers",
+        body: "Nous sélectionnons une vidéo dont le sujet correspond à un chapitre, nous l'intégrons dans notre lecteur, puis nous lui donnons un titre pédagogique propre à notre progression. Le chapitre, ses objectifs, son cours écrit, son exercice et son quiz restent notre production.",
+      },
+      {
+        heading: "Ce que nous ne revendiquons pas",
+        body: "Le contenu filmé, la voix, les démonstrations et la chaîne qui les publie appartiennent à leurs auteurs. Aucun droit d'exploitation, de reproduction ni de rediffusion n'est revendiqué par easyLearn sur ces vidéos.",
+      },
+      {
+        heading: "Auteurs et chaînes référencés",
+        body: "Grafikart, Graven - Développement, Docstring, SimpleTech par Sergio, Yvan Monka, jaicompris Maths, Informatique Sans Complexe !, NOVELCLASS, Hassan EL BAHI, Mohamed Chiny, xavki, MaxCode, Donald Programmeur, Justin Joel Takodjou, Raphaël's Coding Club, Sophiaplustech TV, Laurent Praly, ENGP, MOOC NSI, ETC SCHOOL, Hervé Discours, Liora, Fabien Parrain, DuCodeAuClient, thonain, julien-d, ElectroCodeur, Freddie l'électro-programmeur, Rim Robotique, Parlons Cyber, Bande de Codeurs, Prof. Sabri, Professeur Mohamed YOUSSFI, Les Bons Profs, La minute de code, Malakisi, Michèle Kartner, InfraNerdFR, Foxxpy, Nicolas Galiot, Ludovic Guérin, Odoo, WooCommerce, PawaPay, Stripe, Harvard CS50 et MIT OpenCourseWare.",
+      },
+      {
+        heading: "Retirer une vidéo",
+        body: "Un auteur qui souhaite apparaître sous son nom dans le parcours, voir sa vidéo remplacée ou retirée de la sélection peut écrire à credits@easylearn.cd. La modification est appliquée sous 72 heures.",
+      },
+    ],
+  },
 ];

@@ -13,6 +13,7 @@ import {
 import { messages } from "@/i18n";
 import { extractYouTubeId, toEmbedUrl } from "@/lib/embed-url";
 import type { ChapterResource } from "@/lib/learning/types";
+import { cleanVideoTitle } from "@/lib/learning/video-title";
 import { YouTubePlayer } from "@/components/learning/youtube-player";
 import { cn } from "cn";
 
@@ -46,6 +47,11 @@ function ResourceFrame({
   const src = resource ? toEmbedUrl(resource.url) : null;
   const videoId = resource ? extractYouTubeId(resource.url) : null;
   const hasEmbeddableContent = Boolean(videoId || src);
+  const label = resource
+    ? videoId
+      ? cleanVideoTitle(resource.label ?? "") || t.player.resourceVideo
+      : (resource.label ?? "")
+    : "";
 
   return (
     <Dialog
@@ -64,11 +70,15 @@ function ResourceFrame({
           </span>
           <div className="min-w-0 flex-1">
             <DialogTitle className="truncate text-sm font-semibold">
-              {resource?.label ?? ""}
+              {label}
             </DialogTitle>
             <DialogDescription className="flex items-center gap-1 truncate text-xs text-muted-foreground">
               <GlobeIcon className="size-3 shrink-0" aria-hidden />
-              {resource ? hostnameOf(resource.url) : ""}
+              {resource
+                ? videoId
+                  ? t.player.resourceVideo
+                  : hostnameOf(resource.url)
+                : ""}
             </DialogDescription>
           </div>
 
@@ -91,14 +101,14 @@ function ResourceFrame({
             <YouTubePlayer
               key={resource.url}
               videoId={videoId}
-              title={resource.label ?? ""}
+              title={label}
               fill
             />
           ) : src ? (
             <iframe
               key={src}
               src={src}
-              title={resource?.label ?? ""}
+              title={label}
               loading="eager"
               className="absolute inset-0 size-full border-0 bg-background"
             />
@@ -106,11 +116,9 @@ function ResourceFrame({
             <div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
               <div className="max-w-md space-y-3">
                 <p className="text-base font-medium text-foreground">
-                  Cette ressource ne peut pas être lue dans le lecteur intégré.
+                  {t.player.resourceNotPlayableTitle}
                 </p>
-                <p>
-                  Le lien ne correspond pas à une vidéo exploitable dans la plateforme.
-                </p>
+                <p>{t.player.resourceNotPlayableHint}</p>
               </div>
             </div>
           ) : null}

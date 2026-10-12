@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ExternalLinkIcon,
+  CheckCircle2Icon,
   MaximizeIcon,
   MinimizeIcon,
   PauseIcon,
@@ -101,15 +101,13 @@ function formatTime(total: number): string {
   return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
 }
 
-/** Actions de secours quand la vidéo intégrée ne se lance pas (bot-check,
- *  vidéo supprimée, API indisponible) : réessayer, ouvrir dans YouTube,
- *  marquer comme vue pour débloquer la suite du chapitre. */
+/** Panneau de secours quand la vidéo intégrée refuse de se lancer (contrôle
+ *  anti-robot, vidéo supprimée, API indisponible) : réessayer, ou marquer comme
+ *  vue pour ne jamais bloquer le chapitre. Rien ne renvoie hors de la plateforme. */
 function RecoveryActions({
-  watchUrl,
   onRetry,
   onMarkWatched,
 }: {
-  watchUrl: string;
   onRetry?: () => void;
   onMarkWatched?: () => void;
 }) {
@@ -125,15 +123,6 @@ function RecoveryActions({
           {t.videoRetry}
         </button>
       ) : null}
-      <a
-        href={watchUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 rounded-md border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
-      >
-        {t.videoOpenTab}
-        <ExternalLinkIcon className="size-3.5" aria-hidden />
-      </a>
       {onMarkWatched ? (
         <button
           type="button"
@@ -154,6 +143,7 @@ export function YouTubePlayer({
   className,
   autoplay = false,
   onEnded,
+  onSkipped,
 }: {
   videoId: string;
   title: string;
@@ -161,6 +151,8 @@ export function YouTubePlayer({
   className?: string;
   autoplay?: boolean;
   onEnded?: () => void;
+  /** Le learner marque la leçon comme vue sans la regarder (lecture refusée). */
+  onSkipped?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -170,6 +162,7 @@ export function YouTubePlayer({
   const flashTimer = useRef<number | undefined>(undefined);
   const endedNotified = useRef(false);
   const onEndedRef = useRef<(() => void) | undefined>(undefined);
+  const onSkippedRef = useRef<(() => void) | undefined>(undefined);
   const autoplayRef = useRef(false);
   const blockTimer = useRef<number | undefined>(undefined);
   const playGuardTimer = useRef<number | undefined>(undefined);
@@ -189,13 +182,14 @@ export function YouTubePlayer({
   const [barVisible, setBarVisible] = useState(true);
   const [startFlash, setStartFlash] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [endedId, setEndedId] = useState<string | null>(null);
 
   const isReady = readyId === videoId;
   const isFallback = !isReady && fallbackId === videoId;
   const hasError = errorId === videoId;
   const started = startedId === videoId;
   const blocked = isReady && !started && blockedId === videoId;
-  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const ended = isReady && endedId === videoId;
 
   useEffect(() => {
     playingRef.current = playing;
@@ -204,6 +198,10 @@ export function YouTubePlayer({
   useEffect(() => {
     onEndedRef.current = onEnded;
   }, [onEnded]);
+
+  useEffect(() => {
+    onSkippedRef.current = onSkipped;
+  }, [onSkipped]);
 
   useEffect(() => {
     autoplayRef.current = autoplay;
@@ -243,6 +241,14 @@ export function YouTubePlayer({
     }, PLAY_START_TIMEOUT_MS);
   }, [videoId]);
 
+  const canMarkWatched = Boolean(onSkipped || onEnded);
+
+  /** Le learner ne peut pas lire la vidéo (intégration refusée) : il la déclare
+   *  vue pour ne jamais rester bloqué, sans jamais sortir de la plateforme. */
+  const markAsWatched = useCallback(() => {
+    (onSkippedRef.current ?? onEndedRef.current)?.();
+  }, []);
+
   /** Recrée le lecteur : nouvelle tentative d'intégration après un blocage. */
   const retryPlayback = useCallback(() => {
     window.clearTimeout(blockTimer.current);
@@ -252,6 +258,7 @@ export function YouTubePlayer({
     setFallbackId(null);
     setStartedId(null);
     setReadyId(null);
+    setEndedId(null);
     setPlaying(false);
     setAttempt((value) => value + 1);
   }, []);
@@ -279,6 +286,8 @@ export function YouTubePlayer({
           rel: 0,
           playsinline: 1,
           iv_load_policy: 3,
+          modestbranding: 1,
+          fs: 0,
           origin: window.location.origin,
           host: 'https://www.youtube.com',
         },
@@ -290,6 +299,7 @@ export function YouTubePlayer({
             setDuration(event.target.getDuration() || 0);
             setCurrentTime(0);
             setWatchedMax(0);
+            setEndedId(null);
             endedNotified.current = false;
             playingRef.current = false;
             setPlaying(false);
@@ -318,6 +328,7 @@ export function YouTubePlayer({
               startedRef.current = true;
               clearBlockWatch();
               setBlockedId(null);
+              setEndedId(null);
               setStartedId(videoId);
               showBar();
               window.clearTimeout(flashTimer.current);
@@ -334,9 +345,15 @@ export function YouTubePlayer({
               window.clearTimeout(flashTimer.current);
               setStartFlash(false);
               setBarVisible(true);
-              if (isEnded && !endedNotified.current) {
-                endedNotified.current = true;
-                onEndedRef.current?.();
+              if (isEnded) {
+                // L'écran de fin YouTube (titre, logo, vidéos conseillées) est
+                // remplacé par notre panneau dès la dernière seconde lue.
+                event.target.pauseVideo();
+                setEndedId(videoId);
+                if (!endedNotified.current) {
+                  endedNotified.current = true;
+                  onEndedRef.current?.();
+                }
               }
             }
           },
@@ -358,6 +375,7 @@ export function YouTubePlayer({
             slot?.remove();
             slot = null;
             setReadyId(null);
+            setEndedId(null);
             setErrorId(videoId);
           },
         },
@@ -446,6 +464,22 @@ export function YouTubePlayer({
     }
   };
 
+  const replay = () => {
+    const player = playerRef.current;
+    if (!player || !isReady) return;
+    setEndedId(null);
+    startedRef.current = true;
+    endedNotified.current = true;
+    try {
+      player.seekTo(0, true);
+      player.playVideo();
+    } catch {
+      // lecteur déjà détruit
+    }
+    setCurrentTime(0);
+    showBar();
+  };
+
   const seekCap =
     duration > 0 ? Math.min(duration, watchedMax) : watchedMax;
 
@@ -475,9 +509,8 @@ export function YouTubePlayer({
             {t.videoPlaybackFailed}
           </p>
           <RecoveryActions
-            watchUrl={watchUrl}
             onRetry={retryPlayback}
-            onMarkWatched={onEnded ? () => onEndedRef.current?.() : undefined}
+            onMarkWatched={canMarkWatched ? markAsWatched : undefined}
           />
         </div>
       </div>
@@ -515,9 +548,8 @@ export function YouTubePlayer({
       {isFallback ? (
         <div className="absolute right-3 top-3 z-20">
           <RecoveryActions
-            watchUrl={watchUrl}
             onRetry={retryPlayback}
-            onMarkWatched={onEnded ? () => onEndedRef.current?.() : undefined}
+            onMarkWatched={canMarkWatched ? markAsWatched : undefined}
           />
         </div>
       ) : null}
@@ -532,17 +564,34 @@ export function YouTubePlayer({
           </p>
           <div className="pointer-events-auto">
             <RecoveryActions
-              watchUrl={watchUrl}
               onRetry={retryPlayback}
-              onMarkWatched={onEnded ? () => onEndedRef.current?.() : undefined}
+              onMarkWatched={canMarkWatched ? markAsWatched : undefined}
             />
           </div>
         </div>
       ) : null}
 
+      {ended ? (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
+          <CheckCircle2Icon className="size-8 text-electric" aria-hidden />
+          <p className="text-base font-semibold text-white">{t.videoFinished}</p>
+          <p className="max-w-md text-xs leading-relaxed text-white/70">
+            {t.videoFinishedHint}
+          </p>
+          <button
+            type="button"
+            onClick={replay}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-white/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
+          >
+            <RotateCcwIcon className="size-3.5" aria-hidden />
+            {t.videoRewatch}
+          </button>
+        </div>
+      ) : null}
+
       {isReady ? (
         <>
-          {!playing || startFlash ? (
+          {!playing || startFlash || barVisible ? (
             <div
               aria-hidden
               className="pointer-events-none absolute inset-x-0 top-0 z-20 h-14 bg-black"

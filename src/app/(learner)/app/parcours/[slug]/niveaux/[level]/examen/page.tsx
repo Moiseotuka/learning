@@ -13,7 +13,7 @@ import {
   getLearnerTrack,
   getLevelExamQuestions,
 } from "@/lib/learning/queries";
-import { createAssessmentToken } from "@/lib/security/assessment";
+import { createAssessmentToken, drawExamQuestions } from "@/lib/security/assessment";
 
 const t = messages.learner;
 
@@ -45,14 +45,12 @@ export default async function LevelExamPage({
   const questions = ready
     ? await getLevelExamQuestions(levelChapters.map((chapter) => chapter.id))
     : [];
-  const examCount = Math.min(10, questions.length);
-  const examQuestions = [...questions]
-    .sort(() => Math.random() - 0.5)
-    .slice(0, examCount);
+  const examScope = `exam:${track.id}:${level}`;
+  const examQuestions = drawExamQuestions(questions, examScope, user.id, 10);
   const assessmentToken =
     examQuestions.length > 0
       ? createAssessmentToken(
-          `exam:${track.id}:${level}`,
+          examScope,
           user.id,
           examQuestions.map((question) => question.id),
         )

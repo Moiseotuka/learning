@@ -1,3 +1,10 @@
+/**
+ * Ordre pédagogique des étapes d'un chapitre.
+ *
+ * L'apprenant découvre d'abord la leçon en vidéo, puis en lit la version écrite
+ * (cours), la consolide par l'exercice et approfondit avec les ressources. Cet
+ * ordre unique sert aussi à numéroter les pages du cours (chapitre.étape.page).
+ */
 const DOC_STEPS = ["objectifs", "cours", "exercice", "ressources"] as const;
 const DOC_STEPS_WITH_VIDEOS = [
   "objectifs",
@@ -7,27 +14,8 @@ const DOC_STEPS_WITH_VIDEOS = [
   "ressources",
 ] as const;
 
-/**
- * Ordre canonique des étapes (indépendant du tirage aléatoire du jour) :
- * sert à numéroter le Cours comme dans Cisco NetAcad (chapitre.étape.page).
- */
-export function canonicalStepOrder(hasVideos: boolean): string[] {
+export function chapterStepOrder(hasVideos: boolean): string[] {
   return hasVideos ? [...DOC_STEPS_WITH_VIDEOS] : [...DOC_STEPS];
-}
-
-/**
- * Ordre des étapes d'un chapitre.
- *
- * La progression pédagogique doit rester cohérente : on explique d'abord le
- * concept dans le cours, puis on propose les vidéos associées, ensuite l'exercice
- * et enfin les ressources. Les chapitres sans vidéo gardent l'ordre document.
- */
-export function chapterStepOrder(
-  hasVideos: boolean,
-  _chapterId: string,
-): string[] {
-  if (!hasVideos) return [...DOC_STEPS];
-  return ["objectifs", "cours", "videos", "exercice", "ressources"];
 }
 
 /**

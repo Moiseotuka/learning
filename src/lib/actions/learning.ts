@@ -5,8 +5,8 @@ import { refresh } from "next/cache";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
-import { extractYouTubeId } from "@/lib/embed-url";
 import { getQuizQuestions } from "@/lib/learning/queries";
+import { videoTokens } from "@/lib/learning/video-playability";
 import type { QuizQuestionResult, QuizState } from "@/lib/learning/types";
 import { verifyAssessmentToken } from "@/lib/security/assessment";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -177,14 +177,12 @@ async function runPracticeStateUpdate(
 
 function toVideoTokens(videos: unknown): string[] {
   if (!Array.isArray(videos)) return [];
-  return videos
-    .map((video) => {
-      const url = (video as { url?: unknown } | null)?.url;
-      return typeof url === "string" && url.length > 0
-        ? extractYouTubeId(url) ?? url
-        : "";
-    })
-    .filter((token) => token.length > 0);
+  return videoTokens(
+    videos.filter(
+      (video): video is { url: string } =>
+        typeof (video as { url?: unknown } | null)?.url === "string",
+    ),
+  );
 }
 
 export type VideoWatchResult = {

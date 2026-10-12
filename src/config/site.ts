@@ -66,21 +66,6 @@ export const resolveSiteUrl = (requestOrigin?: string) => {
     return requestOriginUrl;
   }
 
-  try {
-    const { headers } = require("next/headers");
-    const h = headers();
-    const forwardedProto = h.get("x-forwarded-proto") ?? "https";
-    const forwardedHost = h.get("x-forwarded-host") ?? h.get("host");
-    if (forwardedHost) {
-      const hostUrl = `${forwardedProto}://${forwardedHost.replace(/\/$/, "")}`;
-      if (!isLocalhostUrl(hostUrl)) {
-        return hostUrl;
-      }
-    }
-  } catch {
-    // Ignored: no request headers available in this runtime.
-  }
-
   if (isProductionLike) {
     return process.env.VERCEL_PROJECT_PRODUCTION_URL
       ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
@@ -132,6 +117,5 @@ export const socials = [
   { name: "Facebook", href: "https://facebook.com" },
   { name: "X", href: "https://x.com" },
   { name: "LinkedIn", href: "https://linkedin.com" },
-  { name: "YouTube", href: "https://youtube.com" },
   { name: "GitHub", href: "https://github.com" },
 ] as const;
