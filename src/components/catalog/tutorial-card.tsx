@@ -58,7 +58,7 @@ export function TutorialCard({ tutorial }: { tutorial: CatalogTutorial }) {
 
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-hairline pt-3">
             <span className="min-w-0 truncate text-xs text-muted-foreground">
-              {tutorial.channel}
+              {tutorial.category}
             </span>
             <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-electric">
               {t.catalogue.cards.watch}

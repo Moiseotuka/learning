@@ -75,15 +75,10 @@ export default async function TutorialViewerPage(
                 />
               </div>
             ) : (
-              <a
-                href={tutorial.url}
-                target="_blank"
-                rel="noreferrer"
-                className="grid aspect-video w-full place-items-center gap-2 bg-muted text-sm text-muted-foreground transition-colors hover:text-electric"
-              >
+              <div className="grid aspect-video w-full place-items-center gap-2 bg-muted px-6 text-center text-sm text-muted-foreground">
                 <PlayIcon className="size-8" aria-hidden />
-                {t.catalogue.cards.watch}
-              </a>
+                {t.catalogue.viewer.unavailable}
+              </div>
             )}
 
             <div className="p-5">
@@ -105,10 +100,6 @@ export default async function TutorialViewerPage(
               <h1 className="mt-3 text-balance text-xl font-semibold leading-snug sm:text-2xl">
                 {tutorial.title}
               </h1>
-
-              <p className="mt-2 text-sm text-muted-foreground">
-                {t.catalogue.viewer.channel} : {tutorial.channel}
-              </p>
 
               <p className="mt-4 max-w-[70ch] text-sm leading-relaxed text-muted-foreground">
                 {tutorial.summary}
@@ -153,7 +144,7 @@ export default async function TutorialViewerPage(
                         {item.title}
                       </span>
                       <span className="mt-1 block truncate text-[11px] text-muted-foreground">
-                        {item.channel}
+                        {t.tracks.levelLabels[item.level]}
                       </span>
                     </span>
                   </Link>

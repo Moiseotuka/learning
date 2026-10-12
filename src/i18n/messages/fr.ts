@@ -206,7 +206,6 @@ export const fr = {
       chapters: (n: number) => (n > 1 ? `${n} chapitres` : `${n} chapitre`),
       course: "Cours vidéo",
       watch: "Regarder",
-      openChannel: (channel: string) => `Chaîne ${channel}`,
     },
     empty: {
       formations:
@@ -216,9 +215,9 @@ export const fr = {
     },
     viewer: {
       back: "Retour au catalogue",
-      channel: "Chaîne",
       related: "Dans la même technologie",
       level: "Niveau",
+      unavailable: "Le lecteur de cette leçon est en cours de restauration.",
     },
   },
 
