@@ -466,7 +466,7 @@ export const fr = {
       {
         title: "Plateforme",
         links: [
-          { label: "Tutoriels vidéo", href: "/tutoriels" },
+          { label: "Tutoriels vidéo", href: "/catalogue?type=tutoriels" },
           { label: "Communauté", href: "/#communaute" },
           { label: "À propos", href: "/#apropos" },
           { label: "Vérifier un certificat", href: "/verifier" },
@@ -573,7 +573,7 @@ export const fr = {
     noticeLoginFailed:
       "La connexion a échoué. Vérifiez vos identifiants puis réessayez.",
     noticeGoogleUnavailable:
-      "La connexion Google n'est pas encore activée sur ce projet Supabase : à configurer dans Authentication → Providers → Google.",
+      "La connexion Google est momentanément indisponible. Connectez-vous avec votre adresse e-mail, ou réessayez dans quelques instants.",
     noticeGoogleStateUsed:
       "Le lien de connexion Google a déjà été utilisé. Merci de réessayer une seule fois, sans double-clic, puis videz les cookies du site si nécessaire.",
     confirmationTitle: "E-mail confirmé",

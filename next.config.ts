@@ -1,6 +1,17 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Les tutoriels vidéo sont listés par l'onglet « Tutoriels » du catalogue :
+  // /tutoriels reste valable pour les liens déjà partagés.
+  async redirects() {
+    return [
+      {
+        source: "/tutoriels",
+        destination: "/catalogue?type=tutoriels",
+        permanent: true,
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       // Vignettes des lecteurs vidéo intégrés (aucun téléchargement côté serveur)
