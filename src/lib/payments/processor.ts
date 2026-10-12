@@ -27,7 +27,9 @@ export type ProcessResult = {
  * Applique un évènement de paiement de façon idempotente :
  * 1. insert payment_events (conflit = évènement déjà traité → duplicate) ;
  * 2. passe la purchase correspondante à `paid` (service role).
- * Utilisé par la route webhook et par le simulateur mock.
+ * Utilisé par la route webhook et par le simulateur mock. Un évènement déjà
+ * inséré mais jamais appliqué (`processed_at` nul) est représenté, donc une
+ * validation interrompue peut être reprise plus tard.
  */
 export async function processPaymentEvent(
   input: PaymentEventInput,
@@ -45,10 +47,19 @@ export async function processPaymentEvent(
   });
 
   if (eventError) {
-    if (eventError.code === "23505") {
-      return { ok: true, duplicate: true };
+    if (eventError.code !== "23505") {
+      return { ok: false, reason: eventError.message };
     }
-    return { ok: false, reason: eventError.message };
+    // Evenement deja vu : le raccourci « déjà traité » n'est valable que si une
+    // tentative précédente est allée jusqu'au bout. Sinon (achat jamais débloqué
+    // alors que la clé d'idempotence était consommée), on reprend la validation.
+    const { data: prior } = await supabase
+      .from("payment_events")
+      .select("processed_at")
+      .eq("event_id", input.eventId)
+      .maybeSingle<{ processed_at: string | null }>();
+
+    if (prior?.processed_at) return { ok: true, duplicate: true };
   }
 
   let query = supabase

@@ -367,6 +367,8 @@ export const fr = {
         "Le service de paiement est momentanément injoignable. Réessayez dans un instant.",
       "nyole-error":
         "Le service de paiement a refusé la demande. Réessayez dans un instant.",
+      "nyole-auth":
+        "Le service de paiement refuse la clé configurée : le paiement est temporairement indisponible. Prévenez l'administrateur du site.",
     },
   },
 
@@ -955,7 +957,8 @@ export const fr = {
       categories: "Catégories",
       pricing: "Tarifs",
     },
-    dashboardIntro: "Vue d'ensemble du catalogue et raccourcis de gestion.",
+    dashboardIntro:
+      "Vue d'ensemble des inscrits et du catalogue, avec les raccourcis de gestion.",
     pricing: {
       title: "Tarifs par niveau",
       intro:
@@ -969,6 +972,8 @@ export const fr = {
         "Table des tarifs introuvable : collez la migration supabase/migrations/202610030001_payments.sql dans l'éditeur SQL de Supabase.",
     },
     stats: {
+      learners: "Apprenants inscrits",
+      unavailable: "Indisponible",
       categories: "Catégories",
       tracks: "Parcours",
       publishedCategories: "Catégories publiées",

@@ -39,7 +39,7 @@ NEXT_PUBLIC_APP_NAME=easyLearn
 PAYMENT_PROVIDER=nyole
 NYOLE_SECRET_KEY=af_live_sec_...
 NYOLE_PUBLIC_KEY=af_live_pub_...
-NYOLE_WEBHOOK_URL=https://VOTRE_APP.vercel.app/api/webhooks/nyole
+NYOLE_WEBHOOK_URL=https://VOTRE_APP.vercel.app/api/webhooks/payment
 ```
 
 #### Email Resend
@@ -50,8 +50,11 @@ EMAIL_FROM="easyLearn <bonjour@votre-domaine.com>"
 
 #### Sécurité
 ```
-PAYMENT_WEBHOOK_SECRET=easylearn-webhook-secret-2024
+PAYMENT_WEBHOOK_SECRET=<openssl rand -hex 32>
 ```
+La route webhook refuse la valeur d'exemple et rend un 503 tant qu'un secret
+aléatoire n'a pas été configuré — sinon n'importe qui connaissant le dépôt
+pourrait déclarer un paiement confirmé.
 
 ### 3. Build & Deploy
 
@@ -72,13 +75,14 @@ git push origin main
 # Dans Vercel Dashboard > Settings > Domains
 # Copier l'URL réelle (ex: https://easylearn-xxx.vercel.app)
 # Mettre à jour NEXT_PUBLIC_SITE_URL
-# Mettre à jour NYOLE_WEBHOOK_URL = https://VOTRE_APP.vercel.app/api/webhooks/nyole
+# Mettre à jour NYOLE_WEBHOOK_URL = https://VOTRE_APP.vercel.app/api/webhooks/payment
 ```
 
 ### 2. Configurer le webhook Nyole
 - Aller dans Dashboard Nyole > Webhooks
-- Ajouter : `https://VOTRE_APP.vercel.app/api/webhooks/nyole`
-- Événements : `payment.success`, `payment.failed`, `payment.pending`
+- Ajouter : `https://VOTRE_APP.vercel.app/api/webhooks/payment`
+- Événements : `payment.completed` (confirmation), puis `payment.failed`,
+  `payment.cancelled`, `payment.updated` pour le suivi
 
 ### 3. Configurer Supabase Auth
 - Authentication > URL Configuration
@@ -132,7 +136,7 @@ vercel logs
 ## 🚨 Points d'attention
 
 1. **SUPABASE_SERVICE_ROLE_KEY** : Jamais dans `NEXT_PUBLIC_` !
-2. **NYOLE_WEBHOOK_URL** : Doit matcher exactement l'URL Vercel + `/api/webhooks/nyole`
+2. **NYOLE_WEBHOOK_URL** : Doit matcher exactement l'URL Vercel + `/api/webhooks/payment`
 3. **Domaine Resend** : Doit être vérifié avant envoi emails
 3. **Supabase Auth** : Site URL + Redirect URLs doivent matcher l'URL Vercel
 4. **Build** : `npm run build` doit passer en local avant push

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { requireUser } from "@/lib/auth/dal";
 import {
+  CHECKOUT_CURRENCY,
   absoluteUrl,
   activePaymentProvider,
   amountMatches,
@@ -150,7 +151,7 @@ async function runMockCheckout(
       .from("purchases")
       .update({
         amount_usd: price,
-        currency: "CDF",
+        currency: CHECKOUT_CURRENCY,
         provider: "mock",
         provider_reference: reference,
         status: "pending",
@@ -163,7 +164,7 @@ async function runMockCheckout(
       category_id: categoryId,
       level,
       amount_usd: price,
-      currency: "CDF",
+      currency: CHECKOUT_CURRENCY,
       provider: "mock",
       provider_reference: reference,
       status: "pending",
@@ -221,8 +222,7 @@ async function runNyoleCheckout(
     if (
       status.ok &&
       status.status.status === "PENDING" &&
-      status.status.amount === price &&
-      status.status.currency === "CDF"
+      amountMatches(price, status.status)
     ) {
       return {
         mode: "dialog",
@@ -243,7 +243,7 @@ async function runNyoleCheckout(
       category_id: categoryId,
       level,
       amount_usd: price,
-      currency: "CDF",
+      currency: CHECKOUT_CURRENCY,
       provider: "nyole",
       status: "pending",
     });
@@ -253,7 +253,7 @@ async function runNyoleCheckout(
       .from("purchases")
       .update({
         amount_usd: price,
-        currency: "CDF",
+        currency: CHECKOUT_CURRENCY,
         provider: "nyole",
         status: "pending",
       })
@@ -264,7 +264,7 @@ async function runNyoleCheckout(
   const session = await createNyoleSession({
     // nyole attend l'unité principale de la devise : 28000 pour 28 000 CDF.
     amount: price,
-    currency: "CDF",
+    currency: CHECKOUT_CURRENCY,
     description: `easyLearn — niveau ${level} (${categoryId})`,
     customerEmail: email,
     successUrl: absoluteUrl(`/paiement/retour?ref=${purchaseId}`),

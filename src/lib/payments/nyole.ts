@@ -11,6 +11,15 @@ import { site } from "@/config/site";
 
 export const NYOLE_API = "https://app.nyole.com/api";
 
+/**
+ * Devise de facturation d'easyLearn : le prix affiché à l'apprenant est en CDF,
+ * la session nyole est créée dans cette devise et `purchases.currency` doit
+ * rester alignée. La vérification du montant compare la session à cette devise
+ * — jamais à `purchases.currency`, colonne restée à son défaut `USD` sur les
+ * lignes anciennes, ce qui faisait rejeter un paiement réel.
+ */
+export const CHECKOUT_CURRENCY = "CDF";
+
 export type NyoleSessionStatus =
   | "PENDING"
   | "SUCCESS"
@@ -97,14 +106,24 @@ async function nyoleFetch<T>(
     }
     if (!response.ok) {
       const error = (data as { error?: { message?: string } } | null)?.error;
+      const detail = error?.message ?? text.slice(0, 300);
       console.warn(
         "[nyole]",
         init.method ?? "GET",
         path,
         response.status,
-        error?.message ?? text.slice(0, 300),
+        detail,
       );
-      return { ok: false, reason: "nyole-error" };
+      // 401/403 = clé API refusée : un probleme de configuration, pas un refus
+      // de paiement. Sans ce distinguishing, l'apprenant lit « le service a
+      // refusé la demande » alors que rien n'a ete envoye.
+      return {
+        ok: false,
+        reason:
+          response.status === 401 || response.status === 403
+            ? "nyole-auth"
+            : "nyole-error",
+      };
     }
     return { ok: true, data: data as T };
   } catch (error) {
@@ -181,7 +200,7 @@ export async function getNyoleSessionStatus(
 export function amountMatches(
   priceUsd: number | null,
   status: { amount: number; currency: string },
-  expectedCurrency = "CDF",
+  expectedCurrency = CHECKOUT_CURRENCY,
 ): boolean {
   if (priceUsd === null) return true;
   if (status.currency !== expectedCurrency) return false;

@@ -1,4 +1,8 @@
-import { amountMatches, getNyoleSessionStatus } from "@/lib/payments/nyole";
+import {
+  CHECKOUT_CURRENCY,
+  amountMatches,
+  getNyoleSessionStatus,
+} from "@/lib/payments/nyole";
 import { trackNoticeUrl } from "@/lib/payments/notice";
 import { processPaymentEvent } from "@/lib/payments/processor";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -97,7 +101,7 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ ok: true, paid: false, status: info.status });
   }
 
-  if (!amountMatches(purchase.amount_usd, info, purchase.currency ?? "CDF")) {
+  if (!amountMatches(purchase.amount_usd, info, CHECKOUT_CURRENCY)) {
     console.warn(
       "[paiement] statut : montant incohérent —",
       JSON.stringify({

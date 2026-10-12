@@ -186,8 +186,14 @@ try {
   await page.goto(`${BASE}/app`, { waitUntil: "networkidle" });
   const dash = await page.innerText("main");
   check("module débutant présent (python)", dash.includes("Premiers pas en Python"));
-  check("module intermédiaire non payé masqué (réseaux)", !dash.includes("Protocoles et routage"));
-  check("module intermédiaire non payé masqué (ia/data)", !dash.includes("Science des données") && !dash.includes("IA"));
+  check(
+    "module intermédiaire non payé masqué (réseaux)",
+    !dash.includes("protocoles, routage et supervision"),
+  );
+  check(
+    "module intermédiaire non payé masqué (ia/data)",
+    !dash.includes("Intelligence artificielle et Data Science appliquées"),
+  );
   await shot(page, "pay-01-dashboard-filtre");
 
   // ---- 2. Avant achat : chapitre de niveau intermédiaire verrouillé ------
@@ -616,7 +622,14 @@ try {
   await page.waitForLoadState("networkidle");
   const after = await page.innerText("main");
   check("notice de succès affichée", after.includes("Paiement confirmé"));
-  check("bandeau d'achat disparu", !after.includes("Ce niveau n'est pas encore débloqué"));
+  // La bannière reste légitimement affichée tant que `prog/avance` et
+  // `prog/projet` sont payants et non achetés, et l'en-tête affiche toujours
+  // « à partir de 28000 CDF » : on vérifie la disparition du lien d'achat du
+  // niveau acheté, pas celle du bandeau entier ni d'un prix.
+  check(
+    "CTA d'achat du niveau acheté disparu",
+    (await page.locator(`a[href*="level=${LEVEL}"]`).count()) === 0,
+  );
   await shot(page, "pay-05-apres-paiement");
 
   // ---- 4. Après achat : chapitre ouvert + purchase payée ------------------

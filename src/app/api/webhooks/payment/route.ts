@@ -1,10 +1,21 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { amountMatches, nyoleSecretKey } from "@/lib/payments/nyole";
+import {
+  CHECKOUT_CURRENCY,
+  amountMatches,
+  nyoleSecretKey,
+} from "@/lib/payments/nyole";
 import { processPaymentEvent } from "@/lib/payments/processor";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 const MAX_TOLERANCE_SECONDS = 300;
+
+/**
+ * Secret d'exemple présent dans `.env.example` : refusé, sinon n'importe qui
+ * peut signer un faux « paiement confirmé » avec une valeur publiée dans le
+ * dépôt.
+ */
+const PUBLIC_DEMO_SECRET = "easylearn-webhook-secret-2024";
 
 function safeEqualHex(a: string, b: string): boolean {
   const bufferA = Buffer.from(a, "utf8");
@@ -142,7 +153,7 @@ async function handleNyole(
     !amountMatches(
       purchase.amount_usd,
       { amount: payload.data.amount, currency: payload.data.currency },
-      purchase.currency ?? "CDF",
+      CHECKOUT_CURRENCY,
     )
   ) {
     console.warn(
@@ -178,7 +189,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const secret = process.env.PAYMENT_WEBHOOK_SECRET;
-  if (!secret) {
+  if (!secret || secret === PUBLIC_DEMO_SECRET) {
     return Response.json(
       { ok: false, reason: "not-configured" },
       { status: 503 },

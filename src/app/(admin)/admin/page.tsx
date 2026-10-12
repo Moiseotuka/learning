@@ -1,10 +1,16 @@
-import { ArrowRightIcon, LayersIcon, LayoutGridIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  LayersIcon,
+  LayoutGridIcon,
+  UsersIcon,
+} from "lucide-react";
 import Link from "next/link";
 
 import { AdminNotice } from "@/components/admin/admin-notice";
 import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { getCatalogStats } from "@/lib/catalog/queries";
+import { countRegisteredUsers } from "@/lib/admin/stats";
 
 const t = messages.admin;
 
@@ -13,16 +19,34 @@ export default async function AdminDashboardPage({
 }: {
   searchParams: Promise<{ notice?: string }>;
 }) {
-  const [{ notice }, stats] = await Promise.all([
+  const [{ notice }, stats, learners] = await Promise.all([
     searchParams,
     getCatalogStats(),
+    countRegisteredUsers(),
   ]);
 
   const cards = [
-    { label: t.stats.categories, value: stats.categories },
-    { label: t.stats.publishedCategories, value: stats.publishedCategories },
-    { label: t.stats.tracks, value: stats.tracks },
-    { label: t.stats.publishedTracks, value: stats.publishedTracks },
+    {
+      label: t.stats.learners,
+      value: learners ?? t.stats.unavailable,
+      Icon: UsersIcon,
+    },
+    {
+      label: t.stats.categories,
+      value: stats.categories,
+      Icon: LayoutGridIcon,
+    },
+    {
+      label: t.stats.publishedCategories,
+      value: stats.publishedCategories,
+      Icon: LayoutGridIcon,
+    },
+    { label: t.stats.tracks, value: stats.tracks, Icon: LayersIcon },
+    {
+      label: t.stats.publishedTracks,
+      value: stats.publishedTracks,
+      Icon: LayersIcon,
+    },
   ];
 
   return (
@@ -31,13 +55,14 @@ export default async function AdminDashboardPage({
 
       <p className="text-sm text-muted-foreground">{t.dashboardIntro}</p>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {cards.map((card) => (
           <div
             key={card.label}
             className="rounded-2xl border border-hairline bg-card p-5"
           >
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <card.Icon className="size-3.5 text-electric" aria-hidden />
               {card.label}
             </p>
             <p className="mt-2 text-3xl font-semibold text-foreground">

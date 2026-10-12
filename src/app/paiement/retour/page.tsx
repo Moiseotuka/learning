@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { PaymentReturnBridge } from "@/components/payment/payment-return-bridge";
 import type { ReturnStatus } from "@/components/payment/payment-return-bridge";
 import {
+  CHECKOUT_CURRENCY,
   absoluteUrl,
   amountMatches,
   getNyoleSessionStatus,
@@ -80,7 +81,7 @@ export default async function PaymentReturnPage({
     } else if (!result.status.paid) {
       status = result.status.status === "FAILED" ? "failed" : "pending";
     } else if (
-      !amountMatches(purchase.amount_usd, result.status, purchase.currency ?? "CDF")
+      !amountMatches(purchase.amount_usd, result.status, CHECKOUT_CURRENCY)
     ) {
       console.warn(
         "[paiement] retour : montant incohérent —",
