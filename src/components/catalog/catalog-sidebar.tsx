@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDownIcon, SearchIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDownIcon } from "lucide-react";
+import { useState } from "react";
 
+import { CatalogSearchForm } from "@/components/catalog/catalog-search-form";
 import { CategoryIcon } from "@/components/category-icon";
-import { Input } from "@/components/ui/input";
 import { messages } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -21,43 +21,35 @@ type SidebarCategory = {
 
 const VISIBLE_BY_DEFAULT = 8;
 
-function catalogueHref(type: CatalogType, tech: string) {
+function catalogueHref(type: CatalogType, tech: string, query: string) {
   const params = new URLSearchParams();
   if (type !== "formations") params.set("type", type);
   if (tech) params.set("tech", tech);
-  const query = params.toString();
-  return query ? `/catalogue?${query}` : "/catalogue";
+  if (query) params.set("q", query);
+  const built = params.toString();
+  return built ? `/catalogue?${built}` : "/catalogue";
 }
 
 export function CatalogSidebar({
   activeType,
   activeTech,
+  activeQuery = "",
   categories,
   counts,
   totals,
 }: {
   activeType: CatalogType;
   activeTech: string;
+  activeQuery?: string;
   categories: SidebarCategory[];
   counts: Record<CatalogType, Record<string, number>>;
   totals: Record<CatalogType, number>;
 }) {
-  const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
-
   const countsForType = counts[activeType];
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return categories;
-    return categories.filter((category) =>
-      category.name.toLowerCase().includes(needle),
-    );
-  }, [categories, query]);
-
-  const showAll = expanded || query.trim().length > 0;
-  const visible = showAll ? filtered : filtered.slice(0, VISIBLE_BY_DEFAULT);
-  const remaining = filtered.length - visible.length;
+  const visible = expanded ? categories : categories.slice(0, VISIBLE_BY_DEFAULT);
+  const remaining = categories.length - visible.length;
 
   const itemClass = (active: boolean) =>
     cn(
@@ -69,19 +61,13 @@ export function CatalogSidebar({
 
   return (
     <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
-      <div className="relative">
-        <SearchIcon
-          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
-        />
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t.searchPlaceholder}
-          aria-label={t.searchLabel}
-          className="pl-9"
-        />
-      </div>
+      <CatalogSearchForm
+        defaultValue={activeQuery}
+        hidden={{
+          type: activeType === "formations" ? "" : activeType,
+          tech: activeTech,
+        }}
+      />
 
       <div
         role="tablist"
@@ -95,7 +81,7 @@ export function CatalogSidebar({
               key={type}
               role="tab"
               aria-selected={active}
-              href={catalogueHref(type, activeTech)}
+              href={catalogueHref(type, activeTech, activeQuery)}
               className={cn(
                 "flex-1 rounded-lg px-3 py-2 text-center text-sm transition-colors",
                 active
@@ -119,7 +105,10 @@ export function CatalogSidebar({
 
         <ul className="mt-2 space-y-0.5">
           <li>
-            <Link href={catalogueHref(activeType, "")} className={itemClass(!activeTech)}>
+            <Link
+              href={catalogueHref(activeType, "", activeQuery)}
+              className={itemClass(!activeTech)}
+            >
               <span className="min-w-0 flex-1 truncate">{t.all}</span>
               <span className="text-xs tabular-nums">{totals[activeType]}</span>
             </Link>
@@ -130,13 +119,10 @@ export function CatalogSidebar({
             return (
               <li key={category.id}>
                 <Link
-                  href={catalogueHref(activeType, category.id)}
+                  href={catalogueHref(activeType, category.id, activeQuery)}
                   className={itemClass(activeTech === category.id)}
                 >
-                  <CategoryIcon
-                    name={category.icon}
-                    className="size-4 shrink-0"
-                  />
+                  <CategoryIcon name={category.icon} className="size-4 shrink-0" />
                   <span className="min-w-0 flex-1 truncate">{category.name}</span>
                   <span
                     className={cn(

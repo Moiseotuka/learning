@@ -102,12 +102,6 @@ export default async function TrackPage({
           >
             {t.trackMeta.modules(track.modules)}
           </Badge>
-          <Badge
-            variant="secondary"
-            className="rounded-full bg-muted text-muted-foreground"
-          >
-            {t.trackMeta.rating(track.rating)}
-          </Badge>
           {starting === null ? null : (
             <Badge
               variant="secondary"

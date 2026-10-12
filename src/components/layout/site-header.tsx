@@ -5,6 +5,7 @@ import { MenuIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AuthActions } from "@/components/auth/auth-actions";
+import { CatalogSearchForm } from "@/components/catalog/catalog-search-form";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -63,11 +64,16 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <CatalogSearchForm
+            variant="header"
+            className="hidden w-40 md:flex lg:w-56 xl:w-64"
+          />
+
           <Link
             href="/catalogue"
             title={t.nav.search}
             aria-label={t.nav.search}
-            className="hidden h-9 w-9 items-center justify-center rounded-lg border border-input bg-background/60 text-muted-foreground transition-colors hover:border-electric/50 hover:text-foreground md:flex"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-background/60 text-muted-foreground transition-colors hover:border-electric/50 hover:text-foreground md:hidden"
           >
             <SearchIcon className="size-4 shrink-0" aria-hidden />
           </Link>
@@ -96,6 +102,10 @@ export function SiteHeader() {
                   Navigation mobile de easyLearn
                 </SheetDescription>
               </SheetHeader>
+
+              <div className="px-4 pt-4">
+                <CatalogSearchForm variant="header" />
+              </div>
 
               <nav aria-label="Navigation mobile" className="flex flex-col gap-1 px-4 py-4">
                 {t.nav.items.map((item) => (

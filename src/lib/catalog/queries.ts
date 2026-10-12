@@ -8,6 +8,7 @@ import {
 import { startingPrice } from "@/lib/pricing";
 import { createPublicSupabase } from "@/lib/supabase/public";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { createServiceSupabase } from "@/lib/supabase/service";
 
 export type AdminCategory = Category & {
   published: boolean;
@@ -312,5 +313,60 @@ export async function getCatalogStats(): Promise<CatalogStats> {
     tracks: trackRows.length,
     publishedCategories: categoryRows.filter((row) => row.published).length,
     publishedTracks: trackRows.filter((row) => row.published).length,
+  };
+}
+
+export type CatalogNumbers = {
+  tracks: number;
+  chapters: number;
+  lessons: number;
+  categories: number;
+};
+
+type CountRow = {
+  published_tracks: number | string;
+  published_chapters: number | string;
+  video_lessons: number | string;
+  published_categories: number | string;
+};
+
+/**
+ * Compteurs réels publiés sur la vitrine : la fonction SQL `catalog_counts()`
+ * les calcule côté base, en ne comptant que le contenu publié.
+ */
+export async function getCatalogNumbers(): Promise<CatalogNumbers> {
+  const supabase = createServiceSupabase();
+  if (!supabase) {
+    return {
+      tracks: staticTracks.length,
+      chapters: 0,
+      lessons: 0,
+      categories: staticCategories.length,
+    };
+  }
+
+  const { data, error } = await supabase.rpc("catalog_counts");
+
+  if (error || !data) {
+    console.error(
+      "[catalog] compteurs",
+      error?.message ?? "no data",
+      "— appliquer la migration 202610120001_catalog_counts.sql",
+    );
+    return {
+      tracks: staticTracks.length,
+      chapters: 0,
+      lessons: 0,
+      categories: staticCategories.length,
+    };
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as CountRow;
+
+  return {
+    tracks: Number(row.published_tracks),
+    chapters: Number(row.published_chapters),
+    lessons: Number(row.video_lessons),
+    categories: Number(row.published_categories),
   };
 }

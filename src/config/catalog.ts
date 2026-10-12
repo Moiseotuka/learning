@@ -256,10 +256,3 @@ export const popularTracks: PopularTrack[] = [
     bestFor: "Créer une boutique WordPress fiable et convertissante",
   },
 ];
-
-export const keyStats = [
-  { value: 24800, suffix: "+", label: "Apprenants inscrits" },
-  { value: 52, suffix: "", label: "Parcours structurés" },
-  { value: 1400, suffix: "+", label: "Heures de contenu" },
-  { value: 3120, suffix: "", label: "Certificats délivrés" },
-] as const;

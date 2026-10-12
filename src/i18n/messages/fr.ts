@@ -30,23 +30,29 @@ export const fr = {
       "Des parcours structurés du Débutant au Projet final, des exercices pratiques corrigés, des quiz qui débloquent chaque chapitre et un certificat vérifiable. Conçu pour les apprenants d'Afrique francophone, léger sur mobile.",
     primaryCta: "Commencer gratuitement",
     secondaryCta: "Explorer les parcours",
-    note: "Sans carte bancaire · Paiement Mobile Money disponible · Accès immédiat au premier niveau",
     preview: {
       chapter: "Chapitre 3 · Boucles et conditions",
-      progress: "Progression du parcours",
-      video: "Vidéo 90 % · Quiz débloqué",
-      score: "Quiz réussi · 85 %",
+      progress: "6 chapitres sur 8 validés",
+      pathTitle: "Niveaux du parcours",
+      video: "Quiz débloqué",
+      score: "Vérifiable en ligne, sans compte",
+      caption:
+        "Aperçu de l’espace apprenant : la progression s’enregistre chapitre par chapitre.",
       levels: ["Fondamentaux", "Intermédiaire", "Avancé", "Projet"],
-      streak: "Série : 12 jours",
-      projectLabel: "Projet noté",
-      projectValue: "18 / 20 · accepté",
       certLabel: "Certificat émis",
       certValue: "EL-2026-7K3Q-9F2M",
     },
   },
 
   stats: {
-    note: "Chiffres de la plateforme, mis à jour chaque mois.",
+    eyebrow: "Le catalogue en chiffres",
+    items: {
+      tracks: "Parcours publiés",
+      chapters: "Chapitres structurés",
+      lessons: "Leçons vidéo",
+      categories: "Domaines technologiques",
+    },
+    note: "Chiffres calculés en direct sur le contenu publié, sans estimation.",
   },
 
   trust: {
@@ -74,7 +80,7 @@ export const fr = {
   categories: {
     id: "catalogue",
     eyebrow: "Catalogue",
-    title: "Dix univers technologiques, quatre niveaux chacun",
+    title: "Douze domaines technologiques, quatre niveaux chacun",
     description:
       "Chaque catégorie suit la même progression : Débutant, Intermédiaire, Avancé, puis un Projet noté. Filtrez par niveau pour voir les parcours déjà publiés.",
     filterLabel: "Filtrer par niveau",
@@ -95,7 +101,7 @@ export const fr = {
     eyebrow: "Comment ça marche",
     title: "Quatre étapes, du choix du parcours au certificat",
     description:
-      "Rien n'est laissé au hasard : chaque chapitre a des objectifs, une vidéo, un résumé, un exercice et un quiz obligatoire.",
+      "Rien n'est laissé au hasard : chaque chapitre contient des objectifs, des leçons vidéo, un résumé écrit, un exercice corrigé et un quiz obligatoire.",
     steps: [
       {
         n: "01",
@@ -122,16 +128,14 @@ export const fr = {
 
   tracks: {
     id: "parcours",
-    eyebrow: "Parcours populaires",
-    title: "Les formations les plus suivies",
+    eyebrow: "Parcours",
+    title: "Commencez par l'un de ces parcours",
     description:
-      "Chaque parcours contient quatre niveaux, des dizaines de chapitres et un projet final corrigé.",
+      "Chaque parcours est découpé en niveaux : chapitres courts, leçons vidéo, exercices corrigés et quiz de validation.",
     cta: "Détail du parcours",
+    allTracks: (n: number) => `Voir les ${n} parcours publiés`,
     badges: {
       duration: (h: number) => `${h} h`,
-      modules: (m: number) => `${m} modules`,
-      rating: (r: number) => `${r.toFixed(1)}`,
-      students: (s: number) => s.toLocaleString("fr-FR") + " apprenants",
       price: (p: number) => `${p} CDF`,
       free: "Gratuit",
       popular: "Populaire",
@@ -155,8 +159,41 @@ export const fr = {
       formations: "Formations",
       tutoriels: "Tutoriels",
     },
-    searchPlaceholder: "Chercher une technologie",
-    searchLabel: "Chercher une technologie",
+    searchPlaceholder: "Rechercher une technologie",
+    searchLabel: "Rechercher une technologie",
+    search: {
+      label: "Rechercher dans le catalogue",
+      placeholder:
+        "Un sujet, une technologie, un chapitre — ex. routage, Python, Arduino",
+      heroPlaceholder: "Que voulez-vous apprendre ? Ex. cybersécurité, SQL, ESP32",
+      headerPlaceholder: "Rechercher…",
+      submit: "Rechercher",
+      clear: "Effacer",
+      resultsFor: (query: string) => `Résultats pour « ${query} »`,
+      heading: "Rechercher une formation",
+      intro:
+        "Tapez un mot : la recherche couvre les parcours, les chapitres et les tutoriels publiés.",
+      none: (query: string) => `Aucun résultat pour « ${query} ».`,
+      noneHint:
+        "Essayez un seul mot-clé, ou parcourez les domaines ci-dessous.",
+      groups: {
+        formation: (n: number) => (n > 1 ? `${n} formations` : `${n} formation`),
+        chapitre: (n: number) => (n > 1 ? `${n} chapitres` : `${n} chapitre`),
+        tutoriel: (n: number) => (n > 1 ? `${n} tutoriels` : `${n} tutoriel`),
+      },
+      inTrack: (title: string) => `Dans « ${title} »`,
+      opening: "Ouvrir",
+      suggestions: [
+        "Python",
+        "Réseaux",
+        "Cybersécurité",
+        "HTML et CSS",
+        "Arduino",
+        "SQL",
+        "Machine learning",
+        "Raspberry Pi",
+      ],
+    },
     technologies: "Technologie",
     all: "Toutes",
     showMore: (n: number) => `Voir plus (${n})`,
@@ -207,44 +244,6 @@ export const fr = {
     },
   },
 
-  testimonials: {
-    eyebrow: "Témoignages",
-    title: "Ils ont transformé leur parcours",
-    items: [
-      {
-        name: "Grâce Mbuyi",
-        role: "Développeuse web junior, Kinshasa",
-        quote:
-          "La structure par niveaux m'a évité d'abandonner. Le quiz obligatoire à chaque chapitre fait toute la différence : on ne passe pas au suivant sans avoir compris.",
-        initials: "GM",
-        rating: 5,
-      },
-      {
-        name: "Aïcha Traoré",
-        role: "Étudiante en réseaux, Abidjan",
-        quote:
-          "Les exercices pratiques dans le navigateur, même avec une connexion moyenne, sont utilisables. J'ai décroché mon premier certificat en trois mois.",
-        initials: "AT",
-        rating: 5,
-      },
-      {
-        name: "Patrick Ilunga",
-        role: "Technicien informatique, Lubumbashi",
-        quote:
-          "Le niveau Projet m'a forcé à livrer quelque chose de réel. Mon portfolio a convaincu mon employeur avant même que je finisse le parcours.",
-        initials: "PI",
-        rating: 5,
-      },
-      {
-        name: "Fatou Ndiaye",
-        role: "Autodidacte, Dakar",
-        quote:
-          "Enfin une formation en français qui ne se contente pas de traduire des tutos. Les résumés écrits et le glossaire me font gagner un temps fou.",
-        initials: "FN",
-        rating: 4,
-      },
-    ],
-  },
 
   faq: {
     eyebrow: "Questions fréquentes",
@@ -256,7 +255,7 @@ export const fr = {
       },
       {
         q: "Les vidéos sont-elles produites par easyLearn ?",
-        a: "Non. Nous n'hébergeons ni ne revendons aucune vidéo tierce. Les ressources externes sont référencées par lien dans une section « Ressources recommandées », clairement séparée du contenu propriétaire : quiz, exercices, corrections, projets, suivi et certificats.",
+        a: "Les leçons vidéo sont sélectionnées une par une — en français, à jour — puis intégrées dans le lecteur de la plateforme. Vous suivez tout depuis easyLearn : aucune inscription sur un site vidéo externe n'est nécessaire. Autour de ces leçons, nous produisons les résumés écrits, les exercices, les corrections, les quiz, les projets, le suivi et les certificats.",
       },
       {
         q: "Puis-je suivre la formation sur mobile avec une connexion lente ?",
@@ -272,7 +271,7 @@ export const fr = {
       },
       {
         q: "Qui peut créer un parcours ?",
-        a: "L'équipe easyLearn et les formateurs partenaires accrédités. Tout le contenu, les quiz et les projets sont diffusés depuis la plateforme ; aucun compte sur un site vidéo externe n'est requis pour suivre une formation.",
+        a: "L'équipe pédagogique easyLearn. Chaque parcours est écrit avec ses objectifs, ses chapitres, ses exercices corrigés et ses quiz ; les leçons vidéo sont sélectionnées et vérifiées avant d'être publiées. Tout se consulte depuis la plateforme, sans compte externe.",
       },
       {
         q: "Puis-je essayer avant de payer ?",
@@ -373,69 +372,33 @@ export const fr = {
     },
   },
 
-  instructors: {
-    eyebrow: "Formateurs",
-    title: "Appris avec des praticiens, pas des slides",
-    description:
-      "Nos formateurs partenaires sont issus des entreprises et des écoles techniques francophones. Ils conçoivent les chapitres, corrigent les projets et animent leurs communautés.",
-    items: [
-      {
-        name: "David Kasongo",
-        role: "Ingénieur logiciel",
-        expertise: "Python · Django · API",
-        bio: "12 ans de développement backend, formateur de plus de 4 000 apprenants.",
-        initials: "DK",
-      },
-      {
-        name: "Aminata Diallo",
-        role: "Ingénieure réseau & sécurité",
-        expertise: "Réseaux · Linux · Pentest",
-        bio: "Ancienne administratrice réseau dans l'opérateur télécom, certifiée sécurité.",
-        initials: "AD",
-      },
-      {
-        name: "Samuel Mputu",
-        role: "Data scientist",
-        expertise: "Machine learning · Python",
-        bio: "Conçoit des modèles prédictifs pour l'agriculture et la santé en RDC.",
-        initials: "SM",
-      },
-      {
-        name: "Nadège Oyono",
-        role: "Ingénieure embarquée",
-        expertise: "Arduino · ESP32 · STM32",
-        bio: "Conception d'objets connectés et d'automates industriels depuis 8 ans.",
-        initials: "NO",
-      },
-    ],
-  },
 
   community: {
     id: "communaute",
-    eyebrow: "Communauté",
+    eyebrow: "Accompagnement",
     title: "Vous n'apprenez pas seul",
     description:
-      "Chaque parcours dispose de son espace d'entraide : forum sur la plateforme, groupe WhatsApp et salon Discord animés par le formateur. Les questions trouvent une réponse, les projets trouvent des relecteurs.",
+      "Rien n'est lâché dans la nature : la progression s'enregistre chapitre par chapitre, chaque exercice affiche sa correction, et une adresse répond aux questions qui bloquent réellement.",
     channels: [
       {
-        name: "Forum par parcours",
-        text: "Questions techniques, corrections partagées, recherche dans l'historique.",
+        name: "Support par e-mail",
+        text: "contact@easylearn.cd pour un blocage de parcours, de paiement ou de certificat.",
       },
       {
-        name: "Groupes WhatsApp",
-        text: "Rappels de révision, sessions de questions-réponses hebdomadaires.",
+        name: "Suivi de progression",
+        text: "Chapitres validés, scores de quiz et niveau courant : vous reprenez où vous étiez.",
       },
       {
-        name: "Salons Discord",
-        text: "Pair-programming, revues de code et veille technologique.",
+        name: "Entraide entre promotions",
+        text: "Les espaces d'entraide par parcours s'ouvrent au fur et à mesure des inscriptions.",
       },
     ],
     stats: [
-      { value: "18 000+", label: "Messages utiles classés" },
-      { value: "48 h", label: "Délai moyen de réponse" },
-      { value: "120+", label: "Sessions de révision par mois" },
+      { value: "4", label: "Niveaux par parcours" },
+      { value: "1 quiz", label: "Par chapitre, obligatoire" },
+      { value: "1 certificat", label: "Par niveau validé" },
     ],
-    cta: "Rejoindre la communauté",
+    cta: "Créer un compte gratuit",
   },
 
   about: {

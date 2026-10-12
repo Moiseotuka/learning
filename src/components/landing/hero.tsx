@@ -1,11 +1,18 @@
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRightIcon, BadgeCheckIcon, CheckIcon, LockIcon, PlayIcon, SparklesIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  BadgeCheckIcon,
+  CheckIcon,
+  LockIcon,
+  PlayIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
+} from "lucide-react";
 
-import { Counter } from "@/components/counter";
+import { CatalogSearchForm } from "@/components/catalog/catalog-search-form";
 import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
-import { keyStats } from "@/config/catalog";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 
@@ -37,12 +44,12 @@ export function Hero() {
         style={{ background: "radial-gradient(ellipse, var(--electric) 0%, transparent 70%)" }}
       />
 
-      <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pt-24 lg:pb-24">
+      <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pt-20 lg:pb-20">
         <div>
           <Reveal delay={0}>
             <div className="inline-flex items-center gap-2 rounded-full border border-hairline bg-card/80 px-3.5 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
               <SparklesIcon className="size-3.5 text-electric" aria-hidden />
-              Plateforme n°1 en Afrique francophone
+              100 % en français, du premier cours au projet noté
             </div>
           </Reveal>
 
@@ -56,14 +63,18 @@ export function Hero() {
             </h1>
           </Reveal>
 
-          <Reveal delay={160}>
+          <Reveal delay={150}>
             <p className="mt-6 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
               {t.hero.subtitle}
             </p>
           </Reveal>
 
-          <Reveal delay={240}>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <Reveal delay={220} className="mt-8">
+            <CatalogSearchForm variant="hero" />
+          </Reveal>
+
+          <Reveal delay={290}>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
               <Button asChild size="lg" className="h-12 px-6 text-base shadow-lg shadow-electric/25">
                 <Link href={links.signup}>
                   {t.hero.primaryCta}
@@ -81,92 +92,63 @@ export function Hero() {
             </div>
           </Reveal>
 
-          <Reveal delay={320}>
-            <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5">
-                <CheckIcon className="size-3.5 text-emerald-500" aria-hidden />
-                Sans carte bancaire
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <CheckIcon className="size-3.5 text-emerald-500" aria-hidden />
-                Mobile Money accepté
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <CheckIcon className="size-3.5 text-emerald-500" aria-hidden />
-                Accès immédiat
-              </span>
-            </div>
-          </Reveal>
-
-          <Reveal delay={400}>
-            <dl className="mt-10 grid grid-cols-2 gap-x-6 gap-y-6 border-t border-hairline pt-8 sm:grid-cols-4">
-              {keyStats.map((stat) => (
-                <div key={stat.label}>
-                  <dd className="text-2xl font-bold text-foreground sm:text-3xl">
-                    <Counter value={stat.value} suffix={stat.suffix} />
-                  </dd>
-                  <dt className="mt-1 text-xs leading-snug text-muted-foreground">
-                    {stat.label}
-                  </dt>
-                </div>
+          <Reveal delay={360}>
+            <ul className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+              {[
+                "Sans carte bancaire",
+                "Mobile Money accepté",
+                "Accès immédiat au premier niveau",
+              ].map((item) => (
+                <li key={item} className="inline-flex items-center gap-1.5">
+                  <CheckIcon className="size-3.5 text-emerald-500" aria-hidden />
+                  {item}
+                </li>
               ))}
-            </dl>
+            </ul>
           </Reveal>
         </div>
 
         <Reveal variant="scale" delay={200} className="relative">
-          <div className="relative mx-auto w-full max-w-[520px]">
+          <figure className="relative mx-auto w-full max-w-[520px]">
             <div className="overflow-hidden rounded-[28px] border border-hairline bg-card/90 shadow-[0_30px_80px_rgba(11,18,32,0.28)] backdrop-blur">
-              <div className="relative h-[340px] overflow-hidden">
+              <div className="relative h-[300px] overflow-hidden">
                 <Image
                   src={studyPhotos[0]}
-                  alt="Étudiants qui suivent un cours en groupe"
+                  alt="Apprenants qui suivent un cours en groupe"
                   fill
                   priority
                   sizes="(min-width: 1024px) 40vw, 100vw"
                   className="object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-900/10 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-900/25 to-transparent" />
 
-                <div className="absolute left-4 top-4 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm">
-                  Apprenants actifs
-                </div>
-
-                <div className="absolute right-4 top-4 rounded-2xl border border-white/15 bg-slate-950/60 px-3 py-2 text-left backdrop-blur-sm">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-300">Progression</p>
-                  <p className="mt-1 text-lg font-semibold text-white">42%</p>
-                </div>
-
-                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/15 bg-slate-950/55 p-4 backdrop-blur-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">{t.hero.preview.chapter}</p>
-                      <p className="mt-1 text-base font-semibold text-white">{t.hero.preview.progress}</p>
+                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/15 bg-slate-950/60 p-4 backdrop-blur-sm">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                    {t.hero.preview.chapter}
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-white">
+                    {t.hero.preview.progress}
+                  </p>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-electric to-vivid"
+                        style={{ width: "75%" }}
+                      />
                     </div>
-                    <span className="rounded-full bg-emerald-400/15 px-2 py-1 text-xs font-semibold text-emerald-300">
-                      +16 this week
+                    <span className="shrink-0 rounded-full bg-emerald-400/15 px-2 py-1 text-[11px] font-semibold text-emerald-300">
+                      {t.hero.preview.video}
                     </span>
-                  </div>
-
-                  <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-electric to-vivid"
-                      style={{ width: "42%" }}
-                    />
                   </div>
                 </div>
               </div>
 
-              <div className="grid gap-4 border-t border-hairline bg-card/90 p-5 sm:grid-cols-[1.2fr_0.8fr]">
+              <div className="grid gap-4 border-t border-hairline p-5 sm:grid-cols-[1.15fr_0.85fr]">
                 <div>
-                  <div className="mb-3 flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">Parcours actuels</p>
-                    <span className="rounded-full bg-electric/15 px-2.5 py-1 text-[10px] font-semibold text-electric">
-                      LIVE
-                    </span>
-                  </div>
-
-                  <ul className="space-y-3">
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    {t.hero.preview.pathTitle}
+                  </p>
+                  <ul className="space-y-2.5">
                     {t.hero.preview.levels.map((level, index) => (
                       <li
                         key={level}
@@ -193,60 +175,41 @@ export function Hero() {
                         <span className={`flex-1 text-sm ${index > 1 ? "text-muted-foreground" : "text-foreground"}`}>
                           {level}
                         </span>
-                        {index === 1 && (
-                          <span className="text-[10px] text-vivid">{t.hero.preview.video}</span>
-                        )}
                       </li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="rounded-2xl border border-hairline bg-background/60 p-3">
-                    <div className="flex -space-x-2">
-                      {studyPhotos.map((photo, index) => (
-                        <div
-                          key={photo}
-                          className="relative h-10 w-10 overflow-hidden rounded-full border-2 border-card bg-muted"
-                          style={{ zIndex: 10 - index }}
-                        >
-                          <Image
-                            src={photo}
-                            alt={`Étudiant ${index + 1}`}
-                            fill
-                            sizes="40px"
-                            className="object-cover"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">+380 apprenants actifs</p>
-                    <p className="mt-1 text-lg font-semibold text-foreground">4.8/5</p>
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-2xl border border-hairline bg-emerald-500/10 p-3.5">
+                    <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-emerald-600 dark:text-emerald-400">
+                      <BadgeCheckIcon className="size-3.5" aria-hidden />
+                      {t.hero.preview.certLabel}
+                    </p>
+                    <p className="mt-2 font-mono text-sm font-semibold text-foreground">
+                      {t.hero.preview.certValue}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                      {t.hero.preview.score}
+                    </p>
                   </div>
 
-                  <div className="rounded-2xl border border-hairline bg-emerald-500/10 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-500">Certification</p>
-                    <p className="mt-2 text-xl font-bold text-foreground">{t.hero.preview.certValue}</p>
-                    <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
-                      <BadgeCheckIcon className="size-3.5" aria-hidden />
-                      {t.hero.preview.score}
-                    </div>
-                  </div>
+                  <Link
+                    href={links.verify}
+                    className="mt-auto inline-flex items-center gap-1.5 rounded-xl border border-hairline bg-background/60 px-3 py-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-electric/50 hover:text-foreground"
+                  >
+                    <ShieldCheckIcon className="size-3.5 text-electric" aria-hidden />
+                    {t.certificates.verifyLabel}
+                    <ArrowRightIcon className="size-3.5" aria-hidden />
+                  </Link>
                 </div>
               </div>
             </div>
 
-            <div className="absolute -top-5 -left-4 hidden rounded-xl border border-hairline bg-card px-3.5 py-2.5 text-xs shadow-lg sm:block">
-              <span className="text-muted-foreground">{t.hero.preview.projectLabel}</span>
-              <p className="font-semibold">{t.hero.preview.projectValue}</p>
-            </div>
-            <div
-              className="absolute -right-4 -bottom-5 hidden rounded-xl border border-hairline bg-card px-3.5 py-2.5 text-xs shadow-lg sm:block"
-            >
-              <span className="text-muted-foreground">{t.hero.preview.certLabel}</span>
-              <p className="font-semibold">{t.hero.preview.certValue}</p>
-            </div>
-          </div>
+            <figcaption className="mt-3 text-center text-xs text-muted-foreground">
+              {t.hero.preview.caption}
+            </figcaption>
+          </figure>
         </Reveal>
       </div>
     </section>
