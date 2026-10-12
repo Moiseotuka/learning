@@ -17,7 +17,8 @@ export function extractYouTubeId(url: string): string | null {
     const host = parsed.hostname.replace(/^www\./, "");
 
     if (host === "youtu.be") {
-      const id = parsed.searchParams.get("v") ?? parsed.pathname.split("/").filter(Boolean).at(0);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      const id = parsed.searchParams.get("v") ?? parts[0];
       return id && id.length > 0 ? id : null;
     }
 

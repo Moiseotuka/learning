@@ -67,7 +67,7 @@ function ResourceFrame({
     >
       <DialogContent
         showCloseButton={false}
-        className="top-0 left-0 h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 rounded-none border-0 p-0"
+        className="top-0 left-0 h-fullscreen w-screen max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 rounded-none border-0 p-0"
       >
         <div className="flex h-14 shrink-0 items-center gap-3 border-b border-hairline bg-card px-3 sm:px-4">
           <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-electric/10 text-electric">

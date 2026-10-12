@@ -890,6 +890,12 @@ export const fr = {
     videoRewatch: "Revoir la leçon",
     reviewVideos: "Voir les leçons",
     videoAutoNext: "La leçon suivante démarre automatiquement…",
+    videoPosterPlay: "Lire la leçon",
+    videoPosterHint:
+      "Appuyez sur l'image pour démarrer la leçon : rien ne se charge avant votre clic.",
+    videoLoading: "Chargement de la leçon…",
+    videoLoadingSlow:
+      "Connexion lente détectée : la vidéo peut mettre une minute à apparaître.",
     videoLabel: (position: number, index: number) =>
       `Leçon ${position}.${index}`,
     tutorial: {

@@ -15,6 +15,7 @@ import {
 
 import { messages } from "@/i18n";
 import { toEmbedUrl } from "@/lib/embed-url";
+import { DEFAULT_PROFILE, readDeviceProfile } from "@/lib/learning/device-profile";
 import { cn } from "cn";
 
 const t = messages.learner;
@@ -57,19 +58,17 @@ declare global {
 const STATE_PLAYING = 1;
 const STATE_ENDED = 0;
 const STATE_BUFFERING = 3;
-/** Délai avant d'afficher le secours « vidéo qui ne se lance pas » (bot-check). */
-const BLOCKED_DELAY_MS = 4000;
-/** Un clic « Lire » sans réaction du lecteur dans ce délai déclenche le secours. */
-const PLAY_START_TIMEOUT_MS = 3500;
+/** Format d'identifiant YouTube : conditionne l'affichage de la vignette. */
+const VIDEO_ID = /^[\w-]{11}$/;
 
 let apiPromise: Promise<boolean> | null = null;
 
-function loadYouTubeApi(): Promise<boolean> {
+function loadYouTubeApi(timeoutMs: number): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
   if (window.YT?.Player) return Promise.resolve(true);
   if (!apiPromise) {
     apiPromise = new Promise<boolean>((resolve) => {
-      const timer = window.setTimeout(() => resolve(false), 5000);
+      const timer = window.setTimeout(() => resolve(false), timeoutMs);
       const previous = window.onYouTubeIframeAPIReady;
       window.onYouTubeIframeAPIReady = () => {
         window.clearTimeout(timer);
@@ -164,10 +163,17 @@ export function YouTubePlayer({
   const onEndedRef = useRef<(() => void) | undefined>(undefined);
   const onSkippedRef = useRef<(() => void) | undefined>(undefined);
   const autoplayRef = useRef(false);
+  /** Le clic sur la vignette compte comme le geste que le navigateur exige. */
+  const tappedRef = useRef(false);
   const blockTimer = useRef<number | undefined>(undefined);
   const playGuardTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
 
+  const [profile, setProfile] = useState(DEFAULT_PROFILE);
+  const [canFullscreen, setCanFullscreen] = useState(false);
+  /** Vignette tant que le learner n'a pas lancé la leçon : aucune donnée vidéo
+   *  ne part sur un téléphone ancien ou une ligne 3G avant un vrai clic. */
+  const [armed, setArmed] = useState(() => autoplay);
   const [readyId, setReadyId] = useState<string | null>(null);
   const [fallbackId, setFallbackId] = useState<string | null>(null);
   const [errorId, setErrorId] = useState<string | null>(null);
@@ -207,6 +213,12 @@ export function YouTubePlayer({
     autoplayRef.current = autoplay;
   }, [autoplay]);
 
+  // Le profil réseau/matériel n'existe que côté téléphone : le lire pendant
+  // l'hydratation donnerait une vignette différente de celle du serveur.
+  useEffect(() => {
+    setProfile(readDeviceProfile());
+  }, []);
+
   const showBar = useCallback(() => {
     setBarVisible(true);
     window.clearTimeout(hideTimer.current);
@@ -228,18 +240,47 @@ export function YouTubePlayer({
       const time = playerRef.current?.getCurrentTime() ?? 0;
       if (time > 0) return;
       setBlockedId(videoId);
-    }, BLOCKED_DELAY_MS);
-  }, [videoId]);
+    }, profile.blockMs);
+  }, [videoId, profile.blockMs]);
 
-  /** Après un clic « Lire » : si le lecteur ne réagit ni en lecture ni en
-   *  mise en tampon sous 3,5 s, on bascule sur le panneau de secours. */
+  /** Après une demande de lecture : si le lecteur ne réagit ni en lecture ni en
+   *  mise en tampon dans le délai, on bascule sur le panneau de secours. Le
+   *  délai s'allonge d'office sur connexion lente, où l'API arrive en minute. */
   const armPlayGuard = useCallback(() => {
     window.clearTimeout(playGuardTimer.current);
     playGuardTimer.current = window.setTimeout(() => {
       if (playingRef.current) return;
       setBlockedId(videoId);
-    }, PLAY_START_TIMEOUT_MS);
-  }, [videoId]);
+    }, profile.playGuardMs);
+  }, [videoId, profile.playGuardMs]);
+
+  useEffect(() => {
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+    };
+    setCanFullscreen(
+      Boolean(
+        document.fullscreenEnabled || "webkitFullscreenElement" in document,
+      ),
+    );
+    const onChange = () =>
+      setIsFullscreen(
+        Boolean(document.fullscreenElement || doc.webkitFullscreenElement),
+      );
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+    };
+  }, []);
+
+  /** Lance la leçon depuis la vignette : le clic est le geste attendu par le
+   *  navigateur, donc la lecture démarre sans autoplay bloqué. */
+  const startFromPoster = useCallback(() => {
+    tappedRef.current = true;
+    setArmed(true);
+  }, []);
 
   const canMarkWatched = Boolean(onSkipped || onEnded);
 
@@ -264,13 +305,14 @@ export function YouTubePlayer({
   }, []);
 
   useEffect(() => {
+    if (!armed) return;
     let cancelled = false;
     let created: YTPlayer | null = null;
     let slot: HTMLElement | null = null;
 
     startedRef.current = false;
 
-    void loadYouTubeApi().then((ok) => {
+    void loadYouTubeApi(profile.apiTimeoutMs).then((ok) => {
       if (cancelled) return;
       if (!ok || !containerRef.current || !window.YT) {
         setFallbackId(videoId);
@@ -305,7 +347,7 @@ export function YouTubePlayer({
             setPlaying(false);
             setMuted(event.target.isMuted());
             setReadyId(videoId);
-            if (autoplayRef.current) {
+            if (autoplayRef.current || tappedRef.current) {
               event.target.playVideo();
               armBlockWatch();
               armPlayGuard();
@@ -397,7 +439,7 @@ export function YouTubePlayer({
       slot?.remove();
       playerRef.current = null;
     };
-  }, [videoId, showBar, title, attempt, armBlockWatch, armPlayGuard, clearBlockWatch]);
+  }, [armed, videoId, showBar, title, attempt, profile.apiTimeoutMs, armBlockWatch, armPlayGuard, clearBlockWatch]);
 
   useEffect(() => {
     if (!isReady || !playing) return;
@@ -411,12 +453,6 @@ export function YouTubePlayer({
     }, 500);
     return () => window.clearInterval(id);
   }, [isReady, playing]);
-
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
 
   const togglePlay = () => {
     const player = playerRef.current;
@@ -456,11 +492,35 @@ export function YouTubePlayer({
     showBar();
   };
 
+  /** Les WebViews anciens ne connaissent que la version préfixée ; iOS Safari
+   *  n'a aucune des deux, d'où le bouton masqué quand rien n'est disponible. */
   const toggleFullscreen = () => {
-    if (document.fullscreenElement) {
-      void document.exitFullscreen();
-    } else {
-      void containerRef.current?.requestFullscreen();
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+    const box = containerRef.current as
+      | (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> | void })
+      | null;
+    const active = document.fullscreenElement || doc.webkitFullscreenElement;
+    if (active) {
+      try {
+        if (document.fullscreenElement) void document.exitFullscreen();
+        else void doc.webkitExitFullscreen?.();
+      } catch {
+        // sortie déjà engagée
+      }
+      return;
+    }
+    if (!box) return;
+    try {
+      if (typeof box.requestFullscreen === "function") {
+        void box.requestFullscreen();
+      } else {
+        void box.webkitRequestFullscreen?.();
+      }
+    } catch {
+      // intégration refusée en plein écran : on reste en lecture normale
     }
   };
 
@@ -493,6 +553,50 @@ export function YouTubePlayer({
   const fallbackSrc = isFallback
     ? toEmbedUrl(`https://www.youtube.com/watch?v=${videoId}`)
     : null;
+
+  const posterSrc = VIDEO_ID.test(videoId)
+    ? `https://i.ytimg.com/vi/${videoId}/${
+        profile.poster === "mq" ? "mqdefault" : "hqdefault"
+      }.jpg`
+    : null;
+
+  if (!armed) {
+    return (
+      <div className={cn("w-full", fill && "absolute inset-0", className)}>
+        <div
+          className={cn(
+            "relative w-full overflow-hidden bg-black",
+            fill ? "h-full" : "aspect-video",
+          )}
+        >
+          <button
+            type="button"
+            onClick={startFromPoster}
+            aria-label={t.videoPosterPlay}
+            className="absolute inset-0 grid cursor-pointer place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
+          >
+            {posterSrc ? (
+              // Vignette maison : ~15 Ko, contre ~1 Mo pour le lecteur complet.
+              <img
+                src={posterSrc}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : null}
+            <span className="absolute inset-0 bg-black/30" aria-hidden />
+            <span className="relative grid h-16 w-16 place-items-center rounded-full bg-white text-electric-strong sm:h-20 sm:w-20">
+              <PlayIcon className="size-7 fill-current" aria-hidden />
+            </span>
+          </button>
+        </div>
+        {fill ? null : (
+          <p className="mt-2 text-center text-[11px] leading-snug text-muted-foreground">
+            {t.videoPosterHint}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   if (hasError) {
     return (
@@ -683,31 +787,38 @@ export function YouTubePlayer({
               <span className="text-[11px] tabular-nums text-white/85">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
-              <button
-                type="button"
-                onClick={toggleFullscreen}
-                aria-label={
-                  isFullscreen ? t.player.exitFullscreen : t.player.fullscreen
-                }
-                className="ml-auto grid size-7 cursor-pointer place-items-center rounded-md transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
-              >
-                {isFullscreen ? (
-                  <MinimizeIcon className="size-4" aria-hidden />
-                ) : (
-                  <MaximizeIcon className="size-4" aria-hidden />
-                )}
-              </button>
+              {canFullscreen ? (
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  aria-label={
+                    isFullscreen ? t.player.exitFullscreen : t.player.fullscreen
+                  }
+                  className="ml-auto grid size-7 cursor-pointer place-items-center rounded-md transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
+                >
+                  {isFullscreen ? (
+                    <MinimizeIcon className="size-4" aria-hidden />
+                  ) : (
+                    <MaximizeIcon className="size-4" aria-hidden />
+                  )}
+                </button>
+              ) : (
+                <span className="ml-auto" aria-hidden />
+              )}
             </div>
           </div>
         </>
       ) : null}
 
       {!isReady && !fallbackSrc ? (
-        <div className="absolute inset-0 z-10 grid place-items-center">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black px-6 text-center">
           <span
-            className="size-9 animate-spin rounded-full border-2 border-white/30 border-t-white"
+            className="h-9 w-9 animate-spin rounded-full border-2 border-white/30 border-t-white"
             aria-hidden
           />
+          <p className="text-xs text-white/70">
+            {profile.slow ? t.videoLoadingSlow : t.videoLoading}
+          </p>
         </div>
       ) : null}
     </div>

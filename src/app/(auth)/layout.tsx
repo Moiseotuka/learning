@@ -7,7 +7,7 @@ export default function AuthLayout({
 }) {
   return (
     <>
-      <AppHeader homeHref="/" showAuth={false} />
+      <AppHeader showAuth={false} />
       <main className="flex-1">{children}</main>
     </>
   );

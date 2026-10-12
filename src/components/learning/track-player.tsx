@@ -75,7 +75,7 @@ export function TrackPlayer({
   return (
     <ResourceViewerProvider>
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <div className="flex h-[100dvh] flex-col bg-background">
+        <div className="flex h-fullscreen flex-col bg-background">
           <header className="flex h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4 sm:px-5">
             <Link
               href="/"

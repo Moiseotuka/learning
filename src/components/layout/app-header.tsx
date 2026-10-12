@@ -8,6 +8,7 @@ import { AuthActions } from "@/components/auth/auth-actions";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { messages } from "@/i18n";
+import { links } from "@/config/site";
 import { cn } from "@/lib/utils";
 
 const t = messages;
@@ -15,11 +16,9 @@ const t = messages;
 export type AppHeaderItem = { label: string; href: string };
 
 export function AppHeader({
-  homeHref,
   navItems,
   showAuth = true,
 }: {
-  homeHref: string;
   navItems?: AppHeaderItem[];
   showAuth?: boolean;
 }) {
@@ -45,7 +44,7 @@ export function AppHeader({
       )}
     >
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-3 px-4 sm:px-6 lg:gap-6">
-        <Link href={homeHref} aria-label={t.meta.title} className="shrink-0">
+        <Link href={links.home} aria-label={t.meta.title} className="shrink-0">
           <Logo />
         </Link>
 

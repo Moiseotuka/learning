@@ -9,7 +9,6 @@ export default function LearnerLayout({
   return (
     <>
       <AppHeader
-        homeHref="/app"
         navItems={[
           { label: messages.nav.catalogue, href: "/catalogue" },
           { label: messages.learner.profil.title, href: "/app/profil" },

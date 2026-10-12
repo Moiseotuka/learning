@@ -9,7 +9,6 @@ export default function AdminRootLayout({
   return (
     <>
       <AppHeader
-        homeHref="/admin"
         navItems={[{ label: messages.auth.mySpace, href: "/app" }]}
       />
       <main className="flex-1">{children}</main>
