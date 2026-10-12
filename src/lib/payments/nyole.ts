@@ -55,9 +55,21 @@ export function nyoleSecretKey(): string | null {
   return key && key.startsWith("af_") ? key : null;
 }
 
-/** Provider actif : nyole seulement si activé ET configuré. */
+/**
+ * Provider actif. En production hébergée, `PAYMENT_PROVIDER=nyole` fait foi :
+ * une clé absente ou mal formée doit bloquer l'achat, surtout pas basculer sur
+ * le mode simulé, qui ouvre les niveaux payés sans le moindre paiement.
+ */
 export function activePaymentProvider(): "mock" | "nyole" {
-  if (process.env.PAYMENT_PROVIDER === "nyole" && nyoleSecretKey()) {
+  if (process.env.PAYMENT_PROVIDER !== "nyole") return "mock";
+  if (nyoleSecretKey()) return "nyole";
+
+  if (process.env.VERCEL_ENV === "production") {
+    console.error(
+      "[nyole] PAYMENT_PROVIDER=nyole sans clé exploitable : paiement refusé " +
+        "plutôt que simulé (une valeur masquée type « [SENSITIVE] » a pu être " +
+        "recopiée dans la variable d'environnement).",
+    );
     return "nyole";
   }
   return "mock";

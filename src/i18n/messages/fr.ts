@@ -360,7 +360,8 @@ export const fr = {
     lockBadge: "Verrouillé",
     errors: {
       "no-price": "Ce niveau n'a pas encore de prix défini par l'administrateur.",
-      "not-configured": "Base Supabase non configurée.",
+      "not-configured":
+        "Le paiement en ligne n'est pas configuré sur ce site. Prévenez l'administrateur.",
       failed: "Le paiement a échoué. Réessayez dans un instant.",
       missing: "Domaine ou niveau introuvable.",
       "nyole-unavailable":
