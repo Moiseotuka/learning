@@ -118,7 +118,7 @@ export const fr = {
       },
       {
         n: "03",
-        title: "Pratiquer sur des projets",
+        title: "Pratiquer dans l'éditeur",
         text: "Éditeur de code intégré et exercices guidés corrigés, avec le barème affiché avant de rendre.",
       },
       {

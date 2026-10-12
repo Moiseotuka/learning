@@ -7,12 +7,12 @@ const comparisons = [
   {
     label: "Structure pédagogique",
     traditional: "Catalogue de vidéos sans progression",
-    easyLearn: "Parcours ordonnés du débutant au projet final",
+    easyLearn: "Parcours ordonnés, du Débutant au niveau Avancé",
   },
   {
     label: "Pratique",
     traditional: "Théorie uniquement, pas d'exercices",
-    easyLearn: "Éditeur de code intégré, quiz, projets notés",
+    easyLearn: "Éditeur de code intégré, quiz et exercices notés",
   },
   {
     label: "Suivi",

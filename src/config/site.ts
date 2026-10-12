@@ -79,7 +79,7 @@ export const site = {
   name: "easyLearn",
   tagline: "Apprenez la technologie, prouvez-le",
   description:
-    "Plateforme e-learning francophone : des parcours structurés du Débutant au Projet final, des exercices pratiques, des quiz corrigés et un certificat vérifiable.",
+    "Plateforme e-learning francophone : des parcours structurés du Débutant au niveau Avancé, des exercices pratiques, des quiz corrigés et un certificat vérifiable.",
   url: resolveSiteUrl(),
   locale: "fr-FR",
   keywords: [
