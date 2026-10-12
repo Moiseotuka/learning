@@ -13,15 +13,15 @@ export const legalDocs: LegalDoc[] = [
     title: "Mentions légales",
     updated: "30 septembre 2026",
     intro:
-      "Les informations ci-dessous identifient l'éditeur de la plateforme easyLearn. Elles doivent être complétées avec les coordonnées juridiques définitives avant la mise en production.",
+      "Les informations ci-dessous identifient l'éditeur de la plateforme easyLearn et précisent les conditions d'utilisation du service.",
     sections: [
       {
         heading: "Éditeur du site",
-        body: "easyLearn est une plateforme d'apprentissage en ligne éditée par [raison sociale], immatriculée au [registre de commerce], dont le siège est situé à [adresse], Kinshasa, République démocratique du Congo.",
+        body: "easyLearn est une plateforme d'apprentissage en ligne éditée depuis Kinshasa, République démocratique du Congo. La raison sociale, le numéro d'immatriculation au registre de commerce et l'adresse du siège sont communiqués sur simple demande à contact@easylearn.cd.",
       },
       {
         heading: "Directeur de publication",
-        body: "Le directeur de la publication est [nom du responsable], en qualité de représentant légal de l'éditeur.",
+        body: "La publication est assurée par la direction d'easyLearn. Le nom du responsable de publication est communiqué sur simple demande à contact@easylearn.cd.",
       },
       {
         heading: "Hébergement",
@@ -29,11 +29,11 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Paiements",
-        body: "Les paiements Mobile Money et par carte bancaire sont traités par le prestataire nyole. easyLearn ne stocke aucune donnée de carte bancaire.",
+        body: "Les paiements Mobile Money et par carte bancaire sont traités par le prestataire Nyole. easyLearn ne stocke aucune donnée de carte bancaire.",
       },
       {
         heading: "Propriété intellectuelle",
-        body: "Les quiz, exercices, corrections, projets, certificats, textes pédagogiques et éléments graphiques de la plateforme sont la propriété d'easyLearn ou de ses formateurs partenaires. Les ressources externes sont uniquement référencées par lien.",
+        body: "Les quiz, exercices, corrections, projets, certificats, textes pédagogiques et éléments graphiques de la plateforme sont la propriété d'easyLearn ou de ses formateurs partenaires. Les leçons vidéo intégrées dans les parcours restent la propriété de leurs auteurs respectifs ; elles sont lues dans l'application et leurs crédits figurent sur la page des crédits.",
       },
       {
         heading: "Contact",
@@ -58,11 +58,11 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Accès payant",
-        body: "Le paiement d'un parcours ou d'un abonnement ouvre l'accès aux niveaux correspondants. Le paiement est confirmé par notre serveur après notification signée du prestataire de paiement.",
+        body: "Le paiement d'un niveau ouvre l'accès aux chapitres, quiz et certificats de ce niveau. Le paiement est confirmé par notre serveur après notification signée du prestataire de paiement.",
       },
       {
-        heading: "Résiliation",
-        body: "L'abonnement peut être résilié à tout moment ; l'accès reste actif jusqu'à la fin de la période payée. Les conditions de remboursement sont indiquées au moment de l'achat.",
+        heading: "Accès et durée",
+        body: "Chaque niveau se paie une seule fois et reste accessible sans limite de durée : il n'y a ni abonnement, ni résiliation, ni prélèvement récurrent. Toute difficulté de paiement est signalée à contact@easylearn.cd et examinée après vérification auprès du prestataire.",
       },
       {
         heading: "Conduite attendue",
@@ -91,7 +91,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Sous-traitants",
-        body: "Supabase (base de données, authentification, stockage), Vercel (hébergement), Resend (e-mails transactionnels), nyole (paiements).",
+        body: "Supabase (base de données, authentification, stockage), Vercel (hébergement), Resend (e-mails transactionnels), Nyole (paiements).",
       },
       {
         heading: "Conservation",

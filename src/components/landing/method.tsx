@@ -6,7 +6,7 @@ import { Section, SectionHeading } from "@/components/section";
 const comparisons = [
   {
     label: "Structure pédagogique",
-    traditional: "Catalogue de vidéas sans progression",
+    traditional: "Catalogue de vidéos sans progression",
     easyLearn: "Parcours ordonnés du débutant au projet final",
   },
   {

@@ -6,6 +6,7 @@ import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
 import { ensureCertificates } from "@/lib/certificates/issue";
+import { EXAM_SIZE } from "@/lib/learning/exam-size";
 import {
   getLearnerTrack,
   getLevelGradedQuestions,
@@ -17,7 +18,6 @@ import { createServiceSupabase } from "@/lib/supabase/service";
 const t = messages.learner;
 
 const LEVELS = ["debutant", "intermediaire", "avance", "projet"] as const;
-const EXAM_SIZE = 10;
 
 function readTextValue(formData: FormData, key: string) {
   const value = formData.get(key);

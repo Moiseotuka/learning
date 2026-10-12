@@ -169,7 +169,7 @@ export function CheckoutDialog({
               data-testid="checkout-close"
               onClick={onClose}
             >
-              Fermer
+              {t.returnClose}
             </Button>
           </div>
         </div>

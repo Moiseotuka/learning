@@ -6,6 +6,7 @@ import {
   type PopularTrack,
 } from "@/config/catalog";
 import { startingPrice } from "@/lib/pricing";
+import { cleanVideoTitle } from "@/lib/learning/video-title";
 import { createPublicSupabase } from "@/lib/supabase/public";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createServiceSupabase } from "@/lib/supabase/service";
@@ -36,8 +37,6 @@ type TrackRow = {
   duration_hours: number;
   modules_count: number;
   price_usd: number | null;
-  rating: number;
-  students: number;
   categories: { id: string; name: string } | null;
 };
 
@@ -45,7 +44,7 @@ const categorySelect =
   "id,slug,name,description,icon,levels,track_count,position,published";
 
 const trackSelect =
-  "category_id,slug,title,description,level,duration_hours,modules_count,price_usd,rating,students,categories(id,name)";
+  "category_id,slug,title,description,level,duration_hours,modules_count,price_usd,categories(id,name)";
 
 function toCategory(row: CategoryRow): Category {
   return {
@@ -73,8 +72,6 @@ function toTrack(row: TrackRow): PopularTrack {
     durationHours: row.duration_hours,
     modules: row.modules_count,
     priceUsd: row.price_usd,
-    rating: Number(row.rating ?? 0),
-    students: row.students ?? 0,
     bestFor: row.description,
   };
 }
@@ -191,7 +188,9 @@ function toTutorial(row: TutorialRow): CatalogTutorial {
   return {
     id: row.id,
     slug: row.slug,
-    title: row.title,
+    // Le titre brut vient de l'hébergeur : emojis et nom de chaîne n'ont rien à
+    // faire dans une interface pédagogique.
+    title: cleanVideoTitle(row.title, row.channel) || row.title,
     summary: row.summary,
     url: row.url,
     channel: row.channel,

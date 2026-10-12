@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 const lu = messages.levelUp;
 const levelLabels = messages.common.levels;
+const closeLabel = messages.common.close;
 
 type LevelUpNotificationProps = {
   currentLevel?: LevelType;
@@ -122,7 +123,7 @@ export function LevelUpNotification({
           <button
             type="button"
             onClick={dismiss}
-            aria-label="Fermer"
+            aria-label={closeLabel}
             className="grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <XIcon className="size-4" aria-hidden />

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { levels } from "@/config/catalog";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
+import { levelHasContent } from "@/lib/payments/availability";
 import { activePaymentProvider } from "@/lib/payments/nyole";
 import { createServerSupabase } from "@/lib/supabase/server";
 
@@ -54,8 +55,13 @@ export default async function BuyLevelPage({
         .eq("level", levelKey)
         .maybeSingle())?.data ?? null)
     : null;
+  // Un tarif sans chapitres publiés derrière ne se vend pas (voir startCheckout).
+  const sellable =
+    valid &&
+    Boolean(priceRow) &&
+    (await levelHasContent(categoryId, levelKey));
 
-  if (!supabase || !valid || !category || !priceRow) {
+  if (!supabase || !valid || !category || !priceRow || !sellable) {
     const notice = !supabase
       ? messages.admin.notConfigured
       : error && error in t.errors
@@ -63,7 +69,9 @@ export default async function BuyLevelPage({
         : valid && category && !priceRow
           ? // Paramètres valides mais aucun prix saisi dans le back-office.
             t.errors["no-price"]
-          : t.errors.missing;
+          : !sellable
+            ? t.errors["no-content"]
+            : t.errors.missing;
     return (
       <div className="mx-auto w-full max-w-xl px-4 py-12 sm:px-6">
         <Notice tone="error">{notice}</Notice>

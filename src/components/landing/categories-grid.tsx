@@ -35,7 +35,12 @@ export function CategoriesGrid({ categories }: CategoriesGridProps) {
     [filter, categories],
   );
 
-  const filters: Filter[] = ["tous", ...levels];
+  const filters: Filter[] = [
+    "tous",
+    ...levels.filter((level) =>
+      categories.some((category) => category.levels.includes(level)),
+    ),
+  ];
 
   return (
     <Section id={t.categories.id} className="bg-background">
@@ -91,7 +96,9 @@ export function CategoriesGrid({ categories }: CategoriesGridProps) {
                       {category.name}
                     </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {t.categories.tracksLabel(category.trackCount)}
+                      {category.trackCount > 0
+                        ? t.categories.levelsLabel(category.levels.length)
+                        : t.categories.soonLabel}
                     </p>
                   </div>
                 </div>
@@ -125,24 +132,33 @@ export function CategoriesGrid({ categories }: CategoriesGridProps) {
                   })}
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-hairline pt-4">
+                <div className="mt-5 flex items-center justify-between gap-2 border-t border-hairline pt-4">
                   <Badge
                     variant="secondary"
-                    className="rounded-full bg-electric/10 text-electric hover:bg-electric/15"
+                    className={cn(
+                      "rounded-full",
+                      category.trackCount > 0
+                        ? "bg-electric/10 text-electric hover:bg-electric/15"
+                        : "bg-muted text-muted-foreground",
+                    )}
                   >
-                    {t.categories.tracksLabel(category.trackCount)}
+                    {category.trackCount > 0
+                      ? t.categories.tracksLabel(category.trackCount)
+                      : t.categories.soonLabel}
                   </Badge>
-                  <Button
-                    asChild
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground group-hover:text-electric"
-                  >
-                    <Link href={`/catalogue?tech=${category.id}`}>
-                      {t.categories.cta}
-                      <ArrowRightIcon className="size-3.5" aria-hidden />
-                    </Link>
-                  </Button>
+                  {category.trackCount > 0 ? (
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground group-hover:text-electric"
+                    >
+                      <Link href={`/catalogue?tech=${category.id}`}>
+                        {t.categories.cta}
+                        <ArrowRightIcon className="size-3.5" aria-hidden />
+                      </Link>
+                    </Button>
+                  ) : null}
                 </div>
               </article>
             </Reveal>

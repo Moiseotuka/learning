@@ -1,4 +1,5 @@
 import { popularTracks as staticTracks, type LevelType } from "@/config/catalog";
+import { cleanVideoTitle } from "@/lib/learning/video-title";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 export type CatalogSearchKind = "formation" | "chapitre" | "tutoriel";
@@ -204,7 +205,7 @@ function unwrap<T>(value: unknown): T | null {
 const TRACK_SELECT = "slug,title,description,level,categories(id,name)";
 const CHAPTER_SELECT =
   "id,slug,title,summary,level,track:tracks(slug,title,category_id,categories(id,name))";
-const TUTORIAL_SELECT = "slug,title,summary,level,categories(id,name)";
+const TUTORIAL_SELECT = "slug,title,summary,level,channel,categories(id,name)";
 
 function category(value: unknown): { id: string; name: string } {
   const ref = unwrap<CategoryRef>(value);
@@ -255,9 +256,11 @@ function toChapterSource(row: Record<string, unknown>): Source | null {
 
 function toTutorialSource(row: Record<string, unknown>): Source | null {
   const slug = typeof row.slug === "string" ? row.slug : "";
-  const title = typeof row.title === "string" ? row.title : "";
-  if (!slug || !title) return null;
+  const rawTitle = typeof row.title === "string" ? row.title : "";
+  if (!slug || !rawTitle) return null;
 
+  const channel = typeof row.channel === "string" ? row.channel : undefined;
+  const title = cleanVideoTitle(rawTitle, channel) || rawTitle;
   const cat = category(row.categories);
 
   return {
@@ -272,7 +275,7 @@ function toTutorialSource(row: Record<string, unknown>): Source | null {
   };
 }
 
-async function loadSources(): Promise<Source[]> {
+async function fetchSources(): Promise<Source[]> {
   // Les politiques RLS de `chapters` ne couvrent pas le rôle anon : la recherche
   // publique passe par la clé de service et filtre explicitement sur `published`.
   const supabase = createServiceSupabase();
@@ -325,6 +328,22 @@ async function loadSources(): Promise<Source[]> {
     ...map(chapters.data, toChapterSource),
     ...map(tutorials.data, toTutorialSource),
   ];
+}
+
+/**
+ * Le catalogue ne change que depuis le back-office : une minute de mise en cache
+ * par instance suffit, et évite 1 600 lignes relues à chaque frappe du champ.
+ */
+const SOURCES_TTL_MS = 60_000;
+let cachedSources: { at: number; items: Source[] } | null = null;
+
+async function loadSources(): Promise<Source[]> {
+  if (cachedSources && Date.now() - cachedSources.at < SOURCES_TTL_MS) {
+    return cachedSources.items;
+  }
+  const items = await fetchSources();
+  if (items.length > 0) cachedSources = { at: Date.now(), items };
+  return items;
 }
 
 /**

@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type LevelType } from "@/config/catalog";
 import { messages } from "@/i18n";
+import { EXAM_SIZE } from "@/lib/learning/exam-size";
 import { getLearnerTrack, getLevelPricing } from "@/lib/learning/queries";
 import { startingPrice } from "@/lib/pricing";
 import { cn } from "cn";
@@ -388,7 +389,7 @@ export default async function TrackPage({
                           {t.examTitle}
                         </span>
                         <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                          {t.examIntro(track.passingScore, 10)}
+                          {t.examIntro(track.passingScore, EXAM_SIZE)}
                         </span>
                       </span>
                       <Button

@@ -106,16 +106,8 @@ export const links = {
   forgotPassword: "/mot-de-passe-oublie",
   resetPassword: "/mot-de-passe-oublie/nouveau",
   catalogue: "/catalogue",
-  pricing: "/#tarifs",
   verify: "/verifier",
   dashboard: "/app",
   admin: "/admin",
   forbidden: "/interdit",
 } as const;
-
-export const socials = [
-  { name: "Facebook", href: "https://facebook.com" },
-  { name: "X", href: "https://x.com" },
-  { name: "LinkedIn", href: "https://linkedin.com" },
-  { name: "GitHub", href: "https://github.com" },
-] as const;

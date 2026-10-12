@@ -5,7 +5,7 @@ import { MailIcon } from "lucide-react";
 
 import { Logo } from "@/components/logo";
 import { Separator } from "@/components/ui/separator";
-import { links, socials, site } from "@/config/site";
+import { links, site } from "@/config/site";
 import { messages } from "@/i18n";
 
 const t = messages;
@@ -24,20 +24,6 @@ export function SiteFooter() {
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
               {t.footer.tagline}
             </p>
-
-            <div className="mt-6 flex flex-wrap gap-2">
-              {socials.map((social) => (
-                <a
-                  key={social.name}
-                  href={social.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-full border border-hairline px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-electric/60 hover:text-foreground"
-                >
-                  {social.name}
-                </a>
-              ))}
-            </div>
 
             <p className="mt-6 flex items-center gap-2 text-xs text-muted-foreground">
               <MailIcon className="size-3.5 shrink-0 text-electric" aria-hidden />

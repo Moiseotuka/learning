@@ -49,7 +49,7 @@ export function Hero() {
           <Reveal delay={0}>
             <div className="inline-flex items-center gap-2 rounded-full border border-hairline bg-card/80 px-3.5 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
               <SparklesIcon className="size-3.5 text-electric" aria-hidden />
-              100 % en français, du premier cours au projet noté
+              100 % en français, du premier cours à la validation du niveau
             </div>
           </Reveal>
 

@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 
 import { requireUser } from "@/lib/auth/dal";
+import { levelHasContent } from "@/lib/payments/availability";
 import {
   CHECKOUT_CURRENCY,
   absoluteUrl,
@@ -114,6 +115,10 @@ async function runCheckout(formData: FormData): Promise<CheckoutResult> {
 
   if (existing?.status === "paid") {
     return { mode: "redirect", redirect: notice };
+  }
+
+  if (!(await levelHasContent(categoryId, level, supabase))) {
+    return { mode: "error", reason: "no-content" };
   }
 
   if (activePaymentProvider() === "mock") {

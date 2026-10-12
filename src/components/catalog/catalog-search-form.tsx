@@ -27,54 +27,12 @@ export function CatalogSearchForm({
   hidden,
   className,
 }: {
-  variant?: "sidebar" | "header" | "hero";
+  variant?: "sidebar" | "hero";
   defaultValue?: string;
   hidden?: HiddenParams;
   className?: string;
 }) {
-  const placeholder =
-    variant === "hero"
-      ? t.heroPlaceholder
-      : variant === "header"
-        ? t.headerPlaceholder
-        : t.placeholder;
-
-  if (variant === "header") {
-    return (
-      <form
-        action={buildAction(hidden)}
-        method="get"
-        role="search"
-        className={cn("flex w-full items-center gap-1.5", className)}
-      >
-        <label className="sr-only" htmlFor="site-search">
-          {t.label}
-        </label>
-        <div className="relative w-full min-w-0">
-          <SearchIcon
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <input
-            id="site-search"
-            name="q"
-            type="search"
-            defaultValue={defaultValue}
-            placeholder={placeholder}
-            aria-label={t.label}
-            className="h-9 w-full rounded-full border border-hairline bg-background/70 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-electric/60 focus-visible:ring-2 focus-visible:ring-electric/25"
-          />
-        </div>
-        <button
-          type="submit"
-          className="grid size-9 shrink-0 place-items-center rounded-full border border-hairline bg-background/70 text-muted-foreground transition-colors hover:border-electric/60 hover:text-electric"
-          aria-label={t.submit}
-        >
-          <SearchIcon className="size-4" aria-hidden />
-        </button>
-      </form>
-    );
-  }
+  const placeholder = variant === "hero" ? t.heroPlaceholder : t.placeholder;
 
   if (variant === "hero") {
     return (

@@ -14,9 +14,9 @@ export type Category = {
 export const levels: LevelType[] = ["debutant", "intermediaire", "avance", "projet"];
 
 /**
- * Catalogue initial (données de démonstration).
- * À l'étape 3, cette table sera remplacée par les données Supabase
- * et restera modifiable depuis le back-office sans toucher au code.
+ * Repli hors ligne du catalogue : miroir des catégories publiées en base.
+ * La source de vérité reste Supabase (back-office) ; ces valeurs ne servent que
+ * lorsque Supabase n'est pas configuré, et sont donc alignées sur la production.
  */
 export const categories: Category[] = [
   {
@@ -26,8 +26,8 @@ export const categories: Category[] = [
     description:
       "Algorithmique, Python, Java, C#, C++, C, Pascal, JavaScript, HTML, CSS, SQL, PHP.",
     icon: "terminal",
-    levels: ["debutant", "intermediaire", "avance", "projet"],
-    trackCount: 14,
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 7,
   },
   {
     id: "web",
@@ -36,8 +36,8 @@ export const categories: Category[] = [
     description:
       "Interfaces responsive, APIs, frameworks front-end et applications mobiles.",
     icon: "layout",
-    levels: ["debutant", "intermediaire", "avance", "projet"],
-    trackCount: 9,
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 8,
   },
   {
     id: "ai",
@@ -46,7 +46,7 @@ export const categories: Category[] = [
     description: "Machine learning, data science, analyse et modèles prédictifs.",
     icon: "brain",
     levels: ["debutant", "intermediaire", "avance"],
-    trackCount: 6,
+    trackCount: 3,
   },
   {
     id: "cyber",
@@ -55,8 +55,8 @@ export const categories: Category[] = [
     description:
       "Menaces, durcissement des systèmes, investigation et bonnes pratiques.",
     icon: "shield",
-    levels: ["debutant", "intermediaire", "avance", "projet"],
-    trackCount: 5,
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 2,
   },
   {
     id: "net",
@@ -64,8 +64,8 @@ export const categories: Category[] = [
     name: "Réseaux et télécommunications",
     description: "Câblage, adressage, routage, wireless et supervision.",
     icon: "network",
-    levels: ["debutant", "intermediaire", "avance", "projet"],
-    trackCount: 7,
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 1,
   },
   {
     id: "embedded",
@@ -73,8 +73,8 @@ export const categories: Category[] = [
     name: "Systèmes embarqués",
     description: "Arduino, ESP32, STM32, capteurs et interfaçage temps réel.",
     icon: "cpu",
-    levels: ["debutant", "intermediaire", "avance", "projet"],
-    trackCount: 4,
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 2,
   },
   {
     id: "electronics",
@@ -82,17 +82,17 @@ export const categories: Category[] = [
     name: "Électronique",
     description: "Composants, schémas, mesure et prototypage de circuits.",
     icon: "circuit",
-    levels: ["debutant", "intermediaire", "avance"],
-    trackCount: 4,
+    levels: ["debutant", "intermediaire"],
+    trackCount: 1,
   },
   {
     id: "physics",
     slug: "physique-appliquee",
     name: "Physique appliquée",
-    description: "Mécanique, électricité et expérimentation orientée projets.",
+    description: "Mécanique, électricité et expérimentation guidée.",
     icon: "atom",
-    levels: ["debutant", "intermediaire"],
-    trackCount: 3,
+    levels: [],
+    trackCount: 0,
   },
   {
     id: "mecha",
@@ -100,8 +100,8 @@ export const categories: Category[] = [
     name: "Mécatronique et robotique",
     description: "Automatisme, actionneurs, capteurs et robotique mobile.",
     icon: "robot",
-    levels: ["debutant", "intermediaire", "avance"],
-    trackCount: 3,
+    levels: [],
+    trackCount: 0,
   },
   {
     id: "cloud",
@@ -109,8 +109,8 @@ export const categories: Category[] = [
     name: "Cloud et DevOps",
     description: "Conteneurs, CI/CD, infrastructure as code et observabilité.",
     icon: "cloud",
-    levels: ["intermediaire", "avance", "projet"],
-    trackCount: 4,
+    levels: ["debutant", "intermediaire"],
+    trackCount: 1,
   },
   {
     id: "ecom",
@@ -118,8 +118,17 @@ export const categories: Category[] = [
     name: "E-commerce et paiements",
     description: "Paiements, WooCommerce, Odoo, WordPress et vente en ligne.",
     icon: "shopping-cart",
-    levels: ["debutant", "intermediaire", "avance"],
+    levels: ["debutant", "intermediaire"],
     trackCount: 3,
+  },
+  {
+    id: "db",
+    slug: "bases-de-donnees",
+    name: "Bases de données",
+    description: "Modélisation, SQL, optimisation et administration de données.",
+    icon: "database",
+    levels: ["debutant", "intermediaire"],
+    trackCount: 1,
   },
 ];
 
@@ -132,8 +141,6 @@ export type PopularTrack = {
   durationHours: number;
   modules: number;
   priceUsd: number | null;
-  rating: number;
-  students: number;
   bestFor: string;
 };
 
@@ -147,8 +154,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 48,
     modules: 32,
     priceUsd: 49,
-    rating: 4.8,
-    students: 2340,
     bestFor: "Débuter en programmation avec une langue demandée partout",
   },
   {
@@ -160,8 +165,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 60,
     modules: 40,
     priceUsd: 59,
-    rating: 4.9,
-    students: 3120,
     bestFor: "Concevoir des sites et applications web prêts pour le terrain",
   },
   {
@@ -173,8 +176,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 42,
     modules: 28,
     priceUsd: 69,
-    rating: 4.7,
-    students: 1470,
     bestFor: "Sécuriser un réseau, un serveur ou une application",
   },
   {
@@ -186,8 +187,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 55,
     modules: 36,
     priceUsd: 59,
-    rating: 4.8,
-    students: 1890,
     bestFor: "Administrer un réseau d'entreprise de bout en bout",
   },
   {
@@ -199,8 +198,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 70,
     modules: 44,
     priceUsd: 89,
-    rating: 4.9,
-    students: 960,
     bestFor: "Construire et évaluer des modèles sur de vraies données",
   },
   {
@@ -212,8 +209,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 38,
     modules: 26,
     priceUsd: 45,
-    rating: 4.6,
-    students: 1210,
     bestFor: "Prototyper des objets connectés et des automates",
   },
   {
@@ -225,8 +220,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 26,
     modules: 6,
     priceUsd: 79,
-    rating: 4.8,
-    students: 980,
     bestFor: "Mettre en place un flux de paiement mobile et sécuritaire",
   },
   {
@@ -238,8 +231,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 30,
     modules: 6,
     priceUsd: 89,
-    rating: 4.7,
-    students: 720,
     bestFor: "Gérer les commandes, factures et paiements dans un ERP",
   },
   {
@@ -251,8 +242,6 @@ export const popularTracks: PopularTrack[] = [
     durationHours: 24,
     modules: 6,
     priceUsd: 69,
-    rating: 4.8,
-    students: 840,
     bestFor: "Créer une boutique WordPress fiable et convertissante",
   },
 ];

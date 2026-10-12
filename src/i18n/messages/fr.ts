@@ -2,7 +2,7 @@ export const fr = {
   meta: {
     title: "easyLearn — Apprenez la technologie, prouvez-le",
     description:
-      "Plateforme e-learning francophone : parcours structurés du Débutant au Projet final, exercices pratiques, quiz corrigés et certificats vérifiables. Pensée pour l'Afrique francophone et les connexions mobiles.",
+      "Plateforme e-learning francophone : parcours structurés du Débutant au niveau Avancé, exercices pratiques, quiz corrigés et certificats vérifiables. Pensée pour l'Afrique francophone et les connexions mobiles.",
   },
 
   nav: {
@@ -27,7 +27,7 @@ export const fr = {
     title1: "Apprenez la technologie.",
     title2: "Prouvez-le.",
     subtitle:
-      "Des parcours structurés du Débutant au Projet final, des exercices pratiques corrigés, des quiz qui débloquent chaque chapitre et un certificat vérifiable. Conçu pour les apprenants d'Afrique francophone, léger sur mobile.",
+      "Des parcours structurés, du Débutant au niveau Avancé, des exercices pratiques corrigés, des quiz qui débloquent chaque chapitre et un certificat vérifiable. Conçu pour les apprenants d'Afrique francophone, léger sur mobile.",
     primaryCta: "Commencer gratuitement",
     secondaryCta: "Explorer les parcours",
     preview: {
@@ -38,7 +38,7 @@ export const fr = {
       score: "Vérifiable en ligne, sans compte",
       caption:
         "Aperçu de l’espace apprenant : la progression s’enregistre chapitre par chapitre.",
-      levels: ["Fondamentaux", "Intermédiaire", "Avancé", "Projet"],
+      levels: ["Fondamentaux", "Intermédiaire", "Avancé"],
       certLabel: "Certificat émis",
       certValue: "EL-2026-7K3Q-9F2M",
     },
@@ -80,9 +80,9 @@ export const fr = {
   categories: {
     id: "catalogue",
     eyebrow: "Catalogue",
-    title: "Douze domaines technologiques, quatre niveaux chacun",
+    title: "Douze domaines technologiques, une progression par niveau",
     description:
-      "Chaque catégorie suit la même progression : Débutant, Intermédiaire, Avancé, puis un Projet noté. Filtrez par niveau pour voir les parcours déjà publiés.",
+      "Chaque domaine publié suit la même progression : Débutant (gratuit), Intermédiaire, puis Avancé. Filtrez par niveau pour voir les parcours déjà publiés.",
     filterLabel: "Filtrer par niveau",
     filters: {
       tous: "Tous",
@@ -92,6 +92,9 @@ export const fr = {
       projet: "Projet",
     },
     tracksLabel: (n: number) => `${n} parcours`,
+    soonLabel: "Ouverture prochaine",
+    levelsLabel: (n: number) =>
+      n > 1 ? `${n} niveaux publiés` : "1 niveau publié",
     empty: "Aucune catégorie pour ce niveau pour le moment.",
     cta: "Voir la catégorie",
   },
@@ -116,7 +119,7 @@ export const fr = {
       {
         n: "03",
         title: "Pratiquer sur des projets",
-        text: "Éditeur de code intégré, exercices guidés et, en fin de parcours, un projet noté avec grille de correction.",
+        text: "Éditeur de code intégré et exercices guidés corrigés, avec le barème affiché avant de rendre.",
       },
       {
         n: "04",
@@ -153,7 +156,7 @@ export const fr = {
     eyebrow: "Catalogue",
     title: "Formations et tutoriels, au même endroit",
     description:
-      "Les formations structurées du Débutant au Projet final et les tutoriels vidéo libres, classés par technologie.",
+      "Les formations structurées, du Débutant au niveau Avancé, et les tutoriels vidéo libres, classés par technologie.",
     tabLabel: "Type de contenu",
     tabs: {
       formations: "Formations",
@@ -182,7 +185,6 @@ export const fr = {
         tutoriel: (n: number) => (n > 1 ? `${n} tutoriels` : `${n} tutoriel`),
       },
       inTrack: (title: string) => `Dans « ${title} »`,
-      opening: "Ouvrir",
       suggestions: [
         "Python",
         "Réseaux",
@@ -193,6 +195,18 @@ export const fr = {
         "Machine learning",
         "Raspberry Pi",
       ],
+      typeahead: {
+        listLabel: "Suggestions du catalogue",
+        loading: "Recherche en cours…",
+        empty: (query: string) => `Aucune formation pour « ${query} ».`,
+        all: (query: string) => `Voir tous les résultats pour « ${query} »`,
+        shortcut: "Appuyez sur / pour rechercher",
+        kinds: {
+          formation: "Formation",
+          chapitre: "Chapitre",
+          tutoriel: "Tutoriel",
+        },
+      },
     },
     technologies: "Technologie",
     all: "Toutes",
@@ -254,7 +268,7 @@ export const fr = {
       },
       {
         q: "Les vidéos sont-elles produites par easyLearn ?",
-        a: "Les leçons vidéo sont sélectionnées une par une — en français, à jour — puis intégrées dans le lecteur de la plateforme. Vous suivez tout depuis easyLearn : aucune inscription sur un site vidéo externe n'est nécessaire. Autour de ces leçons, nous produisons les résumés écrits, les exercices, les corrections, les quiz, les projets, le suivi et les certificats.",
+        a: "Les leçons vidéo sont sélectionnées une par une — en français, à jour — puis intégrées dans le lecteur de la plateforme. Vous suivez tout depuis easyLearn : aucune inscription sur un site vidéo externe n'est nécessaire. Autour de ces leçons, nous produisons les résumés écrits, les exercices, les corrections, les quiz, le suivi et les certificats.",
       },
       {
         q: "Puis-je suivre la formation sur mobile avec une connexion lente ?",
@@ -266,7 +280,7 @@ export const fr = {
       },
       {
         q: "Le certificat a-t-il une valeur ?",
-        a: "C'est une attestation de compétences délivrée par easyLearn, avec le niveau validé et un numéro de vérification public. Vos réalisations et votre projet final restent consultables par le recruteur.",
+        a: "C'est une attestation de compétences délivrée par easyLearn, avec le niveau validé et un numéro de vérification public. Vos exercices validés et vos certificats restent consultables par le recruteur.",
       },
       {
         q: "Qui peut créer un parcours ?",
@@ -284,7 +298,7 @@ export const fr = {
     eyebrow: "Tarifs",
     title: "Un prix par niveau, payé comme vous voulez",
     description:
-      "Prix en francs congolais (CDF). Le niveau Débutant est gratuit dans tous les domaines ; débloquez ensuite Intermédiaire, Avancé ou Projet, domaine par domaine. Paiement Mobile Money ou carte bancaire, confirmation sécurisée côté serveur, accès débloqué automatiquement.",
+      "Prix en francs congolais (CDF). Le niveau Débutant est gratuit dans tous les domaines ; débloquez ensuite les niveaux suivants, domaine par domaine. Paiement Mobile Money ou carte bancaire, confirmation sécurisée côté serveur, accès débloqué automatiquement.",
     plans: [
       {
         name: "Découverte",
@@ -309,7 +323,7 @@ export const fr = {
         description:
           "Débloquez le niveau dont vous avez besoin, quand vous voulez.",
         features: [
-          "Intermédiaire, Avancé ou Projet",
+          "Niveaux Intermédiaire et Avancé",
           "Prix affiché sur chaque domaine",
           "Quiz, exercices et corrections",
           "Accès permanent, sans abonnement",
@@ -321,8 +335,9 @@ export const fr = {
         note: "Vous ne payez que les niveaux qui comptent pour vous.",
       },
     ],
-    guarantee: "Satisfait ou remboursé sous 7 jours, sans justification.",
-    popularLabel: "Le plus choisi",
+    guarantee:
+      "Sans abonnement et sans prélèvement récurrent : chaque niveau se paie une seule fois et reste accessible sans limite de durée.",
+    popularLabel: "Recommandé",
     paymentMethods: "M-Pesa · Airtel Money · Orange Money · Carte bancaire",
   },
 
@@ -358,6 +373,8 @@ export const fr = {
     lockBadge: "Verrouillé",
     errors: {
       "no-price": "Ce niveau n'a pas encore de prix défini par l'administrateur.",
+      "no-content":
+        "Ce niveau est en cours de préparation : les leçons ne sont pas encore publiées. Il sera proposé dès leur ouverture.",
       "not-configured":
         "Le paiement en ligne n'est pas configuré sur ce site. Prévenez l'administrateur.",
       failed: "Le paiement a échoué. Réessayez dans un instant.",
@@ -393,7 +410,7 @@ export const fr = {
       },
     ],
     stats: [
-      { value: "4", label: "Niveaux par parcours" },
+      { value: "Gratuit", label: "Niveau Débutant, dans chaque domaine" },
       { value: "1 quiz", label: "Par chapitre, obligatoire" },
       { value: "1 certificat", label: "Par niveau validé" },
     ],
@@ -405,7 +422,7 @@ export const fr = {
     eyebrow: "À propos",
     title: "Notre méthode : structurer, faire pratiquer, certifier",
     description:
-      "easyLearn ne vend pas des vidéos. Nous vendons l'ordonnancement pédagogique, les exercices, les quiz, les projets corrigés, le suivi, la communauté et les certificats. Les ressources externes restent des liens recommandés, jamais du contenu revendu.",
+      "easyLearn ne vend pas des vidéos. Nous vendons l'ordonnancement pédagogique, les exercices, les quiz, les corrections, le suivi, la communauté et les certificats. Les liens de ressources renvoient vers des documents publics recommandés, jamais vers du contenu revendu.",
     points: [
       {
         title: "Contenu structuré",
@@ -413,11 +430,11 @@ export const fr = {
       },
       {
         title: "Pratique obligatoire",
-        text: "Éditeur de code intégré et projets notés, pas seulement de la théorie.",
+        text: "Éditeur de code intégré et exercices notés, pas seulement de la théorie.",
       },
       {
         title: "Preuve de compétence",
-        text: "Certificats vérifiables et portfolio consultable par les recruteurs.",
+        text: "Certificats vérifiables par un lien public et progression détaillée chapitre par chapitre.",
       },
       {
         title: "Pensé pour l'Afrique",
@@ -449,7 +466,7 @@ export const fr = {
       {
         title: "Plateforme",
         links: [
-          { label: "Formateurs", href: "/#formateurs" },
+          { label: "Tutoriels vidéo", href: "/tutoriels" },
           { label: "Communauté", href: "/#communaute" },
           { label: "À propos", href: "/#apropos" },
           { label: "Vérifier un certificat", href: "/verifier" },
@@ -671,7 +688,7 @@ export const fr = {
         photoChoose: "Choisir une photo",
         photoUploading: "Envoi en cours…",
         fullName: "Nom complet",
-        email: "Adresse email",
+        email: "Adresse e-mail",
         emailHint:
           "Un lien de confirmation sera envoyé à la nouvelle adresse.",
         emailPending: (email: string) =>
@@ -683,8 +700,8 @@ export const fr = {
         errors: {
           required: "Ce champ est requis.",
           tooLong: "100 caractères maximum.",
-          emailInvalid: "Adresse email invalide.",
-          emailTaken: "Cette adresse email est déjà utilisée.",
+          emailInvalid: "Adresse e-mail invalide.",
+          emailTaken: "Cette adresse e-mail est déjà utilisée.",
           emailRateLimit:
             "Trop de demandes. Réessayez dans quelques minutes.",
           phoneInvalid: "Numéro de téléphone invalide.",
@@ -1046,6 +1063,7 @@ export const fr = {
     },
     notFoundTitle: "Page introuvable",
     notFoundText: "Le contenu demandé n'existe pas ou a été déplacé.",
+    close: "Fermer",
   },
 
   levelUp: {
@@ -1056,7 +1074,7 @@ export const fr = {
       "Vous êtes au dernier niveau — terminez votre projet final et décrochez votre certificat !",
     genericTitle:
       "Ne vous arrêtez pas au premier niveau — passez au niveau supérieur !",
-    text: "Chaque niveau supérieur débloque de nouveaux chapitres, quiz corrigés et projets notés. Votre certificat vérifiable vous attend à la fin du parcours.",
+    text: "Chaque niveau supérieur débloque de nouveaux chapitres, quiz et exercices corrigés. Votre certificat vérifiable vous attend à la fin du parcours.",
     cta: "Passer au niveau supérieur",
     finalCta: "Terminer mon projet",
   },

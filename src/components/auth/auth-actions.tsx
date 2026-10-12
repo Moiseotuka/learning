@@ -224,12 +224,12 @@ export function AuthActions({
           <Avatar size="sm">
             <AvatarFallback>{initial}</AvatarFallback>
           </Avatar>
-          <span className="hidden max-w-28 truncate sm:inline">{account.name}</span>
+          <span className="hidden max-w-28 truncate xl:inline">{account.name}</span>
         </Link>
       </Button>
       <SignOutControl
         className="text-muted-foreground hover:text-foreground"
-        labelClassName="hidden md:inline"
+        labelClassName="hidden xl:inline"
       />
     </>
   );

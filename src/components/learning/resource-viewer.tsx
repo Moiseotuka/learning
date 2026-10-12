@@ -30,11 +30,16 @@ export function useResourceViewer() {
 }
 
 function hostnameOf(url: string) {
+  let host: string;
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    host = new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
   }
+  // Une leçon dont l'identifiant n'est pas lisible ne doit pas trahir son hébergeur.
+  return /youtube|youtu\.be|vimeo|dailymotion/i.test(host)
+    ? t.player.resourceVideo
+    : host;
 }
 
 function ResourceFrame({
