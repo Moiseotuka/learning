@@ -638,6 +638,34 @@ export const fr = {
     welcome: (name: string) => `Bienvenue, ${name}.`,
     intro:
       "Reprenez un chapitre, validez son quiz et débloquez le suivant. Votre progression est enregistrée à chaque tentative.",
+    firstRun: {
+      title: "Comment se déroule un chapitre",
+      intro:
+        "Un parcours est une suite de chapitres, du plus simple au plus avancé, et chaque chapitre se parcourt toujours dans le même ordre. Aucun prérequis : le premier chapitre part de zéro.",
+      steps: [
+        {
+          name: "Objectifs",
+          detail: "Ce que vous saurez faire à la fin, énoncé en quelques lignes.",
+        },
+        {
+          name: "Leçons vidéo",
+          detail: "Trois vidéos courtes qui montrent le geste avant de l’expliquer.",
+        },
+        {
+          name: "Cours écrit",
+          detail: "La même leçon en texte, page par page, à relire à votre rythme.",
+        },
+        {
+          name: "Exercice",
+          detail: "Un travail guidé qui applique ce que vous venez de voir.",
+        },
+        {
+          name: "Quiz",
+          detail: "Il s’ouvre une fois toutes les vidéos visionnées, et valide le chapitre.",
+        },
+      ],
+      tip: "Les vidéos se regardent d’une seule traite : laissez-les avancer jusqu’à la fin, le quiz se débloque ensuite.",
+    },
     resume: "Reprendre le parcours",
     resumeLabel: (chapter: string) => `Reprendre : ${chapter}`,
     start: "Commencer le parcours",
@@ -1061,12 +1089,12 @@ export const fr = {
   levelUp: {
     eyebrow: "Progression",
     title: (current: string, next: string) =>
-      `Tu es au niveau « ${current} » — passe au niveau « ${next} » et débloque la suite du parcours.`,
+      `Vous êtes au niveau « ${current} » — passez au niveau « ${next} » et débloquez la suite du parcours.`,
     finalTitle:
-      "Tu es au dernier niveau — termine ton projet final et décroche ton certificat !",
+      "Vous êtes au dernier niveau — terminez votre projet final et décrochez votre certificat !",
     genericTitle:
-      "Ne t'arrête pas au premier niveau — passe au niveau supérieur !",
-    text: "Chaque niveau supérieur débloque de nouveaux chapitres, quiz corrigés et projets notés. Ton certificat vérifiable t'attend à la fin du parcours.",
+      "Ne vous arrêtez pas au premier niveau — passez au niveau supérieur !",
+    text: "Chaque niveau supérieur débloque de nouveaux chapitres, quiz corrigés et projets notés. Votre certificat vérifiable vous attend à la fin du parcours.",
     cta: "Passer au niveau supérieur",
     finalCta: "Terminer mon projet",
   },

@@ -113,6 +113,8 @@ export default async function DashboardPage() {
         );
 
   const primary = pending[0] ?? null;
+  const isFirstRun =
+    tracks.length > 0 && completedChapters === 0 && attempted.length === 0;
 
   return (
     <>
@@ -242,6 +244,36 @@ export default async function DashboardPage() {
         </section>
       </div>
 
+      {/* Repère de première visite : le rythme d'un chapitre n'est évident qu'après en avoir fait un. */}
+      {isFirstRun ? (
+        <section className="mt-5 rounded-2xl border border-hairline bg-card p-5 shadow-sm sm:p-6">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground">
+            {t.firstRun.title}
+          </h2>
+          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">
+            {t.firstRun.intro}
+          </p>
+          <ol className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {t.firstRun.steps.map((step, index) => (
+              <li key={step.name} className="rounded-xl border border-hairline p-3">
+                <span className="grid size-6 place-items-center rounded-full bg-electric/12 text-[11px] font-semibold tabular-nums text-electric">
+                  {index + 1}
+                </span>
+                <p className="mt-2 text-sm font-semibold text-foreground">
+                  {step.name}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  {step.detail}
+                </p>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
+            {t.firstRun.tip}
+          </p>
+        </section>
+      ) : null}
+
       {/* Ligne 2 : Prochaines étapes + Derniers quiz */}
       <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
         <section className="rounded-2xl border border-hairline bg-card p-5 shadow-sm">
@@ -330,14 +362,16 @@ export default async function DashboardPage() {
       </div>
     </div>
 
-    <LevelUpNotification
-      currentLevel={primary?.chapter.level}
-      ctaHref={
-        primary
-          ? `/app/parcours/${primary.track.slug}/chapitres/${primary.chapter.slug}`
-          : links.catalogue
-      }
-    />
+    {!isFirstRun ? (
+      <LevelUpNotification
+        currentLevel={primary?.chapter.level}
+        ctaHref={
+          primary
+            ? `/app/parcours/${primary.track.slug}/chapitres/${primary.chapter.slug}`
+            : links.catalogue
+        }
+      />
+    ) : null}
     </>
   );
 }

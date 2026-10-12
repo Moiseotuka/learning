@@ -81,7 +81,9 @@ export async function login(
   }
 
   revalidatePath("/", "layout");
-  redirect(next ?? links.home);
+  // Un apprenant qui se connecte vient travailler : il atterrit sur son espace,
+  // pas sur la page d'accueil marketing.
+  redirect(next ?? links.dashboard);
 }
 
 export async function signup(
@@ -147,14 +149,14 @@ export async function signup(
 
   if (data.session) {
     revalidatePath("/", "layout");
-    redirect(links.home);
+    redirect(links.dashboard);
   }
 
   return { status: "success", message: t.confirmSent(email) };
 }
 
 export async function loginWithGoogle(formData: FormData): Promise<void> {
-  const next = sanitizeInternalPath(formData.get("next")) ?? links.home;
+  const next = sanitizeInternalPath(formData.get("next")) ?? links.dashboard;
 
   if (!isSupabaseConfigured) redirect(links.login);
 
