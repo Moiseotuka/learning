@@ -11,6 +11,7 @@ import Link from "next/link";
 import { Reveal } from "@/components/reveal";
 import { Section, SectionHeading } from "@/components/section";
 import { Button } from "@/components/ui/button";
+import { contactMailto } from "@/config/contact";
 import { messages } from "@/i18n";
 
 const t = messages.institutions;
@@ -32,9 +33,7 @@ const cardIcons = [
  * vivrait comme une faute.
  */
 export function Institutions() {
-  const mailto = `mailto:${t.mail}?subject=${encodeURIComponent(
-    t.mailSubject,
-  )}&body=${encodeURIComponent(t.mailBody)}`;
+  const mailto = contactMailto(t.mailSubject, t.mailBody);
 
   return (
     <Section id={t.id} className="border-y border-hairline bg-elevated">

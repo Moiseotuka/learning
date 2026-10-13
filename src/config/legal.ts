@@ -1,3 +1,5 @@
+import { CONTACT_EMAIL } from "@/config/contact";
+
 export type LegalDoc = {
   slug: string;
   title: string;
@@ -17,11 +19,11 @@ export const legalDocs: LegalDoc[] = [
     sections: [
       {
         heading: "Éditeur du site",
-        body: "easyTech est une plateforme d'apprentissage en ligne éditée depuis Kinshasa, République démocratique du Congo. La raison sociale, le numéro d'immatriculation au registre de commerce et l'adresse du siège sont communiqués sur simple demande à contact@easytech.cd.",
+        body: `easyTech est une plateforme d'apprentissage en ligne éditée depuis Kinshasa, République démocratique du Congo. La raison sociale, le numéro d'immatriculation au registre de commerce et l'adresse du siège sont communiqués sur simple demande à ${CONTACT_EMAIL}.`,
       },
       {
         heading: "Directeur de publication",
-        body: "La publication est assurée par la direction d'easyTech. Le nom du responsable de publication est communiqué sur simple demande à contact@easytech.cd.",
+        body: `La publication est assurée par la direction d'easyTech. Le nom du responsable de publication est communiqué sur simple demande à ${CONTACT_EMAIL}.`,
       },
       {
         heading: "Hébergement",
@@ -37,7 +39,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Contact",
-        body: "Toute question peut être adressée à contact@easytech.cd.",
+        body: `Toute question peut être adressée à ${CONTACT_EMAIL}.`,
       },
     ],
   },
@@ -62,7 +64,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Accès et durée",
-        body: "Chaque niveau se paie une seule fois et reste accessible sans limite de durée : il n'y a ni abonnement, ni résiliation, ni prélèvement récurrent. Toute difficulté de paiement est signalée à contact@easytech.cd et examinée après vérification auprès du prestataire.",
+        body: `Chaque niveau se paie une seule fois et reste accessible sans limite de durée : il n'y a ni abonnement, ni résiliation, ni prélèvement récurrent. Toute difficulté de paiement est signalée à ${CONTACT_EMAIL} et examinée après vérification auprès du prestataire.`,
       },
       {
         heading: "Conduite attendue",
@@ -99,7 +101,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Vos droits",
-        body: "Vous pouvez demander l'accès, la rectification ou la suppression de vos données en écrivant à confidentialite@easytech.cd.",
+        body: `Vous pouvez demander l'accès, la rectification ou la suppression de vos données en écrivant à ${CONTACT_EMAIL}.`,
       },
       {
         heading: "Cookies",
@@ -128,7 +130,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Signalement",
-        body: "Un obstacle d'accessibilité peut être signalé à accessibilite@easytech.cd ; nous nous engageons à répondre sous 10 jours ouvrés.",
+        body: `Un obstacle d'accessibilité peut être signalé à ${CONTACT_EMAIL} ; nous nous engageons à répondre sous 10 jours ouvrés.`,
       },
     ],
   },
@@ -153,7 +155,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Retirer une vidéo",
-        body: "Un auteur qui souhaite apparaître sous son nom dans le parcours, voir sa vidéo remplacée ou retirée de la sélection peut écrire à credits@easytech.cd. La modification est appliquée sous 72 heures.",
+        body: `Un auteur qui souhaite apparaître sous son nom dans le parcours, voir sa vidéo remplacée ou retirée de la sélection peut écrire à ${CONTACT_EMAIL}. La modification est appliquée sous 72 heures.`,
       },
     ],
   },

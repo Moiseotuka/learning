@@ -1,3 +1,5 @@
+import { CONTACT_EMAIL } from "@/config/contact";
+
 type EmailInput = {
   to: string;
   subject: string;
@@ -30,6 +32,10 @@ export async function sendEmail(input: EmailInput): Promise<EmailResult> {
       },
       body: JSON.stringify({
         from: process.env.EMAIL_FROM ?? "easyTech <onboarding@resend.dev>",
+        // L'adresse d'envoi est celle du domaine vérifié chez Resend ; la
+        // réponse, elle, doit retomber dans la seule boîte dépouillée par
+        // l'équipe. Sans ce champ, un apprenant qui répond perd son message.
+        reply_to: CONTACT_EMAIL,
         to: [input.to],
         subject: input.subject,
         html: input.html,

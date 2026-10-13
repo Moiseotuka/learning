@@ -1,3 +1,5 @@
+import { CONTACT_EMAIL, contactMailto } from "@/config/contact";
+
 export const fr = {
   meta: {
     title: "easyTech — Apprenez la technologie, prouvez-le",
@@ -412,7 +414,7 @@ export const fr = {
     channels: [
       {
         name: "Support par e-mail",
-        text: "contact@easytech.cd pour un blocage de parcours, de paiement ou de certificat.",
+        text: `${CONTACT_EMAIL} pour un blocage de parcours, de paiement ou de certificat.`,
       },
       {
         name: "Suivi de progression",
@@ -492,9 +494,9 @@ export const fr = {
         title: "Support",
         links: [
           { label: "FAQ", href: "/#faq" },
-          { label: "Contact", href: "mailto:contact@easytech.cd" },
-          { label: "Aide", href: "mailto:aide@easytech.cd" },
-          { label: "Signaler un problème", href: "mailto:support@easytech.cd" },
+          { label: "Contact", href: contactMailto() },
+          { label: "Aide", href: contactMailto("Demande d'aide sur easyTech") },
+          { label: "Signaler un problème", href: contactMailto("Signalement d'un problème sur easyTech") },
         ],
       },
       {
@@ -1603,7 +1605,6 @@ export const fr = {
 
     cta: "Parler d'un déploiement pour votre établissement",
     ctaSecondary: "Voir l'offre formateur",
-    mail: "contact@easytech.cd",
     mailSubject: "Déploiement easyTech pour notre établissement",
     mailBody:
       "Bonjour,\n\nNous envisageons d'utiliser easyTech pour nos formations. Quelques éléments sur notre besoin :\n\n— Établissement :\n— Type de public (étudiants, collaborateurs, apprenants externes) :\n— Nombre approximatif d'apprenants par promotion :\n— Parcours concernés :\n— Cours en direct prévus : oui / non\n— Période visée :\n\nMerci de nous indiquer la formule adaptée.\n\nCordialement,",
