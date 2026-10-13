@@ -14,9 +14,10 @@ export type EmailResult = { sent: boolean; demo: boolean; error?: string };
  * Deux transporteurs, un seul contrat : la plateforme écrit « envoyez ce
  * message », et le premier fournisseur réellement configuré s'en charge.
  *
- * - SMTP (`SMTP_HOST` + `SMTP_USER` + `SMTP_PASS`) : la boîte de l'équipe,
- *   esaylearningrdc@gmail.com. C'est le chemin que l'on veut en production,
- *   parce qu'il n'exige ni domaine à acheter ni clé à faire expirer.
+ * - SMTP (`SMTP_HOST` + `SMTP_USER` + `SMTP_PASS`) : le relais de l'équipe,
+ *   Brevo, dont l'expéditeur est la boîte dépouillée par l'équipe. C'est le
+ *   chemin de production, parce qu'il n'exige ni domaine à acheter ni clé à
+ *   faire expirer.
  * - Resend (`RESEND_API_KEY`) : reste en secours, plus rapide par message.
  *
  * Sans configuration, l'envoi est tracé en log ([email:demo]) : le code est
