@@ -293,6 +293,10 @@ export const fr = {
         a: "Depuis votre profil, souscrivez un abonnement formateur pour la durée choisie : vous obtenez l'accès complet à tous les niveaux des parcours que vous enseignez, une classe par parcours et des places d'élèves incluses. Vos apprenants ajoutés à une classe ouvrent le parcours de cette classe sans achat séparé, tant que votre abonnement est actif.",
       },
       {
+        q: "Une université ou une entreprise peut-elle former son personnel sur easyTech ?",
+        a: "Oui. Un abonnement formateur ouvre une classe par parcours enseigné, avec un nom d'académie qui est le vôtre : il apparaît dans les invitations, l'agenda des apprenants et la salle en direct. Vous invitez vos étudiants ou collaborateurs par e-mail, vos professeurs animent les séances, et vous suivez la progression et la présence de la promotion. Les parcours du catalogue sont produits par notre équipe pédagogique ; pour un contenu propre à votre établissement, écrivez-nous et nous convenons du périmètre.",
+      },
+      {
         q: "Les cours en direct nécessitent-ils un logiciel ?",
         a: "Non. La salle s'ouvre dans le navigateur, directement dans easyTech : le formateur planifie la séance, partage son écran et son terminal, les élèves rejoignent la salle à l'heure dite et leur présence est enregistrée pour le suivi de la classe.",
       },
@@ -1554,5 +1558,55 @@ export const fr = {
       emptyAgenda: "Aucune séance programmée pour vos classes pour le moment.",
       tzNote: "Heures affichées : {tz}",
     },
+  },
+
+  institutions: {
+    id: "etablissements",
+    eyebrow: "Universités, écoles et entreprises",
+    title: "Votre établissement peut dispenser ses formations sur easyTech",
+    subtitle:
+      "Une promotion de première année, un cycle de recyclage, un plan de formation interne : vous gardez votre nom, vos formateurs et votre calendrier. easyTech fournit la salle de classe, les convocations et le suivi.",
+
+    cards: [
+      {
+        title: "Votre nom, pas le nôtre",
+        text: "Le nom de votre académie ou de votre département ouvre chaque classe : il figure sur l'e-mail d'invitation, dans l'agenda de l'étudiant et sur l'écran de la séance en direct.",
+      },
+      {
+        title: "Des places, pas des licences",
+        text: "L'abonnement achète un nombre de places d'apprenants valable toute la période, et ces places se partagent entre vos classes. Ouvrir une promotion de plus ne change pas la formule.",
+      },
+      {
+        title: "Vos formateurs, nos parcours",
+        text: "Un professeur de votre équipe prend en main un parcours du catalogue et l'enseigne à sa classe : les leçons, les vidéos et les quiz sont déjà équipés, il n'a rien à monter.",
+      },
+      {
+        title: "Le cours en direct sans infrastructure",
+        text: "La salle s'ouvre dans le navigateur, la convocation part toute seule à vos étudiants, le rappel la veille aussi, et le rapport de présence vous revient après la séance.",
+      },
+      {
+        title: "La promotion suivie, pas devinée",
+        text: "Progression de chaque étudiant, présence aux séances, relance automatique de l'absent : le responsable du programme sait où en est sa classe sans faire la tournée des groupes.",
+      },
+      {
+        title: "Des certificats qu'on peut vérifier",
+        text: "Chaque apprenant termine sur un certificat portant un numéro public. Un employeur ou une autre école le contrôle en une seconde, sans vous appeler.",
+      },
+    ],
+
+    bullets: [
+      "Pensé pour le réseau congolais : connexion lente tolérée, reprise à l'endroit exact où l'étudiant s'est arrêté.",
+      "L'étudiant sans compte y est guidé depuis l'invitation, avec l'adresse que vous avez saisie — c'est elle qui l'ouvre sa classe.",
+      "Heures affichées à l'heure de Kinshasa, y compris dans le calendrier exporté sur le téléphone de l'étudiant.",
+      "Barème des abonnements en francs congolais, ajustable selon la taille de votre établissement.",
+    ],
+
+    cta: "Parler d'un déploiement pour votre établissement",
+    ctaSecondary: "Voir l'offre formateur",
+    mail: "contact@easytech.cd",
+    mailSubject: "Déploiement easyTech pour notre établissement",
+    mailBody:
+      "Bonjour,\n\nNous envisageons d'utiliser easyTech pour nos formations. Quelques éléments sur notre besoin :\n\n— Établissement :\n— Type de public (étudiants, collaborateurs, apprenants externes) :\n— Nombre approximatif d'apprenants par promotion :\n— Parcours concernés :\n— Cours en direct prévus : oui / non\n— Période visée :\n\nMerci de nous indiquer la formule adaptée.\n\nCordialement,",
+    note: "Réponse sous deux jours ouvrés. Un responsable d'établissement peut commencer seul : l'offre formateur est ouverte sans démarche préalable.",
   },
 };

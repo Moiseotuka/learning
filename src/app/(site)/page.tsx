@@ -6,6 +6,7 @@ import { Faq } from "@/components/landing/faq";
 import { FinalCta } from "@/components/landing/final-cta";
 import { Hero } from "@/components/landing/hero";
 import { HowItWorks } from "@/components/landing/how-it-works";
+import { Institutions } from "@/components/landing/institutions";
 import { Instructors } from "@/components/landing/instructors";
 import { LiveClasses } from "@/components/landing/live-classes";
 import { Method } from "@/components/landing/method";
@@ -46,6 +47,7 @@ export default async function HomePage() {
       <PopularTracks tracks={tracks} prices={startingPrices} />
       <Instructors plans={instructorPlans} />
       <LiveClasses />
+      <Institutions />
       <Certificates />
       <Pricing />
       <Community />
