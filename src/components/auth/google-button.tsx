@@ -3,13 +3,12 @@
 import { Loader2Icon } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { loginWithGoogle } from "@/lib/actions/auth";
 
 function GoogleMark() {
   return (
-    <svg viewBox="0 0 18 18" className="size-4" aria-hidden focusable="false">
+    <svg viewBox="0 0 18 18" className="size-[18px]" aria-hidden focusable="false">
       <path
         fill="#4285F4"
         d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
@@ -30,7 +29,13 @@ function GoogleMark() {
   );
 }
 
-export function GoogleButton({ next }: { next?: string }) {
+/**
+ * Bouton Google à sa charte : fond blanc, liseré gris, lettres sombres. Il
+ * volontairement ne passe pas par `Button` — les variantes du thème peignent un
+ * fond translucent qui, sur la carte déjà sombre, rendait l'option illisible.
+ * Le blanc franc reste au contraire le contraste maximal dans les deux thèmes.
+ */
+export function GoogleButton({ next, label }: { next?: string; label: string }) {
   const [pending, setPending] = useState(false);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -44,29 +49,27 @@ export function GoogleButton({ next }: { next?: string }) {
   return (
     <form action={loginWithGoogle} onSubmit={handleSubmit}>
       <input type="hidden" name="next" value={next ?? ""} />
-      <Button
+      <button
         type="submit"
-        variant="outline"
         disabled={pending}
-        className="h-11 w-full border-hairline"
+        className="inline-flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#d2d7de] bg-white px-4 text-sm font-semibold text-[#1d1f21] shadow-sm outline-none transition-colors hover:border-[#b7bec8] hover:bg-[#f4f6f8] focus-visible:ring-3 focus-visible:ring-ring/60 active:translate-y-px disabled:pointer-events-none disabled:opacity-60"
       >
-        {pending ? <Loader2Icon className="animate-spin" aria-hidden /> : <GoogleMark />}
-        {messages.auth.google}
-      </Button>
+        {pending ? (
+          <Loader2Icon className="size-[18px] animate-spin" aria-hidden />
+        ) : (
+          <GoogleMark />
+        )}
+        {label}
+      </button>
     </form>
   );
 }
 
-export function AuthDivider() {
+export function AuthDivider({ label = messages.auth.orEmail }) {
   return (
     <div className="relative my-5 text-center">
-      <span
-        className="absolute inset-x-0 top-1/2 border-t border-hairline"
-        aria-hidden
-      />
-      <span className="relative bg-card px-3 text-xs text-muted-foreground">
-        {messages.auth.or}
-      </span>
+      <span className="absolute inset-x-0 top-1/2 border-t border-hairline" aria-hidden />
+      <span className="relative bg-card px-3 text-xs text-muted-foreground">{label}</span>
     </div>
   );
 }

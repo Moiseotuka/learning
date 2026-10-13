@@ -39,34 +39,45 @@ export function SignupForm({
 
   return (
     <>
+      {invitation ? (
+        <div className="rounded-xl border border-electric/40 bg-electric/6 p-4">
+          <p className="text-sm font-semibold text-foreground">
+            {fill(t.invitedTitle, { academy: invitation.academy })}
+          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+            {fill(t.invitedBody, {
+              instructor: invitation.instructorName,
+              klass: invitation.className,
+              track: invitation.trackTitle,
+            })}
+          </p>
+        </div>
+      ) : null}
+
+      {state?.message ? (
+        <Notice tone={state.status === "error" ? "error" : "success"}>
+          {state.message}
+          {state.status === "success" ? (
+            <span className="mt-1 block text-xs opacity-80">{t.confirmSentHint}</span>
+          ) : null}
+        </Notice>
+      ) : null}
+
+      {/* Google en tête, sauf sur invitation : là l'adresse est imposée par le
+          formateur et un compte Google ouvrirait une classe vide. */}
+      {invitation ? null : (
+        <>
+          <div className={state?.message ? "mt-4" : undefined}>
+            <GoogleButton next={next} label={t.googleSignup} />
+          </div>
+          <AuthDivider label={t.orEmail} />
+        </>
+      )}
+
       <form action={action} className="space-y-4">
         <input type="hidden" name="next" value={next ?? ""} />
         {invitation ? (
           <input type="hidden" name="invitation" value={invitation.token} />
-        ) : null}
-
-        {invitation ? (
-          <div className="rounded-xl border border-electric/40 bg-electric/6 p-4">
-            <p className="text-sm font-semibold text-foreground">
-              {fill(t.invitedTitle, { academy: invitation.academy })}
-            </p>
-            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-              {fill(t.invitedBody, {
-                instructor: invitation.instructorName,
-                klass: invitation.className,
-                track: invitation.trackTitle,
-              })}
-            </p>
-          </div>
-        ) : null}
-
-        {state?.message ? (
-          <Notice tone={state.status === "error" ? "error" : "success"}>
-            {state.message}
-            {state.status === "success" ? (
-              <span className="mt-1 block text-xs opacity-80">{t.confirmSentHint}</span>
-            ) : null}
-          </Notice>
         ) : null}
 
         <AuthField id="fullName" label={t.fullNameLabel} error={fullNameError}>
@@ -148,13 +159,6 @@ export function SignupForm({
           {invitation ? t.invitedCta : t.submitSignup}
         </Button>
       </form>
-
-      {invitation ? null : (
-        <>
-          <AuthDivider />
-          <GoogleButton next={next} />
-        </>
-      )}
     </>
   );
 }

@@ -574,8 +574,9 @@ export const fr = {
       "Mot de passe mis à jour. Connectez-vous avec votre nouveau mot de passe.",
     noticeResetLinkInvalid:
       "Ce lien est invalide ou a expiré. Demandez un nouveau lien depuis la page « Mot de passe oublié ».",
-    google: "Continuer avec Google",
-    or: "ou",
+    googleLogin: "Se connecter avec Google",
+    googleSignup: "Créer mon compte avec Google",
+    orEmail: "ou avec votre e-mail",
     noAccount: "Pas encore de compte ?",
     hasAccount: "Déjà un compte ?",
     signupLink: "Créer un compte",

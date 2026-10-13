@@ -46,15 +46,21 @@ export function LoginForm({ next, notice }: { next?: string; notice?: LoginNotic
 
   return (
     <>
+      {pageNotice ? <Notice tone="success">{pageNotice}</Notice> : null}
+      {state?.message ? (
+        <Notice tone={state.status === "error" ? "error" : "success"}>{state.message}</Notice>
+      ) : null}
+
+      {/* Google d'abord : c'est le chemin le plus court et il était relégué sous
+          le bouton « Se connecter », hors du premier écran sur téléphone. */}
+      <div className={pageNotice || state?.message ? "mt-4" : undefined}>
+        <GoogleButton next={next} label={t.googleLogin} />
+      </div>
+
+      <AuthDivider label={t.orEmail} />
+
       <form action={action} className="space-y-4">
         <input type="hidden" name="next" value={next ?? ""} />
-
-        {pageNotice ? <Notice tone="success">{pageNotice}</Notice> : null}
-        {state?.message ? (
-          <Notice tone={state.status === "error" ? "error" : "success"}>
-            {state.message}
-          </Notice>
-        ) : null}
 
         <AuthField id="email" label={t.emailLabel} error={emailError}>
           <Input
@@ -99,9 +105,6 @@ export function LoginForm({ next, notice }: { next?: string; notice?: LoginNotic
           {t.submitLogin}
         </Button>
       </form>
-
-      <AuthDivider />
-      <GoogleButton next={next} />
     </>
   );
 }
