@@ -11,6 +11,7 @@ import {
 } from "@/lib/payments/nyole";
 import { trackNoticeUrl } from "@/lib/payments/notice";
 import { processPaymentEvent } from "@/lib/payments/processor";
+import { settleInstructorSubscription } from "@/lib/instructor/checkout";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 export const metadata: Metadata = {
@@ -42,7 +43,7 @@ type PurchaseRow = {
 export default async function PaymentReturnPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ref?: string; cancelled?: string }>;
+  searchParams: Promise<{ ref?: string; cancelled?: string; kind?: string }>;
 }) {
   const params = await searchParams;
   const purchaseId = typeof params.ref === "string" ? params.ref : "";
@@ -52,6 +53,30 @@ export default async function PaymentReturnPage({
 
   const supabase = createServiceSupabase();
   if (!supabase) redirect("/catalogue");
+
+  // Une souscription d'abonnement formateur revient ici avec le même bridge :
+  // le dialogue de paiement reste unique pour toute la plateforme.
+  if (params.kind === "formateur") {
+    const settled = await settleInstructorSubscription(supabase, {
+      subscriptionId: purchaseId,
+    });
+    const instructorStatus: ReturnStatus = cancelled
+      ? "cancelled"
+      : settled.paid
+        ? "success"
+        : settled.status === "FAILED"
+          ? "failed"
+          : "pending";
+
+    return (
+      <PaymentReturnBridge
+        purchaseId={purchaseId}
+        status={instructorStatus}
+        redirectUrl="/app/formateur?notice=actif"
+        retryUrl={absoluteUrl("/app/formateur/souscrire")}
+      />
+    );
+  }
 
   const { data: purchase } = await supabase
     .from("purchases")

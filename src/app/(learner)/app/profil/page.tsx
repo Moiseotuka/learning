@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   ArrowLeftIcon,
   DownloadIcon,
+  GraduationCapIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 
@@ -15,10 +16,14 @@ import { messages } from "@/i18n";
 import { getProfile, requireUser } from "@/lib/auth/dal";
 import { ensureCertificates } from "@/lib/certificates/issue";
 import { isCertificateTestAccount } from "@/lib/certificates/test-accounts";
+import { fill } from "@/lib/instructor/format";
+import { getInstructorPlans } from "@/lib/instructor/plans";
+import { getInstructorStatus, planOf } from "@/lib/instructor/queries";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { cn } from "cn";
 
 const t = messages.learner;
+const ti = messages.formateur;
 
 export const metadata: Metadata = {
   title: t.profil.title,
@@ -57,6 +62,18 @@ export default async function ProfilePage() {
 
   const profile = await getProfile();
   const supabase = await createServerSupabase();
+
+  const [instructor, instructorPlans] = await Promise.all([
+    getInstructorStatus(user.id),
+    getInstructorPlans(),
+  ]);
+  const instructorPlan = planOf(instructorPlans, instructor.subscription?.planId);
+  const seatsLeft = instructor.subscription
+    ? Math.max(
+        0,
+        instructor.subscription.seatsLimit - instructor.seatsUsed,
+      )
+    : 0;
 
   const { data: certificateRows } = supabase
     ? await supabase
@@ -102,6 +119,54 @@ export default async function ProfilePage() {
           />
 
           {isCertificateTestAccount(email) ? <TestCertificateButton /> : null}
+
+          <section className="rounded-2xl border border-hairline bg-card p-5 shadow-sm">
+            <p className="flex items-center gap-2 text-xs font-semibold tracking-wider text-electric uppercase">
+              <GraduationCapIcon className="size-4" aria-hidden />
+              {ti.dashboardTitle}
+            </p>
+
+            {instructor.isActive && instructor.subscription ? (
+              <>
+                <p className="mt-3 text-sm font-semibold text-foreground">
+                  {fill(ti.planOf, { label: instructorPlan?.label ?? "—" })}
+                </p>
+                <ul className="mt-2 space-y-1 text-xs leading-relaxed text-muted-foreground">
+                  <li>
+                    {instructor.subscription.expiresAt
+                      ? `${fill(ti.expiresOn, {
+                          date: formatDate(instructor.subscription.expiresAt),
+                        })} · `
+                      : ""}
+                    {fill(ti.daysLeft, { days: instructor.daysLeft })}
+                  </li>
+                  <li>
+                    {ti.cardSeats} : {instructor.seatsUsed} /{" "}
+                    {instructor.subscription.seatsLimit}
+                  </li>
+                  <li>
+                    {ti.cardClasses} : {instructor.classCount} ·{" "}
+                    {fill(ti.seatsLeft, { count: seatsLeft })}
+                  </li>
+                </ul>
+                <Button asChild className="mt-4 h-10 w-full px-4">
+                  <Link href="/app/formateur">{ti.dashboardTitle}</Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  {ti.benefits[0].text}
+                </p>
+                <Button asChild className="mt-4 h-10 w-full px-4">
+                  <Link href="/app/formateur">
+                    <GraduationCapIcon aria-hidden />
+                    {instructor.subscription ? ti.reactivateCta : ti.cta}
+                  </Link>
+                </Button>
+              </>
+            )}
+          </section>
         </div>
 
         <section className="rounded-2xl border border-hairline bg-card p-5 shadow-sm sm:p-6">

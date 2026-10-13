@@ -44,7 +44,7 @@ export function Hero() {
         style={{ background: "radial-gradient(ellipse, var(--electric) 0%, transparent 70%)" }}
       />
 
-      <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-14 pb-16 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pt-20 lg:pb-20">
+      <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-10 pb-12 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pt-12 lg:pb-14">
         <div>
           <Reveal delay={0}>
             <div className="inline-flex items-center gap-2 rounded-full border border-hairline bg-card/80 px-3.5 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur">
@@ -100,7 +100,7 @@ export function Hero() {
                 "Accès immédiat au premier niveau",
               ].map((item) => (
                 <li key={item} className="inline-flex items-center gap-1.5">
-                  <CheckIcon className="size-3.5 text-emerald-500" aria-hidden />
+                  <CheckIcon className="size-3.5 text-vivid" aria-hidden />
                   {item}
                 </li>
               ))}
@@ -110,7 +110,7 @@ export function Hero() {
 
         <Reveal variant="scale" delay={200} className="relative">
           <figure className="relative mx-auto w-full max-w-[520px]">
-            <div className="overflow-hidden rounded-[28px] border border-hairline bg-card/90 shadow-[0_30px_80px_rgba(11,18,32,0.28)] backdrop-blur">
+            <div className="overflow-hidden rounded-[28px] border border-hairline bg-card shadow-[0_30px_80px_rgba(2,20,12,0.5)] backdrop-blur">
               <div className="relative h-[300px] overflow-hidden">
                 <Image
                   src={studyPhotos[0]}

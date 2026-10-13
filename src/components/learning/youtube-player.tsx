@@ -181,7 +181,6 @@ export function YouTubePlayer({
   const playGuardTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
   const startAtRef = useRef(startAt);
-  startAtRef.current = startAt;
 
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [canFullscreen, setCanFullscreen] = useState(false);
@@ -240,6 +239,10 @@ export function YouTubePlayer({
   useEffect(() => {
     autoplayRef.current = autoplay;
   }, [autoplay]);
+
+  useEffect(() => {
+    startAtRef.current = startAt;
+  }, [startAt]);
 
   // Le profil réseau/matériel n'existe que côté téléphone : le lire pendant
   // l'hydratation donnerait une vignette différente de celle du serveur.

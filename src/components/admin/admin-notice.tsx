@@ -8,6 +8,8 @@ const notices: Record<string, { tone: "success" | "error"; text: string }> = {
   updated: { tone: "success", text: t.updated },
   deleted: { tone: "success", text: t.deleted },
   saved: { tone: "success", text: t.pricing.saved },
+  plansSaved: { tone: "success", text: t.plans.saved },
+  planCreated: { tone: "success", text: t.plans.created },
   error: { tone: "error", text: t.saveFailed },
 };
 

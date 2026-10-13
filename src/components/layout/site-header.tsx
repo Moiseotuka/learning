@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { MenuIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -30,7 +31,13 @@ const BAR_ITEMS = t.nav.items.filter(
   (item) => !SECONDARY_HREFS.includes(item.href),
 );
 
+// L'accueil et la page formateur s'ouvrent sur un bandeau vert forêt : l'entête
+// prend les mêmes tokens que le bandeau tant qu'il est posé dessus, puis
+// redevient neutre dès qu'il se détache au défilement.
+const FOREST_PATHS = ["/", "/formateurs"];
+
 export function SiteHeader() {
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -41,10 +48,13 @@ export function SiteHeader() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  const forest = FOREST_PATHS.includes(pathname) && !scrolled;
+
   return (
     <header
       className={cn(
         "sticky top-0 z-50 w-full transition-all duration-300",
+        forest && "forest",
         scrolled
           ? "bg-background border-b border-hairline shadow-sm"
           : "border-b border-transparent bg-transparent",

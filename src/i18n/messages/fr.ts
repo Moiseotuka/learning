@@ -13,9 +13,11 @@ export const fr = {
     close: "Fermer le menu",
     theme: "Changer de thème",
     catalogue: "Catalogue",
+    seeAll: "Tout voir",
     items: [
       { label: "Catalogue", href: "/catalogue" },
       { label: "Parcours", href: "/#parcours" },
+      { label: "Formateurs", href: "/formateurs" },
       { label: "Certifications", href: "/#certifications" },
       { label: "Tarifs", href: "/#tarifs" },
       { label: "Communauté", href: "/#communaute" },
@@ -287,6 +289,14 @@ export const fr = {
         a: "L'équipe pédagogique easyTech. Chaque parcours est écrit avec ses objectifs, ses chapitres, ses exercices corrigés et ses quiz ; les leçons vidéo sont sélectionnées et vérifiées avant d'être publiées. Tout se consulte depuis la plateforme, sans compte externe.",
       },
       {
+        q: "Comment devenir formateur sur easyTech ?",
+        a: "Depuis votre profil, souscrivez un abonnement formateur pour la durée choisie : vous obtenez l'accès complet à tous les niveaux des parcours que vous enseignez, une classe par parcours et des places d'élèves incluses. Vos apprenants ajoutés à une classe ouvrent le parcours de cette classe sans achat séparé, tant que votre abonnement est actif.",
+      },
+      {
+        q: "Les cours en direct nécessitent-ils un logiciel ?",
+        a: "Non. La salle s'ouvre dans le navigateur, directement dans easyTech : le formateur planifie la séance, partage son écran et son terminal, les élèves rejoignent la salle à l'heure dite et leur présence est enregistrée pour le suivi de la classe.",
+      },
+      {
         q: "Puis-je essayer avant de payer ?",
         a: "Oui, l'inscription est gratuite et ouvre le niveau Débutant de chaque domaine. Les niveaux suivants se débloquent à l'unité, quand vous êtes prêt.",
       },
@@ -459,6 +469,7 @@ export const fr = {
         links: [
           { label: "Catalogue", href: "/catalogue" },
           { label: "Parcours", href: "/#parcours" },
+          { label: "Formateurs", href: "/formateurs" },
           { label: "Certifications", href: "/#certifications" },
           { label: "Tarifs", href: "/#tarifs" },
         ],
@@ -1022,6 +1033,8 @@ export const fr = {
       dashboard: "Tableau de bord",
       categories: "Catégories",
       pricing: "Tarifs",
+      instructors: "Formateurs",
+      instructorPlans: "Barème formateur",
     },
     dashboardIntro:
       "Vue d'ensemble des inscrits et du catalogue, avec les raccourcis de gestion.",
@@ -1036,6 +1049,62 @@ export const fr = {
       saved: "Prix enregistrés.",
       missingMigration:
         "Table des tarifs introuvable : collez la migration supabase/migrations/202610030001_payments.sql dans l'éditeur SQL de Supabase.",
+    },
+    instructors: {
+      title: "Abonnements formateurs",
+      intro:
+        "Qui enseigne sur easyTech, jusqu'à quand, avec combien de places. Les classes et séances suivies ici sont celles de l'espace formateur.",
+      empty:
+        "Aucun abonnement souscrit pour le moment. La souscription se fait depuis le profil d'un apprenant.",
+      stats: {
+        subscribers: "Formateurs",
+        active: "Abonnements actifs",
+        expiring: "Expirent sous 7 jours",
+        revenue: "Revenu formateur",
+      },
+      columns: {
+        trainer: "Formateur",
+        plan: "Formule",
+        status: "Statut",
+        expires: "Fin",
+        amount: "Montant payé",
+        seats: "Places utilisées",
+        classes: "Classes",
+        sessions: "Séances",
+      },
+      status: {
+        active: "Actif",
+        expired: "Expiré",
+        cancelled: "Annulé",
+        pending: "Paiement en attente",
+      },
+      noEmail: "—",
+    },
+    plans: {
+      title: "Barème des abonnements formateur",
+      intro:
+        "Durées, prix, places et nombre de parcours. Vos enregistrements s'appliquent aux prochaines souscriptions : un abonnement déjà payé garde les limites qui ont été achetées.",
+      addTitle: "Ajouter une formule",
+      create: "Créer la formule",
+      save: "Enregistrer le barème",
+      saved: "Barème enregistré.",
+      created: "Formule ajoutée.",
+      codeHint:
+        "Identifiant technique de la formule, sans espace ni accent : deux_mois",
+      labelPlaceholder: "Ex. 2 mois",
+      currencyHint: "Prix en francs congolais (CDF), entier.",
+      unpublished: "Masquée de la page de souscription",
+      fields: {
+        code: "Code",
+        label: "Libellé affiché",
+        days: "Durée (jours)",
+        price: "Prix (FC)",
+        seats: "Places d'élève",
+        tracks: "Parcours",
+        discount: "Remise (%)",
+        highlight: "Signature (optionnelle)",
+        published: "Publiée",
+      },
     },
     stats: {
       learners: "Apprenants inscrits",
@@ -1137,5 +1206,270 @@ export const fr = {
     text: "Chaque niveau supérieur débloque de nouveaux chapitres, quiz et exercices corrigés. Votre certificat vérifiable vous attend à la fin du parcours.",
     cta: "Passer au niveau supérieur",
     finalCta: "Terminer mon projet",
+  },
+
+  formateur: {
+    id: "formateurs",
+    eyebrow: "Formateurs",
+    title: "Formez votre groupe sur easyTech",
+    subtitle:
+      "Vous enseignez l'informatique à un groupe d'élèves ? Souscrivez un abonnement formateur : vous suivez leur progression chapitre par chapitre, vous animez des séances en direct depuis la plateforme, et vos élèves accèdent aux parcours que vous enseignez sans payer séparément.",
+    cta: "Devenir formateur",
+    ctaShort: "Souscrire",
+    backToProfile: "Revenir à mon profil",
+    spaceCta: "Déjà formateur ? Ouvrir mon espace",
+    durationsCount: "{count} durées au choix",
+    heroFacts: "Ce que couvre l'abonnement",
+
+    benefits: [
+      {
+        title: "Vos élèves, votre tableau de bord",
+        text: "Créez une classe par parcours, invitez vos apprenants par e-mail ou par code, et voyez qui a validé quel chapitre, avec quel score.",
+      },
+      {
+        title: "Séances en direct intégrées",
+        text: "Planifiez un cours en vidéo, partagez votre écran et votre terminal : la salle s'ouvre dans easyTech, personne n'a à installer quoi que ce soit.",
+      },
+      {
+        title: "Accès complet des parcours choisis",
+        text: "Tous les niveaux — débutant, intermédiaire et avancé — des parcours que vous enseignez, pour toute la durée de l'abonnement.",
+      },
+      {
+        title: "Places incluses",
+        text: "Chaque abonnement comprend 25 places d'apprenants. Un élève ajouté à une classe ouvre le parcours de sa classe sans frais.",
+      },
+    ],
+
+    plansTitle: "Choisissez la durée",
+    plansHint:
+      "Plus la période est longue, moins le mois coûte cher. Le prix est unique pour toute la durée choisie, sans prélèvement automatique.",
+    perMonth: "par mois",
+    total: "total pour {duration}",
+    discount: "-{pct} %",
+    seatsLabel: "{count} places d'apprenants",
+    tracksLabel: "{count} parcours au choix",
+    chooseTracks: "Quels parcours allez-vous enseigner ?",
+    chooseTracksHint:
+      "Vous pourrez ajuster cette liste depuis votre tableau de bord. Ces parcours s'ouvrent entièrement pour vous, et pour les élèves que vous y inscrivez.",
+    trackSearch: "Rechercher un parcours",
+    trackEmpty: "Aucun parcours ne correspond à cette recherche.",
+    selectedCount: "{count} sur {limit}",
+    subscribeCta: "Valider mon abonnement",
+    paying: "Ouverture de la caisse…",
+
+    dashboardTitle: "Espace formateur",
+    dashboardIntro:
+      "Vos classes, vos élèves et vos séances en direct sont réunis ici. Tout ce que vous enseignez l'est depuis easyTech : vos apprenants n'ont rien à installer ni à chercher ailleurs.",
+
+    cardSubscription: "Abonnement",
+    cardSeats: "Places utilisées",
+    cardClasses: "Classes actives",
+    cardStudents: "Élèves suivis",
+    cardSessions: "Séances à venir",
+    seatsLeft: "{count} place(s) encore libre(s) sur votre abonnement.",
+
+    planOf: "Formule {label}",
+    expiresOn: "Valide jusqu'au {date}",
+    daysLeft: "{days} jours restants",
+    expiresSoon: "Votre abonnement expire dans {days} jours.",
+    renewCta: "Prolonger",
+    expiredOn: "Expiré le {date}",
+    expiredNotice:
+      "Votre abonnement a pris fin : vos élèves ont de nouveau besoin d'un achat individuel pour ouvrir un niveau payant, et vos classes restent enregistrées. Prolongez pour tout réactiver en une minute.",
+    reactivateCta: "Réactiver mon abonnement",
+
+    classes: {
+      title: "Mes classes",
+      newTitle: "Nouvelle classe",
+      fieldName: "Nom de la classe",
+      fieldTrack: "Parcours enseigné",
+      fieldDescription: "Programme ou consigne affichée aux élèves",
+      create: "Créer la classe",
+      empty:
+        "Aucune classe pour l'instant. Créez-en une pour inviter vos premiers élèves.",
+      joinCode: "Code d'accès",
+      joinHint:
+        "Communiquez ce code à vos élèves : depuis « Ma classe », ils rejoignent la classe et ouvrent le parcours concerné.",
+      copyCode: "Copier le code",
+      copied: "Code copié",
+      students: "{count} élève(s)",
+      archive: "Archiver",
+      archived: "Archivée",
+      open: "Ouvrir la classe",
+      assignedTrack: "Parcours de la classe",
+      nextSession: "Prochaine séance",
+      noSession: "Aucune séance planifiée",
+    },
+
+    students: {
+      title: "Progression des élèves",
+      empty: "Personne dans cette classe pour le moment.",
+      columnStudent: "Élève",
+      columnChapters: "Chapitres validés",
+      columnScore: "Score moyen",
+      columnActivity: "Dernier accès",
+      joined: "Inscrit le {date}",
+      never: "Jamais venu",
+      atRisk: "À accompagner",
+      atRiskHint: "Aucune validation depuis 10 jours.",
+      inviteTitle: "Inviter un élève",
+      inviteField: "Adresse e-mail de l'élève",
+      inviteCta: "Envoyer l'invitation",
+      inviteSent: "Invitation envoyée à {email}.",
+      inviteHint:
+        "L'élève reçoit un lien : il crée son compte s'il n'en a pas encore, puis rejoint la classe en un clic.",
+      pendingTitle: "Invitations en attente",
+      pendingCopy: "Copier le lien",
+      pendingCopied: "Lien copié",
+      pendingUntil: "Valable jusqu'au {date}",
+      remove: "Retirer de la classe",
+      removed: "Élève retiré.",
+      seatsFull:
+        "Les {limit} places de votre abonnement sont utilisées. Retirez un élève ou prolongez votre formule pour en ouvrir d'autres.",
+    },
+
+    myClass: {
+      title: "Ma classe",
+      intro:
+        "Les classes dont vous êtes membre ouvrent les parcours que votre formateur enseigne, sans achat séparé, tant que son abonnement est actif.",
+      empty: "Vous n'avez encore rejoint aucune classe.",
+      taughtBy: "Formateur : {name}",
+      joinedOn: "Rejoint le {date}",
+      nextSession: "Prochaine séance : {when}",
+      openTrack: "Ouvrir le parcours",
+      leave: "Quitter la classe",
+      joinTitle: "Rejoindre une classe",
+      codeField: "Code d'accès",
+      codePlaceholder: "Ex. 7KMPQW3R",
+      joinCta: "Rejoindre",
+      joinHint: "Le formateur vous a remis ce code en début de cours.",
+      inviteTitle: "Invitation de {name}",
+      inviteBody:
+        "{instructor} vous invite à rejoindre la classe « {klass} », autour du parcours « {track} ». En acceptant, le parcours s'ouvre pour vous sans achat séparé.",
+      acceptCta: "Accepter l'invitation",
+      inviteUnknown:
+        "Cette invitation est expirée ou a déjà été utilisée. Demandez un nouveau code à votre formateur.",
+      alreadyIn: "Vous êtes déjà dans cette classe.",
+    },
+
+    errors: {
+      notInstructor: "Cet espace est réservé aux formateurs abonnés.",
+      noPlan: "Choisissez une durée d'abonnement.",
+      noTrack: "Sélectionnez au moins un parcours à enseigner.",
+      tooManyTracks: "Cette formule accepte un nombre limité de parcours.",
+      seatsFull: "Plus de places disponibles sur votre abonnement.",
+      codeUnknown: "Ce code de classe n'existe pas ou n'est plus actif.",
+      alreadyMember: "Vous faites déjà partie de cette classe.",
+      forbidden: "Vous n'avez pas accès à cette ressource.",
+      invalidEmail: "Adresse e-mail invalide.",
+      alreadyInvited: "Une invitation est déjà en cours pour cette adresse.",
+      inviteExpired: "Cette invitation a expiré.",
+      missingFields: "Certains champs obligatoires manquent.",
+      failed: "L'opération a échoué. Réessayez ou contactez le support.",
+    },
+
+    notices: {
+      actif: "Abonnement activé : vos parcours sont ouverts.",
+      renouvelle: "Abonnement prolongé.",
+      classeCreee: "Classe créée.",
+      rejoint: "Vous avez rejoint la classe.",
+      partie: "Vous avez quitté la classe.",
+      seancePlanifiee: "Séance planifiée : vos élèves la voient dans « Mes séances ».",
+      eleveRetire: "Élève retiré de la classe.",
+      inviteEnvoye: "Invitation envoyée.",
+      inviteSansEmail:
+        "Invitation créée. L'e-mail n'a pas pu partir : copiez son lien dans la liste des invitations en attente et transmettez-le vous-même.",
+      archivee: "Classe archivée.",
+      seanceOuverte: "Salle ouverte.",
+      seanceClose: "Séance clôturée.",
+      seanceAnnulee: "Séance annulée.",
+    },
+  },
+
+  live: {
+    eyebrow: "Cours en direct",
+    title: "Des séances en vidéo, sans quitter easyTech",
+    subtitle:
+      "Le formateur ouvre une salle, partage son écran et corrige le code en direct. Les élèves arrivent à l'heure dite, lèvent la main, posent leurs questions dans le chat, et leur présence est enregistrée pour le suivi de la classe.",
+    cta: "Planifier une séance",
+
+    landing: {
+      id: "direct",
+      stepsTitle: "Une séance se déroule comme en salle",
+      steps: [
+        {
+          title: "Vous planifiez",
+          text: "Depuis votre espace formateur : classe invitée, date, heure, durée et ordre du jour. Vos élèves voient la séance arriver dans « Mes séances ».",
+        },
+        {
+          title: "Vous ouvrez la salle",
+          text: "La salle s'ouvre dans easyTech, une demi-heure avant le début. Vous partagez votre écran et votre terminal, les élèves lèvent la main et échangent dans le chat.",
+        },
+        {
+          title: "Vous suivez la présence",
+          text: "Chaque élève entré en salle est pointé automatiquement, avec le temps passé. Vous savez qui était là pour la correction du chapitre.",
+        },
+      ],
+      bullets: [
+        "Aucune installation côté élève : la salle s'ouvre dans le navigateur.",
+        "Le nom de la salle reste technique : les élèves voient le titre du cours.",
+        "Caméra et micro ne s'allument que sur demande de l'élève.",
+        "Vous verrouillez la salle et éjectez un participant à tout moment.",
+      ],
+    },
+
+    module: {
+      title: "Séances en direct",
+      upcoming: "À venir",
+      past: "Séances passées",
+      empty: "Aucune séance planifiée pour le moment.",
+      newTitle: "Nouvelle séance",
+      fieldTitle: "Titre de la séance",
+      fieldClass: "Classe invitée",
+      fieldDate: "Date",
+      fieldTime: "Heure de début",
+      fieldDuration: "Durée",
+      fieldAgenda: "Ordre du jour (visible par les élèves)",
+      create: "Planifier",
+      minutes: "{count} min",
+      startNow: "Ouvrir la salle",
+      end: "Clôturer la séance",
+      cancel: "Annuler la séance",
+      attendance: "{count} élève(s) présent(s)",
+      statuses: {
+        scheduled: "Programmée",
+        live: "En cours",
+        ended: "Terminée",
+        cancelled: "Annulée",
+      },
+    },
+
+    room: {
+      title: "Salle de cours",
+      host: "Vous animez cette séance",
+      student: "Séance animée par {name}",
+      startsAt: "Début à {time}",
+      startsIn: "{when}",
+      opensAt: "La salle ouvre {when}",
+      tooEarly:
+        "La salle n'est pas encore ouverte. Revenez quelques minutes avant le début, ou restez sur cette page : elle s'ouvrira automatiquement.",
+      closed: "Cette séance est terminée. Le formateur peut en planifier une nouvelle.",
+      join: "Rejoindre la séance",
+      prejoin: "Vérifiez votre caméra et votre micro avant d'entrer.",
+      loading: "Connexion à la salle…",
+      leave: "Quitter la salle",
+      unsupported:
+        "La salle en direct n'a pas pu se charger sur ce navigateur. Une connexion stable et un navigateur récent sont nécessaires ; vos leçons enregistrées restent accessibles.",
+      privacy:
+        "Caméra et micro ne sont activés que si vous les allumez. Rien n'est enregistré sans l'accord du formateur.",
+      yourName: "Votre nom",
+      nameHint: "C'est le nom que verront les autres participants.",
+    },
+
+    learner: {
+      title: "Mes séances",
+      none: "Aucune séance en direct programmée pour vos classes.",
+      inClass: "Classe : {name}",
+    },
   },
 };

@@ -31,6 +31,8 @@ type StatusResponse = {
 type CheckoutDialogProps = {
   url: string;
   purchaseId: string;
+  /** Clé de sondage : un achat de niveau ou une souscription formateur. */
+  param?: "purchase" | "subscription";
   /** Paiement confirmé : fermer le dialogue et ouvrir le parcours. */
   onSuccess: () => void;
   onClose: () => void;
@@ -49,6 +51,7 @@ type CheckoutDialogProps = {
 export function CheckoutDialog({
   url,
   purchaseId,
+  param = "purchase",
   onSuccess,
   onClose,
 }: CheckoutDialogProps) {
@@ -65,7 +68,7 @@ export function CheckoutDialog({
     setChecking(true);
     try {
       const response = await fetch(
-        `/api/payments/status?purchase=${encodeURIComponent(purchaseId)}`,
+        `/api/payments/status?${param}=${encodeURIComponent(purchaseId)}`,
         { cache: "no-store" },
       );
       const data = (await response.json().catch(() => null)) as

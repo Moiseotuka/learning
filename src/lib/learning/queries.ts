@@ -1,6 +1,7 @@
 import { cache } from "react";
 
 import type { LevelType } from "@/config/catalog";
+import { getUser } from "@/lib/auth/dal";
 import { playableVideos, videoTokens } from "@/lib/learning/video-playability";
 import type {
   ChapterPage,
@@ -209,7 +210,9 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
   const supabase = await createServerSupabase();
   if (!supabase) return null;
 
-  const [tracks, chapters, progress, watched, prices, purchases, exams] =
+  const user = await getUser();
+
+  const [tracks, chapters, progress, watched, prices, purchases, exams, granted] =
     await Promise.all([
       supabase
         .from("tracks")
@@ -232,6 +235,12 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
       supabase
         .from("level_exams")
         .select("track_id,level,status,best_score,attempts,passed_at"),
+      // Droits hors achat : abonnement de formateur et place de classe. La
+      // fonction est `security definer` parce que le quota de places se calcule
+      // sur les classes d'AUTRUI, que la RLS ne montre pas à l'élève.
+      user
+        ? supabase.rpc("granted_category_ids", { p_user: user.id })
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
   if (tracks.error || chapters.error || progress.error) {
@@ -270,6 +279,13 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
     console.warn(
       "[learning] examens : table absente — coller la migration 202610020002_level_exams.sql",
       exams.error.message,
+    );
+  }
+
+  if (granted.error) {
+    console.warn(
+      "[learning] droits formateur : fonction absente — coller la migration 202610140001_instructor_live.sql",
+      granted.error.message,
     );
   }
 
@@ -319,6 +335,12 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
     examMap.set(`${row.track_id}:${row.level}`, row);
   }
 
+  const grantedCategories = new Set<string>(
+    ((granted.data ?? []) as { category_id: string }[]).map(
+      (row) => row.category_id,
+    ),
+  );
+
   return {
     tracks: (tracks.data ?? []) as unknown as TrackRow[],
     chaptersByTrack,
@@ -327,6 +349,7 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
     paidLevels,
     priceLevels,
     examMap,
+    grantedCategories,
   };
 });
 
@@ -335,6 +358,7 @@ type LearnerData = NonNullable<Awaited<ReturnType<typeof fetchLearnerData>>>;
 /** Règle métier : le niveau débutant est gratuit pour tous les domaines. */
 function hasLevelAccess(data: LearnerData, categoryId: string, level: string) {
   if (level === "debutant") return true;
+  if (data.grantedCategories.has(categoryId)) return true;
   return data.paidLevels.get(categoryId)?.has(level) ?? false;
 }
 

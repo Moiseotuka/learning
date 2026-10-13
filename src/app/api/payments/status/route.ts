@@ -5,6 +5,7 @@ import {
 } from "@/lib/payments/nyole";
 import { trackNoticeUrl } from "@/lib/payments/notice";
 import { processPaymentEvent } from "@/lib/payments/processor";
+import { settleInstructorSubscription } from "@/lib/instructor/checkout";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
@@ -30,7 +31,8 @@ type PurchaseRow = {
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const purchaseId = url.searchParams.get("purchase") ?? "";
-  if (!purchaseId) {
+  const subscriptionId = url.searchParams.get("subscription") ?? "";
+  if (!purchaseId && !subscriptionId) {
     return Response.json(
       { ok: false, reason: "missing" },
       { status: 400 },
@@ -53,6 +55,29 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json(
       { ok: false, reason: "not-configured" },
       { status: 503 },
+    );
+  }
+
+  // Abonnement formateur : même dialogue, même sondage, table séparée.
+  if (subscriptionId) {
+    const settled = await settleInstructorSubscription(supabase, {
+      subscriptionId,
+      expectUserId: user.id,
+    });
+    return Response.json(
+      settled.ok && settled.paid
+        ? {
+            ok: true,
+            paid: true,
+            status: "SUCCESS",
+            redirect: "/app/formateur?notice=actif",
+          }
+        : {
+            ok: settled.ok,
+            paid: false,
+            status: settled.status,
+            reason: settled.reason,
+          },
     );
   }
 

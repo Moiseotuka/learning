@@ -35,7 +35,10 @@ export function ExamTimer({
   const deadline = expiresAt - SUBMIT_BUFFER_MS;
   const [left, setLeft] = useState(durationMs - SUBMIT_BUFFER_MS);
   const expireRef = useRef(onExpire);
-  expireRef.current = onExpire;
+
+  useEffect(() => {
+    expireRef.current = onExpire;
+  });
 
   useEffect(() => {
     let fired = false;

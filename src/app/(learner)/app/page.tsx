@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { ArrowRightIcon, TargetIcon } from "lucide-react";
+import { ArrowRightIcon, TargetIcon, UsersIcon, VideoIcon } from "lucide-react";
 
 import { ProgressBar } from "@/components/learning/progress-bar";
 import { LevelUpsellCard } from "@/components/learning/level-upsell-card";
@@ -17,9 +17,15 @@ import type {
   LearnerTrack,
 } from "@/lib/learning/types";
 import { getLearnerTracks } from "@/lib/learning/queries";
+import { fill, formatDateTime } from "@/lib/instructor/format";
+import {
+  getLearnerClasses,
+  getUpcomingSessionsForLearner,
+} from "@/lib/instructor/queries";
 import { cn } from "@/lib/utils";
 
 const t = messages.learner;
+const tc = messages.formateur.myClass;
 
 export const metadata: Metadata = {
   title: t.dashboardTitle,
@@ -61,7 +67,11 @@ function StatRow({ label, value }: { label: string; value: string }) {
 
 export default async function DashboardPage() {
   const user = await requireUser(links.dashboard);
-  const tracks = await getLearnerTracks();
+  const [tracks, myClasses, liveSoon] = await Promise.all([
+    getLearnerTracks(),
+    getLearnerClasses(user.id),
+    getUpcomingSessionsForLearner(user.id),
+  ]);
 
   const metadataName =
     typeof user.user_metadata?.full_name === "string"
@@ -373,6 +383,73 @@ export default async function DashboardPage() {
           )}
         </section>
       </div>
+
+      {myClasses.length > 0 || liveSoon.length > 0 ? (
+        <section className="mt-6 grid gap-4 lg:grid-cols-2">
+          {myClasses.length > 0 ? (
+            <div className="rounded-2xl border border-hairline bg-card p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <UsersIcon className="size-4 text-electric" aria-hidden />
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {tc.title}
+                </h2>
+                <span className="h-px flex-1 bg-hairline" />
+                <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  <Link href="/app/classe">
+                    {messages.nav.seeAll}
+                    <ArrowRightIcon aria-hidden />
+                  </Link>
+                </Button>
+              </div>
+              <ul className="mt-3 space-y-2">
+                {myClasses.slice(0, 3).map((klass) => (
+                  <li key={klass.classId} className="text-xs">
+                    <Link
+                      href={`/app/parcours/${klass.trackSlug}`}
+                      className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/70"
+                    >
+                      <span className="min-w-0 truncate font-medium text-foreground">
+                        {klass.title}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-muted-foreground">
+                        {fill(tc.taughtBy, { name: klass.instructorName })}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {liveSoon.length > 0 ? (
+            <div className="rounded-2xl border border-hairline bg-card p-5 shadow-sm">
+              <div className="flex items-center gap-3">
+                <VideoIcon className="size-4 text-electric" aria-hidden />
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  {messages.live.learner.title}
+                </h2>
+              </div>
+              <ul className="mt-3 space-y-2">
+                {liveSoon.map((session) => (
+                  <li key={session.id} className="text-xs">
+                    <Link
+                      href={`/app/live/${session.id}`}
+                      className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/70"
+                    >
+                      <span className="min-w-0 truncate font-medium text-foreground">
+                        {session.title}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">
+                        {formatDateTime(session.startsAt)}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
 
     {!isFirstRun ? (

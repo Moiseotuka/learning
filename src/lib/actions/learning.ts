@@ -53,6 +53,18 @@ async function chapterLevelLocked(
     return true;
   }
 
+  // Abonnement de formateur ou place de classe : le domaine est ouvert en
+  // entier. La règle vit dans granted_category_ids(), partagée avec la lecture
+  // des parcours (src/lib/learning/queries.ts) pour qu'aucun des deux chemins
+  // ne puisse dévier de l'autre.
+  const { data: granted } = await supabase.rpc("granted_category_ids", {
+    p_user: userId,
+  });
+  const grantedHere = ((granted as { category_id: string }[] | null) ?? []).some(
+    (row) => row.category_id === categoryId,
+  );
+  if (grantedHere) return false;
+
   const { data, error } = await supabase
     .from("purchases")
     .select("id")

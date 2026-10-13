@@ -157,3 +157,130 @@ function errorText(code?: string) {
   if (code === "23505") return t.fields.slugHint;
   return t.saveFailed;
 }
+
+const plansPath = `${links.admin}/formateur-plans`;
+const planCodePattern = /^[a-z][a-z0-9_]{1,30}$/;
+
+function readIntValue(formData: FormData, key: string, max: number) {
+  const parsed = Number.parseInt(readTextValue(formData, key), 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > max) return null;
+  return parsed;
+}
+
+/**
+ * Le barème formateur est éditable ici : aucune redeploiement pour changer une
+ * durée ou un prix. Écritures en service role, `instructor_plans` étant
+ * en lecture seule côté client.
+ */
+export async function saveInstructorPlans(formData: FormData) {
+  await requireAdmin(links.admin);
+
+  const supabase = createServiceSupabase();
+  if (!supabase) {
+    redirect(`${plansPath}?notice=error`);
+  }
+
+  const ids = String(formData.get("plans") ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+
+  const rows: Record<string, unknown>[] = [];
+  for (const id of ids) {
+    const label = readTextValue(formData, `label:${id}`);
+    const durationDays = readIntValue(formData, `days:${id}`, 3650);
+    const priceFc = readIntValue(formData, `price:${id}`, 100_000_000);
+    const seatsLimit = readIntValue(formData, `seats:${id}`, 2000);
+    const trackLimit = readIntValue(formData, `tracks:${id}`, 200);
+    const discountPct = readIntValue(formData, `discount:${id}`, 90);
+
+    if (label.length < 1 || !durationDays || priceFc === null || !seatsLimit || !trackLimit || !discountPct) {
+      console.error("[admin] barème formateur invalide", { id });
+      redirect(`${plansPath}?notice=error`);
+    }
+
+    rows.push({
+      id,
+      label,
+      duration_days: durationDays,
+      price_fc: priceFc,
+      seats_limit: seatsLimit,
+      track_limit: trackLimit,
+      discount_pct: discountPct,
+      highlight: readTextValue(formData, `highlight:${id}`) || null,
+      published: formData.get(`published:${id}`) === "on",
+    });
+  }
+
+  if (rows.length === 0) {
+    redirect(`${plansPath}?notice=error`);
+  }
+
+  const { error } = await supabase
+    .from("instructor_plans")
+    .upsert(rows, { onConflict: "id" });
+  if (error) {
+    console.error("[admin] barème formateur", error.code, error.message);
+    redirect(`${plansPath}?notice=error`);
+  }
+
+  revalidatePath("/", "layout");
+  redirect(`${plansPath}?notice=plansSaved`);
+}
+
+export async function createInstructorPlan(
+  _prevState: AdminFormState | undefined,
+  formData: FormData,
+): Promise<AdminFormState> {
+  await requireAdmin(links.admin);
+
+  const code = readTextValue(formData, "code").toLowerCase();
+  const label = readTextValue(formData, "label");
+  const durationDays = readIntValue(formData, "days", 3650);
+  const priceFc = readIntValue(formData, "price", 100_000_000);
+  const seatsLimit = readIntValue(formData, "seats", 2000);
+  const trackLimit = readIntValue(formData, "tracks", 200);
+
+  const fieldErrors: Record<string, string> = {};
+  if (!planCodePattern.test(code)) fieldErrors.code = t.plans.codeHint;
+  if (label.length < 2) fieldErrors.label = messages.auth.errors.required;
+  if (!durationDays) fieldErrors.days = messages.auth.errors.required;
+  if (priceFc === null) fieldErrors.price = messages.auth.errors.required;
+  if (!seatsLimit) fieldErrors.seats = messages.auth.errors.required;
+  if (!trackLimit) fieldErrors.tracks = messages.auth.errors.required;
+  if (Object.keys(fieldErrors).length > 0) {
+    return { status: "error", fieldErrors };
+  }
+
+  const supabase = createServiceSupabase();
+  if (!supabase) {
+    return { status: "error", message: t.notConfigured };
+  }
+
+  const { count } = await supabase
+    .from("instructor_plans")
+    .select("id", { count: "exact", head: true });
+
+  const { error } = await supabase.from("instructor_plans").insert({
+    id: code,
+    label,
+    duration_days: durationDays,
+    price_fc: priceFc,
+    seats_limit: seatsLimit,
+    track_limit: trackLimit,
+    discount_pct: readIntValue(formData, "discount", 90) ?? 0,
+    highlight: readTextValue(formData, "highlight") || null,
+    published: true,
+    position: (count ?? 0) + 1,
+  });
+  if (error) {
+    if (error.code === "23505") {
+      return { status: "error", fieldErrors: { code: t.plans.codeHint } };
+    }
+    console.error("[admin] formule formateur", error.code, error.message);
+    return { status: "error", message: t.saveFailed };
+  }
+
+  revalidatePath("/", "layout");
+  redirect(`${plansPath}?notice=planCreated`);
+}

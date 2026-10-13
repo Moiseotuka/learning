@@ -6,6 +6,7 @@ import {
   nyoleSecretKey,
 } from "@/lib/payments/nyole";
 import { processPaymentEvent } from "@/lib/payments/processor";
+import { settleInstructorSubscription } from "@/lib/instructor/checkout";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 const MAX_TOLERANCE_SECONDS = 300;
@@ -119,6 +120,23 @@ async function handleNyole(
   const metadata = payload.data.metadata ?? null;
   const purchaseId =
     typeof metadata?.purchase_id === "string" ? metadata.purchase_id : null;
+  const subscriptionId =
+    typeof metadata?.subscription_id === "string" ? metadata.subscription_id : null;
+
+  if (subscriptionId) {
+    const settled = await settleInstructorSubscription(supabase, {
+      subscriptionId,
+      reference: sessionId,
+    });
+    if (!settled.ok && settled.reason === "unknown") {
+      console.warn("[webhook] nyole : souscription introuvable pour", sessionId);
+      return Response.json({ ok: true, skipped: "unknown-subscription" });
+    }
+    if (!settled.ok) {
+      return Response.json(settled, { status: 500 });
+    }
+    return Response.json({ ok: true, paid: settled.paid });
+  }
 
   const lookup = purchaseId
     ? supabase.from("purchases").select("id,status,amount_usd,currency").eq("id", purchaseId)

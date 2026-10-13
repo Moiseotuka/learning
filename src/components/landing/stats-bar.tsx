@@ -14,7 +14,7 @@ export function StatsBar({ numbers }: { numbers: CatalogNumbers }) {
   ].filter((item) => item.value > 0);
 
   return (
-    <section className="border-y border-hairline bg-elevated py-10">
+    <section className="border-t border-hairline py-10 lg:py-12">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6">
         <Reveal>
           <p className="text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -26,10 +26,14 @@ export function StatsBar({ numbers }: { numbers: CatalogNumbers }) {
           <dl className="mt-6 grid grid-cols-2 gap-6 sm:grid-cols-4">
             {items.map((item) => (
               <div key={item.label} className="text-center">
-                <dd className="text-3xl font-bold text-electric sm:text-4xl">
+                <dd className="text-3xl font-bold text-foreground tabular-nums sm:text-4xl">
                   <Counter value={item.value} />
                 </dd>
-                <dt className="mt-1 text-xs text-muted-foreground">
+                <span
+                  className="mx-auto mt-2.5 block h-0.5 w-9 rounded-full bg-electric"
+                  aria-hidden
+                />
+                <dt className="mt-2.5 text-xs text-muted-foreground">
                   {item.label}
                 </dt>
               </div>
