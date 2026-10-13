@@ -1,6 +1,6 @@
 export const fr = {
   meta: {
-    title: "easyLearn — Apprenez la technologie, prouvez-le",
+    title: "easyTech — Apprenez la technologie, prouvez-le",
     description:
       "Plateforme e-learning francophone : parcours structurés du Débutant au niveau Avancé, exercices pratiques, quiz corrigés et certificats vérifiables. Pensée pour l'Afrique francophone et les connexions mobiles.",
   },
@@ -253,7 +253,7 @@ export const fr = {
     verifyNote: "La vérification est publique et gratuite.",
     preview: {
       title: "Certificat de réalisation",
-      alt: "Aperçu d'un certificat easyLearn",
+      alt: "Aperçu d'un certificat easyTech",
     },
   },
 
@@ -267,8 +267,8 @@ export const fr = {
         a: "Chaque chapitre se termine par un quiz obligatoire. Vous devez atteindre le score minimum (70 % par défaut, ajustable par le formateur) pour ouvrir le chapitre suivant. Les échecs déclenchent une explication détaillée de chaque erreur et un lien de révision vers la vidéo concernée.",
       },
       {
-        q: "Les vidéos sont-elles produites par easyLearn ?",
-        a: "Les leçons vidéo sont sélectionnées une par une — en français, à jour — puis intégrées dans le lecteur de la plateforme. Vous suivez tout depuis easyLearn : aucune inscription sur un site vidéo externe n'est nécessaire. Autour de ces leçons, nous produisons les résumés écrits, les exercices, les corrections, les quiz, le suivi et les certificats.",
+        q: "Les vidéos sont-elles produites par easyTech ?",
+        a: "Les leçons vidéo sont sélectionnées une par une — en français, à jour — puis intégrées dans le lecteur de la plateforme. Vous suivez tout depuis easyTech : aucune inscription sur un site vidéo externe n'est nécessaire. Autour de ces leçons, nous produisons les résumés écrits, les exercices, les corrections, les quiz, le suivi et les certificats.",
       },
       {
         q: "Puis-je suivre la formation sur mobile avec une connexion lente ?",
@@ -280,11 +280,11 @@ export const fr = {
       },
       {
         q: "Le certificat a-t-il une valeur ?",
-        a: "C'est une attestation de compétences délivrée par easyLearn, avec le niveau validé et un numéro de vérification public. Vos exercices validés et vos certificats restent consultables par le recruteur.",
+        a: "C'est une attestation de compétences délivrée par easyTech, avec le niveau validé et un numéro de vérification public. Vos exercices validés et vos certificats restent consultables par le recruteur.",
       },
       {
         q: "Qui peut créer un parcours ?",
-        a: "L'équipe pédagogique easyLearn. Chaque parcours est écrit avec ses objectifs, ses chapitres, ses exercices corrigés et ses quiz ; les leçons vidéo sont sélectionnées et vérifiées avant d'être publiées. Tout se consulte depuis la plateforme, sans compte externe.",
+        a: "L'équipe pédagogique easyTech. Chaque parcours est écrit avec ses objectifs, ses chapitres, ses exercices corrigés et ses quiz ; les leçons vidéo sont sélectionnées et vérifiées avant d'être publiées. Tout se consulte depuis la plateforme, sans compte externe.",
       },
       {
         q: "Puis-je essayer avant de payer ?",
@@ -353,10 +353,10 @@ export const fr = {
     payMockHint:
       "Mode démonstration : le paiement est simulé, aucune somme ne sera débitée.",
     paySecureHint:
-      "Paiement sécurisé par nyole (Mobile Money ou carte) — l'apprenant reste sur easyLearn.",
+      "Paiement sécurisé par nyole (Mobile Money ou carte) — l'apprenant reste sur easyTech.",
     checkoutTitle: "Paiement sécurisé",
     checkoutIntro:
-      "La page de paiement nyole s'affiche dans cette fenêtre : vous restez sur easyLearn. Ne la fermez pas avant la confirmation.",
+      "La page de paiement nyole s'affiche dans cette fenêtre : vous restez sur easyTech. Ne la fermez pas avant la confirmation.",
     checkoutNewWindow: "Ouvrir dans une nouvelle fenêtre",
     checkoutChecking: "Vérification du paiement…",
     cancelled: "Paiement annulé. Vous pouvez réessayer à tout moment.",
@@ -398,7 +398,7 @@ export const fr = {
     channels: [
       {
         name: "Support par e-mail",
-        text: "contact@easylearn.cd pour un blocage de parcours, de paiement ou de certificat.",
+        text: "contact@easytech.cd pour un blocage de parcours, de paiement ou de certificat.",
       },
       {
         name: "Suivi de progression",
@@ -422,7 +422,7 @@ export const fr = {
     eyebrow: "À propos",
     title: "Notre méthode : structurer, faire pratiquer, certifier",
     description:
-      "easyLearn ne vend pas des vidéos. Nous vendons l'ordonnancement pédagogique, les exercices, les quiz, les corrections, le suivi, la communauté et les certificats. Les liens de ressources renvoient vers des documents publics recommandés, jamais vers du contenu revendu.",
+      "easyTech ne vend pas des vidéos. Nous vendons l'ordonnancement pédagogique, les exercices, les quiz, les corrections, le suivi, la communauté et les certificats. Les liens de ressources renvoient vers des documents publics recommandés, jamais vers du contenu revendu.",
     points: [
       {
         title: "Contenu structuré",
@@ -477,9 +477,9 @@ export const fr = {
         title: "Support",
         links: [
           { label: "FAQ", href: "/#faq" },
-          { label: "Contact", href: "mailto:contact@easylearn.cd" },
-          { label: "Aide", href: "mailto:aide@easylearn.cd" },
-          { label: "Signaler un problème", href: "mailto:support@easylearn.cd" },
+          { label: "Contact", href: "mailto:contact@easytech.cd" },
+          { label: "Aide", href: "mailto:aide@easytech.cd" },
+          { label: "Signaler un problème", href: "mailto:support@easytech.cd" },
         ],
       },
       {
@@ -494,7 +494,7 @@ export const fr = {
       },
     ],
     follow: "Suivez-nous",
-    rights: (y: number) => `© ${y} easyLearn. Tous droits réservés.`,
+    rights: (y: number) => `© ${y} easyTech. Tous droits réservés.`,
     madeIn: "Conçu à Kinshasa, pour l'Afrique francophone.",
     paymentNote: "Paiements sécurisés : Mobile Money et carte bancaire.",
   },
@@ -513,7 +513,7 @@ export const fr = {
     verifyValid: "Certificat valide",
     verifyInvalid: "Certificat introuvable",
     verifyInvalidText:
-      "Ce numéro ne correspond à aucun certificat délivré par easyLearn.",
+      "Ce numéro ne correspond à aucun certificat délivré par easyTech.",
     verifyHolder: "Bénéficiaire",
     verifyFormation: "Formation",
     verifyIssued: (date: string) => `Délivré le ${date}`,
@@ -644,6 +644,21 @@ export const fr = {
         },
       ],
       tip: "Les vidéos se regardent d’une seule traite : laissez-les avancer jusqu’à la fin, le quiz se débloque ensuite.",
+    },
+    upsell: {
+      eyebrow: "La suite de votre parcours",
+      title: (level: string, chapters: number) =>
+        chapters === 1
+          ? `Niveau ${level} : 1 chapitre vous attend`
+          : `Niveau ${level} : ${chapters} chapitres vous attendent`,
+      intro:
+        "Même rythme que le niveau Débutant : leçons vidéo, cours écrit page par page, exercice corrigé, quiz de validation, puis examen de fin de niveau et certificat.",
+      cta: (price: number) =>
+        `Débloquer · ${price.toLocaleString("fr-FR")} CDF`,
+      paidWith: "Paiement Mobile Money ou carte — accès immédiat, sans abonnement.",
+      alsoLocked: "Les niveaux suivants du domaine",
+      levelChip: (level: string, chapters: number, price: number) =>
+        `${level} · ${chapters} ${chapters > 1 ? "chapitres" : "chapitre"} · ${price.toLocaleString("fr-FR")} CDF`,
     },
     resume: "Reprendre le parcours",
     resumeLabel: (chapter: string) => `Reprendre : ${chapter}`,
@@ -859,6 +874,39 @@ export const fr = {
       "Vous pouvez retenter l'examen pour améliorer votre meilleur score.",
     examCertificateNotice:
       "Examen réussi : votre certificat de niveau est disponible sur votre profil.",
+    questionOf: (index: number, total: number) =>
+      `Question ${index} sur ${total}`,
+    previousQuestion: "Précédente",
+    nextQuestion: "Suivante",
+    chooseAnswerToContinue: "Cochez une réponse pour passer à la suivante.",
+    questionsRemaining: (count: number) =>
+      count <= 1
+        ? "Encore 1 question à compléter avant de terminer."
+        : `Encore ${count} questions à compléter avant de terminer.`,
+    allAnswered: "Toutes les questions ont une réponse : vous pouvez terminer.",
+    answersFilled: (done: number, total: number) =>
+      `${done} réponse${done <= 1 ? "" : "s"} sur ${total}`,
+    examTimeLeft: "Temps restant",
+    examTimeLow: (time: string) =>
+      `Il reste ${time} : terminez et validez maintenant.`,
+    examTimeUp: "Temps écoulé : vos réponses sont envoyées telles quelles.",
+    attemptsLeft: (left: number, total: number) =>
+      left <= 0
+        ? "Plus aucune tentative"
+        : `${left} tentative${left <= 1 ? "" : "s"} sur ${total}`,
+    attemptsExhaustedTitle: "Tentatives épuisées",
+    quizAttemptsExhausted:
+      "Les 3 tentatives de ce quiz sont consommées. Reprenez le niveau depuis le début pour le passer à nouveau.",
+    examAttemptsExhausted:
+      "Les 3 tentatives de cet examen sont consommées. Reprenez le niveau depuis le début pour le passer à nouveau.",
+    restartLevelCta: "Recommencer le niveau",
+    restartLevelWarning: (level: string) =>
+      `Reprendre le niveau ${level} efface sa progression : leçons vidéo, pages lues, exercices et quiz de tous les chapitres du niveau repartent à zéro.`,
+    restartLevelDone: (level: string) =>
+      `Le niveau ${level} est reparti à zéro. Reprenez le premier chapitre.`,
+    restartLevelRefused:
+      "Reprise impossible : ce niveau est déjà validé ou n'est pas à vous.",
+    levelRestartedNotice: "Niveau remis à zéro : reprenez le premier chapitre.",
     chapterLockedTitle: "Chapitre verrouillé",
     levelLockedTitle: "Niveau verrouillé",
     levelLockedMsg:
@@ -893,6 +941,9 @@ export const fr = {
     videoPosterPlay: "Lire la leçon",
     videoPosterHint:
       "Appuyez sur l'image pour démarrer la leçon : rien ne se charge avant votre clic.",
+    videoResumeHint: (time: string) =>
+      `Reprise à ${time} — appuyez pour continuer.`,
+    videoRestart: "Reprendre depuis le début",
     videoLoading: "Chargement de la leçon…",
     videoLoadingSlow:
       "Connexion lente détectée : la vidéo peut mettre une minute à apparaître.",
@@ -909,6 +960,9 @@ export const fr = {
       `Étape ${index} sur ${total}`,
     pageOf: (index: number, total: number) => `Page ${index} sur ${total}`,
     stepsLabel: "Étapes du chapitre",
+    lessonPages: "Pages du cours",
+    chapterMapHint:
+      "Suivez les étapes dans l'ordre : la leçon vidéo, puis le cours écrit, l'exercice, et enfin le quiz qui valide le chapitre. Les étapes suivantes s'ouvrent dès que les vidéos sont terminées.",
     previousStep: "Étape précédente",
     nextStep: "Étape suivante",
     previousPage: "Page précédente",
@@ -963,7 +1017,7 @@ export const fr = {
   admin: {
     title: "Back-office",
     subtitle:
-      "Catalogue easyLearn : catégories, parcours et publications, sans toucher au code.",
+      "Catalogue easyTech : catégories, parcours et publications, sans toucher au code.",
     nav: {
       dashboard: "Tableau de bord",
       categories: "Catégories",
@@ -1056,7 +1110,7 @@ export const fr = {
         `Vous avez terminé « ${title} » avec succès. Ce certificat, délivré le ${date}, est disponible dans votre profil, où il restera téléchargeable en PDF.`,
       cta: "Télécharger mon certificat",
       verify: "Vérifier ce certificat en ligne",
-      footer: "Cet email a été envoyé automatiquement par easyLearn.",
+      footer: "Cet email a été envoyé automatiquement par easyTech.",
     },
   },
 

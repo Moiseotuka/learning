@@ -38,7 +38,7 @@ type CheckoutDialogProps = {
 
 /**
  * Boîte de dialogue contenant la page de paiement nyole (iframe) :
- * l'apprenant ne quitte jamais easyLearn.
+ * l'apprenant ne quitte jamais easyTech.
  * La confirmation vient, dans l'ordre :
  *  1. d'un message posté par /paiement/retour (page atteinte à l'issue du
  *     paiement, dans l'iframe ou une fenêtre détachée) ;

@@ -135,18 +135,37 @@ function ImageBlock({ block }: { block: string }) {
   );
 }
 
+/** Le titre de la page est déjà affiché au-dessus du corps : un premier bloc
+ *  qui le répète ne fait que dédoubler la ligne. */
+function repeatsTitle(block: string, title: string) {
+  const heading = block.match(/^\s*#{1,4}\s+(.*)$/);
+  if (!heading) return false;
+  const flat = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[`*_]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  return flat(heading[1]) === flat(title);
+}
+
 export function LessonBody({
   content,
   className,
+  title,
 }: {
   content: string;
   className?: string;
+  title?: string;
 }) {
   const blocks = splitLessonBlocks(content);
+  const skipped =
+    title && blocks.length > 0 && repeatsTitle(blocks[0], title) ? 1 : 0;
 
   return (
     <div className={cn("max-w-[72ch] space-y-6", className)}>
-      {blocks.map((block, index) => {
+      {blocks.slice(skipped).map((block, offset) => {
+        const index = offset + skipped;
         const lines = block.split("\n").map((line) => line.trim());
         const heading = block.match(/^(#{2,4})\s+(.*)$/);
 

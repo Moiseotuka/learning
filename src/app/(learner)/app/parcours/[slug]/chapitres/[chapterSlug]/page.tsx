@@ -5,19 +5,23 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
+  CompassIcon,
   EyeIcon,
   LockIcon,
 } from "lucide-react";
 import { notFound } from "next/navigation";
 
+import { ChapterStepNav, type ChapterStep } from "@/components/learning/chapter-step-nav";
 import { LessonBody } from "@/components/learning/lesson-body";
 import { LevelUpNotification } from "@/components/learning/level-up-banner";
 import { LessonEditor } from "@/components/learning/lesson-editor";
-import { PageResume } from "@/components/learning/page-resume";
+import { LessonResume } from "@/components/learning/lesson-resume";
+import { LevelUpsellCard } from "@/components/learning/level-upsell-card";
 import { ResourceLink } from "@/components/learning/resource-viewer";
 import { PracticePanel } from "@/components/practice/practice-panel";
 import { TutorialPlayer } from "@/components/learning/tutorial-player";
 import { Button } from "@/components/ui/button";
+import { cn } from "cn";
 import { messages } from "@/i18n";
 import { getLearnerChapter } from "@/lib/learning/queries";
 import {
@@ -37,6 +41,14 @@ export const metadata: Metadata = {
 };
 
 type StepKey = "objectifs" | "videos" | "cours" | "exercice" | "ressources";
+
+const STEP_LABELS: Record<StepKey, string> = {
+  objectifs: t.objectives,
+  videos: t.stepLabels.videos,
+  cours: t.lesson,
+  exercice: t.exercise,
+  ressources: t.resources,
+};
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
@@ -160,7 +172,9 @@ export default async function ChapterPage({
 
   const requested = (stepKeys as string[]).includes(etape ?? "")
     ? (etape as StepKey)
-    : stepKeys[0];
+    : (stepKeys as string[]).includes(chapter.resumeStep ?? "")
+      ? (chapter.resumeStep as StepKey)
+      : stepKeys[0];
   const current: StepKey = stepBlockedByVideos(
     requested,
     stepKeys,
@@ -176,6 +190,36 @@ export default async function ChapterPage({
     { key: "quiz", href: quizHref },
   ];
 
+  // Barre d'étapes affichée dans la zone de lecture : sur téléphone, le
+  // sommaire est replié et l'apprenant ne voit plus où il en est.
+  const validated = chapter.progress?.completed ?? false;
+  const stepNav: ChapterStep[] = [
+    ...stepKeys.map((key) => ({
+      key,
+      label: STEP_LABELS[key],
+      href: `${chapterHref}?etape=${key}`,
+      done:
+        key === "videos"
+          ? chapter.videosDone
+          : key === "exercice"
+            ? chapter.practice.done
+            : validated,
+      locked: stepBlockedByVideos(key, stepKeys, videosBlocked),
+      current: key === current,
+    })),
+    {
+      key: "quiz",
+      label: t.stepLabels.quiz,
+      href: quizHref,
+      done: validated,
+      locked: videosBlocked,
+      current: false,
+    },
+  ];
+  const stepsPercent = Math.round(
+    (stepNav.filter((step) => step.done).length / stepNav.length) * 100,
+  );
+
   const prevStep = currentIndex > 0 ? navSteps[currentIndex - 1] : null;
   const nextStep =
     currentIndex < stepKeys.length - 1
@@ -186,13 +230,18 @@ export default async function ChapterPage({
   const pages = chapter.pages;
   const pageCount = pages.length;
   const requestedPage = Number.parseInt(page ?? "", 10);
+  const explicitPage = Number.isFinite(requestedPage);
+  // Sans paramètre `page`, on reprend la dernière page lue par l'apprenant.
+  const resumePage = Math.min(Math.max(chapter.resumePage ?? 1, 1), Math.max(pageCount, 1));
   const pageNo =
     pageCount > 0
       ? Math.min(
-          Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1),
+          Math.max(explicitPage ? requestedPage : resumePage, 1),
           pageCount,
         )
       : 0;
+  // Défilement mémorisé pour l'étape réellement affichée.
+  const resumeScroll = chapter.resumeScrolls[current] ?? null;
   const currentPage = pageCount > 0 ? pages[pageNo - 1] : null;
   const coursStepNumber = stepKeys.indexOf("cours") + 1;
   const pageCode = `${chapter.position}.${coursStepNumber}.${pageNo}`;
@@ -230,10 +279,20 @@ export default async function ChapterPage({
         <p className="mt-1.5 max-w-[70ch] text-sm leading-relaxed text-muted-foreground">
           {chapter.summary}
         </p>
+
+        <ChapterStepNav steps={stepNav} percent={stepsPercent} />
+
+        {chapter.progress === null && !chapter.videosDone ? (
+          <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
+            <CompassIcon className="mt-0.5 size-3.5 shrink-0 text-electric" aria-hidden />
+            {t.chapterMapHint}
+          </p>
+        ) : null}
       </header>
 
       <article>
         <div className="pb-4">
+          <div className="rounded-2xl border border-hairline bg-card p-4 shadow-sm sm:p-6">
           {current === "videos" ? (
             <section>
               <SectionLabel>{t.stepLabels.videos}</SectionLabel>
@@ -248,6 +307,7 @@ export default async function ChapterPage({
                   chapterPosition={chapter.position}
                   videos={chapter.videos}
                   initialWatched={chapter.videoWatched}
+                  initialSeconds={chapter.videoSeconds}
                   documentHref={`${chapterHref}?etape=cours`}
                 />
               </div>
@@ -290,11 +350,36 @@ export default async function ChapterPage({
                   <h2 className="mt-1 text-xl font-semibold text-foreground">
                     {currentPage.title}
                   </h2>
-                  <LessonBody content={currentPage.content} className="mt-3" />
-                  <PageResume
-                    trackSlug={chapter.trackSlug}
-                    chapterSlug={chapter.slug}
-                    total={pageCount}
+                  {pageCount > 1 ? (
+                    <nav
+                      aria-label={t.lessonPages}
+                      className="mt-3 flex flex-wrap gap-1.5"
+                    >
+                      {pages.map((item, index) => {
+                        const number = index + 1;
+                        const at = number === pageNo;
+                        return (
+                          <Link
+                            key={`${item.position}-${number}`}
+                            href={`${chapterHref}?etape=cours&page=${number}`}
+                            aria-current={at ? "page" : undefined}
+                            className={cn(
+                              "grid size-7 place-items-center rounded-lg border text-xs font-semibold tabular-nums transition-colors",
+                              at
+                                ? "border-electric bg-electric text-primary-foreground"
+                                : "border-hairline text-muted-foreground hover:border-electric/50 hover:text-electric",
+                            )}
+                          >
+                            {number}
+                          </Link>
+                        );
+                      })}
+                    </nav>
+                  ) : null}
+                  <LessonBody
+                    content={currentPage.content}
+                    title={currentPage.title}
+                    className="mt-3"
                   />
                 </>
               ) : (
@@ -367,6 +452,15 @@ export default async function ChapterPage({
               )}
             </section>
           ) : null}
+          </div>
+
+          {/* Repère de reprise commun à toutes les étapes du chapitre. */}
+          <LessonResume
+            chapterId={chapter.id}
+            step={current}
+            page={current === "cours" && pageCount > 0 ? pageNo : undefined}
+            initialScroll={resumeScroll}
+          />
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline py-4">
@@ -392,11 +486,11 @@ export default async function ChapterPage({
                 {t.previousStep}
               </Button>
             )}
-            <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
-              {onPagedCours
-                ? `${pageCode} · ${t.pageOf(pageNo, pageCount)}`
-                : t.stepOf(currentIndex + 1, stepKeys.length)}
-            </span>
+            {onPagedCours ? (
+              <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+                {`${pageCode} · ${t.pageOf(pageNo, pageCount)}`}
+              </span>
+            ) : null}
           </div>
 
           {current === "videos" && videosBlocked ? (
@@ -424,6 +518,16 @@ export default async function ChapterPage({
         </div>
       </article>
     </div>
+
+    {chapter.progress !== null || chapter.videosDone ? (
+      <div className="mt-4">
+        <LevelUpsellCard
+          trackSlug={chapter.trackSlug}
+          categoryId={chapter.categoryId}
+          currentLevel={chapter.level}
+        />
+      </div>
+    ) : null}
 
     <LevelUpNotification
       currentLevel={chapter.level}

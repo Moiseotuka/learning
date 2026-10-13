@@ -58,6 +58,8 @@ declare global {
 const STATE_PLAYING = 1;
 const STATE_ENDED = 0;
 const STATE_BUFFERING = 3;
+/** Intervalle minimal entre deux écritures de la position de reprise. */
+const PROGRESS_STEP_SECONDS = 10;
 /** Format d'identifiant YouTube : conditionne l'affichage de la vignette. */
 const VIDEO_ID = /^[\w-]{11}$/;
 
@@ -141,17 +143,23 @@ export function YouTubePlayer({
   fill = false,
   className,
   autoplay = false,
+  startAt = 0,
   onEnded,
   onSkipped,
+  onProgress,
 }: {
   videoId: string;
   title: string;
   fill?: boolean;
   className?: string;
   autoplay?: boolean;
+  /** Seconde où reprendre la leçon après une sortie. */
+  startAt?: number;
   onEnded?: () => void;
   /** Le learner marque la leçon comme vue sans la regarder (lecture refusée). */
   onSkipped?: () => void;
+  /** Position atteinte, émise tous les ~10 s de lecture et à la pause. */
+  onProgress?: (seconds: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -162,12 +170,18 @@ export function YouTubePlayer({
   const endedNotified = useRef(false);
   const onEndedRef = useRef<(() => void) | undefined>(undefined);
   const onSkippedRef = useRef<(() => void) | undefined>(undefined);
+  const onProgressRef = useRef<((seconds: number) => void) | undefined>(
+    undefined,
+  );
+  const lastReportRef = useRef(0);
   const autoplayRef = useRef(false);
   /** Le clic sur la vignette compte comme le geste que le navigateur exige. */
   const tappedRef = useRef(false);
   const blockTimer = useRef<number | undefined>(undefined);
   const playGuardTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
+  const startAtRef = useRef(startAt);
+  startAtRef.current = startAt;
 
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const [canFullscreen, setCanFullscreen] = useState(false);
@@ -208,6 +222,20 @@ export function YouTubePlayer({
   useEffect(() => {
     onSkippedRef.current = onSkipped;
   }, [onSkipped]);
+
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
+  /** Écrit la position atteinte : au plus une écriture toutes les
+   *  PROGRESS_STEP_SECONDS pendant la lecture, immédiate à l'arrêt. */
+  const reportProgress = useCallback((seconds: number, force = false) => {
+    const value = Math.floor(seconds);
+    if (value <= 0 || value < lastReportRef.current) return;
+    if (!force && value - lastReportRef.current < PROGRESS_STEP_SECONDS) return;
+    lastReportRef.current = value;
+    onProgressRef.current?.(value);
+  }, []);
 
   useEffect(() => {
     autoplayRef.current = autoplay;
@@ -339,8 +367,17 @@ export function YouTubePlayer({
             playerRef.current = event.target;
             event.target.getIframe().title = title;
             setDuration(event.target.getDuration() || 0);
-            setCurrentTime(0);
-            setWatchedMax(0);
+            const from = Math.max(0, Math.floor(startAtRef.current || 0));
+            setCurrentTime(from);
+            setWatchedMax(from);
+            lastReportRef.current = from;
+            if (from > 0) {
+              try {
+                event.target.seekTo(from, true);
+              } catch {
+                // lecteur refusé : la reprise est un confort, pas un blocage
+              }
+            }
             setEndedId(null);
             endedNotified.current = false;
             playingRef.current = false;
@@ -383,6 +420,9 @@ export function YouTubePlayer({
               const time = event.target.getCurrentTime() || 0;
               const markTo = Math.max(time, isEnded ? d || 0 : 0);
               setWatchedMax((w) => (markTo > w ? markTo : w));
+              // Pause, fin ou cue : la position est écrite sans attendre le
+              // prochain palier. La mise en tampon ne déclenche pas d'écriture.
+              reportProgress(markTo, event.data !== STATE_BUFFERING);
               window.clearTimeout(hideTimer.current);
               window.clearTimeout(flashTimer.current);
               setStartFlash(false);
@@ -431,6 +471,11 @@ export function YouTubePlayer({
       window.clearTimeout(flashTimer.current);
       window.clearTimeout(blockTimer.current);
       window.clearTimeout(playGuardTimer.current);
+      // Sortie de la page pendant la lecture : la dernière seconde lue est
+      // conservée pour que l'apprenant reprenne où il s'est arrêté.
+      if (playingRef.current) {
+        reportProgress(created?.getCurrentTime?.() ?? 0, true);
+      }
       try {
         created?.destroy();
       } catch {
@@ -439,7 +484,18 @@ export function YouTubePlayer({
       slot?.remove();
       playerRef.current = null;
     };
-  }, [armed, videoId, showBar, title, attempt, profile.apiTimeoutMs, armBlockWatch, armPlayGuard, clearBlockWatch]);
+  }, [
+    armed,
+    videoId,
+    showBar,
+    title,
+    attempt,
+    profile.apiTimeoutMs,
+    armBlockWatch,
+    armPlayGuard,
+    clearBlockWatch,
+    reportProgress,
+  ]);
 
   useEffect(() => {
     if (!isReady || !playing) return;
@@ -450,9 +506,10 @@ export function YouTubePlayer({
       setCurrentTime(time);
       setWatchedMax((w) => (time > w ? time : w));
       setDuration((d) => d || player.getDuration() || 0);
+      reportProgress(time);
     }, 500);
     return () => window.clearInterval(id);
-  }, [isReady, playing]);
+  }, [isReady, playing, reportProgress]);
 
   const togglePlay = () => {
     const player = playerRef.current;
@@ -551,7 +608,10 @@ export function YouTubePlayer({
   };
 
   const fallbackSrc = isFallback
-    ? toEmbedUrl(`https://www.youtube.com/watch?v=${videoId}`)
+    ? toEmbedUrl(
+        `https://www.youtube.com/watch?v=${videoId}`,
+        Math.floor(startAt || 0),
+      )
     : null;
 
   const posterSrc = VIDEO_ID.test(videoId)
@@ -591,7 +651,9 @@ export function YouTubePlayer({
         </div>
         {fill ? null : (
           <p className="mt-2 text-center text-[11px] leading-snug text-muted-foreground">
-            {t.videoPosterHint}
+            {startAt > 0
+              ? t.videoResumeHint(formatTime(startAt))
+              : t.videoPosterHint}
           </p>
         )}
       </div>

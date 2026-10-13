@@ -1,4 +1,4 @@
-# easyLearn
+# easyTech
 
 Plateforme e-learning professionnelle pour l'apprentissage de la technologie,
 destinée aux étudiants, autodidactes et professionnels francophones (RDC et
@@ -114,7 +114,7 @@ Dans la console Supabase (Authentication → URL Configuration) :
    `/mot-de-passe-oublie/nouveau`, qui valide la session de récupération côté
    navigateur avant l'enregistrement du nouveau mot de passe.
 4. **Expéditeur** : Authentication → Emails → renseigner **Sender name**
-   (`easyLearn`) et **Sender email** — sinon les mails partent avec le nom de
+   (`easyTech`) et **Sender email** — sinon les mails partent avec le nom de
    Supabase. Le texte des modèles se règle dans le même écran.
 5. **Google** : activer le fournisseur Google, renseigner client ID/secret
    (console Google Cloud), et autoriser l'origine `http://localhost:3000`.
@@ -194,7 +194,7 @@ Schéma appliqué depuis `supabase/migrations/202609300001_catalogue.sql` et
 - **Parcours apprenant** : `/app/acheter` → `startCheckout` (server action) →
   la page `https://app.nyole.com/checkout/<id>` s'ouvre dans une **boîte de
   dialogue** (`CheckoutDialog`, iframe) ; « Ouvrir dans une nouvelle
-  fenêtre » reste proposé en repli. L'apprenant ne quitte jamais easyLearn.
+  fenêtre » reste proposé en repli. L'apprenant ne quitte jamais easyTech.
 - **Confirmation** (idempotente, `processPaymentEvent`) par trois canaux
   serveur complémentaires :
   1. webhook `payment.completed` signé `X-Afriflow-Timestamp` /
@@ -254,4 +254,4 @@ Schéma appliqué depuis `supabase/migrations/202609300001_catalogue.sql` et
 
 ## Licence
 
-Tous droits réservés — easyLearn.
+Tous droits réservés — easyTech.

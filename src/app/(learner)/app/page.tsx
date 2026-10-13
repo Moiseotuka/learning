@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRightIcon, TargetIcon } from "lucide-react";
 
 import { ProgressBar } from "@/components/learning/progress-bar";
+import { LevelUpsellCard } from "@/components/learning/level-upsell-card";
 import { LevelUpNotification } from "@/components/learning/level-up-banner";
 import { TrackCarousel } from "@/components/learning/track-carousel";
 import { Button } from "@/components/ui/button";
@@ -243,6 +244,18 @@ export default async function DashboardPage() {
           )}
         </section>
       </div>
+
+      {/* Relais d'achat : l'apprenant a commencé le niveau gratuit, on lui montre
+          ce que le niveau payant suivant ouvre vraiment (chapitres et prix en base). */}
+      {primary && (completedChapters > 0 || attempted.length > 0) ? (
+        <div className="mt-5">
+          <LevelUpsellCard
+            trackSlug={primary.track.slug}
+            categoryId={primary.track.categoryId}
+            currentLevel={primary.chapter.level}
+          />
+        </div>
+      ) : null}
 
       {/* Repère de première visite : le rythme d'un chapitre n'est évident qu'après en avoir fait un. */}
       {isFirstRun ? (

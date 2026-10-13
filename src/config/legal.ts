@@ -13,15 +13,15 @@ export const legalDocs: LegalDoc[] = [
     title: "Mentions légales",
     updated: "30 septembre 2026",
     intro:
-      "Les informations ci-dessous identifient l'éditeur de la plateforme easyLearn et précisent les conditions d'utilisation du service.",
+      "Les informations ci-dessous identifient l'éditeur de la plateforme easyTech et précisent les conditions d'utilisation du service.",
     sections: [
       {
         heading: "Éditeur du site",
-        body: "easyLearn est une plateforme d'apprentissage en ligne éditée depuis Kinshasa, République démocratique du Congo. La raison sociale, le numéro d'immatriculation au registre de commerce et l'adresse du siège sont communiqués sur simple demande à contact@easylearn.cd.",
+        body: "easyTech est une plateforme d'apprentissage en ligne éditée depuis Kinshasa, République démocratique du Congo. La raison sociale, le numéro d'immatriculation au registre de commerce et l'adresse du siège sont communiqués sur simple demande à contact@easytech.cd.",
       },
       {
         heading: "Directeur de publication",
-        body: "La publication est assurée par la direction d'easyLearn. Le nom du responsable de publication est communiqué sur simple demande à contact@easylearn.cd.",
+        body: "La publication est assurée par la direction d'easyTech. Le nom du responsable de publication est communiqué sur simple demande à contact@easytech.cd.",
       },
       {
         heading: "Hébergement",
@@ -29,15 +29,15 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Paiements",
-        body: "Les paiements Mobile Money et par carte bancaire sont traités par le prestataire Nyole. easyLearn ne stocke aucune donnée de carte bancaire.",
+        body: "Les paiements Mobile Money et par carte bancaire sont traités par le prestataire Nyole. easyTech ne stocke aucune donnée de carte bancaire.",
       },
       {
         heading: "Propriété intellectuelle",
-        body: "Les quiz, exercices, corrections, projets, certificats, textes pédagogiques et éléments graphiques de la plateforme sont la propriété d'easyLearn ou de ses formateurs partenaires. Les leçons vidéo intégrées dans les parcours restent la propriété de leurs auteurs respectifs ; elles sont lues dans l'application et leurs crédits figurent sur la page des crédits.",
+        body: "Les quiz, exercices, corrections, projets, certificats, textes pédagogiques et éléments graphiques de la plateforme sont la propriété d'easyTech ou de ses formateurs partenaires. Les leçons vidéo intégrées dans les parcours restent la propriété de leurs auteurs respectifs ; elles sont lues dans l'application et leurs crédits figurent sur la page des crédits.",
       },
       {
         heading: "Contact",
-        body: "Toute question peut être adressée à contact@easylearn.cd.",
+        body: "Toute question peut être adressée à contact@easytech.cd.",
       },
     ],
   },
@@ -46,11 +46,11 @@ export const legalDocs: LegalDoc[] = [
     title: "Conditions générales d'utilisation",
     updated: "30 septembre 2026",
     intro:
-      "Ces conditions régissent l'accès à la plateforme easyLearn. Elles doivent être relues par un conseil juridique avant publication.",
+      "Ces conditions régissent l'accès à la plateforme easyTech. Elles doivent être relues par un conseil juridique avant publication.",
     sections: [
       {
         heading: "Objet",
-        body: "easyLearn fournit des parcours de formation en ligne structurés par niveau, assortis d'exercices, de quiz, de projets et de certificats. L'inscription est gratuite et ouvre l'accès au premier niveau de chaque parcours.",
+        body: "easyTech fournit des parcours de formation en ligne structurés par niveau, assortis d'exercices, de quiz, de projets et de certificats. L'inscription est gratuite et ouvre l'accès au premier niveau de chaque parcours.",
       },
       {
         heading: "Compte utilisateur",
@@ -62,7 +62,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Accès et durée",
-        body: "Chaque niveau se paie une seule fois et reste accessible sans limite de durée : il n'y a ni abonnement, ni résiliation, ni prélèvement récurrent. Toute difficulté de paiement est signalée à contact@easylearn.cd et examinée après vérification auprès du prestataire.",
+        body: "Chaque niveau se paie une seule fois et reste accessible sans limite de durée : il n'y a ni abonnement, ni résiliation, ni prélèvement récurrent. Toute difficulté de paiement est signalée à contact@easytech.cd et examinée après vérification auprès du prestataire.",
       },
       {
         heading: "Conduite attendue",
@@ -70,7 +70,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Limitation de responsabilité",
-        body: "easyLearn s'efforce d'assurer la disponibilité et l'exactitude du contenu, sans garantir l'obtention d'un emploi ou d'un résultat particulier.",
+        body: "easyTech s'efforce d'assurer la disponibilité et l'exactitude du contenu, sans garantir l'obtention d'un emploi ou d'un résultat particulier.",
       },
     ],
   },
@@ -99,7 +99,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Vos droits",
-        body: "Vous pouvez demander l'accès, la rectification ou la suppression de vos données en écrivant à confidentialite@easylearn.cd.",
+        body: "Vous pouvez demander l'accès, la rectification ou la suppression de vos données en écrivant à confidentialite@easytech.cd.",
       },
       {
         heading: "Cookies",
@@ -112,7 +112,7 @@ export const legalDocs: LegalDoc[] = [
     title: "Accessibilité",
     updated: "30 septembre 2026",
     intro:
-      "easyLearn vise une expérience utilisable par tous, y compris sur mobile et avec une connexion limitée.",
+      "easyTech vise une expérience utilisable par tous, y compris sur mobile et avec une connexion limitée.",
     sections: [
       {
         heading: "Engagements",
@@ -128,7 +128,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Signalement",
-        body: "Un obstacle d'accessibilité peut être signalé à accessibilite@easylearn.cd ; nous nous engageons à répondre sous 10 jours ouvrés.",
+        body: "Un obstacle d'accessibilité peut être signalé à accessibilite@easytech.cd ; nous nous engageons à répondre sous 10 jours ouvrés.",
       },
     ],
   },
@@ -137,7 +137,7 @@ export const legalDocs: LegalDoc[] = [
     title: "Crédits des leçons vidéo",
     updated: "12 octobre 2026",
     intro:
-      "Dans le parcours d'apprentissage, les leçons vidéo sont lues dans notre lecteur : l'apprenant reste sur easyLearn, sans suggestion externe ni lien sortant. Cette intégration sobre ne transfère aucune propriété : les images, le son et la mise en scène restent la propriété de leurs auteurs.",
+      "Dans le parcours d'apprentissage, les leçons vidéo sont lues dans notre lecteur : l'apprenant reste sur easyTech, sans suggestion externe ni lien sortant. Cette intégration sobre ne transfère aucune propriété : les images, le son et la mise en scène restent la propriété de leurs auteurs.",
     sections: [
       {
         heading: "Ce que nous faisons de la vidéo d'un tiers",
@@ -145,7 +145,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Ce que nous ne revendiquons pas",
-        body: "Le contenu filmé, la voix, les démonstrations et la chaîne qui les publie appartiennent à leurs auteurs. Aucun droit d'exploitation, de reproduction ni de rediffusion n'est revendiqué par easyLearn sur ces vidéos.",
+        body: "Le contenu filmé, la voix, les démonstrations et la chaîne qui les publie appartiennent à leurs auteurs. Aucun droit d'exploitation, de reproduction ni de rediffusion n'est revendiqué par easyTech sur ces vidéos.",
       },
       {
         heading: "Auteurs et chaînes référencés",
@@ -153,7 +153,7 @@ export const legalDocs: LegalDoc[] = [
       },
       {
         heading: "Retirer une vidéo",
-        body: "Un auteur qui souhaite apparaître sous son nom dans le parcours, voir sa vidéo remplacée ou retirée de la sélection peut écrire à credits@easylearn.cd. La modification est appliquée sous 72 heures.",
+        body: "Un auteur qui souhaite apparaître sous son nom dans le parcours, voir sa vidéo remplacée ou retirée de la sélection peut écrire à credits@easytech.cd. La modification est appliquée sous 72 heures.",
       },
     ],
   },

@@ -3,7 +3,6 @@
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
-  Loader2Icon,
   RotateCcwIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -11,9 +10,11 @@ import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
 
 import { Notice } from "@/components/auth/notice";
+import { QuestionCarousel } from "@/components/learning/question-carousel";
 import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { submitQuiz } from "@/lib/actions/learning";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import type { QuizQuestion } from "@/lib/learning/types";
 import { cn } from "cn";
 
@@ -134,7 +135,7 @@ function QuizAttempt({
             <Button asChild variant="outline" className="h-10 px-4">
               <Link href={chapterHref}>{t.reviewChapter}</Link>
             </Button>
-            {!passed ? (
+            {!passed && (state.attempts ?? attempts) < MAX_ATTEMPTS ? (
               <Button
                 variant="ghost"
                 className="h-10 px-4"
@@ -144,6 +145,11 @@ function QuizAttempt({
                 <RotateCcwIcon aria-hidden />
                 {t.quizRetake}
               </Button>
+            ) : null}
+            {!passed && (state.attempts ?? attempts) >= MAX_ATTEMPTS ? (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {t.quizAttemptsExhausted}
+              </p>
             ) : null}
           </div>
         </div>
@@ -221,93 +227,53 @@ function QuizAttempt({
   }
 
   return (
-    <form
+    <QuestionCarousel
+      questions={questions.map((question) => ({
+        id: question.id,
+        question: question.question,
+        choices: question.choices.map((label, choiceIndex) => ({
+          label,
+          value: String(choiceIndex),
+        })),
+      }))}
+      answers={answers}
+      onSelect={(questionId, value) =>
+        setAnswers((previous) => ({ ...previous, [questionId]: value }))
+      }
       action={action}
-      className="space-y-6"
-      onContextMenu={(event) => event.preventDefault()}
-    >
-      <input type="hidden" name="chapterId" value={chapterId} />
-      <input type="hidden" name="trackSlug" value={trackSlug} />
-      <input type="hidden" name="assessmentToken" value={assessmentToken} />
-
-      {suspiciousActivity > 0 ? (
-        <Notice tone="info">
-          Attention : la fenêtre a été mise en arrière-plan pendant le quiz. Une
-          tentative de triche ou de navigation hors du test peut être refusée.
-        </Notice>
-      ) : null}
-
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        {t.quizIntro(passingScore, questions.length)}
-      </p>
-
-      {state?.status === "error" && state.message ? (
-        <Notice tone="error">{state.message}</Notice>
-      ) : null}
-
-      <ol className="space-y-5">
-        {questions.map((question, index) => (
-          <li
-            key={question.id}
-            className="rounded-2xl border border-hairline bg-card p-4 sm:p-5"
-          >
-            <fieldset>
-              <legend className="text-sm font-semibold text-foreground">
-                <span className="mr-2 text-xs font-medium text-electric">
-                  {index + 1} / {questions.length}
-                </span>
-                {question.question}
-              </legend>
-              <div className="mt-3 space-y-2">
-                {question.choices.map((choice, choiceIndex) => {
-                  const value = String(choiceIndex);
-                  const checked = answers[question.id] === value;
-
-                  return (
-                    <label
-                      key={choice}
-                      htmlFor={`${question.id}-${choiceIndex}`}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:border-electric/50",
-                        checked && "border-electric/60 bg-electric/[0.06]",
-                      )}
-                    >
-                      <input
-                        id={`${question.id}-${choiceIndex}`}
-                        type="radio"
-                        name={question.id}
-                        value={value}
-                        checked={checked}
-                        onChange={() =>
-                          setAnswers((previous) => ({
-                            ...previous,
-                            [question.id]: value,
-                          }))
-                        }
-                        className="mt-0.5 size-4 accent-electric"
-                      />
-                      <span>{choice}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-          </li>
-        ))}
-      </ol>
-
-      <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-4">
-        <Button type="submit" disabled={pending} className="h-10 px-5">
-          {pending ? <Loader2Icon className="animate-spin" aria-hidden /> : null}
-          {t.quizSubmit}
-        </Button>
-        {attempts > 0 ? (
-          <span className="text-xs text-muted-foreground">
-            {t.quizAttempts(attempts)}
-            {bestScore !== null ? ` · ${t.quizBest(bestScore)}` : ""}
-          </span>
-        ) : null}
-      </div>
-    </form>
+      submitLabel={t.quizSubmit}
+      submitting={pending}
+      fields={
+        <>
+          <input type="hidden" name="chapterId" value={chapterId} />
+          <input type="hidden" name="trackSlug" value={trackSlug} />
+          <input type="hidden" name="assessmentToken" value={assessmentToken} />
+          {suspiciousActivity > 0 ? (
+            <Notice tone="info">
+              Attention : la fenêtre a été mise en arrière-plan pendant le quiz.
+              Une tentative de triche ou de navigation hors du test peut être
+              refusée.
+            </Notice>
+          ) : null}
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {t.quizIntro(passingScore, questions.length)}
+          </p>
+          {state?.status === "error" && state.message ? (
+            <Notice tone="error">{state.message}</Notice>
+          ) : null}
+        </>
+      }
+      footer={
+        attempts > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-3 text-xs text-muted-foreground">
+            <span>{t.quizAttempts(attempts)}</span>
+            {bestScore !== null ? <span>{t.quizBest(bestScore)}</span> : null}
+            <span>
+              {t.attemptsLeft(Math.max(0, MAX_ATTEMPTS - attempts), MAX_ATTEMPTS)}
+            </span>
+          </div>
+        ) : null
+      }
+    />
   );
 }

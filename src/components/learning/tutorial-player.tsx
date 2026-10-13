@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { markVideoWatched } from "@/lib/actions/learning";
+import { saveResume } from "@/lib/actions/progress";
 import { messages } from "@/i18n";
 import { playableVideos, videoToken } from "@/lib/learning/video-playability";
 import { videoDisplayTitle } from "@/lib/learning/video-title";
@@ -24,6 +25,7 @@ export function TutorialPlayer({
   chapterPosition,
   videos,
   initialWatched = [],
+  initialSeconds,
   documentHref,
   onAllWatched,
 }: {
@@ -32,6 +34,8 @@ export function TutorialPlayer({
   chapterPosition: number;
   videos: ChapterVideo[];
   initialWatched?: string[];
+  /** Seconde de reprise par jeton de vidéo (position de la dernière sortie). */
+  initialSeconds?: Record<string, number>;
   documentHref: string;
   onAllWatched?: () => void;
 }) {
@@ -51,6 +55,9 @@ export function TutorialPlayer({
   const [watched, setWatched] = useState<Set<string>>(
     () => new Set(initialWatched),
   );
+  const [positions, setPositions] = useState<Record<string, number>>(
+    () => ({ ...initialSeconds }),
+  );
   const [active, setActive] = useState(() => {
     const first = tokens.findIndex((token) => !initialWatched.includes(token));
     return first >= 0 ? first : 0;
@@ -63,11 +70,28 @@ export function TutorialPlayer({
     playlist.length > 0 && tokens.every((token) => watched.has(token));
   const firstUnwatched = tokens.findIndex((token) => !watched.has(token));
 
+  const reportProgress = (token: string | undefined) => (seconds: number) => {
+    if (!token) return;
+    setPositions((prev) =>
+      prev[token] === seconds ? prev : { ...prev, [token]: seconds },
+    );
+    void saveResume({ chapterId, videoToken: token, seconds }).catch(
+      () => undefined,
+    );
+  };
+
   const complete = (token: string | undefined) => {
     if (!token || watched.has(token)) return;
     setWatched((prev) => {
       const next = new Set(prev);
       next.add(token);
+      return next;
+    });
+    // Leçon terminée : un nouveau visionnage repart du début, pas de la fin.
+    setPositions((prev) => {
+      if (!(token in prev)) return prev;
+      const next = { ...prev };
+      delete next[token];
       return next;
     });
     void markVideoWatched(chapterId, token).catch(() => undefined);
@@ -134,8 +158,10 @@ export function TutorialPlayer({
           videoId={videoToken(current) ?? current.url}
           title={titles[active] ?? current.title}
           autoplay={active > 0}
+          startAt={positions[currentToken] ?? 0}
           onEnded={handleEnded}
           onSkipped={() => complete(currentToken)}
+          onProgress={reportProgress(currentToken)}
         />
 
         <div className="pt-3">

@@ -103,6 +103,14 @@ export type LearnerChapterDetail = {
   videoTokens: string[];
   videoWatched: string[];
   videosDone: boolean;
+  /** Seconde de reprise par jeton de vidéo : reprend là où l'arrêt a eu lieu. */
+  videoSeconds: Record<string, number>;
+  /** Dernière page du Cours affichée (null si jamais mémorisée). */
+  resumePage: number | null;
+  /** Dernière étape ouverte du chapitre (vidéo, cours, exercice…). */
+  resumeStep: string | null;
+  /** Défilement du conteneur de leçon, par étape, au dernier arrêt. */
+  resumeScrolls: Record<string, number>;
   content: string;
   /** Pages numérotées du Cours (vide si la migration n'est pas collée). */
   pages: ChapterPage[];

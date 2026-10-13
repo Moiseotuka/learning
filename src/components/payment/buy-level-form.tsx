@@ -16,7 +16,7 @@ const t = messages.payment;
  * CTA de paiement. Le serveur décide du mode :
  *  - simulation locale → redirection immédiate vers le parcours ;
  *  - nyole → la page de paiement s'ouvre dans une boîte de dialogue (iframe)
- *    et l'apprenant reste sur easyLearn.
+ *    et l'apprenant reste sur easyTech.
  * Le résultat de l'action sert de source de vérité : le dialogue est ouvert
  * tant que le serveur répond `dialog` et n'est pas fermé manuellement.
  */

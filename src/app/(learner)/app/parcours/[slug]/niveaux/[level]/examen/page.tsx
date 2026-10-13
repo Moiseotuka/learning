@@ -4,17 +4,25 @@ import { ArrowLeftIcon, AwardIcon, LockIcon } from "lucide-react";
 import { notFound } from "next/navigation";
 
 import { QuizErrorBoundary } from "@/components/learning/quiz-error-boundary";
+import { RestartLevelCard } from "@/components/learning/restart-level-card";
 import { ExamPlayer } from "@/components/learning/exam-player";
+import { LevelUpsellCard } from "@/components/learning/level-upsell-card";
 import { Button } from "@/components/ui/button";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import {
   getLearnerTrack,
   getLevelExamQuestions,
 } from "@/lib/learning/queries";
 import { EXAM_SIZE } from "@/lib/learning/exam-size";
-import { createAssessmentToken, drawExamQuestions } from "@/lib/security/assessment";
+import {
+  ASSESSMENT_TTL_MS,
+  assessmentDeadline,
+  createAssessmentToken,
+  drawExamQuestions,
+} from "@/lib/security/assessment";
 
 const t = messages.learner;
 
@@ -57,6 +65,10 @@ export default async function LevelExamPage({
         )
       : "";
   const empty = questions.length === 0;
+  const levelLabel = messages.common.levels[levelInfo.level];
+  const exhausted =
+    levelInfo.exam.status !== "passed" &&
+    levelInfo.exam.attempts >= MAX_ATTEMPTS;
 
   return (
     <div>
@@ -147,6 +159,14 @@ export default async function LevelExamPage({
               </Link>
             </Button>
           </div>
+        ) : exhausted ? (
+          <RestartLevelCard
+            trackSlug={track.slug}
+            level={levelInfo.level}
+            levelLabel={levelLabel}
+            message={t.examAttemptsExhausted}
+            trackHref={trackHref}
+          />
         ) : (
           <QuizErrorBoundary>
             <ExamPlayer
@@ -158,10 +178,22 @@ export default async function LevelExamPage({
               bestScore={levelInfo.exam.bestScore}
               passed={levelInfo.exam.status === "passed"}
               assessmentToken={assessmentToken}
+              expiresAt={assessmentDeadline(assessmentToken)}
+              durationMs={ASSESSMENT_TTL_MS}
             />
           </QuizErrorBoundary>
         )}
       </div>
+
+      {levelInfo.exam.status === "passed" ? (
+        <div className="mt-4">
+          <LevelUpsellCard
+            trackSlug={track.slug}
+            categoryId={track.categoryId}
+            currentLevel={levelInfo.level}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

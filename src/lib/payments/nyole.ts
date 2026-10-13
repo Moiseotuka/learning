@@ -12,7 +12,7 @@ import { site } from "@/config/site";
 export const NYOLE_API = "https://app.nyole.com/api";
 
 /**
- * Devise de facturation d'easyLearn : le prix affiché à l'apprenant est en CDF,
+ * Devise de facturation d'easyTech : le prix affiché à l'apprenant est en CDF,
  * la session nyole est créée dans cette devise et `purchases.currency` doit
  * rester alignée. La vérification du montant compare la session à cette devise
  * — jamais à `purchases.currency`, colonne restée à son défaut `USD` sur les

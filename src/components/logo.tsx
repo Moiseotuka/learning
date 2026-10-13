@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-/** Marque easyLearn : chevron d'apprentissage + barre de progression. */
+/** Marque easyTech : chevron d'apprentissage + barre de progression. */
 export function Logo({ className, compact = false }: { className?: string; compact?: boolean }) {
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
@@ -19,7 +19,7 @@ export function Logo({ className, compact = false }: { className?: string; compa
       </span>
       {!compact && (
         <span className="text-lg font-semibold tracking-tight">
-          easy<span className="text-electric">Learn</span>
+          easy<span className="text-electric">Tech</span>
         </span>
       )}
     </span>

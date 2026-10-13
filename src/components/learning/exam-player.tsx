@@ -8,31 +8,51 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useMemo, useActionState, useEffect, useRef, useState } from "react";
 
 import { Notice } from "@/components/auth/notice";
+import { ExamTimer } from "@/components/learning/exam-timer";
+import { QuestionCarousel } from "@/components/learning/question-carousel";
 import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { submitLevelExam } from "@/lib/actions/exam";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import type { QuizQuestion, QuizState } from "@/lib/learning/types";
 import { cn } from "cn";
 
 const t = messages.learner;
 
-function shuffle<T>(items: T[]): T[] {
+/**
+ * Mélange reproductible : le serveur et le client doivent produire le même
+ * ordre des choix, sinon l'hydratation échoue. La graine vient du jeton
+ * d'évaluation, unique par session d'examen.
+ */
+function seedFrom(token: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  let state = seed >>> 0;
+  const next = () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+
   const pool = [...items];
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(next() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
   return pool;
 }
-
-/**
- * Mélange des choix affichés pour chaque question, sans toucher à la
- * sélection serveur des questions validées dans l’examen.
- */
-type DrawnQuestion = QuizQuestion & { choiceOrder: number[] };
 
 type ExamPlayerProps = {
   trackSlug: string;
@@ -43,6 +63,9 @@ type ExamPlayerProps = {
   bestScore?: number | null;
   passed?: boolean;
   assessmentToken: string;
+  /** Fin de validité du jeton d'évaluation, en millisecondes depuis l'époque. */
+  expiresAt: number;
+  durationMs: number;
 };
 
 export function ExamPlayer(props: ExamPlayerProps) {
@@ -66,6 +89,8 @@ function ExamAttempt({
   bestScore = null,
   passed = false,
   assessmentToken,
+  expiresAt,
+  durationMs,
   onRetry,
 }: ExamPlayerProps & { onRetry: () => void }) {
   const [state, action, pending] = useActionState(
@@ -73,7 +98,9 @@ function ExamAttempt({
     undefined as QuizState | undefined,
   );
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [expired, setExpired] = useState(false);
   const [suspiciousActivity, setSuspiciousActivity] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     const handleBlur = () => setSuspiciousActivity((value) => value + 1);
@@ -92,10 +119,18 @@ function ExamAttempt({
     };
   }, []);
 
-  const drawn: DrawnQuestion[] = questions.map((question) => ({
-    ...question,
-    choiceOrder: shuffle(question.choices.map((_, index) => index)),
-  }));
+  // ordre figé par jeton : le carrousel re-rend à chaque question, et un nouvel
+  // ordre à ce moment-là ferait bouger les choix sous la main.
+  const drawn = useMemo(() => {
+    const seed = seedFrom(assessmentToken);
+    return questions.map((question, questionIndex) => ({
+      ...question,
+      choiceOrder: seededShuffle(
+        question.choices.map((_, index) => index),
+        seed + questionIndex * 7919,
+      ),
+    }));
+  }, [questions, assessmentToken]);
 
   const results = state?.results;
   const trackHref = `/app/parcours/${trackSlug}`;
@@ -149,15 +184,17 @@ function ExamAttempt({
             <Button asChild variant="outline" className="h-10 px-4">
               <Link href={trackHref}>{t.backToTrack}</Link>
             </Button>
-            <Button
-              variant="ghost"
-              className="h-10 px-4"
-              onClick={onRetry}
-              disabled={pending}
-            >
-              <RotateCcwIcon aria-hidden />
-              {t.examRetake}
-            </Button>
+            {!succeeded && (state.attempts ?? attempts) < MAX_ATTEMPTS ? (
+              <Button
+                variant="ghost"
+                className="h-10 px-4"
+                onClick={onRetry}
+                disabled={pending}
+              >
+                <RotateCcwIcon aria-hidden />
+                {t.examRetake}
+              </Button>
+            ) : null}
           </div>
           {succeeded ? (
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
@@ -214,8 +251,7 @@ function ExamAttempt({
                           <span className="ml-auto text-xs font-medium">
                             {t.answerMissed}
                           </span>
-                        ) : null}
-                        {isSelected && !isCorrect ? (
+                        ) : isSelected && !isCorrect ? (
                           <span className="ml-auto text-xs font-medium">
                             {t.answerWrong}
                           </span>
@@ -239,108 +275,96 @@ function ExamAttempt({
   }
 
   return (
-    <form
-      action={action}
-      className="space-y-6"
-      onContextMenu={(event) => event.preventDefault()}
-    >
-      <input type="hidden" name="trackSlug" value={trackSlug} />
-      <input type="hidden" name="level" value={level} />
-      <input type="hidden" name="assessmentToken" value={assessmentToken} />
-      <input
-        type="hidden"
-        name="questionIds"
-        value={questions.map((question) => question.id).join(",")}
-      />
-
-      {suspiciousActivity > 0 ? (
+    <>
+      {expired ? (
         <Notice tone="info">
-          Attention : le navigateur a été détourné hors du test pendant l’examen.
-          Les tentatives de triche ou de consultation externe peuvent invalider la
-          soumission.
+          <span className="flex items-center gap-2">
+            {pending ? (
+              <Loader2Icon className="size-4 animate-spin" aria-hidden />
+            ) : null}
+            {t.examTimeUp}
+          </span>
         </Notice>
       ) : null}
 
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        {t.examIntro(passingScore, drawn.length)}
-      </p>
-
-      {passed ? (
-        <Notice tone="success">{t.examCertificateNotice}</Notice>
-      ) : null}
-
-      {state?.status === "error" && state.message ? (
-        <Notice tone="error">{state.message}</Notice>
-      ) : null}
-
-      <ol className="space-y-5">
-        {drawn.map((question, index) => (
-          <li
-            key={question.id}
-            className="rounded-2xl border border-hairline bg-card p-4 sm:p-5"
-          >
-            <fieldset>
-              <legend className="text-sm font-semibold text-foreground">
-                <span className="mr-2 text-xs font-medium text-electric">
-                  {index + 1} / {drawn.length}
-                </span>
-                {question.question}
-              </legend>
-              <div className="mt-3 space-y-2">
-                {question.choiceOrder.map((originalIndex) => {
-                  const choice = question.choices[originalIndex];
-                  const value = String(originalIndex);
-                  const checked = answers[question.id] === value;
-                  const inputId = `exam-${question.id}-${originalIndex}`;
-
-                  return (
-                    <label
-                      key={originalIndex}
-                      htmlFor={inputId}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:border-electric/50",
-                        checked && "border-electric/60 bg-electric/[0.06]",
-                      )}
-                    >
-                      <input
-                        id={inputId}
-                        type="radio"
-                        name={question.id}
-                        value={value}
-                        checked={checked}
-                        onChange={() =>
-                          setAnswers((previous) => ({
-                            ...previous,
-                            [question.id]: value,
-                          }))
-                        }
-                        className="mt-0.5 size-4 accent-electric"
-                      />
-                      <span>{choice}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-          </li>
-        ))}
-      </ol>
-
-      <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-4">
-        <Button type="submit" disabled={pending} className="h-10 px-5">
-          {pending ? <Loader2Icon className="animate-spin" aria-hidden /> : null}
-          {t.examSubmit}
-        </Button>
-        <Button asChild variant="ghost" className="h-10 px-4">
-          <Link href={trackHref}>{t.backToTrack}</Link>
-        </Button>
-        {attempts > 0 ? (
-          <span className="text-xs text-muted-foreground">
-            {t.quizAttempts(attempts)}
-            {bestScore !== null ? ` · ${t.quizBest(bestScore)}` : ""}
-          </span>
-        ) : null}
-      </div>
-    </form>
+      <QuestionCarousel
+        formRef={formRef}
+        questions={drawn.map((question) => ({
+          id: question.id,
+          question: question.question,
+          choices: question.choiceOrder.map((originalIndex) => ({
+            label: question.choices[originalIndex] ?? "",
+            value: String(originalIndex),
+          })),
+        }))}
+        answers={answers}
+        onSelect={(questionId, value) =>
+          setAnswers((previous) => ({ ...previous, [questionId]: value }))
+        }
+        action={action}
+        submitLabel={t.examSubmit}
+        submitting={pending}
+        aside={
+          <ExamTimer
+            expiresAt={expiresAt}
+            durationMs={durationMs}
+            onExpire={() => {
+              setExpired(true);
+              formRef.current?.requestSubmit();
+            }}
+          />
+        }
+        fields={
+          <>
+            <input type="hidden" name="trackSlug" value={trackSlug} />
+            <input type="hidden" name="level" value={level} />
+            <input
+              type="hidden"
+              name="assessmentToken"
+              value={assessmentToken}
+            />
+            <input
+              type="hidden"
+              name="questionIds"
+              value={questions.map((question) => question.id).join(",")}
+            />
+            {suspiciousActivity > 0 ? (
+              <Notice tone="info">
+                Attention : le navigateur a été détourné hors du test pendant
+                l’examen. Les tentatives de triche ou de consultation externe
+                peuvent invalider la soumission.
+              </Notice>
+            ) : null}
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {t.examIntro(passingScore, drawn.length)}
+            </p>
+            {passed ? (
+              <Notice tone="success">{t.examCertificateNotice}</Notice>
+            ) : null}
+            {state?.status === "error" && state.message ? (
+              <Notice tone="error">{state.message}</Notice>
+            ) : null}
+          </>
+        }
+        footer={
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-3 text-xs text-muted-foreground">
+            <Button asChild variant="ghost" className="h-8 px-2 text-xs">
+              <Link href={trackHref}>{t.backToTrack}</Link>
+            </Button>
+            {attempts > 0 ? (
+              <>
+                <span>{t.quizAttempts(attempts)}</span>
+                {bestScore !== null ? (
+                  <span>{t.quizBest(bestScore)}</span>
+                ) : null}
+              </>
+            ) : null}
+            <span>
+              {t.attemptsLeft(Math.max(0, MAX_ATTEMPTS - attempts), MAX_ATTEMPTS)}
+            </span>
+          </div>
+        }
+      />
+    </>
   );
 }

@@ -76,7 +76,7 @@ export const resolveSiteUrl = (requestOrigin?: string) => {
 };
 
 export const site = {
-  name: "easyLearn",
+  name: "easyTech",
   tagline: "Apprenez la technologie, prouvez-le",
   description:
     "Plateforme e-learning francophone : des parcours structurés du Débutant au niveau Avancé, des exercices pratiques, des quiz corrigés et un certificat vérifiable.",
@@ -93,7 +93,7 @@ export const site = {
     "RDC",
     "certification",
   ],
-  author: "easyLearn",
+  author: "easyTech",
 } as const;
 
 /**

@@ -5,10 +5,13 @@ import { notFound } from "next/navigation";
 
 import { QuizErrorBoundary } from "@/components/learning/quiz-error-boundary";
 import { QuizPlayer } from "@/components/learning/quiz-player";
+import { LevelUpsellCard } from "@/components/learning/level-upsell-card";
+import { RestartLevelCard } from "@/components/learning/restart-level-card";
 import { Button } from "@/components/ui/button";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import { getLearnerChapter, getQuizQuestions } from "@/lib/learning/queries";
 import { createAssessmentToken } from "@/lib/security/assessment";
 
@@ -48,6 +51,9 @@ export default async function QuizPage({
       : "";
   const empty = questions.length === 0;
   const attempts = chapter.progress?.attempts ?? 0;
+  // Trois tentatives consommées sans validation : le quiz est fermé jusqu'à
+  // la reprise complète du niveau.
+  const exhausted = !chapter.progress?.completed && attempts >= MAX_ATTEMPTS;
 
   return (
     <div>
@@ -145,6 +151,14 @@ export default async function QuizPage({
               </Link>
             </Button>
           </div>
+        ) : exhausted ? (
+          <RestartLevelCard
+            trackSlug={chapter.trackSlug}
+            level={chapter.level}
+            levelLabel={messages.common.levels[chapter.level]}
+            message={t.quizAttemptsExhausted}
+            trackHref={trackHref}
+          />
         ) : (
           <QuizErrorBoundary>
             <QuizPlayer
@@ -164,6 +178,16 @@ export default async function QuizPage({
           </QuizErrorBoundary>
         )}
       </div>
+
+      {chapter.progress?.completed ? (
+        <div className="mt-4">
+          <LevelUpsellCard
+            trackSlug={chapter.trackSlug}
+            categoryId={chapter.categoryId}
+            currentLevel={chapter.level}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -7,32 +7,32 @@ const comparisons = [
   {
     label: "Structure pédagogique",
     traditional: "Catalogue de vidéos sans progression",
-    easyLearn: "Parcours ordonnés, du Débutant au niveau Avancé",
+    easyTech: "Parcours ordonnés, du Débutant au niveau Avancé",
   },
   {
     label: "Pratique",
     traditional: "Théorie uniquement, pas d'exercices",
-    easyLearn: "Éditeur de code intégré, quiz et exercices notés",
+    easyTech: "Éditeur de code intégré, quiz et exercices notés",
   },
   {
     label: "Suivi",
     traditional: "Aucune visibilité sur la progression",
-    easyLearn: "Progression chapitre par chapitre, scores, séries",
+    easyTech: "Progression chapitre par chapitre, scores, séries",
   },
   {
     label: "Certification",
     traditional: "Attestations sans vérification",
-    easyLearn: "Certificats vérifiables en ligne avec numéro unique",
+    easyTech: "Certificats vérifiables en ligne avec numéro unique",
   },
   {
     label: "Paiement",
     traditional: "Abonnements mensuels forcés",
-    easyLearn: "Paiement unique par niveau, Mobile Money accepté",
+    easyTech: "Paiement unique par niveau, Mobile Money accepté",
   },
   {
     label: "Langue",
     traditional: "Contenu en anglais majoritairement",
-    easyLearn: "Français natif, pensé pour l'Afrique francophone",
+    easyTech: "Français natif, pensé pour l'Afrique francophone",
   },
 ];
 
@@ -41,7 +41,7 @@ export function Method() {
     <Section id="methode" className="bg-background">
       <SectionHeading
         eyebrow="Notre méthode"
-        title="Pourquoi easyLearn est différent"
+        title="Pourquoi easyTech est différent"
         description="Nous ne vendons pas des vidéos. Nous vendons un parcours structuré qui mène à un résultat vérifiable."
       />
 
@@ -52,7 +52,7 @@ export function Method() {
             <div className="border-x border-hairline px-4 py-3 text-center text-muted-foreground">
               Formation traditionnelle
             </div>
-            <div className="bg-electric/10 px-4 py-3 text-center text-electric">easyLearn</div>
+            <div className="bg-electric/10 px-4 py-3 text-center text-electric">easyTech</div>
           </div>
           {comparisons.map((row, index) => (
             <div
@@ -69,7 +69,7 @@ export function Method() {
               </div>
               <div className="flex items-center gap-2 bg-electric/5 px-4 py-3.5 text-xs text-foreground sm:text-sm">
                 <CheckIcon className="size-3.5 shrink-0 text-emerald-500" aria-hidden />
-                {row.easyLearn}
+                {row.easyTech}
               </div>
             </div>
           ))}

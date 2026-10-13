@@ -6,6 +6,7 @@ import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
 import { ensureCertificates } from "@/lib/certificates/issue";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import { EXAM_SIZE } from "@/lib/learning/exam-size";
 import {
   getLearnerTrack,
@@ -74,6 +75,29 @@ async function runLevelExamSubmission(formData: FormData): Promise<QuizState> {
     return { status: "error", message: t.examLocked };
   }
 
+  const service = createServiceSupabase();
+  if (!service) {
+    return { status: "error", message: t.notConfigured };
+  }
+
+  const { data: existing, error: readError } = await service
+    .from("level_exams")
+    .select("attempts,best_score,status,passed_at")
+    .eq("user_id", user.id)
+    .eq("track_id", track.id)
+    .eq("level", level)
+    .maybeSingle();
+
+  if (readError) {
+    console.error("[learning] exam read", readError.message);
+    return { status: "error", message: t.notConfigured };
+  }
+
+  // Même règle que le quiz : trois tentatives, puis le niveau est à reprendre.
+  if ((existing?.attempts ?? 0) >= MAX_ATTEMPTS && existing?.status !== "passed") {
+    return { status: "error", message: t.examAttemptsExhausted };
+  }
+
   const graded = await getLevelGradedQuestions(
     levelChapters.map((chapter) => chapter.id),
   );
@@ -135,24 +159,6 @@ async function runLevelExamSubmission(formData: FormData): Promise<QuizState> {
   const score = Math.round((correct / ids.length) * 100);
   const passingScore = track.passingScore;
   const passedNow = score >= passingScore;
-
-  const service = createServiceSupabase();
-  if (!service) {
-    return { status: "error", message: t.notConfigured };
-  }
-
-  const { data: existing, error: readError } = await service
-    .from("level_exams")
-    .select("attempts,best_score,status,passed_at")
-    .eq("user_id", user.id)
-    .eq("track_id", track.id)
-    .eq("level", level)
-    .maybeSingle();
-
-  if (readError) {
-    console.error("[learning] exam read", readError.message);
-    return { status: "error", message: t.notConfigured };
-  }
 
   const attempts = (existing?.attempts ?? 0) + 1;
   const bestScore = Math.max(existing?.best_score ?? 0, score);

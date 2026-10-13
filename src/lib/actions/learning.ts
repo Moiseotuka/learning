@@ -5,6 +5,7 @@ import { refresh } from "next/cache";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
+import { MAX_ATTEMPTS } from "@/lib/learning/attempts";
 import { getQuizQuestions } from "@/lib/learning/queries";
 import { videoTokens } from "@/lib/learning/video-playability";
 import type { QuizQuestionResult, QuizState } from "@/lib/learning/types";
@@ -370,6 +371,23 @@ async function runQuizSubmission(formData: FormData): Promise<QuizState> {
     return { status: "error", message: t.levelLockedMsg };
   }
 
+  const { data: existing } = await supabase
+    .from("chapter_progress")
+    .select("attempts,best_score,status,completed_at")
+    .eq("user_id", user.id)
+    .eq("chapter_id", chapterId)
+    .maybeSingle();
+
+  // Trois tentatives seulement : au-delà, il faut reprendre le niveau entier,
+  // ce qui remet la progression à zéro. Vérifié ici et non dans l'interface,
+  // l'apprenant pouvant écrire lui-même ses lignes de progression.
+  if (
+    (existing?.attempts ?? 0) >= MAX_ATTEMPTS &&
+    existing?.status !== "completed"
+  ) {
+    return { status: "error", message: t.quizAttemptsExhausted };
+  }
+
   const videoTokens = toVideoTokens(chapter.videos);
   if (videoTokens.length > 0) {
     const { data: watchedRow, error: watchedError } = await supabase
@@ -521,13 +539,6 @@ async function runQuizSubmission(formData: FormData): Promise<QuizState> {
 
   const score = Math.round((correct / questions.length) * 100);
   const passedNow = score >= passingScore;
-
-  const { data: existing } = await supabase
-    .from("chapter_progress")
-    .select("attempts,best_score,status,completed_at")
-    .eq("user_id", user.id)
-    .eq("chapter_id", chapterId)
-    .maybeSingle();
 
   const attempts = (existing?.attempts ?? 0) + 1;
   const bestScore = Math.max(existing?.best_score ?? 0, score);

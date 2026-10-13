@@ -49,7 +49,7 @@ export async function sendCertificateEmail(input: {
 <html lang="fr">
 <body style="margin:0;background:#f5f5f4;font-family:Helvetica,Arial,sans-serif;color:#111827">
   <div style="max-width:560px;margin:0 auto;padding:32px 20px">
-    <div style="font-size:20px;font-weight:700;color:#1d4ed8">easyLearn</div>
+    <div style="font-size:20px;font-weight:700;color:#1d4ed8">easyTech</div>
     <div style="margin-top:20px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:28px">
       <h1 style="margin:0;font-size:22px">${escapeHtml(t.heading(input.name))}</h1>
       <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#374151">${escapeHtml(t.body(input.title, date))}</p>

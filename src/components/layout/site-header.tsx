@@ -104,7 +104,7 @@ export function SiteHeader() {
                     <Logo />
                   </SheetTitle>
                   <SheetDescription className="sr-only">
-                    Navigation mobile de easyLearn
+                    Navigation mobile de easyTech
                   </SheetDescription>
                 </SheetHeader>
 

@@ -270,7 +270,7 @@ async function runNyoleCheckout(
     // nyole attend l'unité principale de la devise : 28000 pour 28 000 CDF.
     amount: price,
     currency: CHECKOUT_CURRENCY,
-    description: `easyLearn — niveau ${level} (${categoryId})`,
+    description: `easyTech — niveau ${level} (${categoryId})`,
     customerEmail: email,
     successUrl: absoluteUrl(`/paiement/retour?ref=${purchaseId}`),
     cancelUrl: absoluteUrl(`/paiement/retour?ref=${purchaseId}&cancelled=1`),

@@ -3,7 +3,7 @@ import type { ChapterVideo } from "@/lib/learning/types";
 /**
  * Les leçons vidéo proviennent de chaînes externes : leurs titres bruts portent
  * des numéros d'épisode, le nom de la chaîne et du marketing. Ils sont réécrits
- * ici pour que l'apprenant lise une leçon easyLearn.
+ * ici pour que l'apprenant lise une leçon easyTech.
  *
  * Filet de sécurité seulement : la source de vérité reste le titre saisi en
  * base, donc la réécriture ne doit jamais abîmer une phrase correcte.

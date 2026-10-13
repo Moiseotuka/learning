@@ -24,7 +24,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(site.url),
   title: {
     default: messages.meta.title,
-    template: "%s · easyLearn",
+    template: "%s · easyTech",
   },
   description: messages.meta.description,
   keywords: [...site.keywords],

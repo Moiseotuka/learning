@@ -1,6 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const ASSESSMENT_TTL_MS = 15 * 60 * 1000;
+export const ASSESSMENT_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Date limite de validité encodée dans le jeton. La minuterie de l'examen s'y
+ * cale plutôt que de repartir de zéro à l'hydratation : le temps a déjà couru
+ * pendant le rendu serveur.
+ */
+export function assessmentDeadline(token: string): number {
+  const value = Number(token.split(".")[0]);
+  return Number.isFinite(value) ? value : Date.now() + ASSESSMENT_TTL_MS;
+}
 
 function resolveAssessmentSecret(): string {
   const secret =

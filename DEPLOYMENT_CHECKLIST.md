@@ -1,4 +1,4 @@
-# Checklist de déploiement Vercel - easyLearn
+# Checklist de déploiement Vercel - easyTech
 
 ## ✅ Pré-requis
 
@@ -31,7 +31,7 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 #### Application
 ```
 NEXT_PUBLIC_SITE_URL=https://VOTRE_APP.vercel.app
-NEXT_PUBLIC_APP_NAME=easyLearn
+NEXT_PUBLIC_APP_NAME=easyTech
 ```
 
 #### Paiement Nyole
@@ -45,7 +45,7 @@ NYOLE_WEBHOOK_URL=https://VOTRE_APP.vercel.app/api/webhooks/payment
 #### Email Resend
 ```
 RESEND_API_KEY=re_...
-EMAIL_FROM="easyLearn <bonjour@votre-domaine.com>"
+EMAIL_FROM="easyTech <bonjour@votre-domaine.com>"
 ```
 
 #### Sécurité

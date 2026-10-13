@@ -511,6 +511,61 @@ type ChapterDetailRow = ChapterRow & {
   resources: ChapterResource[] | null;
 };
 
+/** Blob de reprise stocké dans `chapter_progress.resume` (jsonb, tolérant). */
+type ResumeBlob = {
+  video: Record<string, unknown>;
+  scrolls: Record<string, number>;
+  page: number | null;
+  step: string | null;
+};
+
+const RESUME_STEPS = [
+  "objectifs",
+  "videos",
+  "cours",
+  "exercice",
+  "ressources",
+  "quiz",
+];
+
+function normalizeResume(value: unknown): ResumeBlob {
+  if (!value || typeof value !== "object") {
+    return { video: {}, scrolls: {}, page: null, step: null };
+  }
+
+  const blob = value as Record<string, unknown>;
+  const video =
+    blob.video && typeof blob.video === "object"
+      ? (blob.video as Record<string, unknown>)
+      : {};
+
+  const positiveInt = (input: unknown, max: number) =>
+    typeof input === "number" && Number.isFinite(input) && input > 0
+      ? Math.min(Math.floor(input), max)
+      : null;
+
+  // `scroll` a pu être écrit en nombre simple : la valeur est alors partagée
+  // entre toutes les étapes.
+  const rawScrolls =
+    blob.scroll && typeof blob.scroll === "object"
+      ? (blob.scroll as Record<string, unknown>)
+      : typeof blob.scroll === "number"
+        ? { cours: blob.scroll }
+        : {};
+  const scrolls: Record<string, number> = {};
+  for (const [key, input] of Object.entries(rawScrolls)) {
+    const parsed = positiveInt(input, 200_000);
+    if (parsed !== null && RESUME_STEPS.includes(key)) scrolls[key] = parsed;
+  }
+
+  const step =
+    typeof blob.step === "string" && RESUME_STEPS.includes(blob.step)
+      ? blob.step
+      : null;
+
+  return { video, scrolls, page: positiveInt(blob.page, 500), step };
+}
+
 function toVideos(value: ChapterVideo[] | null): ChapterVideo[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
@@ -544,6 +599,7 @@ export async function getLearnerChapter(
     { data, error },
     { data: practiceRow, error: practiceError },
     { data: watchedRow, error: watchedError },
+    { data: resumeRow, error: resumeError },
     { data: pageRows, error: pagesError },
   ] = await Promise.all([
     supabase
@@ -564,6 +620,11 @@ export async function getLearnerChapter(
       .eq("chapter_id", summary.id)
       .maybeSingle(),
     supabase
+      .from("chapter_progress")
+      .select("resume")
+      .eq("chapter_id", summary.id)
+      .maybeSingle(),
+    supabase
       .from("chapter_pages")
       .select("position,title,content")
       .eq("chapter_id", summary.id)
@@ -577,6 +638,12 @@ export async function getLearnerChapter(
     console.warn(
       "[learning] videos watched : colonne absente — coller la migration 202610020001_video_watch.sql",
       watchedError.message,
+    );
+  }
+  if (resumeError) {
+    console.warn(
+      "[learning] resume : colonne absente — coller la migration 202610120001_resume_position.sql",
+      resumeError.message,
     );
   }
   if (pagesError) {
@@ -615,6 +682,19 @@ export async function getLearnerChapter(
   const videosDone = tokens.every((token) => watchedIds.has(token));
   const videoWatched = tokens.filter((token) => watchedIds.has(token));
 
+  const resumeBlob = normalizeResume(
+    (resumeRow as { resume?: unknown } | null)?.resume,
+  );
+  const videoSeconds: Record<string, number> = {};
+  for (const token of tokens) {
+    // Une leçon déjà vue repart du début : pas de reprise à sa dernière seconde.
+    if (watchedIds.has(token)) continue;
+    const value = resumeBlob.video[token];
+    if (typeof value === "number" && Number.isFinite(value) && value > 10) {
+      videoSeconds[token] = Math.min(Math.floor(value), 21_600);
+    }
+  }
+
   const levelIndex = track.levels.findIndex(
     (info) => info.level === summary.level,
   );
@@ -641,6 +721,10 @@ export async function getLearnerChapter(
     videoTokens: tokens,
     videoWatched,
     videosDone,
+    videoSeconds,
+    resumePage: resumeBlob.page,
+    resumeStep: resumeBlob.step,
+    resumeScrolls: resumeBlob.scrolls,
     content: row.content,
     pages,
     exercise: row.exercise,

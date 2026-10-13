@@ -55,7 +55,7 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
     <div className="mx-auto w-full max-w-xl px-4 py-12 sm:px-6 lg:py-16">
       <header className="text-center">
         <p className="text-xs font-semibold uppercase tracking-wider text-electric">
-          easyLearn
+          easyTech
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
           {t.verifyTitle}
