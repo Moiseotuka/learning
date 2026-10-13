@@ -893,11 +893,15 @@ export async function noticesSummary(
       (data as { kind: NoticeKind; sent_at: string | null; last_error: string | null }[] | null) ?? []
   ) {
     const bucket = byKind.get(row.kind) ?? { due: 0, sent: 0, failed: 0, error: null };
-    if (row.sent_at) bucket.sent += 1;
-    else {
+    if (row.sent_at) {
+      // « sans objet » = ligne retirée avant l'envoi (séance annulée, élève sorti).
+      // La compter comme envoyée ferait croire à l'enseignant que ses élèves ont
+      // reçu un message qui n'est jamais parti.
+      if (!row.last_error || row.last_error === "mode démo") bucket.sent += 1;
+    } else {
       bucket.due += 1;
       // Une ligne en échec répété ne dit rien d'elle-même : le motif du
-      // refusal remonte ici plutôt que de rester dans les journaux du serveur.
+      // refus remonte ici plutôt que de rester dans les journaux du serveur.
       if (row.last_error) {
         bucket.failed += 1;
         bucket.error ??= row.last_error;
