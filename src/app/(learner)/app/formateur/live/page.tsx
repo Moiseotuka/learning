@@ -28,7 +28,7 @@ import {
 } from "@/lib/instructor/queries";
 
 const t = messages.live;
-const durations = [30, 45, 60, 90, 120, 180];
+const durations = [30, 45, 60, 90, 120, 180, 240, 300];
 
 export const metadata: Metadata = {
   title: t.module.title,
@@ -55,7 +55,9 @@ function durationMinutes(startsAt: string, endsAt: string): number {
 
 function isUpcoming(session: LiveSession, now: number): boolean {
   if (session.status === "cancelled" || session.status === "ended") return false;
-  return new Date(session.endsAt).getTime() >= now;
+  // Une salle encore ouverte passe avant les séances achevées, même si son
+  // heure annoncée est déjà passée : la séance n'est pas bornée par l'horloge.
+  return session.status === "live" || new Date(session.endsAt).getTime() >= now;
 }
 
 function partitionSessions(sessions: LiveSession[]) {
@@ -181,7 +183,10 @@ export default async function InstructorLivePage({
             </div>
           </ActionForm>
         )}
-        <p className="mt-3 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-3 max-w-[70ch] text-xs leading-relaxed text-electric">
+          {t.module.durationNote}
+        </p>
+        <p className="mt-2 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
           {fill(t.module.academyNote, { tz: ACADEMY_TZ_LABEL })}
         </p>
       </section>

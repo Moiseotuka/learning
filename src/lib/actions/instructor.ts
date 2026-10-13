@@ -587,6 +587,20 @@ async function attachStudent(
   return { ok: true };
 }
 
+/**
+ * Durée ANNONCÉE d'une séance, en millisecondes.
+ *
+ * L'heure n'est pas limitée : la valeur saisie sert à la convocation et au
+ * calendrier, elle ne clôt pas la salle — c'est le formateur qui la ferme.
+ * Seule une borne de lisibilité est posée (24 h), pour qu'aucun créneau
+ * aberrant ne soit envoyé aux élèves.
+ */
+function announcedDurationMs(minutes: number): number {
+  const value = Math.round(Number(minutes));
+  const safe = Number.isFinite(value) && value > 0 ? value : 60;
+  return Math.min(safe, 1_440) * 60_000;
+}
+
 export async function createLiveSession(
   _prevState: FormState | undefined,
   formData: FormData,
@@ -620,7 +634,7 @@ export async function createLiveSession(
       return { status: "error", message: t.errors.pastDate, field: "time" };
     }
     const endsAt = new Date(
-      startsAt.getTime() + Math.min(Math.max(Math.round(minutes) || 60, 15), 240) * 60_000,
+      startsAt.getTime() + announcedDurationMs(minutes),
     );
 
     let trackId: string | null = null;
@@ -711,7 +725,7 @@ export async function updateLiveSession(
     }
 
     const endsAt = new Date(
-      startsAt.getTime() + Math.min(Math.max(Math.round(minutes) || 60, 15), 240) * 60_000,
+      startsAt.getTime() + announcedDurationMs(minutes),
     );
 
     const { error } = await supabase

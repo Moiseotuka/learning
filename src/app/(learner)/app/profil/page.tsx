@@ -10,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ProfileHeader } from "@/components/learner/profile-header";
+import { SecurityCard } from "@/components/learner/security-card";
 import { TestCertificateButton } from "@/components/learner/test-certificate-button";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
@@ -167,6 +168,13 @@ export default async function ProfilePage() {
               </>
             )}
           </section>
+
+          <SecurityCard
+            managedByProvider={
+              typeof user.app_metadata?.provider === "string" &&
+              user.app_metadata.provider !== "email"
+            }
+          />
         </div>
 
         <section className="rounded-2xl border border-hairline bg-card p-5 shadow-sm sm:p-6">

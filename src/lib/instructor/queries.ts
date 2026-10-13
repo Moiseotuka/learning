@@ -54,6 +54,8 @@ export type InstructorTrack = {
   slug: string;
   title: string;
   categoryId: string;
+  /** Nom du domaine, pour chercher un parcours à enseigner par matière. */
+  categoryName: string;
 };
 
 export type InstructorStatus = {
@@ -125,6 +127,44 @@ function subscriptionOf(row: Record<string, unknown> | null): InstructorSubscrip
   };
 }
 
+/**
+ * Un administrateur qui éprouve la plateforme enseigne sans souscrire : il joue
+ * tous les rôles pour tester, y compris la salle live et les places d'élève.
+ * Ces valeurs ne passent jamais dans une facture, elles bornent seulement les
+ * affichages « places utilisées » et « parcours choisis ».
+ */
+const ADMIN_SEATS = 200;
+const ADMIN_DAYS = 3650;
+
+const isAdministrator = cache(async (userId: string): Promise<boolean> => {
+  if (!userId) return false;
+
+  const supabase = createServiceSupabase();
+  if (!supabase) return false;
+
+  const { data } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .maybeSingle<{ role: string }>();
+
+  return data?.role === "admin";
+});
+
+function adminSubscriptionOf(trackCount: number): InstructorSubscription {
+  const now = Date.now();
+  return {
+    id: "acces_test",
+    planId: "acces_test",
+    status: "active",
+    amountFc: 0,
+    seatsLimit: ADMIN_SEATS,
+    trackLimit: Math.max(trackCount, 1),
+    startedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + ADMIN_DAYS * 86_400_000).toISOString(),
+  };
+}
+
 function daysLeft(expiresAt: string | null): number {
   if (!expiresAt) return 0;
   return Math.max(0, Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86_400_000));
@@ -134,6 +174,10 @@ function daysLeft(expiresAt: string | null): number {
  * Situation commerciale d'un utilisateur : abonnement le plus récent, validité
  * recalculée à la lecture (une souscription jamais fermée par le serveur
  * reste `active` en base après son échéance, c'est `expires_at` qui tranche).
+ *
+ * Exception assumée : sans abonnement actif, un administrateur est traité comme
+ * un formateur illimité. La règle est la même que celle du paywall — le compte
+ * admin teste toute la plateforme sans payer.
  */
 export const getInstructorStatus = cache(
   async (userId: string): Promise<InstructorStatus> => {
@@ -164,15 +208,22 @@ export const getInstructorStatus = cache(
       Boolean(subscription.expiresAt) &&
       new Date(subscription.expiresAt as string).getTime() > Date.now();
 
-    if (!isActive || !subscription) {
+    const asAdmin = !isActive && (await isAdministrator(userId));
+    if (!isActive && !asAdmin) {
       return { ...empty, subscription };
     }
 
     const [tracksResult, classesResult] = await Promise.all([
-      supabase
-        .from("instructor_subscription_tracks")
-        .select("track_id, tracks(id,slug,title,category_id)")
-        .eq("subscription_id", subscription.id),
+      asAdmin
+        ? supabase
+            .from("tracks")
+            .select("id,slug,title,category_id,categories(name)")
+            .eq("published", true)
+            .order("position")
+        : supabase
+            .from("instructor_subscription_tracks")
+            .select("track_id, tracks(id,slug,title,category_id,categories(name))")
+            .eq("subscription_id", subscription!.id),
       supabase
         .from("instructor_classes")
         .select("id, instructor_class_members(user_id,status)")
@@ -180,18 +231,33 @@ export const getInstructorStatus = cache(
         .eq("status", "active"),
     ]);
 
-    const tracks: InstructorTrack[] = (
-      (tracksResult.data as
-        | { track_id: string; tracks: { id: string; slug: string; title: string; category_id: string } | null }[]
-        | null) ?? []
-    )
-      .filter((row) => row.tracks)
-      .map((row) => ({
-        id: row.tracks!.id,
-        slug: row.tracks!.slug,
-        title: row.tracks!.title,
-        categoryId: row.tracks!.category_id,
-      }));
+    type TrackJoin = {
+      id: string;
+      slug: string;
+      title: string;
+      category_id: string;
+      categories: { name: string } | null;
+    };
+
+    const tracks: InstructorTrack[] = asAdmin
+      ? (((tracksResult.data as TrackJoin[] | null) ?? []).map((row) => ({
+          id: row.id,
+          slug: row.slug,
+          title: row.title,
+          categoryId: row.category_id,
+          categoryName: row.categories?.name ?? "",
+        })))
+      : (
+          (tracksResult.data as { track_id: string; tracks: TrackJoin | null }[] | null) ?? []
+        )
+          .filter((row) => row.tracks)
+          .map((row) => ({
+            id: row.tracks!.id,
+            slug: row.tracks!.slug,
+            title: row.tracks!.title,
+            categoryId: row.tracks!.category_id,
+            categoryName: row.tracks!.categories?.name ?? "",
+          }));
 
     const classes =
       (classesResult.data as
@@ -204,9 +270,9 @@ export const getInstructorStatus = cache(
       (item.instructor_class_members ?? []).filter((member) => member.status === "active").length;
 
     return {
-      subscription,
+      subscription: asAdmin ? adminSubscriptionOf(tracks.length) : subscription!,
       isActive: true,
-      daysLeft: daysLeft(subscription.expiresAt),
+      daysLeft: asAdmin ? ADMIN_DAYS : daysLeft(subscription!.expiresAt),
       seatsUsed: classes.reduce((total, item) => total + activeMembers(item), 0),
       classCount: classes.length,
       tracks,
@@ -239,9 +305,14 @@ export async function activeSeatLimit(instructorId: string): Promise<number | nu
     .limit(1)
     .maybeSingle<{ status: string; expires_at: string; seats_limit: number }>();
 
-  if (data?.status !== "active") return null;
-  if (new Date(data.expires_at).getTime() <= Date.now()) return null;
-  return Number(data.seats_limit) || 0;
+  if (data?.status === "active" && new Date(data.expires_at).getTime() > Date.now()) {
+    return Number(data.seats_limit) || 0;
+  }
+
+  // Classe tenue par un administrateur en test : les places ne dépendent
+  // d'aucun abonnement payé, sinon personne ne pourrait jamais y entrer.
+  if (await isAdministrator(instructorId)) return ADMIN_SEATS;
+  return null;
 }
 
 export async function getInstructorClasses(
@@ -487,8 +558,10 @@ export async function getLearnerClasses(userId: string): Promise<{
       "class_id",
       classes.map((row) => row.klass.id),
     )
-    .gte("ends_at", new Date().toISOString())
     .in("status", ["scheduled", "live"])
+    // La séance qui déborre de son heure annoncée reste « à venir » tant
+    // qu'elle n'est pas clôturée : `ends_at` n'est qu'une indication.
+    .or(`status.eq.live,ends_at.gte.${new Date().toISOString()}`)
     .order("starts_at");
 
   const nextByClass = new Map<
@@ -707,8 +780,9 @@ export async function getUpcomingSessionsForLearner(
       "id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,instructor_classes(title,academy)",
     )
     .in("class_id", classIds)
-    .gte("ends_at", new Date().toISOString())
     .in("status", ["scheduled", "live"])
+    // Séance en cours = séance encore à venir, heure annoncée dépassée ou non.
+    .or(`status.eq.live,ends_at.gte.${new Date().toISOString()}`)
     .order("starts_at")
     .limit(options.limit ?? 5);
 

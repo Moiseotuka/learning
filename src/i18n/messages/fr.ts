@@ -819,6 +819,26 @@ export const fr = {
           generic: "Impossible d'enregistrer. Réessayez.",
         },
       },
+      security: {
+        title: "Mot de passe",
+        intro:
+          "Changez-le quand vous voulez. Vos sessions ouvertes sur d'autres appareils restent actives jusqu'à leur expiration.",
+        newPassword: "Nouveau mot de passe",
+        confirm: "Confirmez le mot de passe",
+        save: "Mettre à jour",
+        saved: "Mot de passe mis à jour.",
+        hint: "8 caractères minimum, avec au moins une lettre et un chiffre.",
+        oauthHint:
+          "Votre compte est connecté à Google : votre mot de passe est géré par Google, la plateforme n'en garde aucun.",
+        errors: {
+          weak: "Choisissez un mot de passe plus solide.",
+          mismatch: "Les deux mots de passe ne correspondent pas.",
+          same: "Le nouveau mot de passe doit être différent de l'actuel.",
+          reauth:
+            "Reconnectez-vous avant de changer votre mot de passe.",
+          generic: "Impossible de mettre à jour le mot de passe. Réessayez.",
+        },
+      },
     },
     notConfigured:
       "Base Supabase non configurée : renseignez les variables dans .env.local.",
@@ -1334,7 +1354,7 @@ export const fr = {
     chooseTracks: "Quels parcours allez-vous enseigner ?",
     chooseTracksHint:
       "Vous pourrez ajuster cette liste depuis votre tableau de bord. Ces parcours s'ouvrent entièrement pour vous, et pour les élèves que vous y inscrivez.",
-    trackSearch: "Rechercher un parcours",
+    trackSearch: "Rechercher un domaine ou un parcours à enseigner",
     trackEmpty: "Aucun parcours ne correspond à cette recherche.",
     selectedCount: "{count} sur {limit}",
     subscribeCta: "Valider mon abonnement",
@@ -1514,7 +1534,7 @@ export const fr = {
     eyebrow: "Cours en direct",
     title: "Des séances en vidéo, sans quitter easyTech",
     subtitle:
-      "Le formateur ouvre une salle, partage son écran et corrige le code en direct. Les élèves arrivent à l'heure dite, lèvent la main, posent leurs questions dans le chat, et leur présence est enregistrée pour le suivi de la classe.",
+      "Le formateur ouvre une salle, partage son écran et corrige le code en direct. Les élèves arrivent à l'heure dite, lèvent la main, posent leurs questions dans le chat, et leur présence est enregistrée pour le suivi de la classe. Et la séance ne s'arrête pas toute seule : ici, l'heure n'est pas limitée.",
     cta: "Planifier une séance",
 
     landing: {
@@ -1538,6 +1558,7 @@ export const fr = {
         "Aucune installation côté élève : la salle s'ouvre dans le navigateur.",
         "Le nom de la salle reste technique : les élèves voient le titre du cours.",
         "Caméra et micro ne s'allument que sur demande de l'élève.",
+        "L'heure n'est pas limitée : contrairement aux salles facturées à la minute, la séance dure le temps du cours, pas 30 ou 60 minutes.",
         "Vous verrouillez la salle et éjectez un participant à tout moment.",
       ],
     },
@@ -1552,8 +1573,10 @@ export const fr = {
       fieldClass: "Classe invitée",
       fieldDate: "Date",
       fieldTime: "Heure de début",
-      fieldDuration: "Durée",
+      fieldDuration: "Durée annoncée",
       fieldAgenda: "Ordre du jour (visible par les élèves)",
+      durationNote:
+        "L'heure n'est pas limitée : ce créneau sert à la convocation et au calendrier des élèves, il n'arrête pas la séance. Ailleurs on vous coupe au bout de 30 ou 60 minutes ; ici la salle reste ouverte jusqu'à ce que vous la clôturiez vous-même.",
       create: "Planifier",
       minutes: "{count} min",
       academyNote:

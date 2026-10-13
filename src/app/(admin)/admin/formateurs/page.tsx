@@ -124,7 +124,10 @@ async function loadRows() {
     ends_at: string;
   }[]) {
     if (session.status === "cancelled" || session.status === "ended") continue;
-    if (new Date(session.ends_at).getTime() < now) continue;
+    // Une séance encore ouverte compte même si son heure annoncée est passée.
+    if (session.status !== "live" && new Date(session.ends_at).getTime() < now) {
+      continue;
+    }
     upcomingByOwner.set(
       session.instructor_id,
       (upcomingByOwner.get(session.instructor_id) ?? 0) + 1,

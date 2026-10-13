@@ -85,7 +85,12 @@ export function SubscribeForm({
     const needle = query.trim().toLocaleLowerCase("fr");
     const byCategory = new Map<string, TrackChoice[]>();
     for (const track of tracks) {
-      if (needle && !track.title.toLocaleLowerCase("fr").includes(needle)) continue;
+      if (
+        needle &&
+        !`${track.title} ${track.category}`.toLocaleLowerCase("fr").includes(needle)
+      ) {
+        continue;
+      }
       const list = byCategory.get(track.category) ?? [];
       list.push(track);
       byCategory.set(track.category, list);

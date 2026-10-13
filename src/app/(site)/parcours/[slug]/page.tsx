@@ -107,17 +107,21 @@ export default async function TrackSheetPage(props: PageProps<"/parcours/[slug]"
 
   // Numérotation continue sur tout le parcours : un chapitre « 7 » reste le
   // septième, même quand il ouvre le niveau Intermédiaire.
-  const programmeGroups = (() => {
-    let vus = 0;
-    return levels
-      .map((level) => {
-        const chapters = track.chapters.filter((chapter) => chapter.level === level);
-        const offset = vus;
-        vus += chapters.length;
-        return { level, chapters, offset };
-      })
-      .filter((group) => group.chapters.length > 0);
-  })();
+  const chaptersByLevel = new Map(
+    levels.map((level) => [
+      level,
+      track.chapters.filter((chapter) => chapter.level === level),
+    ]),
+  );
+  const programmeGroups = levels
+    .map((level, index) => ({
+      level,
+      chapters: chaptersByLevel.get(level) ?? [],
+      offset: levels
+        .slice(0, index)
+        .reduce((total, previous) => total + (chaptersByLevel.get(previous)?.length ?? 0), 0),
+    }))
+    .filter((group) => group.chapters.length > 0);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 lg:py-14">

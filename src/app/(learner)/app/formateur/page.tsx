@@ -43,8 +43,10 @@ function upcomingOnly(sessions: LiveSession[]) {
   const now = Date.now();
   return sessions.filter(
     (session) =>
-      (session.status === "scheduled" || session.status === "live") &&
-      new Date(session.endsAt).getTime() > now,
+      // Une salle ouverte reste « à venir » après son heure annoncée : c'est
+      // la clôture par le formateur qui termine la séance, pas l'horloge.
+      session.status === "live" ||
+      (session.status === "scheduled" && new Date(session.endsAt).getTime() > now),
   );
 }
 

@@ -5,6 +5,7 @@ import { ArrowLeftIcon, UsersIcon } from "lucide-react";
 
 import { ActionForm } from "@/components/instructor/action-form";
 import { CopyCode } from "@/components/instructor/copy-code";
+import { TrackPicker } from "@/components/instructor/track-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,18 +103,19 @@ export default async function InstructorClassesPage() {
                 </span>
                 <Input name="title" required minLength={3} className="h-10" />
               </label>
-              <label className="block sm:col-span-2">
+              <div className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   {t.classes.fieldTrack}
                 </span>
-                <select name="trackId" required className={fieldClass}>
-                  {status.tracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {track.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <TrackPicker
+                  name="trackId"
+                  tracks={status.tracks.map((track) => ({
+                    id: track.id,
+                    title: track.title,
+                    domain: track.categoryName || track.categoryId,
+                  }))}
+                />
+              </div>
               <label className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   {t.classes.fieldDescription}

@@ -4,11 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import { messages } from "@/i18n";
 import { getUser } from "@/lib/auth/dal";
-import { isValidEmail } from "@/lib/auth/validation";
+import { isValidEmail, isStrongPassword } from "@/lib/auth/validation";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 const t = messages.learner.profil.form;
+const ts = messages.learner.profil.security;
 
 export type ProfileField = "fullName" | "email" | "phone";
 
@@ -119,8 +120,59 @@ export async function updateProfile(
   return { status: "success", message: t.saved };
 }
 
-export async function uploadAvatar(file: File): Promise<AvatarResult> {
-  if (!isSupabaseConfigured) {
+export type PasswordField = "password" | "confirm";
+
+export type PasswordFormState = {
+  status: "idle" | "success" | "error";
+  message?: string;
+  fieldErrors?: Partial<Record<PasswordField, string>>;
+};
+
+/**
+ * Changer son mot de passe sans se déconnecter. L'API de Supabase exige une
+ * session récente : son refus est traduit en consigne claire plutôt qu'en
+ * « erreur inconnue », sinon l'utilisateur croirait la plateforme cassée.
+ */
+export async function updatePassword(
+  _prevState: PasswordFormState | undefined,
+  formData: FormData,
+): Promise<PasswordFormState> {
+  const password = typeof formData.get("password") === "string" ? String(formData.get("password")) : "";
+  const confirm = typeof formData.get("confirm") === "string" ? String(formData.get("confirm")) : "";
+
+  const fieldErrors: Partial<Record<PasswordField, string>> = {};
+  if (password !== confirm) {
+    fieldErrors.confirm = ts.errors.mismatch;
+  } else if (!isStrongPassword(password)) {
+    fieldErrors.password = ts.errors.weak;
+  }
+  if (Object.keys(fieldErrors).length > 0) {
+    return { status: "error", fieldErrors };
+  }
+
+  const user = await getUser();
+  const supabase = await createServerSupabase();
+  if (!user || !supabase) {
+    return { status: "error", message: ts.errors.generic };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) {
+    const message = error.message ?? "";
+    if (/recent|re-?auth/i.test(message)) {
+      return { status: "error", message: ts.errors.reauth };
+    }
+    if (/same|current/i.test(message)) {
+      return { status: "error", fieldErrors: { password: ts.errors.same } };
+    }
+    console.warn("[profil] mot de passe", message);
+    return { status: "error", message: ts.errors.generic };
+  }
+
+  return { status: "success", message: ts.saved };
+}
+
+export async function uploadAvatar(file: File): Promise<AvatarResult> {  if (!isSupabaseConfigured) {
     return { status: "error", message: t.errors.generic };
   }
 

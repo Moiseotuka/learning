@@ -16,7 +16,9 @@
 export type LiveProviderName = "jitsi";
 
 export const JOIN_BEFORE_MINUTES = 10;
-export const JOIN_AFTER_MINUTES = 15;
+
+/** Tolérance après l'heure annoncée : une séance qui déborne ne ferme pas. */
+export const SESSION_OVERRUN_MS = 24 * 3_600_000;
 
 export function liveProvider(): LiveProviderName {
   return "jitsi";
@@ -212,13 +214,34 @@ export type JoinWindow = {
   opensAt: Date;
 };
 
-export function joinWindow(startsAt: string, endsAt: string, now = new Date()): JoinWindow {
+/**
+ * Fenêtre d'entrée en salle.
+ *
+ * La durée d'une séance n'est PAS une limite : `endsAt` est l'heure annoncée
+ * dans la convocation, pas un couperet. Une séance ouverte par le formateur
+ * (`live`) reste joignable jusqu'à ce qu'il la clôture lui-même ; une séance
+ * programmée accepte encore les retards pendant `SESSION_OVERRUN_MS` après son
+ * terme annoncé, histoire qu'un cours qui déborre ne ferme pas sur les élèves.
+ */
+export function joinWindow(
+  startsAt: string,
+  endsAt: string,
+  status: string,
+  now = new Date(),
+): JoinWindow {
+  if (status === "ended" || status === "cancelled") {
+    return { openable: false, state: "closed", opensAt: now };
+  }
+
   const start = new Date(startsAt);
-  const end = new Date(endsAt);
   const opensAt = new Date(start.getTime() - JOIN_BEFORE_MINUTES * 60_000);
-  const closesAt = new Date(end.getTime() + JOIN_AFTER_MINUTES * 60_000);
 
   if (now < opensAt) return { openable: false, state: "too_early", opensAt };
+  if (status === "live") return { openable: true, state: "live_now", opensAt };
+
+  const closesAt = new Date(
+    new Date(endsAt).getTime() + SESSION_OVERRUN_MS,
+  );
   if (now > closesAt) return { openable: false, state: "closed", opensAt };
   return { openable: true, state: now < start ? "too_early" : "live_now", opensAt };
 }

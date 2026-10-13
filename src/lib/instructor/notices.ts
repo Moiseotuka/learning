@@ -691,10 +691,14 @@ async function syncQueue(supabase: Reader, now: Date): Promise<number> {
     enqueued += await queueReminders(supabase, classId, sessions, roster, now);
   }
 
-  // Séances terminées dont la présence n'a pas encore été mise en file.
+  // Séances CLOSES par le formateur dont la présence n'a pas encore été mise
+  // en file. `ends_at` n'est que l'heure annoncée : une salle encore ouverte
+  // (`live`) n'est pas terminée, même passée son créneau, et son rapport ne
+  // part pas tant que l'enseignant ne l'a pas clôturée.
   const { data: finished } = await supabase
     .from("live_sessions")
     .select("id,class_id,ends_at")
+    .in("status", ["ended", "cancelled"])
     .lte("ends_at", new Date(now.getTime() - REPORT_LAG_MS).toISOString())
     .gte("ends_at", new Date(now.getTime() - 3 * DAY_MS).toISOString())
     .order("ends_at", { ascending: false })

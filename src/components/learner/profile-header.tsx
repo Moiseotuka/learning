@@ -235,7 +235,7 @@ export function ProfileHeader({
                 name="phone"
                 type="tel"
                 defaultValue={phone ?? ""}
-                placeholder="+33 6 12 34 56 78"
+                placeholder="+243 81 234 5678"
                 aria-invalid={Boolean(state?.fieldErrors?.phone)}
                 className="h-11"
               />

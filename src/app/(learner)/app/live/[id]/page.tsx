@@ -52,7 +52,7 @@ export default async function LiveRoomPage({
     "Participant";
   const email = profile?.email ?? user.email ?? null;
 
-  const window_ = joinWindow(session.startsAt, session.endsAt);
+  const window_ = joinWindow(session.startsAt, session.endsAt, session.status);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:py-10">
