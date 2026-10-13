@@ -801,11 +801,19 @@ async function deliver(
     return "sent";
   }
 
+  const reason = (result?.error ?? "envoi impossible").slice(0, 180);
+
+  // Une clé d'envoi révoquée ou absente est un défaut du site, pas un destinataire
+  // injoignable : le serveur refuse avant d'émettre. Brûler les tentatives ici
+  // ferait perdre la convocation, alors qu'elle partira toute seule dès que la
+  // clé sera remise en place.
+  const siteBlocked = /api key|unauthorized|forbidden|401/i.test(reason);
+
   await supabase
     .from("instructor_notices")
     .update({
-      attempts: notice.attempts + 1,
-      last_error: result ? "non remis" : "envoi impossible",
+      attempts: siteBlocked ? notice.attempts : notice.attempts + 1,
+      last_error: reason,
     })
     .eq("id", notice.id);
   return "failed";
@@ -870,20 +878,31 @@ export async function notifyNow(): Promise<FlushReport> {
 /** État de la file d'une classe, pour le tableau de bord du formateur. */
 export async function noticesSummary(
   classId: string,
-): Promise<{ kind: NoticeKind; due: number; sent: number }[]> {
+): Promise<{ kind: NoticeKind; due: number; sent: number; failed: number; error: string | null }[]> {
   const supabase = createServiceSupabase();
   if (!supabase) return [];
 
   const { data } = await supabase
     .from("instructor_notices")
-    .select("kind,sent_at")
+    .select("kind,sent_at,last_error")
     .eq("class_id", classId);
 
-  const byKind = new Map<string, { due: number; sent: number }>();
-  for (const row of (data as { kind: NoticeKind; sent_at: string | null }[] | null) ?? []) {
-    const bucket = byKind.get(row.kind) ?? { due: 0, sent: 0 };
+  const byKind = new Map<string, { due: number; sent: number; failed: number; error: string | null }>();
+  for (
+    const row of
+      (data as { kind: NoticeKind; sent_at: string | null; last_error: string | null }[] | null) ?? []
+  ) {
+    const bucket = byKind.get(row.kind) ?? { due: 0, sent: 0, failed: 0, error: null };
     if (row.sent_at) bucket.sent += 1;
-    else bucket.due += 1;
+    else {
+      bucket.due += 1;
+      // Une ligne en échec répété ne dit rien d'elle-même : le motif du
+      // refusal remonte ici plutôt que de rester dans les journaux du serveur.
+      if (row.last_error) {
+        bucket.failed += 1;
+        bucket.error ??= row.last_error;
+      }
+    }
     byKind.set(row.kind, bucket);
   }
 

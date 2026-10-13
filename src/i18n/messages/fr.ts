@@ -1323,6 +1323,8 @@ export const fr = {
       noticesTitle: "Notifications de la classe",
       noticesDue: "{count} en file",
       noticesSent: "{count} envoyées",
+      noticesFailed:
+        "{count} en échec — {error}. Le message repartira de lui-même une fois la clé d'envoi rétablie.",
       noticesEmpty: "Aucune notification pour l'instant.",
       calendar: "Ouvrir le calendrier",
       kinds: {

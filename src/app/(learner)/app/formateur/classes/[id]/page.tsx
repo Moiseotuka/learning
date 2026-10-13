@@ -238,14 +238,21 @@ export default async function InstructorClassPage({
             </p>
             <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
               {summaries.map((row) => (
-                <li key={row.kind} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="text-foreground">{t.classes.kinds[row.kind]}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {fill(t.classes.noticesSent, { count: row.sent })}
-                    {row.due > 0
-                      ? ` · ${fill(t.classes.noticesDue, { count: row.due })}`
-                      : null}
+                <li key={row.kind} className="text-sm">
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="text-foreground">{t.classes.kinds[row.kind]}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {fill(t.classes.noticesSent, { count: row.sent })}
+                      {row.due > 0
+                        ? ` · ${fill(t.classes.noticesDue, { count: row.due })}`
+                        : null}
+                    </span>
                   </span>
+                  {row.failed > 0 && row.error ? (
+                    <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+                      {fill(t.classes.noticesFailed, { count: row.failed, error: row.error })}
+                    </p>
+                  ) : null}
                 </li>
               ))}
             </ul>

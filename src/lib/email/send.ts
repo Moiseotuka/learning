@@ -5,7 +5,7 @@ type EmailInput = {
   text: string;
 };
 
-export type EmailResult = { sent: boolean; demo: boolean };
+export type EmailResult = { sent: boolean; demo: boolean; error?: string };
 
 /**
  * Envoi via Resend. Sans RESEND_API_KEY, l'email est tracé en log
@@ -38,13 +38,21 @@ export async function sendEmail(input: EmailInput): Promise<EmailResult> {
     });
 
     if (!response.ok) {
-      console.error("[email] resend", response.status, await response.text());
-      return { sent: false, demo: false };
+      // Le motif de Refuser compte : la file de notifications le montre au
+      // formateur, qui sinon ne voit qu'un « non remis » sans explication.
+      const detail = (await response.text()).slice(0, 180);
+      console.error("[email] resend", response.status, detail);
+      const message = detail.match(/"message":"([^"]+)"/)?.[1];
+      return { sent: false, demo: false, error: message ?? `HTTP ${response.status}` };
     }
 
     return { sent: true, demo: false };
   } catch (error) {
     console.error("[email] resend", error);
-    return { sent: false, demo: false };
+    return {
+      sent: false,
+      demo: false,
+      error: error instanceof Error ? error.message : "reseau",
+    };
   }
 }
