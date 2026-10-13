@@ -21,6 +21,9 @@ export const SUCCESS_NOTICES: Record<string, string> = {
   seanceOuverte: t.notices.seanceOuverte,
   seanceClose: t.notices.seanceClose,
   seanceAnnulee: t.notices.seanceAnnulee,
+  seanceDeplacee: t.notices.seanceDeplacee,
+  eleveInscrit: t.notices.eleveInscrit,
+  programmeEnvoye: t.notices.programmeEnvoye,
 };
 
 export function successNotice(notice: string | undefined): string | undefined {

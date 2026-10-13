@@ -12,8 +12,14 @@ import { requireUser } from "@/lib/auth/dal";
 import {
   createLiveSession,
   setLiveSessionStatus,
+  updateLiveSession,
 } from "@/lib/actions/instructor";
 import { fill, formatDateTime, relativeFromNow } from "@/lib/instructor/format";
+import {
+  ACADEMY_TZ_LABEL,
+  academyHourLabel,
+  icsLocalStamp,
+} from "@/lib/instructor/timezone";
 import {
   getInstructorClasses,
   getInstructorSessions,
@@ -31,6 +37,21 @@ export const metadata: Metadata = {
 
 const fieldClass =
   "w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+
+/** Créneau dit à l'heure de l'académie, prêt pour un champ `type="date"`. */
+function dayValue(startsAt: string): string {
+  const stamp = icsLocalStamp(startsAt);
+  return `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}`;
+}
+
+/** Durée saisie à partir des bornes de la séance, arrondie à la tranche proposée. */
+function durationMinutes(startsAt: string, endsAt: string): number {
+  const minutes = Math.round((new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 60_000);
+  return durations.reduce(
+    (best, option) => (Math.abs(option - minutes) < Math.abs(best - minutes) ? option : best),
+    durations[0],
+  );
+}
 
 function isUpcoming(session: LiveSession, now: number): boolean {
   if (session.status === "cancelled" || session.status === "ended") return false;
@@ -160,6 +181,9 @@ export default async function InstructorLivePage({
             </div>
           </ActionForm>
         )}
+        <p className="mt-3 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
+          {fill(t.module.academyNote, { tz: ACADEMY_TZ_LABEL })}
+        </p>
       </section>
 
       <SessionList title={t.module.upcoming} sessions={upcoming} now={now} />
@@ -274,6 +298,89 @@ function SessionList({
                   </Button>
                 </div>
               </div>
+
+              {session.status === "scheduled" || session.status === "live" ? (
+                <details className="mt-3 rounded-xl border border-hairline px-4 py-3">
+                  <summary className="cursor-pointer text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                    {t.module.reschedule}
+                  </summary>
+                  <ActionForm
+                    action={updateLiveSession}
+                    label={t.module.saveChanges}
+                    hidden={{ sessionId: session.id }}
+                    className="mt-3"
+                    buttonClassName="h-10 px-5"
+                  >
+                    <div className="grid w-full gap-3 sm:grid-cols-2">
+                      <label className="block sm:col-span-2">
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          {t.module.fieldTitle}
+                        </span>
+                        <Input
+                          name="title"
+                          required
+                          minLength={3}
+                          defaultValue={session.title}
+                          className="h-10"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          {t.module.fieldDate}
+                        </span>
+                        <Input
+                          name="date"
+                          type="date"
+                          required
+                          defaultValue={dayValue(session.startsAt)}
+                          className={fieldClass}
+                        />
+                      </label>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            {t.module.fieldTime}
+                          </span>
+                          <Input
+                            name="time"
+                            type="time"
+                            required
+                            defaultValue={academyHourLabel(session.startsAt)}
+                            className={fieldClass}
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            {t.module.fieldDuration}
+                          </span>
+                          <select
+                            name="minutes"
+                            defaultValue={String(
+                              durationMinutes(session.startsAt, session.endsAt),
+                            )}
+                            className={fieldClass}
+                          >
+                            {durations.map((minutes) => (
+                              <option key={minutes} value={minutes}>
+                                {fill(t.module.minutes, { count: minutes })}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <label className="block sm:col-span-2">
+                        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                          {t.module.fieldAgenda}
+                        </span>
+                        <textarea name="agenda" rows={2} defaultValue={session.agenda} className={fieldClass} />
+                      </label>
+                    </div>
+                  </ActionForm>
+                  <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                    {fill(t.module.academyNote, { tz: ACADEMY_TZ_LABEL })}
+                  </p>
+                </details>
+              ) : null}
             </li>
           );
         })}

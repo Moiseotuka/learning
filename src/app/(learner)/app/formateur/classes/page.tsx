@@ -85,11 +85,24 @@ export default async function InstructorClassesPage() {
             <div className="grid w-full gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                  {t.classes.fieldAcademy}
+                </span>
+                <Input
+                  name="academy"
+                  required
+                  minLength={2}
+                  className="h-10"
+                  autoComplete="organization"
+                  placeholder={t.classes.academyPlaceholder}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   {t.classes.fieldName}
                 </span>
                 <Input name="title" required minLength={3} className="h-10" />
               </label>
-              <label className="block">
+              <label className="block sm:col-span-2">
                 <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
                   {t.classes.fieldTrack}
                 </span>
@@ -108,6 +121,9 @@ export default async function InstructorClassesPage() {
                 <textarea name="description" rows={2} className={fieldClass} />
               </label>
             </div>
+            <p className="mt-3 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
+              {t.classes.academyHint}
+            </p>
           </ActionForm>
         )}
       </section>
@@ -135,7 +151,7 @@ export default async function InstructorClassesPage() {
                     {klass.title}
                   </Link>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {klass.trackTitle} ·{" "}
+                    {klass.academy || klass.trackTitle} ·{" "}
                     {fill(t.classes.students, { count: klass.memberCount })}
                   </p>
                 </div>

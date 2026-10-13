@@ -8,10 +8,30 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { messages } from "@/i18n";
 import { reportLivePresence } from "@/lib/actions/instructor";
+import { fill } from "@/lib/instructor/format";
+import {
+  bandwidthConfig,
+  type LiveBandwidthMode,
+} from "@/lib/live/provider";
+import { useBandwidthMode } from "@/lib/live/bandwidth-store";
 
 const t = messages.live;
 
 const HEARTBEAT_SECONDS = 30;
+
+const BANDWIDTH_MODES: LiveBandwidthMode[] = ["hd", "eco", "audio"];
+
+function labelOf(mode: LiveBandwidthMode): string {
+  if (mode === "eco") return t.room.bandwidthEco;
+  if (mode === "audio") return t.room.bandwidthAudio;
+  return t.room.bandwidthHd;
+}
+
+function noteOf(mode: LiveBandwidthMode): string {
+  if (mode === "eco") return t.room.bandwidthNoteEco;
+  if (mode === "audio") return t.room.bandwidthNoteAudio;
+  return t.room.bandwidthNoteHd;
+}
 
 type JitsiApi = {
   addListener: (event: string, handler: (...args: unknown[]) => void) => void;
@@ -80,6 +100,9 @@ export function LiveRoom({
   const apiRef = useRef<JitsiApi | null>(null);
   const beatRef = useRef<number | null>(null);
   const [name, setName] = useState(displayName);
+  const measured = useBandwidthMode();
+  const [pickedMode, setPickedMode] = useState<LiveBandwidthMode | null>(null);
+  const mode = pickedMode ?? measured;
   const [status, setStatus] = useState<"before" | "loading" | "open" | "failed">(
     "before",
   );
@@ -101,8 +124,10 @@ export function LiveRoom({
       return;
     }
 
+    const config = (options.configOverwrite ?? {}) as Record<string, unknown>;
     const api = new window.JitsiMeetExternalAPI(domain, {
       ...options,
+      configOverwrite: { ...config, ...bandwidthConfig(mode) },
       parentNode: holder,
       roomName,
       userInfo: {
@@ -179,6 +204,43 @@ export function LiveRoom({
           {t.room.nameHint}
         </span>
       </label>
+
+      <div className="mt-5">
+        <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
+          {t.room.bandwidthTitle}
+        </span>
+        <div
+          role="radiogroup"
+          aria-label={t.room.bandwidthTitle}
+          className="flex flex-wrap gap-2"
+        >
+          {BANDWIDTH_MODES.map((value) => (
+            <Button
+              key={value}
+              type="button"
+              size="sm"
+              role="radio"
+              aria-checked={mode === value}
+              variant={mode === value ? "default" : "outline"}
+              className="h-9 px-4"
+              onClick={() => setPickedMode(value)}
+            >
+              {labelOf(value)}
+            </Button>
+          ))}
+        </div>
+        <p className="mt-2 max-w-[60ch] text-[11px] leading-relaxed text-muted-foreground">
+          {t.room.bandwidthHint}
+        </p>
+        <p className="mt-1 max-w-[60ch] text-[11px] leading-relaxed text-muted-foreground">
+          {noteOf(mode)}
+        </p>
+        {pickedMode === null && measured !== "hd" ? (
+          <p className="mt-1 text-[11px] leading-relaxed text-electric">
+            {fill(t.room.bandwidthAuto, { mode: labelOf(measured) })}
+          </p>
+        ) : null}
+      </div>
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <Button

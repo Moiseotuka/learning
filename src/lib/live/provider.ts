@@ -125,6 +125,87 @@ export function buildRoomOptions(identity: RoomIdentity) {
   };
 }
 
+/**
+ * Modes de bande passante.
+ *
+ * Une séance en direct est le seul écran de la plateforme qui consomme du réseau
+ * en continu, et le contexte d'usage est une connexion mobile instable. Le choix
+ * appartient à l'apprenant, avec un réglage par défaut mesuré sur son propre
+ * navigateur : « voix seule » coûte vingt fois moins de données que la vidéo
+ * fluide et laisse l'élève écouter le cours jusqu'au bout.
+ */
+export type LiveBandwidthMode = "hd" | "eco" | "audio";
+
+const ECO_CONFIG = {
+  resolution: 360,
+  startVideoQuality: 360,
+  lastN: 1,
+  videoQuality: {
+    display: "thumbnail",
+    small: { dimensions: { width: 214, height: 120 } },
+    thumbnail: { dimensions: { width: 160, height: 90 } },
+  },
+  constraints: {
+    video: {
+      width: { ideal: 640, min: 320, max: 640 },
+      height: { ideal: 360, min: 180, max: 360 },
+      frameRate: { ideal: 10, max: 15 },
+    },
+  },
+  channelSimulation: { lastN: { defaultValue: 1 } },
+  disableThirdPartyRequests: true,
+  prejoinConfig: { enabled: false },
+} as const;
+
+const AUDIO_CONFIG = {
+  ...ECO_CONFIG,
+  disableVideo: true,
+  disableRemoteVideo: true,
+  startWithVideoMuted: true,
+} as const;
+
+export function bandwidthConfig(mode: LiveBandwidthMode) {
+  if (mode === "eco") return ECO_CONFIG;
+  if (mode === "audio") return AUDIO_CONFIG;
+  return {};
+}
+
+/**
+ * Détection côté navigateur, au montage seulement : rendue côté serveur, elle
+ * donnerait une valeur différente de celle du client et donc une interface qui
+ * clignote. `Connection.effectiveType` est mesuré par le navigateur sur les
+ * débits réels, ce que le Wi-Fi bridé d'un téléphone capte mieux qu'un ping.
+ */
+type NetworkConnection = {
+  saveData?: boolean;
+  effectiveType?: string;
+  addEventListener?: (type: "change", listener: () => void) => void;
+  removeEventListener?: (type: "change", listener: () => void) => void;
+};
+
+export function networkConnection(): NetworkConnection | null {
+  if (typeof navigator === "undefined") return null;
+  const { connection } = navigator as Navigator & {
+    connection?: NetworkConnection;
+  };
+  return connection ?? null;
+}
+
+export function detectBandwidthMode(): LiveBandwidthMode {
+  const connection = networkConnection();
+  if (!connection) return "hd";
+  if (connection.saveData) return "audio";
+  switch (connection.effectiveType) {
+    case "slow-2g":
+    case "2g":
+      return "audio";
+    case "3g":
+      return "eco";
+    default:
+      return "hd";
+  }
+}
+
 export type JoinWindow = {
   openable: boolean;
   state: "too_early" | "live_now" | "closed";

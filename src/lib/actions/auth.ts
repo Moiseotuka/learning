@@ -14,6 +14,7 @@ import {
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 import { findAccountByEmail, isExistingAccountResponse } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getInvitation } from "@/lib/instructor/queries";
 
 const t = messages.auth;
 
@@ -94,6 +95,8 @@ export async function signup(
   const email = readText(formData, "email");
   const password = readText(formData, "password");
   const confirm = readText(formData, "confirm");
+  const next = sanitizeInternalPath(formData.get("next"));
+  const invitationToken = readText(formData, "invitation");
 
   const fieldErrors: NonNullable<AuthFormState>["fieldErrors"] = {};
   if (fullName.length < 2) fieldErrors.fullName = t.errors.nameTooShort;
@@ -105,6 +108,21 @@ export async function signup(
 
   if (Object.keys(fieldErrors).length > 0) {
     return { status: "error", fieldErrors };
+  }
+
+  // Invitation en cours : le compte doit porter l'adresse saisie par le
+  // formateur, sinon la classe ne se serait pas ouverte après la confirmation.
+  const invitation = invitationToken ? await getInvitation(invitationToken) : null;
+  if (invitationToken && !invitation) {
+    return { status: "error", message: t.invitedExpired };
+  }
+  if (invitation && invitation.email.toLowerCase() !== email.toLowerCase()) {
+    return {
+      status: "error",
+      fieldErrors: {
+        email: t.invitedMismatch.replace("{email}", invitation.email),
+      },
+    };
   }
 
   if (!isSupabaseConfigured) {
@@ -122,13 +140,16 @@ export async function signup(
   }
 
   const publicUrl = resolveSiteUrl();
+  const redirectTo = next
+    ? `${publicUrl}/auth/confirm?next=${encodeURIComponent(next)}`
+    : `${publicUrl}/auth/confirm`;
 
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: `${publicUrl}/auth/confirm`,
+      emailRedirectTo: redirectTo,
     },
   });
 
@@ -149,7 +170,7 @@ export async function signup(
 
   if (data.session) {
     revalidatePath("/", "layout");
-    redirect(links.dashboard);
+    redirect(next ?? links.dashboard);
   }
 
   return { status: "success", message: t.confirmSent(email) };

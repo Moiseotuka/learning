@@ -13,6 +13,20 @@ import {
   getInstructorStatus,
   invitationLink,
 } from "@/lib/instructor/queries";
+import {
+  invitationEmail,
+  invitationSignupLink,
+} from "@/lib/instructor/email-templates";
+import {
+  announceClassProgram,
+  announceJoin,
+  announceSessionChange,
+  announceSessionScheduled,
+  notifyNow,
+  type NoticeSession,
+} from "@/lib/instructor/notices";
+import { zonedInstant } from "@/lib/instructor/timezone";
+import { findAccountByEmail } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email/send";
 import { createServiceSupabase } from "@/lib/supabase/service";
 import { messages } from "@/i18n";
@@ -101,10 +115,14 @@ export async function createClass(
     if (!supabase) return { status: "error", message: t.errors.failed };
 
     const title = readTextValue(formData, "title");
+    const academy = readTextValue(formData, "academy");
     const trackId = readTextValue(formData, "trackId");
     const description = readTextValue(formData, "description");
-    if (title.length < 3 || !trackId) {
-      return { status: "error", message: t.errors.missingFields, field: "title" };
+    // L'académie signe les invitations et les convocations : une classe sans nom
+    // d'école enverrait des e-mails au nom de la plateforme, ce que le formateur
+    // ne veut pas.
+    if (title.length < 3 || academy.length < 2 || !trackId) {
+      return { status: "error", message: t.errors.missingAcademy, field: academy.length < 2 ? "academy" : "title" };
     }
 
     // La classe doit porter un parcours que le formateur a le droit d'enseigner.
@@ -116,6 +134,7 @@ export async function createClass(
       instructor_id: user.id,
       track_id: trackId,
       title,
+      academy,
       description,
       join_code: newJoinCode(),
     });
@@ -176,10 +195,17 @@ export async function inviteStudent(
 
     const { data: klass } = await supabase
       .from("instructor_classes")
-      .select("id,title,instructor_id,tracks(title)")
+      .select("id,title,academy,instructor_id,track_id,tracks(title)")
       .eq("id", classId)
       .eq("instructor_id", user.id)
-      .maybeSingle<{ id: string; title: string; instructor_id: string; tracks: { title: string } | null }>();
+      .maybeSingle<{
+        id: string;
+        title: string;
+        academy: string;
+        instructor_id: string;
+        track_id: string;
+        tracks: { title: string } | null;
+      }>();
     if (!klass) return { status: "error", message: t.errors.forbidden };
 
     if (status.seatsUsed >= (status.subscription?.seatsLimit ?? 0)) {
@@ -207,17 +233,79 @@ export async function inviteStudent(
       .insert({ class_id: classId, email, token });
     if (error) return { status: "error", message: t.errors.failed };
 
-    const link = invitationLink(token);
     const trackTitle = klass.tracks?.title ?? klass.title;
+    const academy = klass.academy || klass.title;
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", user.id)
+      .maybeSingle<{ full_name: string | null }>();
+    const instructorName = profile?.full_name ?? academy;
+
+    // L'adresse connaît déjà la plateforme : inutile de lui faire refuser une
+    // inscription. La place est prise tout de suite, l'e-mail n'annonce plus
+    // qu'une entrée en classe déjà faite.
+    const account = await findAccountByEmail(email);
+
+    if (account?.confirmed) {
+      const { data: existingUser } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("email", email)
+        .maybeSingle<{ id: string }>();
+      const studentId = existingUser?.id;
+      if (!studentId) {
+        await supabase.from("instructor_class_invites").delete().eq("token", token);
+        return { status: "error", message: t.errors.failed };
+      }
+
+      const added = await attachStudent(
+        supabase,
+        classId,
+        klass.instructor_id,
+        studentId,
+        "invite",
+        email,
+      );
+      if (!added.ok) {
+        await supabase.from("instructor_class_invites").delete().eq("token", token);
+        return { status: "error", message: added.message };
+      }
+
+      await supabase
+        .from("instructor_class_invites")
+        .update({ status: "accepted", accepted_at: new Date().toISOString() })
+        .eq("token", token);
+
+      // `attachStudent` a mis le programme à la file : l'élève reçoit la
+      // convocation de sa classe, pas un second e-mail redondant.
+      return { status: "success", notice: "eleveInscrit" };
+    }
+
+    // Compte créé mais adresse non confirmée : on ne peut pas l'inscrire à
+    // sa place. Le lien mène à la classe, l'élève confirmera d'abord son compte.
+    const ctaHref =
+      account === null ? invitationSignupLink(token) : invitationLink(token);
+
     const mail = await sendEmail({
       to: email,
-      subject: `Invitation à la classe « ${klass.title} » sur easyTech`,
-      html: `<p>Bonjour,</p>
-<p>Votre formateur vous invite à rejoindre la classe <strong>« ${klass.title} »</strong> sur easyTech, autour du parcours « ${trackTitle} ».</p>
-<p><a href="${link}">Rejoindre la classe sur easyTech</a></p>
-<p>Si vous n'avez pas encore de compte, la page vous proposera d'en créer un avant d'intégrer la classe.</p>
-<p>Lien valable 14 jours.</p>`,
-      text: `Rejoignez la classe « ${klass.title} » sur easyTech : ${link}`,
+      subject: `${academy} — invitation à la classe « ${klass.title} »`,
+      html: invitationEmail({
+        academy,
+        className: klass.title,
+        trackTitle,
+        instructorName,
+        body:
+          account === null
+            ? `<p><strong>${academy}</strong> vous invite dans sa classe « ${klass.title} », autour du parcours « ${trackTitle} ».</p>
+<p>Vous n'avez pas encore de compte ? Créez-le avec <strong>${email}</strong> — c'est l'adresse que votre formateur a saisie, et la classe s'ouvrira dessus tout de suite.</p>`
+            : `<p><strong>${academy}</strong> vous inscrit dans sa classe « ${klass.title} », autour du parcours « ${trackTitle} ».</p>
+<p>Votre compte existe mais n'est pas encore confirmé : confirmez-le, puis ouvrez le lien ci-dessous pour rejoindre la classe.</p>`,
+        ctaLabel: "Rejoindre la classe",
+        ctaHref,
+      }),
+      text: `Rejoignez la classe « ${klass.title} » de ${academy} : ${ctaHref}`,
     });
 
     return {
@@ -288,7 +376,14 @@ export async function joinClassByCode(
       return { status: "error", message: t.errors.codeUnknown };
     }
 
-    const added = await attachStudent(supabase, klass.id, klass.instructor_id, user.id, "code");
+    const added = await attachStudent(
+      supabase,
+      klass.id,
+      klass.instructor_id,
+      user.id,
+      "code",
+      user.email ?? null,
+    );
     if (!added.ok) return { status: "error", message: added.message };
     return { status: "success", notice: "rejoint" };
   } catch (error) {
@@ -343,6 +438,7 @@ export async function acceptInvitation(
       invite.instructor_classes.instructor_id,
       user.id,
       "invite",
+      user.email ?? invite.email,
     );
     if (!added.ok) return { status: "error", message: added.message };
 
@@ -391,6 +487,9 @@ type ServiceClient = NonNullable<ReturnType<typeof createServiceSupabase>>;
  * Inscrit un apprenant dans la limite des places de l'abonnement du formateur.
  * La place est vérifiée ici et dans `granted_category_ids()` : l'une sans
  * l'autre laisserait passer un quinzième élève sur un plan de quatorze.
+ *
+ * L'entrée en classe met le programme à la file (`announceJoin`) : l'élève sait
+ * quand il entre, sans que le formateur ait à penser à l'e-mail.
  */
 async function attachStudent(
   supabase: ServiceClient,
@@ -398,6 +497,7 @@ async function attachStudent(
   instructorId: string,
   studentId: string,
   source: "code" | "invite",
+  email: string | null,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const { data: already } = await supabase
     .from("instructor_class_members")
@@ -432,6 +532,10 @@ async function attachStudent(
       .eq("class_id", classId)
       .eq("user_id", studentId);
     if (error) return { ok: false, message: t.errors.failed };
+    if (email) {
+      await announceJoin(classId, email);
+      await notifyNow();
+    }
     return { ok: true };
   }
 
@@ -441,6 +545,10 @@ async function attachStudent(
     source,
   });
   if (error) return { ok: false, message: t.errors.failed };
+  if (email) {
+    await announceJoin(classId, email);
+    await notifyNow();
+  }
   return { ok: true };
 }
 
@@ -467,11 +575,18 @@ export async function createLiveSession(
       return { status: "error", message: t.errors.missingFields, field: "title" };
     }
 
-    const startsAt = new Date(`${date}T${time}:00`);
-    if (Number.isNaN(startsAt.getTime())) {
-      return { status: "error", message: t.errors.missingFields, field: "date" };
+    // L'horaire est dit à l'heure de l'académie, pas à celle du serveur :
+    // sinon la salle ouvrirait à contretemps de la convocation envoyée.
+    const startsAt = zonedInstant(date, time);
+    if (!startsAt) {
+      return { status: "error", message: t.errors.badDateTime, field: "date" };
     }
-    const endsAt = new Date(startsAt.getTime() + Math.min(Math.max(minutes, 15), 240) * 60_000);
+    if (startsAt.getTime() < Date.now() - 12 * 3_600_000) {
+      return { status: "error", message: t.errors.pastDate, field: "time" };
+    }
+    const endsAt = new Date(
+      startsAt.getTime() + Math.min(Math.max(Math.round(minutes) || 60, 15), 240) * 60_000,
+    );
 
     let trackId: string | null = null;
     if (classId) {
@@ -500,9 +615,93 @@ export async function createLiveSession(
     });
     if (error) return { status: "error", message: t.errors.failed };
 
+    if (classId) {
+      const session: NoticeSession = {
+        id,
+        title,
+        agenda,
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        status: "scheduled",
+        previousStartsAt: null,
+      };
+      // Le calendrier complet repart, puis le rappel de la veille est posé.
+      await announceClassProgram(classId);
+      await announceSessionScheduled(classId, session);
+      await notifyNow();
+    }
+
     return { status: "success", notice: "seancePlanifiee" };
   } catch (error) {
     console.error("[live] planification", error);
+    return { status: "error", message: t.errors.failed };
+  }
+}
+
+/** Déplacer une séance : l'ancien créneau est retiré, le nouveau est annoncé. */
+export async function updateLiveSession(
+  _prevState: FormState | undefined,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const user = await requireUser("/app/formateur");
+    const sessionId = readTextValue(formData, "sessionId");
+    const title = readTextValue(formData, "title");
+    const date = readTextValue(formData, "date");
+    const time = readTextValue(formData, "time");
+    const minutes = Number(readTextValue(formData, "minutes") || 60);
+    const agenda = readTextValue(formData, "agenda");
+
+    if (!sessionId || title.length < 3 || !date || !time) {
+      return { status: "error", message: t.errors.missingFields, field: "title" };
+    }
+
+    const supabase = createServiceSupabase();
+    if (!supabase) return { status: "error", message: t.errors.failed };
+
+    const { data: current } = await supabase
+      .from("live_sessions")
+      .select("id,class_id,starts_at,status")
+      .eq("id", sessionId)
+      .eq("instructor_id", user.id)
+      .maybeSingle<{ id: string; class_id: string | null; starts_at: string; status: string }>();
+    if (!current) return { status: "error", message: t.errors.forbidden };
+    if (current.status === "cancelled") {
+      return { status: "error", message: t.errors.sessionCancelled };
+    }
+
+    const startsAt = zonedInstant(date, time);
+    if (!startsAt) {
+      return { status: "error", message: t.errors.badDateTime, field: "date" };
+    }
+
+    const endsAt = new Date(
+      startsAt.getTime() + Math.min(Math.max(Math.round(minutes) || 60, 15), 240) * 60_000,
+    );
+
+    const { error } = await supabase
+      .from("live_sessions")
+      .update({
+        title,
+        agenda,
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
+        previous_starts_at: current.starts_at,
+        status: "scheduled",
+      })
+      .eq("id", sessionId)
+      .eq("instructor_id", user.id);
+    if (error) return { status: "error", message: t.errors.failed };
+
+    if (current.class_id) {
+      await announceSessionChange(sessionId, "moved");
+      await announceClassProgram(current.class_id);
+      await notifyNow();
+    }
+
+    return { status: "success", notice: "seanceDeplacee" };
+  } catch (error) {
+    console.error("[live] déplacement de séance", error);
     return { status: "error", message: t.errors.failed };
   }
 }
@@ -522,18 +721,69 @@ export async function setLiveSessionStatus(
     const supabase = createServiceSupabase();
     if (!supabase) return { status: "error", message: t.errors.failed };
 
+    const { data: current } = await supabase
+      .from("live_sessions")
+      .select("id,class_id,status")
+      .eq("id", sessionId)
+      .eq("instructor_id", user.id)
+      .maybeSingle<{ id: string; class_id: string | null; status: string }>();
+    if (!current) return { status: "error", message: t.errors.forbidden };
+
     const { error } = await supabase
       .from("live_sessions")
-      .update({ status: next })
+      .update({
+        status: next,
+        cancelled_at: next === "cancelled" ? new Date().toISOString() : null,
+      })
       .eq("id", sessionId)
       .eq("instructor_id", user.id);
     if (error) return { status: "error", message: t.errors.failed };
+
+    if (next === "cancelled" && current.class_id) {
+      await announceSessionChange(sessionId, "cancelled");
+      await notifyNow();
+    }
 
     const notice =
       next === "live" ? "seanceOuverte" : next === "ended" ? "seanceClose" : "seanceAnnulee";
     return { status: "success", notice };
   } catch (error) {
     console.error("[live] statut de séance", error);
+    return { status: "error", message: t.errors.failed };
+  }
+}
+
+/** Le formateur renvoie le calendrier complet de sa classe, à la demande. */
+export async function sendClassProgram(
+  _prevState: FormState | undefined,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const user = await requireUser("/app/formateur");
+    const classId = readTextValue(formData, "classId");
+    if (!classId) return { status: "error", message: t.errors.failed };
+
+    const supabase = createServiceSupabase();
+    if (!supabase) return { status: "error", message: t.errors.failed };
+
+    const { data: klass } = await supabase
+      .from("instructor_classes")
+      .select("id")
+      .eq("id", classId)
+      .eq("instructor_id", user.id)
+      .maybeSingle<{ id: string }>();
+    if (!klass) return { status: "error", message: t.errors.forbidden };
+
+    const queued = await announceClassProgram(
+      classId,
+      `manuel ${new Date().toISOString().slice(0, 16)}`,
+    );
+    if (queued === 0) return { status: "error", message: t.errors.noStudents };
+
+    await notifyNow();
+    return { status: "success", notice: "programmeEnvoye" };
+  } catch (error) {
+    console.error("[formateur] envoi du programme", error);
     return { status: "error", message: t.errors.failed };
   }
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeftIcon, MailIcon, VideoIcon } from "lucide-react";
+import { ArrowLeftIcon, CalendarDaysIcon, MailIcon, VideoIcon } from "lucide-react";
 
 import { ActionForm } from "@/components/instructor/action-form";
 import { CopyCode } from "@/components/instructor/copy-code";
@@ -12,9 +12,11 @@ import { Input } from "@/components/ui/input";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
 import {
+  sendClassProgram,
   inviteStudent,
   removeStudent,
 } from "@/lib/actions/instructor";
+import { noticesSummary } from "@/lib/instructor/notices";
 import { fill, formatDate, formatDateTime } from "@/lib/instructor/format";
 import {
   getClassStudents,
@@ -48,10 +50,11 @@ export default async function InstructorClassPage({
   if (!status.isActive) redirect("/app/formateur");
 
   const { id } = await params;
-  const [{ class: klass, students }, sessions, pending] = await Promise.all([
+  const [{ class: klass, students }, sessions, pending, summaries] = await Promise.all([
     getClassStudents(id, user.id),
     getInstructorSessions(user.id),
     getPendingInvites(id),
+    noticesSummary(id),
   ]);
 
   if (!klass) notFound();
@@ -77,7 +80,7 @@ export default async function InstructorClassPage({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold tracking-wider text-electric uppercase">
-              {t.classes.assignedTrack}
+              {klass.academy || t.classes.assignedTrack}
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight text-balance">
               {klass.title}
@@ -198,6 +201,56 @@ export default async function InstructorClassPage({
           <MailIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           {t.students.inviteHint}
         </p>
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-hairline bg-card p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-foreground">
+            {t.classes.programTitle}
+          </h2>
+          <Button asChild variant="outline" size="sm" className="h-8 px-3">
+            <Link href={`/app/formateur/live?class=${klass.id}`}>
+              <CalendarDaysIcon aria-hidden />
+              {t.classes.calendar}
+            </Link>
+          </Button>
+        </div>
+        <p className="mt-2 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
+          {t.classes.programHint}
+        </p>
+
+        <ActionForm
+          action={sendClassProgram}
+          label={t.classes.sendProgram}
+          hidden={{ classId: klass.id }}
+          className="mt-4"
+          buttonClassName="h-10 px-5"
+        />
+
+        {summaries.length === 0 ? (
+          <p className="mt-4 border-t border-hairline pt-4 text-sm text-muted-foreground">
+            {t.classes.noticesEmpty}
+          </p>
+        ) : (
+          <div className="mt-4 border-t border-hairline pt-4">
+            <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              {t.classes.noticesTitle}
+            </p>
+            <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+              {summaries.map((row) => (
+                <li key={row.kind} className="flex items-baseline justify-between gap-3 text-sm">
+                  <span className="text-foreground">{t.classes.kinds[row.kind]}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                    {fill(t.classes.noticesSent, { count: row.sent })}
+                    {row.due > 0
+                      ? ` · ${fill(t.classes.noticesDue, { count: row.due })}`
+                      : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="mt-6 rounded-2xl border border-hairline bg-card p-5 shadow-sm">

@@ -69,6 +69,8 @@ export type InstructorStatus = {
 export type InstructorClass = {
   id: string;
   title: string;
+  /** Nom de l'académie de l'enseignant, tel qu'il le signe à ses élèves. */
+  academy: string;
   description: string;
   joinCode: string;
   status: string;
@@ -100,6 +102,8 @@ export type LiveSession = {
   status: string;
   classId: string | null;
   className: string | null;
+  /** Académie de rattachement, signataire des convocations. */
+  academy: string | null;
   trackId: string | null;
   instructorId: string;
   instructorName: string;
@@ -223,7 +227,7 @@ export async function getInstructorClasses(
   const { data } = await supabase
     .from("instructor_classes")
     .select(
-      "id,title,description,join_code,status,created_at,track_id,tracks(slug,title),instructor_class_members(user_id),live_sessions(id)",
+      "id,title,academy,description,join_code,status,created_at,track_id,tracks(slug,title),instructor_class_members(user_id),live_sessions(id)",
     )
     .eq("instructor_id", instructorId)
     .order("created_at", { ascending: false });
@@ -233,6 +237,7 @@ export async function getInstructorClasses(
       | {
           id: string;
           title: string;
+          academy: string;
           description: string;
           join_code: string;
           status: string;
@@ -264,6 +269,7 @@ export async function getInstructorClasses(
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
+    academy: row.academy ?? "",
     description: row.description,
     joinCode: row.join_code,
     status: row.status,
@@ -291,7 +297,7 @@ export async function getClassStudents(
 
   const { data: classRow } = await supabase
     .from("instructor_classes")
-    .select("id,title,description,join_code,status,created_at,track_id,instructor_id,tracks(slug,title)")
+    .select("id,title,academy,description,join_code,status,created_at,track_id,instructor_id,tracks(slug,title)")
     .eq("id", classId)
     .maybeSingle<Record<string, unknown>>();
 
@@ -384,6 +390,7 @@ function toClass(row: Record<string, unknown>): InstructorClass {
   return {
     id: String(row.id),
     title: String(row.title),
+    academy: String(row.academy ?? ""),
     description: String(row.description ?? ""),
     joinCode: String(row.join_code),
     status: String(row.status),
@@ -400,6 +407,7 @@ function toClass(row: Record<string, unknown>): InstructorClass {
 export async function getLearnerClasses(userId: string): Promise<{
   classId: string;
   title: string;
+  academy: string;
   instructorName: string;
   trackId: string;
   trackSlug: string;
@@ -413,7 +421,7 @@ export async function getLearnerClasses(userId: string): Promise<{
   const { data } = await supabase
     .from("instructor_class_members")
     .select(
-      "joined_at, instructor_classes(id,title,status,instructor_id,track_id,tracks(slug,title))",
+      "joined_at, instructor_classes(id,title,academy,status,instructor_id,track_id,tracks(slug,title))",
     )
     .eq("user_id", userId)
     .eq("status", "active")
@@ -426,6 +434,7 @@ export async function getLearnerClasses(userId: string): Promise<{
           instructor_classes: {
             id: string;
             title: string;
+            academy: string;
             status: string;
             instructor_id: string;
             track_id: string;
@@ -483,6 +492,7 @@ export async function getLearnerClasses(userId: string): Promise<{
     return {
       classId: klass.id,
       title: klass.title,
+      academy: klass.academy ?? "",
       instructorName,
       trackId: klass.track_id,
       trackSlug: klass.tracks?.slug ?? "",
@@ -492,6 +502,7 @@ export async function getLearnerClasses(userId: string): Promise<{
         ? {
             ...upcoming,
             classId: klass.id,
+            academy: klass.academy ?? "",
             agenda: "",
             className: klass.title,
             trackId: klass.track_id,
@@ -521,7 +532,7 @@ export async function getLiveSession(
   const { data } = await supabase
     .from("live_sessions")
     .select(
-      "id,title,agenda,starts_at,ends_at,status,room_name,class_id,instructor_id,track_id,instructor_classes(title)",
+      "id,title,agenda,starts_at,ends_at,status,room_name,class_id,instructor_id,track_id,instructor_classes(title,academy)",
     )
     .eq("id", sessionId)
     .maybeSingle<Record<string, unknown>>();
@@ -551,7 +562,7 @@ export async function getLiveSession(
     canJoin = profile?.role === "admin";
   }
 
-  const klass = data.instructor_classes as { title: string } | null;
+  const klass = data.instructor_classes as { title: string; academy: string } | null;
   const people = await peopleOf(supabase, [String(data.instructor_id)]);
 
   return {
@@ -564,6 +575,7 @@ export async function getLiveSession(
       status: String(data.status),
       classId: (data.class_id as string | null) ?? null,
       className: klass?.title ?? null,
+      academy: klass?.academy ?? null,
       trackId: (data.track_id as string | null) ?? null,
       instructorId: String(data.instructor_id),
       instructorName: people.get(String(data.instructor_id))?.fullName || "Formateur",
@@ -582,7 +594,7 @@ export async function getInstructorSessions(
 
   const { data } = await supabase
     .from("live_sessions")
-    .select("id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,track_id,instructor_classes(title)")
+    .select("id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,track_id,instructor_classes(title,academy)")
     .eq("instructor_id", instructorId)
     .order("starts_at", { ascending: false });
 
@@ -598,7 +610,7 @@ export async function getInstructorSessions(
           class_id: string | null;
           instructor_id: string;
           track_id: string | null;
-          instructor_classes: { title: string } | null;
+          instructor_classes: { title: string; academy: string } | null;
         }[]
       | null) ?? [];
   if (rows.length === 0) return [];
@@ -625,6 +637,7 @@ export async function getInstructorSessions(
     status: row.status,
     classId: row.class_id,
     className: row.instructor_classes?.title ?? null,
+    academy: row.instructor_classes?.academy ?? null,
     trackId: row.track_id,
     instructorId: row.instructor_id,
     instructorName: "",
@@ -632,18 +645,28 @@ export async function getInstructorSessions(
   }));
 }
 
-/** Prochaines séances des classes de l'apprenant (tableau de bord). */
+/**
+ * Prochaines séances des classes de l'apprenant.
+ * `classId` borne le calendrier d'une seule classe (vue « Mon emploi du temps »
+ * et fichier .ics), `limit` suit l'usage : cinq cartes au tableau de bord,
+ * soixante dates dans l'agenda.
+ */
 export async function getUpcomingSessionsForLearner(
   userId: string,
+  options: { classId?: string; limit?: number } = {},
 ): Promise<LiveSession[]> {
   const supabase = createServiceSupabase();
   if (!supabase || !userId) return [];
 
-  const { data: memberships } = await supabase
+  const membershipFilter = supabase
     .from("instructor_class_members")
     .select("class_id")
     .eq("user_id", userId)
     .eq("status", "active");
+
+  const { data: memberships } = options.classId
+    ? await membershipFilter.eq("class_id", options.classId)
+    : await membershipFilter;
 
   const classIds = ((memberships as { class_id: string }[] | null) ?? []).map(
     (row) => row.class_id,
@@ -653,13 +676,13 @@ export async function getUpcomingSessionsForLearner(
   const { data } = await supabase
     .from("live_sessions")
     .select(
-      "id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,instructor_classes(title)",
+      "id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,instructor_classes(title,academy)",
     )
     .in("class_id", classIds)
     .gte("ends_at", new Date().toISOString())
     .in("status", ["scheduled", "live"])
     .order("starts_at")
-    .limit(5);
+    .limit(options.limit ?? 5);
 
   const rows =
     (data as
@@ -672,7 +695,7 @@ export async function getUpcomingSessionsForLearner(
           status: string;
           class_id: string | null;
           instructor_id: string;
-          instructor_classes: { title: string } | null;
+          instructor_classes: { title: string; academy: string } | null;
         }[]
       | null) ?? [];
 
@@ -690,6 +713,7 @@ export async function getUpcomingSessionsForLearner(
     status: row.status,
     classId: row.class_id,
     className: row.instructor_classes?.title ?? null,
+    academy: row.instructor_classes?.academy ?? null,
     trackId: null,
     instructorId: row.instructor_id,
     instructorName: people.get(row.instructor_id)?.fullName || "Formateur",
@@ -781,8 +805,10 @@ export async function getInvitation(token: string): Promise<{
   classId: string;
   email: string;
   className: string;
+  academy: string;
   trackTitle: string;
   instructorName: string;
+  instructorEmail: string | null;
   expiresAt: string;
 } | null> {
   const supabase = createServiceSupabase();
@@ -791,7 +817,7 @@ export async function getInvitation(token: string): Promise<{
   const { data } = await supabase
     .from("instructor_class_invites")
     .select(
-      "email,status,expires_at,instructor_classes(id,title,instructor_id,track_id,tracks(title))",
+      "email,status,expires_at,instructor_classes(id,title,academy,instructor_id,track_id,tracks(title))",
     )
     .eq("token", token)
     .maybeSingle<Record<string, unknown>>();
@@ -803,6 +829,7 @@ export async function getInvitation(token: string): Promise<{
     | {
         id: string;
         title: string;
+        academy: string;
         instructor_id: string;
         tracks: { title: string } | null;
       }
@@ -810,13 +837,16 @@ export async function getInvitation(token: string): Promise<{
   if (!klass) return null;
 
   const people = await peopleOf(supabase, [klass.instructor_id]);
+  const instructor = people.get(klass.instructor_id);
 
   return {
     classId: klass.id,
     email: String(data.email),
     className: klass.title,
+    academy: klass.academy ?? "",
     trackTitle: klass.tracks?.title ?? "",
-    instructorName: people.get(klass.instructor_id)?.fullName || "Formateur",
+    instructorName: instructor?.fullName || "Formateur",
+    instructorEmail: instructor?.email ?? null,
     expiresAt: String(data.expires_at),
   };
 }

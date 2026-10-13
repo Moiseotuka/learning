@@ -130,6 +130,12 @@ export default async function MyClassPage({
             {tc.title}
           </h2>
           <span className="h-px flex-1 bg-hairline" />
+          <Link
+            href="/app/classe/agenda"
+            className="shrink-0 text-xs font-medium text-electric hover:underline"
+          >
+            {tc.agendaAll}
+          </Link>
           <span className="text-xs tabular-nums text-muted-foreground">
             {classes.length}
           </span>
@@ -155,6 +161,7 @@ export default async function MyClassPage({
                       {klass.title}
                     </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
+                      {klass.academy ? `${klass.academy} · ` : ""}
                       {fill(tc.taughtBy, { name: klass.instructorName })} ·{" "}
                       {fill(tc.joinedOn, { date: formatDate(klass.joinedAt) })}
                     </p>
@@ -188,6 +195,13 @@ export default async function MyClassPage({
                       </Link>
                     </Button>
                   ) : null}
+                  <Button asChild variant="outline" size="sm" className="h-9 px-4">
+                    <Link
+                      href={`/app/classe/agenda?class=${klass.classId}`}
+                    >
+                      {tc.agendaForClass}
+                    </Link>
+                  </Button>
                   <ActionForm
                     action={leaveClass}
                     label={tc.leave}

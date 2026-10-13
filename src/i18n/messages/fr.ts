@@ -535,6 +535,19 @@ export const fr = {
       "Accédez à votre espace apprenant et reprenez votre parcours là où vous l'avez arrêté.",
     signupSubtitle:
       "Compte gratuit : profil, progression, quiz corrigés et certificat vérifiable.",
+    invitedTitle: "Invitation de {academy}",
+    invitedBody:
+      "{instructor} vous inscrit dans la classe « {klass} » ({track}). Votre compte doit porter l'adresse que votre formateur a saisie : c'est elle qui ouvre la classe et les leçons mises en ligne.",
+    invitedAccountField: "Adresse de l'invitation",
+    invitedEmailLocked: "Adresse verrouillée par l'invitation",
+    invitedMismatch:
+      "Créez le compte avec l'adresse de votre invitation ({email}). C'est elle qui vous place dans la classe de votre formateur.",
+    invitedExpired:
+      "Cette invitation a expiré ou a déjà été utilisée. Demandez un nouveau lien à votre formateur, puis créez votre compte.",
+    invitedCta: "Créer mon compte et rejoindre la classe",
+    invitedAccountExists:
+      "Cette adresse a déjà un compte easyTech. Connectez-vous avec elle : votre formateur vous y a inscrit, la classe s'ouvrira dès la connexion.",
+    invitedLogin: "Se connecter et ouvrir la classe",
     fullNameLabel: "Nom complet",
     fullNamePlaceholder: "Ex. Marie Kabeya",
     emailLabel: "Adresse e-mail",
@@ -1282,8 +1295,12 @@ export const fr = {
       title: "Mes classes",
       newTitle: "Nouvelle classe",
       fieldName: "Nom de la classe",
+      fieldAcademy: "Nom de l'académie",
+      academyPlaceholder: "ex. e-learning (ISIPA)",
       fieldTrack: "Parcours enseigné",
       fieldDescription: "Programme ou consigne affichée aux élèves",
+      academyHint:
+        "Le nom de votre académie signe chaque e-mail envoyé aux élèves : invitation, calendrier, rappel. Ils reconnaissent votre école, pas la plateforme.",
       create: "Créer la classe",
       empty:
         "Aucune classe pour l'instant. Créez-en une pour inviter vos premiers élèves.",
@@ -1299,6 +1316,23 @@ export const fr = {
       assignedTrack: "Parcours de la classe",
       nextSession: "Prochaine séance",
       noSession: "Aucune séance planifiée",
+      programTitle: "Calendrier et convocations",
+      sendProgram: "Envoyer le programme aux élèves",
+      programHint:
+        "Le tableau complet des séances à venir part par e-mail à chaque élève joignable. Le rappel de la veille, l'annulation et le rapport de présence partent tout seuls.",
+      noticesTitle: "Notifications de la classe",
+      noticesDue: "{count} en file",
+      noticesSent: "{count} envoyées",
+      noticesEmpty: "Aucune notification pour l'instant.",
+      calendar: "Ouvrir le calendrier",
+      kinds: {
+        program: "Calendrier de la classe",
+        session_reminder: "Rappel de la veille",
+        session_cancelled: "Annulation de séance",
+        session_rescheduled: "Séance déplacée",
+        absent_followup: "Relance des absents",
+        attendance_report: "Rapport de présence",
+      },
     },
 
     students: {
@@ -1350,6 +1384,8 @@ export const fr = {
       inviteUnknown:
         "Cette invitation est expirée ou a déjà été utilisée. Demandez un nouveau code à votre formateur.",
       alreadyIn: "Vous êtes déjà dans cette classe.",
+      agendaAll: "Mon emploi du temps",
+      agendaForClass: "Calendrier des séances",
     },
 
     errors: {
@@ -1365,6 +1401,12 @@ export const fr = {
       alreadyInvited: "Une invitation est déjà en cours pour cette adresse.",
       inviteExpired: "Cette invitation a expiré.",
       missingFields: "Certains champs obligatoires manquent.",
+      missingAcademy:
+        "Indiquez le nom de votre académie (ex. e-learning ISIPA) : il signe les invitations et les convocations envoyées à vos élèves.",
+      badDateTime: "Date ou heure invalide. Format attendu : AAAA-MM-JJ et HH:MM.",
+      pastDate: "La séance est déjà passée à l'heure de l'académie. Choisissez un créneau à venir.",
+      sessionCancelled: "Une séance annulée ne se déplace pas : planifiez-en une nouvelle.",
+      noStudents: "Cette classe n'a encore aucun élève joignable par e-mail.",
       failed: "L'opération a échoué. Réessayez ou contactez le support.",
     },
 
@@ -1382,7 +1424,12 @@ export const fr = {
       archivee: "Classe archivée.",
       seanceOuverte: "Salle ouverte.",
       seanceClose: "Séance clôturée.",
-      seanceAnnulee: "Séance annulée.",
+      seanceAnnulee: "Séance annulée : la classe en est avertie par e-mail.",
+      eleveInscrit:
+        "Élève déjà inscrit sur la plateforme : il rejoint la classe tout de suite et reçoit sa convocation par e-mail.",
+      programmeEnvoye: "Programme mis en file d'envoi : il part à la minute.",
+      seanceDeplacee:
+        "Séance déplacée : l'ancien créneau est retiré et le nouveau part par e-mail.",
     },
   },
 
@@ -1432,6 +1479,12 @@ export const fr = {
       fieldAgenda: "Ordre du jour (visible par les élèves)",
       create: "Planifier",
       minutes: "{count} min",
+      academyNote:
+        "Les horaires sont saisis à l'heure de l'académie ({tz}) : c'est celle des élèves, pas celle du serveur.",
+      reschedule: "Déplacer",
+      rescheduleTitle: "Nouveau créneau",
+      saveChanges: "Enregistrer et prévenir la classe",
+      cancelReschedule: "Revenir à la planification",
       startNow: "Ouvrir la salle",
       end: "Clôturer la séance",
       cancel: "Annuler la séance",
@@ -1464,12 +1517,34 @@ export const fr = {
         "Caméra et micro ne sont activés que si vous les allumez. Rien n'est enregistré sans l'accord du formateur.",
       yourName: "Votre nom",
       nameHint: "C'est le nom que verront les autres participants.",
+      bandwidthTitle: "Qualité de connexion",
+      bandwidthHint:
+        "Choisissez selon votre réseau. Ce réglage se fait avant d'entrer dans la salle.",
+      bandwidthHd: "Vidéo fluide",
+      bandwidthEco: "Économie de données",
+      bandwidthAudio: "Voix seule",
+      bandwidthNoteHd: "Réseau 4G ou Wi-Fi stable. Toutes les caméras s'affichent.",
+      bandwidthNoteEco:
+        "Image réduite à une seule caméra visible : la séance tient sur une connexion 3G.",
+      bandwidthNoteAudio:
+        "Vous entendez le cours et lisez le chat, les images sont coupées. Idéal en connexion très faible.",
+      bandwidthAuto:
+        "Votre connexion semble limitée : le mode « {mode} » a été préparé pour vous.",
     },
 
     learner: {
       title: "Mes séances",
       none: "Aucune séance en direct programmée pour vos classes.",
       inClass: "Classe : {name}",
+      agendaTitle: "Mon emploi du temps",
+      agendaIntro:
+        "Les séances de vos classes, dans l'ordre des dates et à l'heure de l'académie. Enregistrez-les dans le calendrier de votre téléphone : les heures restent lisibles même sans connexion.",
+      download: "Ajouter au calendrier (.ics)",
+      downloadAll: "Tout mon calendrier (.ics)",
+      downloadHint:
+        "Fichier standard .ics : il s'ouvre dans Google Agenda, Apple Calendrier ou Samsung Calendar.",
+      emptyAgenda: "Aucune séance programmée pour vos classes pour le moment.",
+      tzNote: "Heures affichées : {tz}",
     },
   },
 };

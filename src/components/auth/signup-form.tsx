@@ -9,11 +9,27 @@ import { Notice } from "@/components/auth/notice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { messages } from "@/i18n";
+import { fill } from "@/lib/instructor/format";
 import { signup } from "@/lib/actions/auth";
 
 const t = messages.auth;
 
-export function SignupForm({ next }: { next?: string }) {
+export type SignupInvitation = {
+  token: string;
+  email: string;
+  academy: string;
+  className: string;
+  trackTitle: string;
+  instructorName: string;
+};
+
+export function SignupForm({
+  next,
+  invitation,
+}: {
+  next?: string;
+  invitation?: SignupInvitation | null;
+}) {
   const [state, action, pending] = useActionState(signup, undefined);
 
   const fullNameError = state?.fieldErrors?.fullName;
@@ -25,6 +41,24 @@ export function SignupForm({ next }: { next?: string }) {
     <>
       <form action={action} className="space-y-4">
         <input type="hidden" name="next" value={next ?? ""} />
+        {invitation ? (
+          <input type="hidden" name="invitation" value={invitation.token} />
+        ) : null}
+
+        {invitation ? (
+          <div className="rounded-xl border border-electric/40 bg-electric/6 p-4">
+            <p className="text-sm font-semibold text-foreground">
+              {fill(t.invitedTitle, { academy: invitation.academy })}
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              {fill(t.invitedBody, {
+                instructor: invitation.instructorName,
+                klass: invitation.className,
+                track: invitation.trackTitle,
+              })}
+            </p>
+          </div>
+        ) : null}
 
         {state?.message ? (
           <Notice tone={state.status === "error" ? "error" : "success"}>
@@ -48,7 +82,12 @@ export function SignupForm({ next }: { next?: string }) {
           />
         </AuthField>
 
-        <AuthField id="email" label={t.emailLabel} error={emailError}>
+        <AuthField
+          id="email"
+          label={invitation ? t.invitedAccountField : t.emailLabel}
+          hint={invitation ? t.invitedEmailLocked : undefined}
+          error={emailError}
+        >
           <Input
             id="email"
             name="email"
@@ -56,10 +95,18 @@ export function SignupForm({ next }: { next?: string }) {
             autoComplete="email"
             inputMode="email"
             placeholder={t.emailPlaceholder}
+            defaultValue={invitation?.email}
+            readOnly={Boolean(invitation)}
             required
             aria-invalid={Boolean(emailError)}
-            aria-describedby={emailError ? "email-error" : undefined}
-            className="h-11"
+            aria-describedby={
+              emailError ? "email-error" : invitation ? "email-hint" : undefined
+            }
+            className={
+              invitation
+                ? "h-11 bg-muted font-medium text-muted-foreground cursor-default"
+                : "h-11"
+            }
           />
         </AuthField>
 
@@ -98,12 +145,16 @@ export function SignupForm({ next }: { next?: string }) {
 
         <Button type="submit" disabled={pending} className="h-11 w-full">
           {pending ? <Loader2Icon className="animate-spin" aria-hidden /> : null}
-          {t.submitSignup}
+          {invitation ? t.invitedCta : t.submitSignup}
         </Button>
       </form>
 
-      <AuthDivider />
-      <GoogleButton next={next} />
+      {invitation ? null : (
+        <>
+          <AuthDivider />
+          <GoogleButton next={next} />
+        </>
+      )}
     </>
   );
 }

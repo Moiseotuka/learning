@@ -2,7 +2,13 @@
  * Formatage partagé entre le serveur et le client : les montants et les dates
  * d'un abonnement sont calculés côté serveur, mais les libellés de date des
  * listes (séances, inscriptions) le sont aussi côté client.
+ *
+ * Les horaires de cours sont lus à l'heure de l'académie, jamais à celle de la
+ * machine : un serveur à New York afficherait « 13:30 » une séance dite à
+ * 19 h 30, et la convocation contredirait l'écran.
  */
+
+import { ACADEMY_TIME_ZONE } from "@/lib/instructor/timezone";
 
 export function fill(template: string, values: Record<string, string | number>) {
   return template.replace(/\{(\w+)\}/g, (match, key: string) =>
@@ -12,6 +18,7 @@ export function fill(template: string, values: Record<string, string | number>) 
 
 export function formatDate(value: string | Date): string {
   return new Intl.DateTimeFormat("fr-FR", {
+    timeZone: ACADEMY_TIME_ZONE,
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -25,6 +32,7 @@ export function formatFc(value: number): string {
 
 export function formatDateTime(value: string | Date): string {
   return new Intl.DateTimeFormat("fr-FR", {
+    timeZone: ACADEMY_TIME_ZONE,
     day: "2-digit",
     month: "short",
     hour: "2-digit",
