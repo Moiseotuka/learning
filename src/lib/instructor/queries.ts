@@ -218,6 +218,30 @@ export async function requireActiveInstructor(userId: string) {
   return status.isActive ? status : null;
 }
 
+/**
+ * Places consenties à un formateur, lues avec la clé de service.
+ *
+ * Un élève qui rejoint par code doit vérifier l'abonnement d'un autre : la
+ * lecture au nom de l'appelant renverrait une ligne vide, donc « plus de places
+ * disponibles », et aucune classe ne pourrait jamais être rejointe.
+ */
+export async function activeSeatLimit(instructorId: string): Promise<number | null> {
+  const supabase = createServiceSupabase();
+  if (!supabase || !instructorId) return null;
+
+  const { data } = await supabase
+    .from("instructor_subscriptions")
+    .select("status,expires_at,seats_limit")
+    .eq("user_id", instructorId)
+    .order("expires_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle<{ status: string; expires_at: string; seats_limit: number }>();
+
+  if (data?.status !== "active") return null;
+  if (new Date(data.expires_at).getTime() <= Date.now()) return null;
+  return Number(data.seats_limit) || 0;
+}
+
 export async function getInstructorClasses(
   instructorId: string,
 ): Promise<InstructorClass[]> {

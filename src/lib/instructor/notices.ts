@@ -440,10 +440,16 @@ export async function queueNotices(
 
   if (rows.length === 0) return 0;
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("instructor_notices")
     .upsert(rows, { onConflict: "dedup_key", ignoreDuplicates: true })
     .select("id");
+
+  if (error) {
+    // Une file muette veut dire « aucun e-mail partira » : sans trace ici,
+    // l'élève convoqué ne reçoit rien et rien ne le dit.
+    console.error("[notices] mise en file", rows.length, error.code, error.message);
+  }
 
   return ((data as { id: string }[] | null) ?? []).length;
 }

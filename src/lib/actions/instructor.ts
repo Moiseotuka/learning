@@ -10,6 +10,7 @@ import {
   type InstructorCheckout,
 } from "@/lib/instructor/checkout";
 import {
+  activeSeatLimit,
   getInstructorStatus,
   invitationLink,
 } from "@/lib/instructor/queries";
@@ -510,18 +511,15 @@ async function attachStudent(
     return { ok: false, message: t.errors.alreadyMember };
   }
 
-  const subscription = await getInstructorStatus(instructorId);
-  if (!subscription.isActive || !subscription.subscription) {
+  const seatsLimit = await activeSeatLimit(instructorId);
+  if (seatsLimit === null) {
     return { ok: false, message: t.errors.seatsFull };
   }
   const used = await seatsUsed(supabase, instructorId);
-  if (used >= subscription.subscription.seatsLimit) {
+  if (used >= seatsLimit) {
     return {
       ok: false,
-      message: t.students.seatsFull.replace(
-        "{limit}",
-        String(subscription.subscription.seatsLimit),
-      ),
+      message: t.students.seatsFull.replace("{limit}", String(seatsLimit)),
     };
   }
 
@@ -531,7 +529,10 @@ async function attachStudent(
       .update({ status: "active", joined_at: new Date().toISOString(), source })
       .eq("class_id", classId)
       .eq("user_id", studentId);
-    if (error) return { ok: false, message: t.errors.failed };
+    if (error) {
+      console.error("[classe] réintégration d'élève", classId, error.code, error.message);
+      return { ok: false, message: t.errors.failed };
+    }
     if (email) {
       await announceJoin(classId, email);
       await notifyNow();
@@ -544,7 +545,10 @@ async function attachStudent(
     user_id: studentId,
     source,
   });
-  if (error) return { ok: false, message: t.errors.failed };
+  if (error) {
+    console.error("[classe] ajout d'élève par code", classId, error.code, error.message);
+    return { ok: false, message: t.errors.failed };
+  }
   if (email) {
     await announceJoin(classId, email);
     await notifyNow();
