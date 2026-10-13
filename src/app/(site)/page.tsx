@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 import { About } from "@/components/landing/about";
 import { CategoriesGrid } from "@/components/landing/categories-grid";
 import { Certificates } from "@/components/landing/certificates";
@@ -21,6 +23,13 @@ import {
   getTracks,
 } from "@/lib/catalog/queries";
 import { getInstructorPlans } from "@/lib/instructor/plans";
+import { categorySeo } from "@/config/seo";
+import { site } from "@/config/site";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  keywords: [...site.keywords, ...Object.values(categorySeo).map((entry) => entry.primary)],
+};
 
 export default async function HomePage() {
   const [categories, tracks, startingPrices, numbers, instructorPlans] =

@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 
 import { EmailLinkRedirect } from "@/components/auth/email-link-redirect";
 import { ThemeProvider } from "@/components/theme-provider";
+import { JsonLd, organizationLd, webSiteLd } from "@/components/seo/json-ld";
 import { site } from "@/config/site";
 import { messages } from "@/i18n";
 
@@ -30,7 +31,9 @@ export const metadata: Metadata = {
   keywords: [...site.keywords],
   applicationName: site.name,
   authors: [{ name: site.author }],
-  alternates: { canonical: "/" },
+  // Pas de canonical ici : l'objet `alternates` s'hérite par fusion, donc un
+  // canonical racine ferait de « / » la version canonique de TOUTES les pages,
+  // y compris le catalogue et les fiches parcours. Chaque page déclare le sien.
   openGraph: {
     type: "website",
     locale: "fr_FR",
@@ -56,26 +59,7 @@ export const viewport: Viewport = {
   ],
 };
 
-const jsonLd = {
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "Organization",
-      name: site.name,
-      url: site.url,
-      description: site.description,
-      areaServed: "Afrique francophone",
-      inLanguage: "fr",
-    },
-    {
-      "@type": "WebSite",
-      name: site.name,
-      url: site.url,
-      inLanguage: "fr",
-      description: site.description,
-    },
-  ],
-};
+const jsonLd = [organizationLd(), webSiteLd()];
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -88,10 +72,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col font-sans">
         <EmailLinkRedirect />
         <ThemeProvider>{children}</ThemeProvider>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-        />
+        <JsonLd data={jsonLd} />
       </body>
     </html>
   );

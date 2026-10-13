@@ -49,7 +49,7 @@ export function FormationCard({ track }: { track: PopularTrack }) {
 
       <div className="mt-auto border-t border-hairline p-4">
         <Link
-          href={`/app/parcours/${track.slug}`}
+          href={`/parcours/${track.slug}`}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-electric transition-colors hover:underline"
         >
           {t.tracks.cta}

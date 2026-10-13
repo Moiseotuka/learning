@@ -1,14 +1,27 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { messages } from "@/i18n";
 import { createServiceSupabase } from "@/lib/supabase/service";
 
 const t = messages.auth;
+const c = messages.certificates;
 
-export const metadata: Metadata = {
-  title: t.verifyTitle,
-  robots: { index: false },
-};
+/** Un résultat envoyé par `?code=` n'est pas une page à indexer. */
+export async function generateMetadata(
+  props: PageProps<"/verifier">,
+): Promise<Metadata> {
+  const searchParams = await props.searchParams;
+  const hasCode =
+    typeof searchParams.code === "string" && searchParams.code.trim().length > 0;
+
+  return {
+    title: c.verifyPage.title,
+    description: c.verifyPage.description,
+    alternates: { canonical: "/verifier" },
+    ...(hasCode ? { robots: { index: false, follow: true } } : {}),
+  };
+}
 
 type CertificateRow = {
   code: string;
@@ -58,8 +71,11 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
           easyTech
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
-          {t.verifyTitle}
+          {c.verifyPage.title}
         </h1>
+        <p className="mx-auto mt-3 max-w-[62ch] text-sm leading-relaxed text-muted-foreground">
+          {c.verifyPage.intro}
+        </p>
       </header>
 
       <form
@@ -160,6 +176,39 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
           </section>
         )
       ) : null}
+
+      <section className="mt-12">
+        <h2 className="text-base font-semibold sm:text-lg">
+          {c.verifyPage.howTitle}
+        </h2>
+        <ul className="mt-3 space-y-3">
+          {c.verifyPage.how.map((line) => (
+            <li
+              key={line}
+              className="flex gap-2 text-sm leading-relaxed text-muted-foreground"
+            >
+              <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-electric" />
+              {line}
+            </li>
+          ))}
+        </ul>
+
+        <h2 className="mt-8 text-base font-semibold sm:text-lg">
+          {c.verifyPage.trustTitle}
+        </h2>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+          {c.verifyPage.trust}
+        </p>
+
+        <div className="mt-8 text-sm">
+          <Link
+            href="/catalogue"
+            className="inline-flex h-10 items-center rounded-lg border border-hairline bg-card px-4 font-medium transition-colors hover:border-electric/50"
+          >
+            {messages.catalogue.viewer.back}
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }

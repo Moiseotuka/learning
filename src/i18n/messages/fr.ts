@@ -239,6 +239,53 @@ export const fr = {
     },
   },
 
+  fiche: {
+    home: "Accueil",
+    catalogue: "Catalogue",
+    back: "Voir toutes les formations",
+    levelFromTo: (from: string, to: string) => `Du niveau ${from} au niveau ${to}`,
+    levelSingle: (level: string) => `Niveau ${level}`,
+    facts: {
+      duration: "Durée totale",
+      chapters: "Chapitres publiés",
+      levels: "Niveaux",
+      price: "Accès à partir de",
+    },
+    freeIntro:
+      "Le niveau Débutant est gratuit : une inscription suffit pour ouvrir les premières leçons.",
+    paidIntro: (price: string) =>
+      `Les niveaux suivants se débloquent à l'unité, à partir de ${price}, sans abonnement : ce qui est payé reste ouvert.`,
+    quizNote:
+      "Chaque niveau se termine par un examen chronométré : trois tentatives, puis le niveau se reprend au premier chapitre. Le certificat n'est délivré qu'après réussite.",
+    objectivesTitle: "Ce que vous saurez faire",
+    objectivesIntro:
+      "Ces compétences sont celles annoncées chapitre par chapitre dans le programme, pas une promesse générale.",
+    programmeTitle: "Programme détaillé",
+    chapterIndex: (n: number) => `Chapitre ${n}`,
+    programmeIntro: (n: number) =>
+      `${n} ${n > 1 ? "chapitres publiés, chacun avec" : "chapitre publié, avec"} sa leçon vidéo, son résumé écrit, son exercice corrigé et son quiz de validation.`,
+    levelCount: (level: string, n: number) =>
+      `Niveau ${level.toLowerCase()} — ${n} ${n > 1 ? "chapitres" : "chapitre"}`,
+    relatedTitle: "Autres parcours du même domaine",
+    ctaStart: "Commencer gratuitement",
+    ctaCompare: "Comparer les autres parcours",
+  },
+
+  domaine: {
+    home: "Accueil",
+    catalogue: "Catalogue",
+    tracksCount: (n: number) => `${n} ${n > 1 ? "parcours publiés" : "parcours publié"}`,
+    chaptersCount: (n: number) =>
+      `${n} ${n > 1 ? "chapitres en ligne" : "chapitre en ligne"}`,
+    levelsLabel: "Niveaux couverts",
+    tracksTitle: "Parcours de ce domaine",
+    subjectsTitle: "Sujets réellement traités",
+    subjectsIntro: (name: string) =>
+      `Un extrait des leçons publiées dans ${name.toLowerCase()} : ce sont les chapitres que les apprenants ouvrent en premier.`,
+    otherDomains: "Explorer les autres domaines",
+    cta: "S'inscrire et commencer",
+  },
+
   certificates: {
     id: "certifications",
     eyebrow: "Certifications",
@@ -255,6 +302,22 @@ export const fr = {
     verifyPlaceholder: "Ex. PYT-2026-K7MHQ2JP",
     verifyCta: "Vérifier",
     verifyNote: "La vérification est publique et gratuite.",
+    verifyPage: {
+      title: "Vérifier un certificat easyTech",
+      description:
+        "Contrôle public d'un certificat easyTech : numéro unique, titulaire, formation, niveau validé et date de délivrance. Sans compte, sans inscription.",
+      intro:
+        "N'importe qui — recruteur, formateur, client — peut confirmer qu'un certificat easyTech existe. Le numéro est imprimé sur le PDF ; la vérification ne demande ni compte ni inscription.",
+      howTitle: "Comment lire un numéro de certificat",
+      how: [
+        "Un code suit le format PRÉFIXE-ANNÉE-CODE ALÉATOIRE, par exemple PYT-2026-K7MHQ2JP : les trois premières lettres viennent de la filière, le reste n'est pas devinable.",
+        "L'alphabet exclut I, L, O, 0 et 1 pour que le code se recopie sans ambiguïté depuis le PDF ou une capture d'écran.",
+        "La réponse affiche le titulaire, l'intitulé exact de la formation, le niveau validé et la date de délivrance — rien de plus, et rien d'inventable.",
+      ],
+      trustTitle: "Ce que le certificat atteste",
+      trust:
+        "Chaque niveau d'un parcours se valide par un examen chronométré après les exercices corrigés. Le certificat constate ce parcours achevé sur easyTech, pas une équivalence officielle de diplôme.",
+    },
     preview: {
       title: "Certificat de réalisation",
       alt: "Aperçu d'un certificat easyTech",

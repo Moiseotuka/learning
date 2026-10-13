@@ -1,4 +1,5 @@
 import { Reveal } from "@/components/reveal";
+import { JsonLd, faqLd } from "@/components/seo/json-ld";
 import { Section, SectionHeading } from "@/components/section";
 import {
   Accordion,
@@ -14,6 +15,7 @@ export function Faq() {
   return (
     <Section id="faq" className="border-y border-hairline bg-elevated">
       <SectionHeading eyebrow={t.faq.eyebrow} title={t.faq.title} />
+      <JsonLd data={faqLd(t.faq.items)} />
 
       <Reveal className="mx-auto max-w-3xl">
         <Accordion type="single" collapsible className="rounded-2xl border border-hairline bg-card px-5">

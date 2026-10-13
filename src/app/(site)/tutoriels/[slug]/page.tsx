@@ -8,6 +8,7 @@ import { levelTone } from "@/components/catalog/level-tone";
 import { Badge } from "@/components/ui/badge";
 import { messages } from "@/i18n";
 import { getTutorialBySlug, getTutorials } from "@/lib/catalog/queries";
+import { seoFor } from "@/config/seo";
 import { extractYouTubeId, toEmbedUrl } from "@/lib/embed-url";
 import { YouTubePlayer } from "@/components/learning/youtube-player";
 
@@ -26,12 +27,26 @@ export async function generateMetadata(
   const tutorial = await getTutorialBySlug(slug);
 
   if (!tutorial) {
-    return { title: t.catalogue.empty.tutoriels, robots: { index: false } };
+    return { title: t.catalogue.empty.tutoriels, robots: { index: false, follow: true } };
   }
 
+  const keyword = seoFor(tutorial.categoryId, tutorial.category);
+  const title = `${tutorial.title} — tutoriel vidéo en français`;
+
   return {
-    title: tutorial.title,
-    description: tutorial.summary || t.catalogue.description,
+    title,
+    description:
+      tutorial.summary ||
+      `${keyword.primary} : leçon vidéo intégrée à easyTech, avec résumé écrit et quiz.`,
+    keywords: [keyword.primary, tutorial.category, t.tracks.levelLabels[tutorial.level]],
+    alternates: { canonical: `/tutoriels/${tutorial.slug}` },
+    openGraph: {
+      type: "video.other",
+      url: `/tutoriels/${tutorial.slug}`,
+      title,
+      description: tutorial.summary,
+      ...(tutorial.thumbnail ? { images: [{ url: tutorial.thumbnail }] } : {}),
+    },
   };
 }
 

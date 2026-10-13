@@ -17,6 +17,13 @@ const t = messages.formateur;
 export const metadata: Metadata = {
   title: t.title,
   description: t.subtitle,
+  keywords: [
+    "devenir formateur en ligne",
+    "formation professionnelle en français",
+    "classe virtuelle pour université",
+    "former des étudiants en ligne RDC",
+  ],
+  alternates: { canonical: "/formateurs" },
 };
 
 const subscribeHref = "/app/formateur/souscrire";

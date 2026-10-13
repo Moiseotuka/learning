@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import {
   CatalogSidebar,
@@ -8,15 +9,47 @@ import { FormationCard } from "@/components/catalog/formation-card";
 import { SearchResults } from "@/components/catalog/search-results";
 import { TutorialCard } from "@/components/catalog/tutorial-card";
 import { messages } from "@/i18n";
+import { site } from "@/config/site";
+import { catalogueCanonical, categorySeo } from "@/config/seo";
 import { getCategories, getTracks, getTutorials } from "@/lib/catalog/queries";
 import { searchCatalog } from "@/lib/catalog/search";
 
 const t = messages;
 
-export const metadata: Metadata = {
-  title: t.catalogue.title,
-  description: t.catalogue.description,
-};
+export async function generateMetadata(
+  props: PageProps<"/catalogue">,
+): Promise<Metadata> {
+  const searchParams = await props.searchParams;
+  const query = readParam(searchParams.q).trim();
+  const tech = readParam(searchParams.tech);
+  const type = readParam(searchParams.type);
+
+  // Un filtrage n'est pas une page : c'est la même liste, dans un autre ordre.
+  // Laisser Google indexer `?tech=web&type=tutoriels` créerait une dizaine de
+  // doublons du catalogue et diluerait sa pertinence.
+  const filtered = Boolean(query || tech || (type && type !== "formations"));
+
+  const keywords = Object.values(categorySeo).flatMap((entry) => [
+    entry.primary,
+    entry.variants[0],
+  ]);
+
+  return {
+    title: query ? t.catalogue.search.resultsFor(query) : t.catalogue.title,
+    description: t.catalogue.description,
+    keywords,
+    alternates: { canonical: catalogueCanonical },
+    robots: filtered
+      ? { index: false, follow: true }
+      : { index: true, follow: true },
+    openGraph: {
+      type: "website",
+      url: `${site.url}${catalogueCanonical}`,
+      title: t.catalogue.title,
+      description: t.catalogue.description,
+    },
+  };
+}
 
 function countByCategory(ids: string[], entries: { categoryId: string }[]) {
   const counts: Record<string, number> = {};
@@ -88,6 +121,21 @@ export default async function CataloguePage(
           {query ? t.catalogue.search.intro : t.catalogue.description}
         </p>
       </header>
+
+      <nav
+        aria-label={t.catalogue.technologies}
+        className="mt-6 flex flex-wrap gap-2"
+      >
+        {categories.map((category) => (
+          <Link
+            key={category.id}
+            href={`/formations/${category.slug}`}
+            className="inline-flex h-8 items-center rounded-full border border-hairline bg-card px-3 text-xs font-medium text-foreground transition-colors hover:border-electric/50 hover:text-electric"
+          >
+            {category.name}
+          </Link>
+        ))}
+      </nav>
 
       <div className="mt-10 grid gap-8 lg:grid-cols-[260px_minmax(0,1fr)] lg:gap-10">
         <CatalogSidebar

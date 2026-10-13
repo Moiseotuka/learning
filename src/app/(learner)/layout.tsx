@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
+
 import { AppHeader } from "@/components/layout/app-header";
 import { messages } from "@/i18n";
+
+/** Espace connecté : aucune de ces pages n'a de sens hors d'une session. */
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 export default function LearnerLayout({
   children,
