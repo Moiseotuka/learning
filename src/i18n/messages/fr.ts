@@ -1360,6 +1360,8 @@ export const fr = {
       removed: "Élève retiré.",
       seatsFull:
         "Les {limit} places de votre abonnement sont utilisées. Retirez un élève ou prolongez votre formule pour en ouvrir d'autres.",
+      seatsLapsed:
+        "Votre abonnement ne couvre plus aucune place : prolongez-le avant d'inscrire un nouvel élève.",
     },
 
     myClass: {
@@ -1386,6 +1388,10 @@ export const fr = {
       alreadyIn: "Vous êtes déjà dans cette classe.",
       agendaAll: "Mon emploi du temps",
       agendaForClass: "Calendrier des séances",
+      classFull:
+        "Cette classe est complète ({limit} places). Reessayez plus tard, ou prévenez votre formateur : il peut ouvrir une autre classe.",
+      classClosed:
+        "Ce formateur ne peut plus inscrire d'élève pour l'instant. Prévenez-le : c'est son abonnement qui est à reprendre, pas le vôtre.",
     },
 
     errors: {
@@ -1393,7 +1399,6 @@ export const fr = {
       noPlan: "Choisissez une durée d'abonnement.",
       noTrack: "Sélectionnez au moins un parcours à enseigner.",
       tooManyTracks: "Cette formule accepte un nombre limité de parcours.",
-      seatsFull: "Plus de places disponibles sur votre abonnement.",
       codeUnknown: "Ce code de classe n'existe pas ou n'est plus actif.",
       alreadyMember: "Vous faites déjà partie de cette classe.",
       forbidden: "Vous n'avez pas accès à cette ressource.",

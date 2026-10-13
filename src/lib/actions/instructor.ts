@@ -54,16 +54,28 @@ function newJoinCode(): string {
   return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
+/**
+ * Places prises chez ce formateur. Seuls les élèves encore dans la classe
+ * comptent : un apprenant sorti ou renvoyé libère sa place, sinon le formateur
+ * ne pourrait plus jamais en accueillir d'autre sur un plan plein.
+ */
 async function seatsUsed(supabase: NonNullable<ReturnType<typeof createServiceSupabase>>, instructorId: string) {
-  const { data } = await supabase
+  const { data: classes } = await supabase
     .from("instructor_classes")
-    .select("id, instructor_class_members(user_id)")
+    .select("id")
     .eq("instructor_id", instructorId)
     .eq("status", "active");
 
-  return (
-    (data as { instructor_class_members: { user_id: string }[] | null }[] | null) ?? []
-  ).reduce((total, row) => total + (row.instructor_class_members?.length ?? 0), 0);
+  const classIds = (classes as { id: string }[] | null) ?? [];
+  if (classIds.length === 0) return 0;
+
+  const { count } = await supabase
+    .from("instructor_class_members")
+    .select("user_id", { count: "exact", head: true })
+    .in("class_id", classIds.map((row) => row.id))
+    .eq("status", "active");
+
+  return count ?? 0;
 }
 
 /** La souscription passe par le même dialogue que l'achat d'un niveau. */
@@ -271,7 +283,7 @@ export async function inviteStudent(
       );
       if (!added.ok) {
         await supabase.from("instructor_class_invites").delete().eq("token", token);
-        return { status: "error", message: added.message };
+        return { status: "error", message: attachRefusal(added, "formateur") };
       }
 
       await supabase
@@ -385,7 +397,7 @@ export async function joinClassByCode(
       "code",
       user.email ?? null,
     );
-    if (!added.ok) return { status: "error", message: added.message };
+    if (!added.ok) return { status: "error", message: attachRefusal(added, "eleve") };
     return { status: "success", notice: "rejoint" };
   } catch (error) {
     console.error("[classe] code d'accès", error);
@@ -441,7 +453,7 @@ export async function acceptInvitation(
       "invite",
       user.email ?? invite.email,
     );
-    if (!added.ok) return { status: "error", message: added.message };
+    if (!added.ok) return { status: "error", message: attachRefusal(added, "eleve") };
 
     await supabase
       .from("instructor_class_invites")
@@ -484,6 +496,28 @@ export async function leaveClass(
 
 type ServiceClient = NonNullable<ReturnType<typeof createServiceSupabase>>;
 
+type AttachFailure = {
+  reason: "already" | "lapsed" | "full" | "failed";
+  seatsLimit?: number;
+};
+
+/**
+ * Le même refus ne se dit pas de la même façon : la place manquée est un
+ * problème d'abonnement pour le formateur, alors que l'élève, lui, n'a aucun
+ * abonnement — la lui reprocher lui ferait croire qu'il doit payer.
+ */
+function attachRefusal(failure: AttachFailure, who: "formateur" | "eleve"): string {
+  if (failure.reason === "already") return t.errors.alreadyMember;
+  if (failure.reason === "failed") return t.errors.failed;
+  if (failure.reason === "full") {
+    const limit = String(failure.seatsLimit ?? 0);
+    return who === "formateur"
+      ? t.students.seatsFull.replace("{limit}", limit)
+      : t.myClass.classFull.replace("{limit}", limit);
+  }
+  return who === "formateur" ? t.students.seatsLapsed : t.myClass.classClosed;
+}
+
 /**
  * Inscrit un apprenant dans la limite des places de l'abonnement du formateur.
  * La place est vérifiée ici et dans `granted_category_ids()` : l'une sans
@@ -499,7 +533,7 @@ async function attachStudent(
   studentId: string,
   source: "code" | "invite",
   email: string | null,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | ({ ok: false } & AttachFailure)> {
   const { data: already } = await supabase
     .from("instructor_class_members")
     .select("status")
@@ -508,19 +542,16 @@ async function attachStudent(
     .maybeSingle<{ status: string }>();
 
   if (already?.status === "active") {
-    return { ok: false, message: t.errors.alreadyMember };
+    return { ok: false, reason: "already" };
   }
 
   const seatsLimit = await activeSeatLimit(instructorId);
   if (seatsLimit === null) {
-    return { ok: false, message: t.errors.seatsFull };
+    return { ok: false, reason: "lapsed" };
   }
   const used = await seatsUsed(supabase, instructorId);
   if (used >= seatsLimit) {
-    return {
-      ok: false,
-      message: t.students.seatsFull.replace("{limit}", String(seatsLimit)),
-    };
+    return { ok: false, reason: "full", seatsLimit };
   }
 
   if (already) {
@@ -531,7 +562,7 @@ async function attachStudent(
       .eq("user_id", studentId);
     if (error) {
       console.error("[classe] réintégration d'élève", classId, error.code, error.message);
-      return { ok: false, message: t.errors.failed };
+      return { ok: false, reason: "failed" };
     }
     if (email) {
       await announceJoin(classId, email);
@@ -547,7 +578,7 @@ async function attachStudent(
   });
   if (error) {
     console.error("[classe] ajout d'élève par code", classId, error.code, error.message);
-    return { ok: false, message: t.errors.failed };
+    return { ok: false, reason: "failed" };
   }
   if (email) {
     await announceJoin(classId, email);

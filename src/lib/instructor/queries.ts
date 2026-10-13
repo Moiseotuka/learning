@@ -175,7 +175,7 @@ export const getInstructorStatus = cache(
         .eq("subscription_id", subscription.id),
       supabase
         .from("instructor_classes")
-        .select("id, instructor_class_members(user_id)")
+        .select("id, instructor_class_members(user_id,status)")
         .eq("instructor_id", userId)
         .eq("status", "active"),
     ]);
@@ -195,17 +195,19 @@ export const getInstructorStatus = cache(
 
     const classes =
       (classesResult.data as
-        | { id: string; instructor_class_members: { user_id: string }[] | null }[]
+        | { id: string; instructor_class_members: { status: string }[] | null }[]
         | null) ?? [];
+
+    // Une place libérée par un départ compte libérée : le compteur du tableau
+    // de bord doit annoncer la même disponibilité que le contrôle d'inscription.
+    const activeMembers = (item: { instructor_class_members: { status: string }[] | null }) =>
+      (item.instructor_class_members ?? []).filter((member) => member.status === "active").length;
 
     return {
       subscription,
       isActive: true,
       daysLeft: daysLeft(subscription.expiresAt),
-      seatsUsed: classes.reduce(
-        (total, item) => total + (item.instructor_class_members?.length ?? 0),
-        0,
-      ),
+      seatsUsed: classes.reduce((total, item) => total + activeMembers(item), 0),
       classCount: classes.length,
       tracks,
     };
@@ -251,7 +253,7 @@ export async function getInstructorClasses(
   const { data } = await supabase
     .from("instructor_classes")
     .select(
-      "id,title,academy,description,join_code,status,created_at,track_id,tracks(slug,title),instructor_class_members(user_id),live_sessions(id)",
+      "id,title,academy,description,join_code,status,created_at,track_id,tracks(slug,title),instructor_class_members(user_id,status),live_sessions(id)",
     )
     .eq("instructor_id", instructorId)
     .order("created_at", { ascending: false });
@@ -268,7 +270,7 @@ export async function getInstructorClasses(
           created_at: string;
           track_id: string;
           tracks: { slug: string; title: string } | null;
-          instructor_class_members: { user_id: string }[] | null;
+          instructor_class_members: { status: string }[] | null;
           live_sessions: { id: string }[] | null;
         }[]
       | null) ?? [];
@@ -301,7 +303,9 @@ export async function getInstructorClasses(
     trackId: row.track_id,
     trackSlug: row.tracks?.slug ?? "",
     trackTitle: row.tracks?.title ?? "Parcours supprimé",
-    memberCount: row.instructor_class_members?.length ?? 0,
+    memberCount: (row.instructor_class_members ?? []).filter(
+      (member) => member.status === "active",
+    ).length,
     nextSessionAt: nextByClass.get(row.id) ?? null,
   }));
 }
