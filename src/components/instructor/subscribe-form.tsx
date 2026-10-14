@@ -46,6 +46,8 @@ const PLAN_REASONS: Record<string, string> = {
   "no-track": t.errors.noTrack,
   "too-many-tracks": t.errors.tooManyTracks,
   "unknown-track": t.errors.noTrack,
+  "certificate-required": t.errors.certificateRequired,
+  "offer-suspended": t.errors.offerSuspended,
 };
 
 /**

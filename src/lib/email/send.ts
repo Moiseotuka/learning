@@ -138,7 +138,14 @@ async function sendViaResend(input: EmailInput): Promise<EmailResult> {
       const detail = (await response.text()).slice(0, 180);
       console.error("[email] resend", response.status, detail);
       const message = detail.match(/"message":"([^"]+)"/)?.[1];
-      return { sent: false, demo: false, error: message ?? `HTTP ${response.status}` };
+      // Le statut accompagne le motif : « API key is invalid » ne contient ni
+      // « 401 » ni « unauthorized », et une file qui ne lit que le texte laisserait
+      // un pointeur de clé révoquée brûler les quatre tentatives d'un apprenant.
+      return {
+        sent: false,
+        demo: false,
+        error: `${message ?? `HTTP ${response.status}`} (${response.status})`,
+      };
     }
 
     return { sent: true, demo: false };

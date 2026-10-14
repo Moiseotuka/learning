@@ -14,6 +14,76 @@ const LEVELS = ["debutant", "intermediaire", "avance", "projet"] as const;
 type TrackRow = { id: string; slug: string; title: string };
 type ChapterRow = { id: string; track_id: string; level: string };
 
+/** Le formateur qui répond du travail de l'élève, par parcours suivi en classe. */
+type Signature = { instructorId: string; instructorName: string; academy: string };
+
+/**
+ * Classe active la plus récente pour chaque parcours de l'élève : c'est elle qui
+ * signe le certificat. Un apprenant inscrit dans deux classes du même parcours
+ * est signé par la plus récente, celle qui le suit aujourd'hui.
+ */
+async function signaturesOf(
+  supabase: NonNullable<ReturnType<typeof createServiceSupabase>>,
+  userId: string,
+): Promise<Map<string, Signature>> {
+  const empty = new Map<string, Signature>();
+
+  const { data: memberships } = await supabase
+    .from("instructor_class_members")
+    .select("class_id")
+    .eq("user_id", userId)
+    .eq("status", "active");
+
+  const classIds = ((memberships as { class_id: string }[] | null) ?? []).map(
+    (row) => row.class_id,
+  );
+  if (classIds.length === 0) return empty;
+
+  const { data: classes } = await supabase
+    .from("instructor_classes")
+    .select("id,track_id,academy,instructor_id,created_at")
+    .in("id", classIds)
+    .eq("status", "active")
+    .not("track_id", "is", null)
+    .order("created_at", { ascending: false });
+
+  const rows = (classes as
+    | {
+        id: string;
+        track_id: string | null;
+        academy: string | null;
+        instructor_id: string;
+      }[]
+    | null) ?? [];
+  if (rows.length === 0) return empty;
+
+  const { data: people } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .in("id", [...new Set(rows.map((row) => row.instructor_id))]);
+
+  const names = new Map(
+    ((people as { id: string; full_name: string | null }[] | null) ?? []).map((row) => [
+      row.id,
+      (row.full_name ?? "").trim(),
+    ]),
+  );
+
+  for (const row of rows) {
+    if (!row.track_id || empty.has(row.track_id)) continue;
+    const instructorName = names.get(row.instructor_id);
+    // Sans nom lisible, mieux vaut une plateforme qui signe qu'un blanc bâclé.
+    if (!instructorName) continue;
+    empty.set(row.track_id, {
+      instructorId: row.instructor_id,
+      instructorName,
+      academy: (row.academy ?? "").trim(),
+    });
+  }
+
+  return empty;
+}
+
 function certificateTitle(trackTitle: string, level: string): string {
   const topic = trackTitle.split(":")[0].trim() || trackTitle;
   if (level === "parcours") {
@@ -206,12 +276,15 @@ export async function ensureCertificates(
 
   if (candidates.length === 0) return [];
 
+  const signatures = await signaturesOf(supabase, userId);
+
   const issued: IssuedCertificate[] = [];
   const year = new Date().getFullYear();
 
   for (const candidate of candidates) {
     const title = certificateTitle(candidate.track.title, candidate.level);
     const prefix = codePrefix(candidate.track.slug);
+    const signature = signatures.get(candidate.track.id);
 
     let row: {
       id: string;
@@ -236,6 +309,13 @@ export async function ensureCertificates(
             title,
             track_title: candidate.track.title,
             full_name: fullName,
+            ...(signature
+              ? {
+                  instructor_id: signature.instructorId,
+                  instructor_name: signature.instructorName,
+                  academy: signature.academy || null,
+                }
+              : {}),
           },
           { onConflict: "user_id,track_id,level", ignoreDuplicates: true },
         )

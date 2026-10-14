@@ -286,6 +286,102 @@ export const fr = {
     cta: "S'inscrire et commencer",
   },
 
+  afrique: {
+    id: "afrique",
+    eyebrow: "Afrique francophone",
+    title: "Formation informatique en ligne pour l'Afrique francophone",
+    subtitle:
+      "Apprendre un métier du numérique en français, depuis un téléphone, et payer par Mobile Money : easyTech publie des parcours structurés, du niveau débutant au niveau avancé, conçus à Kinshasa pour les apprenants de RDC et de toute l'Afrique francophone.",
+    ctaPrimary: "Explorer les parcours",
+    ctaSecondary: "S'inscrire — le niveau débutant est gratuit",
+
+    statsIntro: "Ce que compte la plateforme aujourd'hui",
+    stats: {
+      tracks: "parcours publiés",
+      chapters: "chapitres",
+      lessons: "leçons vidéo",
+      categories: "domaines",
+    },
+
+    whyEyebrow: "Notre différence",
+    whyTitle: "Pourquoi une plateforme africaine plutôt qu'un cours importé",
+    why: [
+      {
+        title: "Tout est en français",
+        text: "Leçons vidéo, énoncés d'exercices, corrigés, quiz et examens de niveau. Personne n'a à traduire une explication anglaise de quarante minutes pour comprendre ce qu'on attend de lui.",
+      },
+      {
+        title: "Vous payez comme tout le monde ici",
+        text: "Mobile Money — M-Pesa, Airtel Money, Orange Money — ou carte bancaire, avec les prix affichés en francs congolais. Pas besoin d'une carte de crédit internationale, et aucun abonnement qui se renouvelle tout seul.",
+      },
+      {
+        title: "Ça tourne sur un téléphone, même en 3G",
+        text: "La vidéo ne se charge que quand vous appuyez sur lecture, les pages restent légères, et une leçon interrompue par une coupure reprend à la seconde exacte où vous l'avez laissée.",
+      },
+      {
+        title: "Une preuve que l'employeur peut vérifier",
+        text: "Chaque niveau validé débouche sur un certificat portant un code public : une entreprise ou une école le contrôle en dix secondes sur la page de vérification, sans avoir à vous appeler.",
+      },
+    ],
+
+    tracksEyebrow: "Parcours",
+    tracksTitle: "Les domaines qui recrutent en Afrique",
+    tracksIntro:
+      "Un parcours se termine par un examen de niveau : c'est lui qui débloque le certificat, avec le titre exact de la formation et le niveau atteint.",
+    tracksCountLabel: (count: number) =>
+      `${count} parcours publiés, du niveau débutant au niveau avancé`,
+    tracksMore: "Voir tous les domaines du catalogue",
+
+    priceEyebrow: "Tarifs",
+    priceTitle: "Combien coûte une formation informatique en ligne en Afrique ?",
+    pricePoints: [
+      "Le niveau débutant est gratuit dans chaque domaine : on commence sans engager un franc.",
+      "Un niveau se paie une fois, en francs congolais, et l'accès reste ouvert durablement — ce n'est pas un abonnement mensuel.",
+      "Mobile Money ou carte bancaire : la confirmation côté serveur débloque le niveau immédiatement, sans attente et sans frais de dossier.",
+    ],
+    priceNote:
+      "Le catalogue affiche le montant réel de chaque niveau avant le paiement, domaine par domaine.",
+    priceCta: "Voir les niveaux et leurs prix",
+
+    faqTitle: "Les questions que l'on se pose avant de s'inscrire",
+    faq: [
+      {
+        q: "Depuis quels pays d'Afrique peut-on s'inscrire ?",
+        a: "De tous. L'inscription demande seulement une adresse e-mail, et la plateforme s'utilise entièrement en français — que vous soyez à Kinshasa, Lubumbashi, Goma, Brazzaville, Kigali, Douala, Abidjan, Dakar ou Cotonou. Les canaux Mobile Money proposés dépendent de votre opérateur.",
+      },
+      {
+        q: "easyTech est-elle la meilleure plateforme de formation informatique en Afrique ?",
+        a: "Nous ne publions pas de classement. Ce que la plateforme tient concrètement : des cours entièrement en français, un paiement Mobile Money en francs congolais, une charge légère sur connexion mobile et un certificat vérifiable par code public. Si ce sont les quatre points qui vous bloquent ailleurs, vous êtes chez vous ici.",
+      },
+      {
+        q: "Les cours sont-ils réellement en français ?",
+        a: "Oui : vidéos, exercices, corrigés et quiz sont en français. Les termes techniques anglais restent nommés tels que l'industrie les emploie — un administrateur réseau doit savoir lire « gateway » — mais ils sont expliqués en français dès la première leçon.",
+      },
+      {
+        q: "Peut-on payer sans carte bancaire ?",
+        a: "Oui, par M-Pesa, Airtel Money ou Orange Money, ou par carte si vous en avez une. Le prix est unique pour le niveau choisi, affiché en francs congolais, et l'accès est débloqué automatiquement dès la confirmation du paiement.",
+      },
+      {
+        q: "Une connexion 3G instable permet-elle de suivre ?",
+        a: "Oui. Le lecteur vidéo ne se charge que sur demande, les pages sont optimisées pour les téléphones d'entrée de gamme, et la reprise se fait à l'endroit exact — sur la vidéo comme sur le texte. Les leçons écrites et les quiz restent consultables quand le réseau faiblit.",
+      },
+      {
+        q: "Le certificat remplace-t-il un diplôme ?",
+        a: "Non, et nous ne le présentons pas comme tel. C'est une preuve vérifiable : les chapitres validés, le niveau atteint, un examen réussi et un code que tout employeur peut contrôler publiquement. Là où un diplôme atteste une scolarité, le certificat atteste un travail réellement fait.",
+      },
+      {
+        q: "Faut-il un ordinateur pour commencer ?",
+        a: "Un smartphone suffit pour les niveaux débutants et pour la bureautique. Dès qu'un parcours demande d'écrire du code, de monter une machine virtuelle ou de configurer un routeur, un ordinateur devient nécessaire : un poste de cybercafé, de campus ou de médiathèque fait l'affaire pour les séances de pratique.",
+      },
+    ],
+
+    finalTitle: "Commencez ce soir, terminez avec une preuve vérifiable",
+    finalText:
+      "Le niveau débutant est gratuit dans chaque domaine : créez un compte, ouvrez la première leçon et voyez si la méthode vous convient avant de payer quoi que ce soit.",
+    finalCta: "Créer mon compte",
+    finalSecondary: "Parcourir le catalogue",
+  },
+
   certificates: {
     id: "certifications",
     eyebrow: "Certifications",
@@ -538,6 +634,7 @@ export const fr = {
         links: [
           { label: "Catalogue", href: "/catalogue" },
           { label: "Parcours", href: "/#parcours" },
+          { label: "Formation en Afrique", href: "/formation-informatique-afrique" },
           { label: "Formateurs", href: "/formateurs" },
           { label: "Certifications", href: "/#certifications" },
           { label: "Tarifs", href: "/#tarifs" },
@@ -599,6 +696,9 @@ export const fr = {
     verifyIssued: (date: string) => `Délivré le ${date}`,
     verifyIssuedLabel: "Délivré le",
     verifyCode: "Numéro",
+    verifyInstructorLabel: "Signé par le formateur",
+    verifySolo: "Parcours suivi en autonomie, sans formateur",
+    verifyAcademyLabel: "Académie",
 
     loginSubtitle:
       "Accédez à votre espace apprenant et reprenez votre parcours là où vous l'avez arrêté.",
@@ -1041,10 +1141,11 @@ export const fr = {
       `${done} / ${total} leçon${total <= 1 ? "" : "s"} terminée${
         total <= 1 ? "" : "s"
       }`,
-    markWatched: "Marquer la leçon comme vue",
+    videoNotRecorded:
+      "La fin de cette leçon n'a pas été enregistrée : le lecteur n'a pas vu la vidéo avancer jusqu'au bout. Laissez-la se terminer normalement, sans la passer en accéléré.",
     videoBlockedTitle: "La leçon ne se lance pas ?",
     videoBlockedHint:
-      "Il lui arrive de refuser la lecture intégrée (contrôle de sécurité ou connexion instable). Patientez quelques secondes puis réessayez ; vous pouvez aussi marquer la leçon comme vue pour poursuivre votre chapitre.",
+      "Votre navigateur bloque parfois le lecteur vidéo (protection anti-pistage, extension, connexion instable). Réessayez ci-dessous ; si rien ne démarre, autorisez la lecture pour ce site dans les paramètres de votre navigateur, puis rechargez la page. La leçon doit être vue jusqu'à sa fin : rien n'est validé tant que l'écran reste noir.",
     videoRetry: "Réessayer",
     videoFinished: "Leçon terminée",
     videoFinishedHint:
@@ -1138,9 +1239,53 @@ export const fr = {
       pricing: "Tarifs",
       instructors: "Formateurs",
       instructorPlans: "Barème formateur",
+      marketing: "Relances",
     },
     dashboardIntro:
       "Vue d'ensemble des inscrits et du catalogue, avec les raccourcis de gestion.",
+    marketing: {
+      title: "Relances automatiques",
+      intro:
+        "Cinq règles suivent l'apprenant : reprise d'un chapitre laissé ouvert, niveau supérieur à goûter, parcours voisin à explorer, retour après une pause, et annonce d'un parcours que vous publiez. Le contenu se recompose à l'envoi, donc un parcours corrigé part corrigé.",
+      cards: {
+        used: "Envoyés aujourd'hui",
+        queued: "En file",
+        sent: "Déjà partis",
+        failed: "En échec",
+        optedOut: "Désinscriptions",
+        cap: "Plafond du jour",
+      },
+      byKindTitle: "Par règle",
+      kinds: {
+        resume: "Reprendre le chapitre ouvert",
+        level_up: "Niveau suivant",
+        explore: "Explorer un autre parcours",
+        winback: "Retour après pause",
+        new_track: "Nouveau parcours publié",
+      },
+      columnKind: "Règle",
+      columnQueued: "En file",
+      columnSent: "Partis",
+      capTitle: "Plafond quotidien",
+      capIntro:
+        "Le compte d'envoi compte les relances et les convocations des formateurs dans la même réserve journalière. Gardez le total sous le plafond de votre fournisseur : une campagne qui l'épuise empêche les élèves convoqués de recevoir leur rappel.",
+      capLabel: "E-mails par jour, toutes files confondues",
+      capSave: "Enregistrer le plafond",
+      capSaved: "Plafond enregistré.",
+      capInvalid: "Le plafond doit être un nombre entier, au moins 1.",
+      runTitle: "Lancer la passe maintenant",
+      runIntro:
+        "Vide la file sans attendre la tâche du soir. Un apprenant déjà servi dans les cinq jours n'est pas relancé.",
+      run: "Envoyer la file",
+      errorsTitle: "Envois qui reviennent",
+      errorsIntro:
+        "Ces lignes restent dues : la passe suivante les reprend, jusqu'à quatre tentatives.",
+      ranSummary: (sent: number, failed: number, waiting: number) =>
+        `Passe terminée : ${sent} message(s) parti(s), ${failed} en échec, ${waiting} encore en file.`,
+      columnRecipient: "Adresse",
+      columnAttempts: "Tentatives",
+      columnError: "Refus du serveur",
+    },
     pricing: {
       title: "Tarifs par niveau",
       intro:
@@ -1286,6 +1431,29 @@ export const fr = {
     },
   },
 
+  relances: {
+    eyebrow: "easyTech",
+    title: "Vos relances de progression",
+    description:
+      "Gérez en un clic les relances de progression easyTech reçues par e-mail : retirez-vous ou réactivez ces rappels pour l'adresse de votre compte.",
+    intro:
+      "Ce lien porte le jeton de votre adresse : aucune connexion n'est demandée, et un seul clic suffit.",
+    addressLabel: "Adresse concernée",
+    stateLabel: "État actuel",
+    subscribed: "Relances actives",
+    unsubscribed: "Relances retirées",
+    scopeTitle: "Ce que ce choix change",
+    scope:
+      "Les relances de progression s'arrêtent ici. Les convocations de votre formateur, vos certificats et les messages de sécurité de votre compte continuent d'arriver normalement.",
+    leave: "Se désinscrire des relances",
+    resume: "Réactiver les relances",
+    invalidTitle: "Lien incomplet",
+    invalidText:
+      "Ce lien ne correspond à aucune adresse suivie par les relances. Reprenez le dernier message reçu et cliquez de nouveau sur « Se désinscrire de ces relances », ou écrivez-nous depuis la page contact.",
+    sentBecause:
+      "Vous recevez ces messages parce que votre compte easyTech est actif et qu'un parcours est resté ouvert.",
+  },
+
   common: {
     levels: {
       debutant: "Débutant",
@@ -1323,6 +1491,23 @@ export const fr = {
     spaceCta: "Déjà formateur ? Ouvrir mon espace",
     durationsCount: "{count} durées au choix",
     heroFacts: "Ce que couvre l'abonnement",
+
+    eligibility: {
+      title: "Condition pour enseigner",
+      intro:
+        "easyTech ne confie un parcours qu'à quelqu'un qui l'a terminé : il faut au moins un certificat de niveau avancé, de projet de fin de parcours, ou un parcours complet.",
+      granted: "Droit ouvert par « {title} ».",
+      closed:
+        "Ce compte n'a encore aucun certificat de niveau avancé ou de projet : la souscription restera bloquée jusqu'à ce que tu valides l'un d'eux.",
+      cta: "Choisir un niveau avancé",
+    },
+
+    offer: {
+      label: "Souscription momentanément fermée",
+      text:
+        "Nous ouvrons l'offre formateur dès que les convocations, rapports et invitations partent vers vos élèves depuis easyTech. En attendant, vos parcours, vos examens et vos certificats restent accessibles normalement.",
+      cta: "Revenir à mon profil",
+    },
 
     benefits: [
       {
@@ -1491,6 +1676,10 @@ export const fr = {
       noPlan: "Choisissez une durée d'abonnement.",
       noTrack: "Sélectionnez au moins un parcours à enseigner.",
       tooManyTracks: "Cette formule accepte un nombre limité de parcours.",
+      certificateRequired:
+        "Pour enseigner ici, il faut au moins un certificat easyTech de niveau avancé, de projet de fin de parcours, ou un parcours complet. Valide un niveau avancé et repasse son examen, puis reviens souscrire.",
+      offerSuspended:
+        "La souscription formateur est momentanément fermée. Repassez bientôt, ou prévenez le support si vous avez déjà une classe à ouvrir.",
       codeUnknown: "Ce code de classe n'existe pas ou n'est plus actif.",
       alreadyMember: "Vous faites déjà partie de cette classe.",
       forbidden: "Vous n'avez pas accès à cette ressource.",

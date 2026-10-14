@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { links } from "@/config/site";
+import { sanitizeInternalPath } from "@/lib/auth/validation";
 import { getSupabaseEnv } from "@/lib/supabase/config";
 
 const protectedPaths = ["/app", "/admin"];
@@ -58,7 +59,10 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && authPaths.includes(pathname)) {
-    const redirect = NextResponse.redirect(new URL(links.home, request.url));
+    // Un apprenant deja connecte qui suit un lien « Commencer gratuitement » doit
+    // arriver sur le parcours vise, pas etre rejete sur la page d'accueil.
+    const next = sanitizeInternalPath(request.nextUrl.searchParams.get("next"));
+    const redirect = NextResponse.redirect(new URL(next ?? links.home, request.url));
     copyCookies(response, redirect);
     return redirect;
   }

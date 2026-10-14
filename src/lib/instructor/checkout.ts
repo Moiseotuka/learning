@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { getInstructorEligibility } from "@/lib/instructor/eligibility";
+import { instructorOfferOpen } from "@/lib/instructor/offer";
 import { getInstructorPlan, type InstructorPlan } from "@/lib/instructor/plans";
 import {
   CHECKOUT_CURRENCY,
@@ -54,11 +56,24 @@ export async function startInstructorSubscription(input: {
   planId: string;
   trackIds: string[];
 }): Promise<InstructorCheckout> {
+  // L'offre est en attente : la caisse refuse même si la page est atteinte
+  // par un lien ancien ou un favori.
+  if (!instructorOfferOpen) {
+    return { mode: "error", reason: "offer-suspended" };
+  }
+
   const supabase = createServiceSupabase();
   if (!supabase) return { mode: "error", reason: "not-configured" };
 
   const plan = await getInstructorPlan(input.planId);
   if (!plan) return { mode: "error", reason: "no-plan" };
+
+  // Enseigner suppose d'avoir soi-même terminé au moins un niveau avancé : la
+  // caisse refuse la souscription avant même de créer une ligne en attente.
+  const eligibility = await getInstructorEligibility(input.userId);
+  if (!eligibility.allowed) {
+    return { mode: "error", reason: "certificate-required" };
+  }
 
   const trackIds = [...new Set(input.trackIds)].filter(Boolean);
   if (trackIds.length === 0) return { mode: "error", reason: "no-track" };

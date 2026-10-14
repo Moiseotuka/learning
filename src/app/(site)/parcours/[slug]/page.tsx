@@ -201,7 +201,7 @@ export default async function TrackSheetPage(props: PageProps<"/parcours/[slug]"
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
         <Link
-          href="/inscription"
+          href={`/inscription?next=${encodeURIComponent(`/app/parcours/${track.slug}`)}`}
           className="inline-flex h-11 items-center gap-2 rounded-xl bg-electric px-5 text-sm font-semibold text-primary-foreground shadow-lg shadow-electric/25 transition-opacity hover:opacity-90"
         >
           {t.fiche.ctaStart}

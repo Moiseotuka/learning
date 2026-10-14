@@ -79,9 +79,9 @@ export function TutorialPlayer({
         prev[token] === seconds ? prev : { ...prev, [token]: seconds },
       );
       // Le battement alimente la preuve côté serveur ; sans lui, l'attestation
-      // refuserait une leçon légitimement terminée.
-      // eslint-disable-next-line react-hooks/refs -- appelé par l'événement de
-      // lecture du lecteur, jamais pendant le rendu.
+      // refuserait une leçon légitimement terminée. Cette fonction est appelée
+      // par l'événement de lecture du lecteur, jamais pendant le rendu.
+      // eslint-disable-next-line react-hooks/refs
       pendingWrites.current[token] = recordVideoTick({
         chapterId,
         videoToken: token,

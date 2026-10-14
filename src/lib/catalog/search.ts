@@ -78,7 +78,14 @@ const ALIASES: Record<string, string[]> = {
   iot: ["iot", "objet", "objets", "esp32", "arduino", "capteur"],
   objet: ["objet", "objets", "iot", "esp32", "arduino", "capteur"],
   objets: ["objets", "objet", "iot", "esp32", "arduino", "capteur"],
-  mobile: ["mobile", "flutter", "android", "ios", "telephone"],
+  mobile: ["mobile", "flutter", "android", "ios", "telephone", "smartphone"],
+  telephone: ["telephone", "smartphone", "mobile", "reparation", "deblocage"],
+  smartphone: ["smartphone", "telephone", "mobile", "reparation"],
+  reparation: ["reparation", "panne", "depannage", "atelier", "telephone"],
+  depannage: ["depannage", "reparation", "panne", "maintenance", "telephone"],
+  deblocage: ["deblocage", "code", "operateur", "imei", "telephone"],
+  flash: ["flash", "firmware", "restauration", "telephone"],
+  atelier: ["atelier", "reparation", "devis", "client"],
   application: ["application", "app", "site", "logiciel"],
 };
 
@@ -94,6 +101,9 @@ const PHRASES: Record<string, string[]> = {
   "science des donnees": ["data", "donnees", "data science", "analyse", "sql"],
   "securite informatique": ["cyber", "cybersecurite", "securite", "pentest"],
   "reparation d ordinateur": ["maintenance", "materiel", "pc", "diagnostiquer"],
+  "reparation de telephone": ["reparation", "telephone", "smartphone", "panne", "ecran", "batterie"],
+  "reparation smartphone": ["reparation", "smartphone", "telephone", "panne", "ecran", "batterie"],
+  "deblocage telephone": ["deblocage", "telephone", "imei", "operateur", "code"],
   "creation de site web": ["web", "site", "html", "css", "wordpress"],
   "application mobile": ["mobile", "flutter", "react native", "android"],
 };

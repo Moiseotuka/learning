@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, CheckIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ClockIcon } from "lucide-react";
 
 import { FinalCta } from "@/components/landing/final-cta";
 import { Instructors } from "@/components/landing/instructors";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { fill, formatFc } from "@/lib/instructor/format";
+import { instructorOfferOpen } from "@/lib/instructor/offer";
 import { getInstructorPlans, monthlyPriceFc } from "@/lib/instructor/plans";
 
 const t = messages.formateur;
@@ -64,12 +65,19 @@ export default async function TrainersPage() {
             </Reveal>
             <Reveal delay={190}>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Button asChild size="lg" className="h-12 px-6 text-base">
-                  <Link href={subscribeHref}>
-                    {t.cta}
-                    <ArrowRightIcon className="size-4" aria-hidden />
-                  </Link>
-                </Button>
+                {instructorOfferOpen ? (
+                  <Button asChild size="lg" className="h-12 px-6 text-base">
+                    <Link href={subscribeHref}>
+                      {t.cta}
+                      <ArrowRightIcon className="size-4" aria-hidden />
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button disabled size="lg" className="h-12 px-6 text-base">
+                    <ClockIcon className="size-4" aria-hidden />
+                    {t.offer.label}
+                  </Button>
+                )}
                 <Button
                   asChild
                   variant="outline"
@@ -80,6 +88,13 @@ export default async function TrainersPage() {
                 </Button>
               </div>
             </Reveal>
+            {instructorOfferOpen ? null : (
+              <Reveal delay={230}>
+                <p className="mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
+                  {t.offer.text}
+                </p>
+              </Reveal>
+            )}
             <Reveal delay={250}>
               <Link
                 href="/app/formateur"

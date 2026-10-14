@@ -20,7 +20,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from("certificates")
-    .select("id,code,title,full_name,track_title,level,issued_at")
+    .select("id,code,title,full_name,track_title,level,issued_at,instructor_name,academy")
     .eq("code", code)
     .eq("user_id", user.id)
     .maybeSingle();
@@ -37,6 +37,9 @@ export async function GET(
     code: data.code,
     title: data.title,
     full_name: data.full_name,
+    instructor_name: data.instructor_name,
+    academy: data.academy,
+    issued_at: data.issued_at,
   });
 
   const { searchParams } = new URL(_request.url);

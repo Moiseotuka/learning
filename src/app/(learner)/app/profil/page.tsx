@@ -18,6 +18,7 @@ import { getProfile, requireUser } from "@/lib/auth/dal";
 import { ensureCertificates } from "@/lib/certificates/issue";
 import { isCertificateTestAccount } from "@/lib/certificates/test-accounts";
 import { fill } from "@/lib/instructor/format";
+import { instructorOfferOpen } from "@/lib/instructor/offer";
 import { getInstructorPlans } from "@/lib/instructor/plans";
 import { getInstructorStatus, planOf } from "@/lib/instructor/queries";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -157,14 +158,21 @@ export default async function ProfilePage() {
             ) : (
               <>
                 <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                  {ti.benefits[0].text}
+                  {instructorOfferOpen ? ti.benefits[0].text : ti.offer.text}
                 </p>
-                <Button asChild className="mt-4 h-10 w-full px-4">
-                  <Link href="/app/formateur">
+                {instructorOfferOpen ? (
+                  <Button asChild className="mt-4 h-10 w-full px-4">
+                    <Link href="/app/formateur">
+                      <GraduationCapIcon aria-hidden />
+                      {instructor.subscription ? ti.reactivateCta : ti.cta}
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button disabled className="mt-4 h-10 w-full px-4">
                     <GraduationCapIcon aria-hidden />
-                    {instructor.subscription ? ti.reactivateCta : ti.cta}
-                  </Link>
-                </Button>
+                    {ti.offer.label}
+                  </Button>
+                )}
               </>
             )}
           </section>

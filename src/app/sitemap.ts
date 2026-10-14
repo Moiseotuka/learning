@@ -37,6 +37,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   return [
     url("/", null, "weekly", 1),
     url("/catalogue", null, "daily", 0.9),
+    url("/formation-informatique-afrique", null, "weekly", 0.9),
     url("/formateurs", null, "weekly", 0.8),
     ...categories.map((category) =>
       url(`/formations/${category.slug}`, null, "weekly", 0.8),

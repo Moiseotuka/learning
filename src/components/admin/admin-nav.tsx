@@ -14,6 +14,7 @@ const items = [
   { href: "/admin/tarifs", label: t.nav.pricing },
   { href: "/admin/formateurs", label: t.nav.instructors },
   { href: "/admin/formateur-plans", label: t.nav.instructorPlans },
+  { href: "/admin/marketing", label: t.nav.marketing },
 ];
 
 export function AdminNav() {

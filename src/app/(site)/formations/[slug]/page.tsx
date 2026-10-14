@@ -125,7 +125,9 @@ export default async function DomainPage(props: PageProps<"/formations/[slug]">)
         </div>
 
         <Link
-          href="/inscription"
+          href={`/inscription?next=${encodeURIComponent(
+            tracks[0]?.slug ? `/app/parcours/${tracks[0].slug}` : "/catalogue",
+          )}`}
           className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-electric px-5 text-sm font-semibold text-primary-foreground shadow-lg shadow-electric/25 transition-opacity hover:opacity-90"
         >
           {t.domaine.cta}

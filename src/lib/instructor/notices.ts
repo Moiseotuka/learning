@@ -811,7 +811,9 @@ async function deliver(
   // injoignable : le serveur refuse avant d'émettre. Brûler les tentatives ici
   // ferait perdre la convocation, alors qu'elle partira toute seule dès que la
   // clé sera remise en place.
-  const siteBlocked = /api key|unauthorized|forbidden|401/i.test(reason);
+  const siteBlocked = /api key|unauthorized|forbidden|401|sender|not valid|rejected/i.test(
+    reason,
+  );
 
   await supabase
     .from("instructor_notices")

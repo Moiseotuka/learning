@@ -103,15 +103,10 @@ function formatTime(total: number): string {
 }
 
 /** Panneau de secours quand la vidéo intégrée refuse de se lancer (contrôle
- *  anti-robot, vidéo supprimée, API indisponible) : réessayer, ou marquer comme
- *  vue pour ne jamais bloquer le chapitre. Rien ne renvoie hors de la plateforme. */
-function RecoveryActions({
-  onRetry,
-  onMarkWatched,
-}: {
-  onRetry?: () => void;
-  onMarkWatched?: () => void;
-}) {
+ *  anti-robot, navigateur qui bloque le lecteur, API indisponible) : réessayer
+ *  seulement. Rien ne renvoie hors de la plateforme, et aucune leçon ne se
+ *  valide sans visionnage. */
+function RecoveryActions({ onRetry }: { onRetry?: () => void }) {
   return (
     <div className="flex flex-wrap items-center justify-center gap-2">
       {onRetry ? (
@@ -122,15 +117,6 @@ function RecoveryActions({
         >
           <RotateCcwIcon className="size-3.5" aria-hidden />
           {t.videoRetry}
-        </button>
-      ) : null}
-      {onMarkWatched ? (
-        <button
-          type="button"
-          onClick={onMarkWatched}
-          className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-white/15 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric"
-        >
-          {t.markWatched}
         </button>
       ) : null}
     </div>
@@ -145,7 +131,6 @@ export function YouTubePlayer({
   autoplay = false,
   startAt = 0,
   onEnded,
-  onSkipped,
   onProgress,
 }: {
   videoId: string;
@@ -156,10 +141,8 @@ export function YouTubePlayer({
   /** Seconde où reprendre la leçon après une sortie. */
   startAt?: number;
   onEnded?: () => void;
-  /** Le learner marque la leçon comme vue sans la regarder (lecture refusée). */
-  onSkipped?: () => void;
-  /** Position atteinte, émise tous les ~10 s de lecture et à la pause. */
-  onProgress?: (seconds: number) => void;
+  /** Position atteinte et durée lue, émises tous les ~10 s de lecture et à l'arrêt. */
+  onProgress?: (seconds: number, duration: number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -169,10 +152,9 @@ export function YouTubePlayer({
   const flashTimer = useRef<number | undefined>(undefined);
   const endedNotified = useRef(false);
   const onEndedRef = useRef<(() => void) | undefined>(undefined);
-  const onSkippedRef = useRef<(() => void) | undefined>(undefined);
-  const onProgressRef = useRef<((seconds: number) => void) | undefined>(
-    undefined,
-  );
+  const onProgressRef = useRef<
+    ((seconds: number, duration: number) => void) | undefined
+  >(undefined);
   const lastReportRef = useRef(0);
   const autoplayRef = useRef(false);
   /** Le clic sur la vignette compte comme le geste que le navigateur exige. */
@@ -219,21 +201,18 @@ export function YouTubePlayer({
   }, [onEnded]);
 
   useEffect(() => {
-    onSkippedRef.current = onSkipped;
-  }, [onSkipped]);
-
-  useEffect(() => {
     onProgressRef.current = onProgress;
   }, [onProgress]);
 
   /** Écrit la position atteinte : au plus une écriture toutes les
-   *  PROGRESS_STEP_SECONDS pendant la lecture, immédiate à l'arrêt. */
+   *  PROGRESS_STEP_SECONDS pendant la lecture, immédiate à l'arrêt. La durée
+   *  accompagne la position : c'est elle qui permet de vérifier la fin lue. */
   const reportProgress = useCallback((seconds: number, force = false) => {
     const value = Math.floor(seconds);
     if (value <= 0 || value < lastReportRef.current) return;
     if (!force && value - lastReportRef.current < PROGRESS_STEP_SECONDS) return;
     lastReportRef.current = value;
-    onProgressRef.current?.(value);
+    onProgressRef.current?.(value, Math.floor(playerRef.current?.getDuration?.() || 0));
   }, []);
 
   useEffect(() => {
@@ -311,14 +290,6 @@ export function YouTubePlayer({
   const startFromPoster = useCallback(() => {
     tappedRef.current = true;
     setArmed(true);
-  }, []);
-
-  const canMarkWatched = Boolean(onSkipped || onEnded);
-
-  /** Le learner ne peut pas lire la vidéo (intégration refusée) : il la déclare
-   *  vue pour ne jamais rester bloqué, sans jamais sortir de la plateforme. */
-  const markAsWatched = useCallback(() => {
-    (onSkippedRef.current ?? onEndedRef.current)?.();
   }, []);
 
   /** Recrée le lecteur : nouvelle tentative d'intégration après un blocage. */
@@ -679,7 +650,6 @@ export function YouTubePlayer({
           </p>
           <RecoveryActions
             onRetry={retryPlayback}
-            onMarkWatched={canMarkWatched ? markAsWatched : undefined}
           />
         </div>
       </div>
@@ -718,7 +688,6 @@ export function YouTubePlayer({
         <div className="absolute right-3 top-3 z-20">
           <RecoveryActions
             onRetry={retryPlayback}
-            onMarkWatched={canMarkWatched ? markAsWatched : undefined}
           />
         </div>
       ) : null}
@@ -734,7 +703,6 @@ export function YouTubePlayer({
           <div className="pointer-events-auto">
             <RecoveryActions
               onRetry={retryPlayback}
-              onMarkWatched={canMarkWatched ? markAsWatched : undefined}
             />
           </div>
         </div>

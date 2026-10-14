@@ -28,6 +28,8 @@ type CertificateRow = {
   title: string;
   full_name: string;
   issued_at: string;
+  instructor_name: string | null;
+  academy: string | null;
 };
 
 function formatDate(iso: string): string {
@@ -52,7 +54,7 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
     if (supabase) {
       const { data, error } = await supabase
         .from("certificates")
-        .select("code,title,full_name,issued_at")
+        .select("code,title,full_name,issued_at,instructor_name,academy")
         .eq("code", code)
         .maybeSingle();
 
@@ -162,6 +164,21 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
                     {formatDate(certificate.issued_at)}
                   </dd>
                 </div>
+              </div>
+              <div className="border-t border-hairline pt-3">
+                <dt className="text-xs uppercase tracking-wider text-muted-foreground">
+                  {certificate.instructor_name
+                    ? t.verifyInstructorLabel
+                    : t.verifySolo}
+                </dt>
+                <dd className="mt-0.5 font-semibold text-foreground">
+                  {certificate.instructor_name ?? "easyTech"}
+                </dd>
+                {certificate.academy ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t.verifyAcademyLabel} : {certificate.academy}
+                  </p>
+                ) : null}
               </div>
             </dl>
           </section>

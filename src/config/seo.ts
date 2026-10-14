@@ -26,7 +26,7 @@ export const categorySeo: Record<string, CategorySeo> = {
       "cours de programmation débutant",
       "apprendre Python sans expérience",
       "algorithme et structure de données cours",
-      "formation programmation Kinshasa",
+      "formation informatique en afrique",
     ],
     intro:
       "Apprendre la programmation en français, du premier « print » jusqu'au code qu'on ose montrer : algorithmique, Python, Java, C, C++, JavaScript et SQL, avec un exercice corrigé à chaque étape.",
@@ -151,6 +151,17 @@ export const categorySeo: Record<string, CategorySeo> = {
     ],
     intro:
       "Apprendre SQL et la modélisation de données : écrire une requête juste, dessiner un schéma qui tient, éviter les doublons et optimiser ce qui traîne.",
+  },
+  repair: {
+    primary: "apprendre la réparation de téléphones en français",
+    variants: [
+      "formation dépannage smartphone débutant",
+      "changer un écran de téléphone cours",
+      "métier réparateur téléphone atelier",
+      "déblocage téléphone légal formation",
+    ],
+    intro:
+      "Apprendre la réparation de téléphones en français : diagnostiquer une panne, changer un écran ou une batterie, traiter un téléphone tombé dans l'eau, flasher un firmware officiel et ouvrir un atelier qui tient — avec la preuve de propriété comme règle de métier.",
   },
 };
 

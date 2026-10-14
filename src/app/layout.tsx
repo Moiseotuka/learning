@@ -48,6 +48,13 @@ export const metadata: Metadata = {
     description: messages.meta.description,
   },
   robots: { index: true, follow: true },
+  // Double assurance pour Google Search Console : cette balise et le fichier
+  // public/google9a93affa0135a93b.html vérifient tous deux la propriété
+  // « https://elearning-three-phi.vercel.app ». L'un des deux suffit, et un
+  // redéploiement ne peut plus casser la vérification.
+  other: {
+    "google-site-verification": "vIT5Gzw5DNm9Ru-ceV0OO8aWdFuDOMB15zXmbyvDK0s",
+  },
 };
 
 export const viewport: Viewport = {

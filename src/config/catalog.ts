@@ -130,6 +130,16 @@ export const categories: Category[] = [
     levels: ["debutant", "intermediaire"],
     trackCount: 1,
   },
+  {
+    id: "repair",
+    slug: "reparation-mobile",
+    name: "Réparation et déblocage mobile",
+    description:
+      "Diagnostic, écran, batterie, flash officiel, déblocage opérateur légal et gestion d'atelier.",
+    icon: "wrench",
+    levels: ["debutant", "intermediaire", "avance"],
+    trackCount: 3,
+  },
 ];
 
 export type PopularTrack = {

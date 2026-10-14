@@ -90,6 +90,7 @@ export const site = {
     "réseaux",
     "intelligence artificielle",
     "Afrique francophone",
+    "formation informatique en Afrique",
     "RDC",
     "certification",
   ],

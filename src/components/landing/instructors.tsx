@@ -11,6 +11,7 @@ import { Section, SectionHeading } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { fill, formatFc } from "@/lib/instructor/format";
+import { instructorOfferOpen } from "@/lib/instructor/offer";
 import { monthlyPriceFc, type InstructorPlan } from "@/lib/instructor/plans";
 import { cn } from "@/lib/utils";
 
@@ -22,11 +23,14 @@ export function Instructors({
   plans,
   subscribeHref = "/formateurs",
   heading = true,
+  closed = !instructorOfferOpen,
 }: {
   plans: InstructorPlan[];
   subscribeHref?: string;
   /** Fausse sur /formateurs, dont le bandeau d'ouverture tient déjà ce rôle. */
   heading?: boolean;
+  /** Offre en attente : les appels à souscrire deviennent inertes. */
+  closed?: boolean;
 }) {
   return (
     <Section id={t.id} className="border-y border-hairline bg-elevated">
@@ -103,9 +107,23 @@ export function Instructors({
                     <li>{fill(t.total, { duration: plan.label })}</li>
                   </ul>
 
-                  <Button asChild variant={index === 0 ? "default" : "outline"} className="mt-5 h-9 w-full">
-                    <Link href={subscribeHref}>{t.ctaShort}</Link>
-                  </Button>
+                  {closed ? (
+                    <Button
+                      disabled
+                      variant={index === 0 ? "default" : "outline"}
+                      className="mt-5 h-9 w-full"
+                    >
+                      {t.ctaShort}
+                    </Button>
+                  ) : (
+                    <Button
+                      asChild
+                      variant={index === 0 ? "default" : "outline"}
+                      className="mt-5 h-9 w-full"
+                    >
+                      <Link href={subscribeHref}>{t.ctaShort}</Link>
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -114,11 +132,19 @@ export function Instructors({
       )}
 
       <Reveal delay={140}>
-        <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
-          <p className="text-sm text-muted-foreground">{t.chooseTracksHint}</p>
-          <Button asChild size="lg" className="h-11 shrink-0 px-6">
-            <Link href={subscribeHref}>{t.cta}</Link>
-          </Button>
+        <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {closed ? t.offer.text : t.chooseTracksHint}
+          </p>
+          {closed ? (
+            <p className="shrink-0 text-sm font-semibold text-foreground">
+              {t.offer.label}
+            </p>
+          ) : (
+            <Button asChild size="lg" className="h-11 shrink-0 px-6">
+              <Link href={subscribeHref}>{t.cta}</Link>
+            </Button>
+          )}
         </div>
       </Reveal>
     </Section>

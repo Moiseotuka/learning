@@ -42,7 +42,10 @@ export default async function LoginPage(props: PageProps<"/connexion">) {
       footer={
         <span>
           {t.noAccount}{" "}
-          <Link href={links.signup} className="font-medium text-electric hover:underline">
+          <Link
+            href={next ? `${links.signup}?next=${encodeURIComponent(next)}` : links.signup}
+            className="font-medium text-electric hover:underline"
+          >
             {t.signupLink}
           </Link>
         </span>

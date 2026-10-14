@@ -10,6 +10,8 @@ const notices: Record<string, { tone: "success" | "error"; text: string }> = {
   saved: { tone: "success", text: t.pricing.saved },
   plansSaved: { tone: "success", text: t.plans.saved },
   planCreated: { tone: "success", text: t.plans.created },
+  cap_saved: { tone: "success", text: t.marketing.capSaved },
+  cap_invalid: { tone: "error", text: t.marketing.capInvalid },
   error: { tone: "error", text: t.saveFailed },
 };
 

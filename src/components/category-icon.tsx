@@ -9,7 +9,9 @@ import {
   LayoutDashboard,
   Network,
   ShieldCheck,
+  ShoppingCart,
   Terminal,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -25,6 +27,8 @@ const iconMap: Record<string, LucideIcon> = {
   robot: Bot,
   cloud: Cloud,
   database: Database,
+  "shopping-cart": ShoppingCart,
+  wrench: Wrench,
 };
 
 export function CategoryIcon({ name, className }: { name: string; className?: string }) {

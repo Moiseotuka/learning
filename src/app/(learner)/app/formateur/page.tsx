@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
 import { fill, formatDate, formatDateTime } from "@/lib/instructor/format";
+import { instructorOfferOpen } from "@/lib/instructor/offer";
 import { getInstructorPlans } from "@/lib/instructor/plans";
 import {
   getInstructorClasses,
@@ -154,12 +155,22 @@ export default async function InstructorDashboard({
           </ul>
 
           <div className="mt-7 flex flex-wrap gap-3 border-t border-hairline pt-5">
-            <Button asChild size="lg" className="h-11 px-6">
-              <Link href="/app/formateur/souscrire">
-                <GraduationCapIcon aria-hidden />
-                {expired ? t.reactivateCta : t.cta}
-              </Link>
-            </Button>
+            {instructorOfferOpen ? (
+              <Button asChild size="lg" className="h-11 px-6">
+                <Link href="/app/formateur/souscrire">
+                  <GraduationCapIcon aria-hidden />
+                  {expired ? t.reactivateCta : t.cta}
+                </Link>
+              </Button>
+            ) : (
+              <div className="w-full">
+                <Notice tone="info">{t.offer.text}</Notice>
+                <Button disabled size="lg" className="mt-3 h-11 px-6">
+                  <GraduationCapIcon aria-hidden />
+                  {t.offer.label}
+                </Button>
+              </div>
+            )}
             <Button asChild variant="outline" size="lg" className="h-11 px-5">
               <Link href="/formateurs">
                 <UsersIcon aria-hidden />
