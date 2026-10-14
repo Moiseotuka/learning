@@ -17,7 +17,7 @@ try {
 
   await page.goto("http://localhost:3000/connexion", { waitUntil: "domcontentloaded" });
   await page.fill("#email", "quiz-test@easylearn.dev");
-  await page.fill("#password", "QuizTest2026!");
+  await page.fill("#password", (process.env.QUIZ_TEST_PASSWORD ?? "définir QUIZ_TEST_PASSWORD"));
   await page.click('button[type="submit"]');
   await page.waitForURL((u) => u.pathname === "/", { timeout: 60000 });
 

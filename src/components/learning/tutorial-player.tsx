@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
@@ -9,8 +9,7 @@ import {
   PlayCircleIcon,
 } from "lucide-react";
 
-import { markVideoWatched } from "@/lib/actions/learning";
-import { saveResume } from "@/lib/actions/progress";
+import { attestVideoWatched, recordVideoTick } from "@/lib/actions/learning";
 import { messages } from "@/i18n";
 import { playableVideos, videoToken } from "@/lib/learning/video-playability";
 import { videoDisplayTitle } from "@/lib/learning/video-title";
@@ -62,6 +61,9 @@ export function TutorialPlayer({
     const first = tokens.findIndex((token) => !initialWatched.includes(token));
     return first >= 0 ? first : 0;
   });
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Battement de lecture en vol, par leçon : attendu avant l'attestation. */
+  const pendingWrites = useRef<Record<string, Promise<{ ok: boolean }>>>({});
 
   const current = playlist[active];
   const currentToken = tokens[active];
@@ -70,18 +72,39 @@ export function TutorialPlayer({
     playlist.length > 0 && tokens.every((token) => watched.has(token));
   const firstUnwatched = tokens.findIndex((token) => !watched.has(token));
 
-  const reportProgress = (token: string | undefined) => (seconds: number) => {
-    if (!token) return;
-    setPositions((prev) =>
-      prev[token] === seconds ? prev : { ...prev, [token]: seconds },
-    );
-    void saveResume({ chapterId, videoToken: token, seconds }).catch(
-      () => undefined,
-    );
-  };
+  const reportProgress =
+    (token: string | undefined) => (seconds: number, duration: number) => {
+      if (!token) return;
+      setPositions((prev) =>
+        prev[token] === seconds ? prev : { ...prev, [token]: seconds },
+      );
+      // Le battement alimente la preuve côté serveur ; sans lui, l'attestation
+      // refuserait une leçon légitimement terminée.
+      // eslint-disable-next-line react-hooks/refs -- appelé par l'événement de
+      // lecture du lecteur, jamais pendant le rendu.
+      pendingWrites.current[token] = recordVideoTick({
+        chapterId,
+        videoToken: token,
+        seconds,
+        duration,
+      });
+    };
 
-  const complete = (token: string | undefined) => {
-    if (!token || watched.has(token)) return;
+  /**
+   * Une leçon n'est comptée terminée que si le serveur l'a vérifiée : la fin de
+   * la vidéo ne suffit plus, il faut la trace des battements de lecture.
+   */
+  const complete = async (token: string | undefined) => {
+    if (!token || watched.has(token)) return true;
+    await pendingWrites.current[token];
+    const result = await attestVideoWatched(chapterId, token).catch(() => ({
+      ok: false,
+    }));
+    if (!result.ok) {
+      setNotice(t.videoNotRecorded);
+      return false;
+    }
+    setNotice(null);
     setWatched((prev) => {
       const next = new Set(prev);
       next.add(token);
@@ -94,16 +117,18 @@ export function TutorialPlayer({
       delete next[token];
       return next;
     });
-    void markVideoWatched(chapterId, token).catch(() => undefined);
+    return true;
   };
 
   const handleEnded = () => {
-    complete(currentToken);
-    if (active < playlist.length - 1) {
-      setActive(active + 1);
-    } else {
-      onAllWatched?.();
-    }
+    void complete(currentToken).then((done) => {
+      if (!done) return;
+      if (active < playlist.length - 1) {
+        setActive(active + 1);
+      } else {
+        onAllWatched?.();
+      }
+    });
   };
 
   const selectVideo = (index: number) => {
@@ -160,9 +185,14 @@ export function TutorialPlayer({
           autoplay={active > 0}
           startAt={positions[currentToken] ?? 0}
           onEnded={handleEnded}
-          onSkipped={() => complete(currentToken)}
           onProgress={reportProgress(currentToken)}
         />
+
+        {notice ? (
+          <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+            {notice}
+          </p>
+        ) : null}
 
         <div className="pt-3">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">

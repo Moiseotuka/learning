@@ -3,6 +3,10 @@ import { site } from "@/config/site";
 
 type JsonLd = Record<string, unknown>;
 
+const ORG_ID = `${site.url}/#organization`;
+/** 180 px : le minimum que Google accepte pour le logo d'un organisme. */
+const LOGO_URL = `${site.url}/apple-icon`;
+
 /**
  * Un donné structuré n'est valorisé que s'il décrit ce que l'internaute voit.
  * D'où l'absence volontaire d'`aggregateRating` : `tracks.rating` et
@@ -12,9 +16,20 @@ export function JsonLd({ data }: { data: JsonLd | JsonLd[] }) {
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+      dangerouslySetInnerHTML={{ __html: escapeJsonLd(JSON.stringify(data)) }}
     />
   );
+}
+
+/**
+ * Les titres de cours viennent du back-office : un `</script>` dans l'un
+ * d'eux fermerait le bloc et exécuterait la suite comme du JavaScript.
+ */
+function escapeJsonLd(json: string): string {
+  return json
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026");
 }
 
 export function breadcrumbLd(items: { name: string; path: string }[]): JsonLd {
@@ -38,10 +53,12 @@ export function webSiteLd(): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
+    "@id": site.url,
     name: site.name,
     url: site.url,
     inLanguage: "fr",
     description: site.description,
+    publisher: { "@id": ORG_ID },
     potentialAction: {
       "@type": "SearchAction",
       target: {
@@ -57,8 +74,12 @@ export function organizationLd(): JsonLd {
   return {
     "@context": "https://schema.org",
     "@type": "EducationalOrganization",
+    "@id": ORG_ID,
     name: site.name,
     url: site.url,
+    logo: LOGO_URL,
+    image: { "@type": "ImageObject", "@id": `${site.url}/#logo`, url: LOGO_URL },
+    slogan: site.tagline,
     description: site.description,
     areaServed: "Afrique francophone",
     inLanguage: "fr",

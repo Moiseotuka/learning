@@ -61,17 +61,27 @@ export function nyoleSecretKey(): string | null {
  * le mode simulé, qui ouvre les niveaux payés sans le moindre paiement.
  */
 export function activePaymentProvider(): "mock" | "nyole" {
-  if (process.env.PAYMENT_PROVIDER !== "nyole") return "mock";
-  if (nyoleSecretKey()) return "nyole";
+  if (process.env.PAYMENT_PROVIDER === "nyole" && nyoleSecretKey()) {
+    return "nyole";
+  }
 
-  if (process.env.VERCEL_ENV === "production") {
+  // Le mode simulé ouvre les niveaux payés sans le moindre paiement : il reste
+  // donc confiné aux environnements de test. En production, une variable mal
+  // réglée ou une clé absente ferme la caisse au lieu de l'ouvrir.
+  const vercelEnv = process.env.VERCEL_ENV;
+  const testEnvironment =
+    (vercelEnv === "preview" || vercelEnv === "development") ||
+    process.env.NODE_ENV !== "production";
+
+  if (!testEnvironment) {
     console.error(
-      "[nyole] PAYMENT_PROVIDER=nyole sans clé exploitable : paiement refusé " +
-        "plutôt que simulé (une valeur masquée type « [SENSITIVE] » a pu être " +
-        "recopiée dans la variable d'environnement).",
+      "[nyole] production sans fournisseur de paiement exploitable : achat " +
+        "refusé plutôt que simulé (PAYMENT_PROVIDER=nyole et NYOLE_SECRET_KEY " +
+        "requis ; une valeur masquée type « [SENSITIVE] » a pu être recopiée).",
     );
     return "nyole";
   }
+
   return "mock";
 }
 

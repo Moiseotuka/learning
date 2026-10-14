@@ -31,6 +31,13 @@ export async function issueTestCertificate(): Promise<TestCertificateResult> {
     return { ok: false, error: "no-db" };
   }
 
+  // Le compte de test est sur liste blanche, mais l'écriture reste celle du
+  // serveur : un apprenant ne peut déclarer lui-même un chapitre terminé.
+  const service = createServiceSupabase();
+  if (!service) {
+    return { ok: false, error: "no-db" };
+  }
+
   const { data: chapters, error: chaptersError } = await supabase
     .from("chapters")
     .select("id")
@@ -62,7 +69,7 @@ export async function issueTestCertificate(): Promise<TestCertificateResult> {
   );
 
   if (unfinished.length > 0) {
-    const { error } = await supabase
+    const { error } = await service
       .from("chapter_progress")
       .update({ status: "completed", completed_at: now })
       .eq("user_id", user.id)
@@ -74,7 +81,7 @@ export async function issueTestCertificate(): Promise<TestCertificateResult> {
   }
 
   if (missing.length > 0) {
-    const { error } = await supabase.from("chapter_progress").upsert(
+    const { error } = await service.from("chapter_progress").upsert(
       missing.map((chapter) => ({
         user_id: user.id,
         chapter_id: chapter.id,
@@ -94,11 +101,6 @@ export async function issueTestCertificate(): Promise<TestCertificateResult> {
 
   // L'examen final conditionne la délivrance : le bouton de test simule sa
   // réussite (compte de test uniquement, au même titre que les chapitres).
-  const service = createServiceSupabase();
-  if (!service) {
-    return { ok: false, error: "no-db" };
-  }
-
   const { data: exam } = await service
     .from("level_exams")
     .select("attempts,status")

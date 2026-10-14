@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
+import { links } from "@/config/site";
 import { PaymentReturnBridge } from "@/components/payment/payment-return-bridge";
 import type { ReturnStatus } from "@/components/payment/payment-return-bridge";
+import { getUser } from "@/lib/auth/dal";
 import {
   CHECKOUT_CURRENCY,
   absoluteUrl,
@@ -21,6 +23,7 @@ export const metadata: Metadata = {
 
 type PurchaseRow = {
   id: string;
+  user_id: string;
   category_id: string;
   level: string;
   status: string;
@@ -87,6 +90,15 @@ export default async function PaymentReturnPage({
     .maybeSingle<PurchaseRow>();
 
   if (!purchase) redirect("/catalogue");
+
+  // Le lien de retour peut se retrouver collé ailleurs (historique, capture,
+  // messagerie). Si un compte est connecté sur ce navigateur, il doit être
+  // celui qui a lancé l'achat ; sinon la page reste un simple pont de
+  // vérification pour le paiement déjà engagé.
+  const sessionUser = await getUser();
+  if (sessionUser && sessionUser.id !== purchase.user_id) {
+    redirect(links.dashboard);
+  }
 
   let status: ReturnStatus = "pending";
 

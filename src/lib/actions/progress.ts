@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { links } from "@/config/site";
 import { messages } from "@/i18n";
 import { requireUser } from "@/lib/auth/dal";
+import { chapterLevelLocked } from "@/lib/actions/learning";
 import { getLearnerTrack } from "@/lib/learning/queries";
 import type { QuizState } from "@/lib/learning/types";
 import { createServerSupabase } from "@/lib/supabase/server";
@@ -16,7 +17,6 @@ const t = messages.learner;
 const LEVELS = ["debutant", "intermediaire", "avance", "projet"] as const;
 
 /** Garde-fous des valeurs de reprise : le client est une source non fiable. */
-const MAX_SECONDS = 6 * 60 * 60;
 const MAX_PAGE = 500;
 const MAX_SCROLL = 200_000;
 
@@ -45,15 +45,15 @@ export type ResumeInput = {
   chapterId: string;
   /** Étape du chapitre affichée : c'est elle que l'apprenant retrouve en revenant. */
   step?: string;
-  videoToken?: string;
-  seconds?: number;
   page?: number;
   scroll?: number;
 };
 
 /**
- * Enregistre la position de lecture (seconde d'une vidéo, page et défilement
- * d'un cours écrit) pour que l'apprenant reprenne où il s'était arrêté.
+ * Enregistre la position d'un cours écrit (étape, page, défilement) pour que
+ * l'apprenant reprenne où il s'était arrêté. Les secondes de vidéo ne passent
+ * plus par ici : la reprise de lecture est déduite de la preuve de visionnage,
+ * que seul le serveur sait écrire (`recordVideoTick`).
  * Écriture tolérante : une anomalie n'est jamais remontée à l'interface.
  */
 export async function saveResume(input: ResumeInput): Promise<void> {
@@ -66,11 +66,15 @@ export async function saveResume(input: ResumeInput): Promise<void> {
 
   const { data: chapter } = await supabase
     .from("chapters")
-    .select("id,track_id,published")
+    .select("id,track_id,published,level")
     .eq("id", chapterId)
     .maybeSingle();
 
   if (!chapter?.published) return;
+
+  // La reprise n'ouvre aucun contenu : elle ne se justifie que sur un niveau
+  // que l'apprenant possède déjà.
+  if (await chapterLevelLocked(supabase, user.id, chapter)) return;
 
   const { data: row } = await supabase
     .from("chapter_progress")
@@ -83,23 +87,8 @@ export async function saveResume(input: ResumeInput): Promise<void> {
     row?.resume && typeof row.resume === "object"
       ? (row.resume as Record<string, unknown>)
       : {};
-  const previousVideos =
-    previous.video && typeof previous.video === "object"
-      ? (previous.video as Record<string, unknown>)
-      : {};
 
   const resume: Record<string, unknown> = { ...previous };
-  const videos: Record<string, unknown> = { ...previousVideos };
-
-  const videoToken = typeof input.videoToken === "string" ? input.videoToken : "";
-  const seconds = clampNumber(input.seconds, MAX_SECONDS);
-  if (videoToken && seconds !== null) {
-    const known = Number(videos[videoToken]);
-    if (!Number.isFinite(known) || seconds > known) {
-      videos[videoToken] = seconds;
-      resume.video = videos;
-    }
-  }
 
   const step =
     typeof input.step === "string" &&
@@ -161,10 +150,11 @@ async function runRestart(
 
   if (chapters.length === 0) return { refused: t.notConfigured };
 
-  const supabase = await createServerSupabase();
-  if (!supabase) return { refused: t.notConfigured };
+  // Remise à zéro d'une progression que seul le serveur sait écrire.
+  const service = createServiceSupabase();
+  if (!service) return { refused: t.notConfigured };
 
-  const { error } = await supabase
+  const { error } = await service
     .from("chapter_progress")
     .update({
       attempts: 0,
@@ -174,6 +164,7 @@ async function runRestart(
       videos_watched: [],
       practice_done: false,
       solution_viewed: false,
+      watch_proof: {},
       resume: {},
     })
     .eq("user_id", userId)
@@ -189,18 +180,15 @@ async function runRestart(
 
   // level_exams n'autorise aucune écriture côté apprenant : la ligne est
   // supprimée avec le rôle service, sinon l'examen resterait « in_progress ».
-  const service = createServiceSupabase();
-  if (service) {
-    const { error: examError } = await service
-      .from("level_exams")
-      .delete()
-      .eq("user_id", userId)
-      .eq("track_id", track.id)
-      .eq("level", level);
+  const { error: examError } = await service
+    .from("level_exams")
+    .delete()
+    .eq("user_id", userId)
+    .eq("track_id", track.id)
+    .eq("level", level);
 
-    if (examError) {
-      console.error("[learning] reprise examen", examError.message);
-    }
+  if (examError) {
+    console.error("[learning] reprise examen", examError.message);
   }
 
   try {

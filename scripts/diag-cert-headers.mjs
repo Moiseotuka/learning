@@ -17,7 +17,7 @@ const login = await fetch(`${SUPA}/auth/v1/token?grant_type=password`, {
   headers: { "Content-Type": "application/json", apikey: ANON },
   body: JSON.stringify({
     email: "quiz-test@easylearn.dev",
-    password: "QuizTest2026!",
+    password: (process.env.QUIZ_TEST_PASSWORD ?? "définir QUIZ_TEST_PASSWORD"),
   }),
 }).then((r) => r.json());
 

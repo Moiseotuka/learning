@@ -13,13 +13,19 @@ export function assessmentDeadline(token: string): number {
 }
 
 function resolveAssessmentSecret(): string {
-  const secret =
-    process.env.ASSESSMENT_SECRET ??
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_URL ??
-    "easylearn-assessment-dev-secret";
+  const secret = (process.env.ASSESSMENT_SECRET ?? "").trim();
+  if (secret) return secret;
 
-  return secret.trim();
+  // Aucun repli en production : un secret deviné ou dérivé d'une valeur
+  // publiée (URL du projet) permettrait de fabriquer des jetons d'évaluation
+  // à durée illimitée. Sans secret, l'évaluation refuse de démarrer.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "[security] ASSESSMENT_SECRET absent — évaluation impossible en production",
+    );
+  }
+
+  return "easylearn-assessment-dev-secret";
 }
 
 function normalizeIds(ids: Iterable<string>): string[] {

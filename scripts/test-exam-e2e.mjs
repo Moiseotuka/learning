@@ -22,7 +22,7 @@ import { serviceEnv } from "./e2e-setup.mjs";
 
 const BASE = process.env.QUIZ_TEST_BASE ?? "http://localhost:3000";
 const EMAIL = process.env.QUIZ_TEST_EMAIL ?? "quiz-test@easylearn.dev";
-const PASSWORD = process.env.QUIZ_TEST_PASSWORD ?? "QuizTest2026!";
+const PASSWORD = process.env.QUIZ_TEST_PASSWORD ?? (process.env.QUIZ_TEST_PASSWORD ?? "définir QUIZ_TEST_PASSWORD");
 const TRACK = "python-developpeur";
 const LEVEL = "debutant";
 const NEXT_LEVEL = "intermediaire";

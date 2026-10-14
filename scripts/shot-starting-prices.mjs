@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 
 const BASE = "http://localhost:3000";
 const EMAIL = process.env.QUIZ_TEST_EMAIL ?? "quiz-test@easylearn.dev";
-const PASSWORD = process.env.QUIZ_TEST_PASSWORD ?? "QuizTest2026!";
+const PASSWORD = process.env.QUIZ_TEST_PASSWORD ?? (process.env.QUIZ_TEST_PASSWORD ?? "définir QUIZ_TEST_PASSWORD");
 const EDGE =
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const OUT = "C:\\Users\\moiseo\\AppData\\Local\\Temp\\opencode";

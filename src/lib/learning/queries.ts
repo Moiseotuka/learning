@@ -210,6 +210,13 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
   const supabase = await createServerSupabase();
   if (!supabase) return null;
 
+  // Les colonnes `videos` des chapitres ne sont plus lisibles par le rôle
+  // client : la fiche d'un chapitre est donc portée par la clé de service,
+  // tandis que les lignes de progression du reste du dossier restent lues avec
+  // la session, filtrées par la RLS.
+  const service = createServiceSupabase();
+  if (!service) return null;
+
   const user = await getUser();
 
   const [tracks, chapters, progress, watched, prices, purchases, exams, granted] =
@@ -219,7 +226,7 @@ const fetchLearnerData = cache(async function fetchLearnerData() {
         .select(trackSelect)
         .eq("published", true)
         .order("position"),
-      supabase
+      service
         .from("chapters")
         .select(chapterSelect)
         .eq("published", true)
@@ -423,7 +430,7 @@ export async function getLevelPricing(categoryId: string): Promise<{
 export async function getTrackResources(
   trackId: string,
 ): Promise<TrackResourceGroup[]> {
-  const supabase = await createServerSupabase();
+  const supabase = createServiceSupabase();
   if (!supabase) return [];
 
   const { data, error } = await supabase
@@ -458,7 +465,7 @@ export async function getTrackResources(
 export async function getTrackVideoCounts(
   trackId: string,
 ): Promise<Record<string, number>> {
-  const supabase = await createServerSupabase();
+  const supabase = createServiceSupabase();
   if (!supabase) return {};
 
   const { data, error } = await supabase
@@ -484,7 +491,7 @@ export async function getTrackVideoCounts(
 export async function getTrackPageCounts(
   trackId: string,
 ): Promise<Record<string, number>> {
-  const supabase = await createServerSupabase();
+  const supabase = createServiceSupabase();
   if (!supabase) return {};
 
   const { data: chapters, error: chaptersError } = await supabase
@@ -609,7 +616,10 @@ export async function getLearnerChapter(
   const track = await getLearnerTrack(trackSlug);
   if (!track) return null;
 
-  const supabase = await createServerSupabase();
+  // Les colonnes de contenu (vidéos, cours écrits, corrigés, ressources) ne se
+  // lisent plus qu'avec la clé de service ; le droit d'accès, lui, reste décidé
+  // ci-dessous avec les lignes de progression de l'apprenant.
+  const supabase = createServiceSupabase();
   if (!supabase) return null;
 
   const index = track.chapters.findIndex((chapter) => chapter.slug === chapterSlug);
@@ -618,6 +628,8 @@ export async function getLearnerChapter(
   const summary = track.chapters[index];
   const previous = index > 0 ? track.chapters[index - 1] : null;
   const next = index < track.chapters.length - 1 ? track.chapters[index + 1] : null;
+
+  const userId = (await getUser())?.id ?? "";
 
   const [
     { data, error },
@@ -636,16 +648,19 @@ export async function getLearnerChapter(
     supabase
       .from("chapter_progress")
       .select("practice_done,solution_viewed")
+      .eq("user_id", userId)
       .eq("chapter_id", summary.id)
       .maybeSingle(),
     supabase
       .from("chapter_progress")
       .select("videos_watched")
+      .eq("user_id", userId)
       .eq("chapter_id", summary.id)
       .maybeSingle(),
     supabase
       .from("chapter_progress")
       .select("resume")
+      .eq("user_id", userId)
       .eq("chapter_id", summary.id)
       .maybeSingle(),
     supabase
@@ -729,6 +744,12 @@ export async function getLearnerChapter(
       ? `/app/parcours/${track.slug}/niveaux/${previousLevel}/examen`
       : null;
 
+  // Marchandise verrouillée : niveau non acheté, examen de niveau précédent non
+  // passé, ou chapitre encore fermé dans la séquence. La leçon n'est pas envoyée
+  // au navigateur, même sérialisée dans la charge serveur — sans ce masque,
+  // l'écran de verrou cachait un payload complet.
+  const locked = summary.levelLocked || summary.examLocked || !summary.unlocked;
+
   return {
     id: row.id,
     slug: row.slug,
@@ -740,27 +761,27 @@ export async function getLearnerChapter(
     summary: row.summary,
     level: row.level,
     position: row.position,
-    objectives: row.objectives ?? [],
-    videos,
-    videoTokens: tokens,
+    objectives: locked ? [] : row.objectives ?? [],
+    videos: locked ? [] : videos,
+    videoTokens: locked ? [] : tokens,
     videoWatched,
     videosDone,
     videoSeconds,
     resumePage: resumeBlob.page,
     resumeStep: resumeBlob.step,
     resumeScrolls: resumeBlob.scrolls,
-    content: row.content,
-    pages,
-    exercise: row.exercise,
-    starterCode: row.starter_code ?? "",
-    solutionCode: row.solution_code ?? "",
-    codeLanguage: row.code_language ?? "",
+    content: locked ? "" : row.content,
+    pages: locked ? [] : pages,
+    exercise: locked ? "" : row.exercise,
+    starterCode: locked ? "" : row.starter_code ?? "",
+    solutionCode: locked ? "" : row.solution_code ?? "",
+    codeLanguage: locked ? "" : row.code_language ?? "",
     practice: {
       done: (practiceRow as { practice_done?: boolean } | null)?.practice_done ?? false,
       solutionViewed:
         (practiceRow as { solution_viewed?: boolean } | null)?.solution_viewed ?? false,
     },
-    resources: row.resources ?? [],
+    resources: locked ? [] : row.resources ?? [],
     passingScore: track.passingScore,
     chapterCount: track.totalChapters,
     unlocked: summary.unlocked,
