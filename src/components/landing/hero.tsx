@@ -45,8 +45,8 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
         />
       </div>
 
-      {/* Ondes concentriques du bas, façon maquette : des cercles fins qui
-          rayonnent depuis le coin bas-droit, rognés par la section. */}
+      {/* Ondes concentriques du bas, façon maquette : arcs fins confinés au
+          quadrant bas-droit, derrière la personne. */}
       <svg
         aria-hidden
         className="pointer-events-none absolute inset-0 h-full w-full"
@@ -54,15 +54,15 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
         preserveAspectRatio="xMidYMax slice"
         fill="none"
       >
-        {[160, 260, 360, 460, 560, 660, 760, 860, 960, 1060, 1160, 1260, 1360].map((r) => (
+        {[130, 195, 260, 325, 390, 455, 520, 585, 650].map((r) => (
           <circle
             key={r}
-            cx="1120"
-            cy="640"
+            cx="1180"
+            cy="690"
             r={r}
             stroke="#86efac"
-            strokeOpacity="0.12"
-            strokeWidth="1.5"
+            strokeOpacity="0.09"
+            strokeWidth="1.25"
           />
         ))}
       </svg>
@@ -117,26 +117,19 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
           )}
         </div>
 
-        <Reveal variant="scale" delay={150} className="relative">
-          {/* Le masque radial fond le fond vert de la photo dans la bande :
-              la personne semble posée directement sur le dégradé. */}
-          <figure
-            className="relative mx-auto aspect-[0.92] w-full max-w-[560px]"
-            style={{
-              maskImage: "radial-gradient(ellipse 70% 66% at 50% 44%, black 55%, transparent 80%)",
-              WebkitMaskImage:
-                "radial-gradient(ellipse 70% 66% at 50% 44%, black 55%, transparent 80%)",
-            }}
-          >
-            <Image
-              src="/hero-apprenante.png"
-              alt="Apprenante souriante, un ordinateur portable à la main, prête à commencer un parcours"
-              fill
-              priority
-              sizes="(min-width: 1024px) 44vw, 100vw"
-              className="object-cover object-top"
-            />
-          </figure>
+        <Reveal variant="scale" delay={150} className="relative flex justify-center lg:justify-end">
+          {/* Découpe PNG (fond transparent, scripts/cutout-hero.mjs) posée sur
+              le bord bas de la bande : la coupe au niveau de la taille est
+              portée par la fin de la section, comme sur la maquette. */}
+          <Image
+            src="/hero-apprenante.png"
+            alt="Apprenante souriante, un ordinateur portable à la main, prête à commencer un parcours"
+            width={772}
+            height={736}
+            priority
+            sizes="(min-width: 1024px) 44vw, 88vw"
+            className="-mb-12 w-full max-w-[440px] self-end sm:max-w-[500px] lg:-mb-14 lg:max-w-[540px]"
+          />
         </Reveal>
       </div>
     </section>
