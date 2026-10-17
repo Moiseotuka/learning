@@ -17,7 +17,7 @@ export function TrustBar() {
         {t.title}
       </p>
 
-      <div className="space-y-3 [mask-image:linear-gradient(to_right,transparent,black_9%,black_91%,transparent)]">
+      <div className="space-y-3 overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_9%,black_91%,transparent)]">
         {rangees.map((rangee, index) => (
           <div
             key={index}
