@@ -45,6 +45,28 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
         />
       </div>
 
+      {/* Ondes concentriques du bas, façon maquette : des cercles fins qui
+          rayonnent depuis le coin bas-droit, rognés par la section. */}
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox="0 0 1440 560"
+        preserveAspectRatio="xMidYMax slice"
+        fill="none"
+      >
+        {[160, 260, 360, 460, 560, 660, 760, 860, 960, 1060, 1160, 1260, 1360].map((r) => (
+          <circle
+            key={r}
+            cx="1120"
+            cy="640"
+            r={r}
+            stroke="#86efac"
+            strokeOpacity="0.12"
+            strokeWidth="1.5"
+          />
+        ))}
+      </svg>
+
       <div className="relative mx-auto grid w-full max-w-6xl items-center gap-10 px-4 pt-10 pb-12 sm:px-6 lg:grid-cols-[1.08fr_0.92fr] lg:gap-6 lg:pt-14 lg:pb-14">
         <div>
           <Reveal delay={0}>
