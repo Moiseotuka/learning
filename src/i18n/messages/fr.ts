@@ -41,29 +41,15 @@ export const fr = {
       "Des parcours structurés, du Débutant au niveau Avancé, des exercices pratiques corrigés, des quiz qui débloquent chaque chapitre et un certificat vérifiable. Conçu pour les apprenants d'Afrique francophone, léger sur mobile.",
     primaryCta: "Commencer gratuitement",
     secondaryCta: "Explorer les parcours",
-    preview: {
-      chapter: "Chapitre 3 · Boucles et conditions",
-      progress: "6 chapitres sur 8 validés",
-      pathTitle: "Niveaux du parcours",
-      video: "Quiz débloqué",
-      score: "Vérifiable en ligne, sans compte",
-      caption:
-        "Aperçu de l’espace apprenant : la progression s’enregistre chapitre par chapitre.",
-      levels: ["Fondamentaux", "Intermédiaire", "Avancé"],
-      certLabel: "Certificat émis",
-      certValue: "EL-2026-7K3Q-9F2M",
-    },
   },
 
   stats: {
-    eyebrow: "Le catalogue en chiffres",
     items: {
       tracks: "Parcours publiés",
       chapters: "Chapitres structurés",
       lessons: "Leçons vidéo",
       categories: "Domaines technologiques",
     },
-    note: "Chiffres calculés en direct sur le contenu publié, sans estimation.",
   },
 
   trust: {

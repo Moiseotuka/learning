@@ -14,7 +14,6 @@ import { LiveClasses } from "@/components/landing/live-classes";
 import { Method } from "@/components/landing/method";
 import { PopularTracks } from "@/components/landing/popular-tracks";
 import { Pricing } from "@/components/landing/pricing";
-import { StatsBar } from "@/components/landing/stats-bar";
 import { TrustBar } from "@/components/landing/trust-bar";
 import {
   getCatalogNumbers,
@@ -45,8 +44,7 @@ export default async function HomePage() {
     <>
       {/* Bandeau d'ouverture : l'entête transparent se pose sur la même couleur. */}
       <div className="forest forest-band -mt-16 pt-16">
-        <Hero />
-        <StatsBar numbers={numbers} />
+        <Hero numbers={numbers} />
       </div>
 
       <TrustBar />
