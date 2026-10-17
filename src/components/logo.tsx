@@ -2,7 +2,7 @@ import Image from "next/image";
 
 import { cn } from "@/lib/utils";
 
-const HAUTEURS = { petite: 22, moyenne: 28, grande: 34 } as const;
+const HAUTEURS = { petite: 24, moyenne: 34, grande: 42 } as const;
 
 /**
  * Marque easyTech, en vraies images PNG déposées dans `public/` : l'icône seule quand la place
@@ -29,7 +29,7 @@ export function Logo({
         width={256}
         height={256}
         priority
-        className={cn("size-8 shrink-0 rounded-lg", className)}
+        className={cn("size-9 shrink-0 rounded-lg", className)}
       />
     );
   }

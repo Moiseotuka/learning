@@ -26,7 +26,7 @@ if (!EDGE) {
 const VERT_CLAIR = "#15803d"; // --primary clair
 const VERT_SOMBRE = "#22c55e"; // --primary sombre
 const VERT_ICONE = "#16a34a"; // --vivid clair, lisible sur les deux fonds
-const ENCRE = "#0b1f17"; // --foreground clair
+const VERT_VIF = "#16a34a"; // accent « Tech » du logotype clair
 
 /* Emblème vectoriel dans un viewBox 0 0 100 100 : toque (plateau + bandeau +
    bouton évidé + dragonne à pompon) posée sur un globe filaire, le tout cerclé
@@ -59,8 +59,9 @@ const icone = (px) => {
   </svg>`;
 };
 
-/* Logotype horizontal 960x256 : emblème à gauche, « easyTech » à droite
-   (easy dans la couleur d'encre du thème, Tech dans le vert de marque). */
+/* Logotype horizontal 960x256 : emblème à gauche, « easyTech » à droite —
+   tout en verts de marque : easy dans le vert primaire, Tech dans un vert
+   plus vif (le noir d'origine tranchait avec l'identité verte du site). */
 const logotype = (couleurEmbleme, couleurEasy, couleurTech) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 256" width="960" height="256">
     <g transform="translate(28 37) scale(2.0)">${EMBLEME(couleurEmbleme)}</g>
@@ -74,7 +75,7 @@ const sections = [
   ["icon-256", icone(256), 256, 256],
   ["icon-512", icone(512), 512, 512],
   ["icon-1024", icone(1024), 1024, 1024],
-  ["type-fonce", logotype(VERT_CLAIR, ENCRE, VERT_CLAIR), 960, 256],
+  ["type-fonce", logotype(VERT_CLAIR, VERT_CLAIR, VERT_VIF), 960, 256],
   ["type-blanc", logotype(VERT_SOMBRE, "#ffffff", VERT_SOMBRE), 960, 256],
 ];
 
