@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { purgerVieuxVisites } from "@/lib/analytics/purge";
 import { flushScheduledNotices } from "@/lib/instructor/notices";
 import { flushMarketing } from "@/lib/marketing/queue";
 
@@ -18,6 +19,9 @@ import { flushMarketing } from "@/lib/marketing/queue";
  *
  * Le secret est obligatoire : sans lui, la route refuse de courir plutôt que
  * de laisser un inconnu déclencher les envois.
+ *
+ * Elle tient aussi la durée de conservation des visites du site : deux ans, puis purge. Sans
+ * cette ligne la promesse de suppression ne serait jamais exécutée.
  */
 export const dynamic = "force-dynamic";
 
@@ -42,5 +46,6 @@ export async function GET(request: Request): Promise<Response> {
 
   const classes = await flushScheduledNotices();
   const marketing = await flushMarketing();
-  return Response.json({ ok: true, ...classes, marketing });
+  const purge = await purgerVieuxVisites();
+  return Response.json({ ok: true, ...classes, marketing, purge });
 }

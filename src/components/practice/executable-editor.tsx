@@ -131,7 +131,7 @@ export default function ExecutableEditor({
                   <span className="text-foreground/85">{outcome.stdout}</span>
                 ) : null}
                 {outcome.stderr ? (
-                  <span className="text-amber-600 dark:text-amber-400">
+                  <span className="text-emerald-600 dark:text-emerald-400">
                     {outcome.stderr}
                   </span>
                 ) : null}

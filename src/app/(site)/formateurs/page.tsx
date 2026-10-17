@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, CheckIcon, ClockIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon } from "lucide-react";
 
 import { FinalCta } from "@/components/landing/final-cta";
 import { Instructors } from "@/components/landing/instructors";
 import { LiveClasses } from "@/components/landing/live-classes";
+import { OfferClosedPill } from "@/components/instructor/offer-closed-pill";
 import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
 import { links } from "@/config/site";
@@ -73,10 +74,10 @@ export default async function TrainersPage() {
                     </Link>
                   </Button>
                 ) : (
-                  <Button disabled size="lg" className="h-12 px-6 text-base">
-                    <ClockIcon className="size-4" aria-hidden />
-                    {t.offer.label}
-                  </Button>
+                  <OfferClosedPill
+                    label={t.offer.label}
+                    className="h-12 justify-center px-6 text-base"
+                  />
                 )}
                 <Button
                   asChild

@@ -56,7 +56,7 @@ export default async function UnsubscribePage(props: PageProps<"/desinscription"
                 <dd
                   className={
                     consent.optedOut
-                      ? "mt-1 flex items-center gap-2 font-semibold text-amber-600 dark:text-amber-400"
+                      ? "mt-1 flex items-center gap-2 font-semibold text-emerald-600 dark:text-emerald-400"
                       : "mt-1 flex items-center gap-2 font-semibold text-emerald-600 dark:text-emerald-400"
                   }
                 >

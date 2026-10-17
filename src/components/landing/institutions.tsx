@@ -44,7 +44,7 @@ export function Institutions() {
           const Icon = cardIcons[index] ?? LandmarkIcon;
           return (
             <Reveal key={card.title} delay={index * 60}>
-              <div className="h-full rounded-2xl border border-hairline bg-card p-5">
+              <div className="h-full hover-lift rounded-2xl border border-hairline bg-card p-5">
                 <span className="grid size-10 place-items-center rounded-xl bg-electric/12 text-electric">
                   <Icon className="size-5" aria-hidden />
                 </span>
@@ -63,7 +63,7 @@ export function Institutions() {
           {t.bullets.map((bullet) => (
             <li
               key={bullet}
-              className="flex items-start gap-2.5 rounded-xl border border-hairline bg-card px-4 py-3 text-sm leading-relaxed text-foreground"
+              className="flex items-start gap-2.5 hover-lift rounded-xl border border-hairline bg-card px-4 py-3 text-sm leading-relaxed text-foreground"
             >
               <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-electric" aria-hidden />
               {bullet}

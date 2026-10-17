@@ -21,7 +21,7 @@ export function About() {
         <div className="grid gap-4 sm:grid-cols-2">
           {t.about.points.map((point, index) => (
             <Reveal key={point.title} delay={index * 80}>
-              <div className="h-full rounded-2xl border border-hairline bg-card p-5">
+              <div className="h-full hover-lift rounded-2xl border border-hairline bg-card p-5">
                 <span
                   className="mb-3 block h-1 w-8 rounded-full bg-electric"
                   aria-hidden

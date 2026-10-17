@@ -13,6 +13,8 @@
  * connaître le fournisseur technique.
  */
 
+import { capClosesAt } from "@/lib/live/policy";
+
 export type LiveProviderName = "jitsi";
 
 export const JOIN_BEFORE_MINUTES = 10;
@@ -227,10 +229,18 @@ export function joinWindow(
   startsAt: string,
   endsAt: string,
   status: string,
+  capMinutes: number | null = null,
   now = new Date(),
 ): JoinWindow {
   if (status === "ended" || status === "cancelled") {
     return { openable: false, state: "closed", opensAt: now };
+  }
+
+  // Une séance à quota se referme sur son budget de minutes, quelle que soit
+  // l'heure annoncée dans la convocation : c'est la monnaie du palier gratuit.
+  const cappedBy = capClosesAt(startsAt, capMinutes);
+  if (cappedBy && now > cappedBy) {
+    return { openable: false, state: "closed", opensAt: cappedBy };
   }
 
   const start = new Date(startsAt);
@@ -239,9 +249,7 @@ export function joinWindow(
   if (now < opensAt) return { openable: false, state: "too_early", opensAt };
   if (status === "live") return { openable: true, state: "live_now", opensAt };
 
-  const closesAt = new Date(
-    new Date(endsAt).getTime() + SESSION_OVERRUN_MS,
-  );
+  const closesAt = cappedBy ?? new Date(new Date(endsAt).getTime() + SESSION_OVERRUN_MS);
   if (now > closesAt) return { openable: false, state: "closed", opensAt };
   return { openable: true, state: now < start ? "too_early" : "live_now", opensAt };
 }

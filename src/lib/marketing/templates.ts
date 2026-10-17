@@ -204,7 +204,7 @@ export async function tokenFor(
 
 function footLine(email: string, token: string | null): string {
   const manage = token
-    ? `<a href="${unsubscribeLink(token)}" style="color:#0f766e">Se désinscrire de ces relances</a>`
+    ? `<a href="${unsubscribeLink(token)}" style="color:#15803d">Se désinscrire de ces relances</a>`
     : "Relances automatiques easyTech";
   return `Vous recevez ce message parce que votre compte easyTech (<strong>${escapeHtml(email)}</strong>) est actif. ${manage} — un seul clic, sans justification.`;
 }
@@ -280,7 +280,7 @@ export async function composeMarketing(
       `Après ${levelLabel(certLevel ?? "")}, le niveau ${levelLabel(up)}`,
       `${hello} Vous tenez le niveau <strong>${escapeHtml(levelLabel(certLevel ?? ""))}</strong> de <strong>« ${escapeHtml(track.title)} »</strong>. C'est le moment qui décide de tout : les bases sont en place, et c'est maintenant que le travail devient réel — construire plutôt que répéter.`,
       `<p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#334155">Le niveau <strong>${escapeHtml(levelLabel(up))}</strong> du même parcours s'ouvre sur ${track.modules || "des"} chapitres de pratique réelle : on ne vous demande plus de répéter, on vous demande de construire. Le certificat qui le termine porte les deux niveaux.</p>`,
-      `${emailButton("Goûter au niveau supérieur", `${trackLink(track.slug)}`)} &nbsp; <a href="${siteUrl()}/app/acheter?cat=${encodeURIComponent(track.categoryId)}&level=${encodeURIComponent(up)}" style="color:#0f766e;font-size:14px">Voir le tarif de ce niveau</a>`,
+      `${emailButton("Goûter au niveau supérieur", `${trackLink(track.slug)}`)} &nbsp; <a href="${siteUrl()}/app/acheter?cat=${encodeURIComponent(track.categoryId)}&level=${encodeURIComponent(up)}" style="color:#15803d;font-size:14px">Voir le tarif de ce niveau</a>`,
       subject,
     );
     return { ...built, text: `${subject}\n\nCertificat ${levelLabel(certLevel ?? "")} en poche, le niveau ${levelLabel(up)} vous attend : ${trackLink(track.slug)}` };

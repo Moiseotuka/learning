@@ -29,20 +29,23 @@ export function Hero() {
     <section className="relative overflow-hidden">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0"
+        className="anim-trame pointer-events-none absolute inset-0"
         style={{
-          backgroundImage:
-            "linear-gradient(var(--hairline) 1px, transparent 1px), linear-gradient(90deg, var(--hairline) 1px, transparent 1px)",
-          backgroundSize: "56px 56px",
           maskImage: "radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%)",
           WebkitMaskImage: "radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%)",
         }}
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute -top-40 left-1/2 h-[500px] w-[800px] -translate-x-1/2 rounded-full opacity-30 blur-3xl"
-        style={{ background: "radial-gradient(ellipse, var(--electric) 0%, transparent 70%)" }}
-      />
+        className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2"
+      >
+        {/* L'anneau respire : le centrage est porté par le parent, l'animation par l'enfant,
+            sinon la mise à l'échelle écraserait la translation. */}
+        <div
+          className="anim-halo h-[500px] w-[800px] rounded-full opacity-30 blur-3xl"
+          style={{ background: "radial-gradient(ellipse, var(--electric) 0%, transparent 70%)" }}
+        />
+      </div>
 
       <div className="relative mx-auto grid w-full max-w-6xl items-center gap-12 px-4 pt-10 pb-12 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16 lg:pt-12 lg:pb-14">
         <div>
@@ -57,7 +60,7 @@ export function Hero() {
             <h1 className="mt-5 text-4xl leading-[1.05] font-bold tracking-tight text-balance sm:text-5xl lg:text-6xl">
               {t.hero.title1}
               <br />
-              <span className="bg-gradient-to-r from-electric via-vivid to-electric bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-electric via-vivid to-electric-strong bg-clip-text text-transparent">
                 {t.hero.title2}
               </span>
             </h1>
@@ -75,10 +78,18 @@ export function Hero() {
 
           <Reveal delay={290}>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Button asChild size="lg" className="h-12 px-6 text-base shadow-lg shadow-electric/25">
+              <Button
+                asChild
+                size="lg"
+                className="group relative h-12 overflow-hidden px-6 text-base shadow-lg shadow-electric/25"
+              >
                 <Link href={links.signup}>
+                  <span aria-hidden className="anim-eclat pointer-events-none absolute inset-0" />
                   {t.hero.primaryCta}
-                  <ArrowRightIcon className="size-4" aria-hidden />
+                  <ArrowRightIcon
+                    className="relative size-4 transition-transform duration-300 group-hover:translate-x-1"
+                    aria-hidden
+                  />
                 </Link>
               </Button>
               <Button
@@ -120,10 +131,10 @@ export function Hero() {
                   sizes="(min-width: 1024px) 40vw, 100vw"
                   className="object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-900/25 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-forest via-forest/35 to-transparent" />
 
-                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/15 bg-slate-950/60 p-4 backdrop-blur-sm">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-300">
+                <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/15 bg-forest/70 p-4 backdrop-blur-sm">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-white/70">
                     {t.hero.preview.chapter}
                   </p>
                   <p className="mt-1 text-base font-semibold text-white">
@@ -132,7 +143,7 @@ export function Hero() {
                   <div className="mt-3 flex items-center justify-between gap-3">
                     <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-white/10">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-electric to-vivid"
+                        className="anim-remplir h-full rounded-full bg-gradient-to-r from-electric to-vivid"
                         style={{ width: "75%" }}
                       />
                     </div>

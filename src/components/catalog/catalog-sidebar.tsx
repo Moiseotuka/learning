@@ -98,7 +98,9 @@ export function CatalogSidebar({
         })}
       </div>
 
-      <nav aria-label={t.technologies}>
+      {/* Sur téléphone la rangée de puces du haut suffit : cette liste empilée
+          repousserait les formations hors du premier écran. */}
+      <nav aria-label={t.technologies} className="hidden lg:block">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
           {t.technologies}
         </p>

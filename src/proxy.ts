@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { links } from "@/config/site";
+import { journaliserVisite, tacheArrierePlan, type EvenementProxy } from "@/lib/analytics/journal";
 import { sanitizeInternalPath } from "@/lib/auth/validation";
 import { getSupabaseEnv } from "@/lib/supabase/config";
 
@@ -25,9 +26,16 @@ function copyCookies(from: NextResponse, to: NextResponse) {
   }
 }
 
-export async function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest, event?: EvenementProxy) {
+  // Une visite ne se paie jamais d'un aller-retour de plus : l'écriture est lancée après la
+  // réponse, et seulement pour les pages que l'on sert vraiment (pas pour les redirections).
+  const journaliser = () => tacheArrierePlan(event, () => journaliserVisite(request));
+
   const env = getSupabaseEnv();
-  if (!env) return NextResponse.next();
+  if (!env) {
+    journaliser();
+    return NextResponse.next();
+  }
 
   const { pathname, search } = request.nextUrl;
   const response = NextResponse.next({ request });
@@ -67,6 +75,7 @@ export async function proxy(request: NextRequest) {
     return redirect;
   }
 
+  journaliser();
   return response;
 }
 

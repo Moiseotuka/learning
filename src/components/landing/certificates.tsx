@@ -24,7 +24,7 @@ export function Certificates() {
             {t.certificates.features.map((feature) => (
               <li
                 key={feature}
-                className="flex items-start gap-3 rounded-xl border border-hairline bg-card px-4 py-3.5"
+                className="flex items-start gap-3 hover-lift rounded-xl border border-hairline bg-card px-4 py-3.5"
               >
                 <span
                   className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-vivid/15 text-vivid"
@@ -40,7 +40,7 @@ export function Certificates() {
           <form
             action="/verifier"
             method="get"
-            className="mt-6 rounded-2xl border border-hairline bg-card p-5"
+            className="mt-6 hover-lift rounded-2xl border border-hairline bg-card p-5"
           >
             <label
               htmlFor="certificate-code"
@@ -68,7 +68,7 @@ export function Certificates() {
         </Reveal>
 
         <Reveal variant="scale" delay={120}>
-          <figure className="relative overflow-hidden rounded-2xl border border-hairline bg-card p-4 sm:p-6">
+          <figure className="relative overflow-hidden hover-lift rounded-2xl border border-hairline bg-card p-4 sm:p-6">
             <div className="overflow-hidden rounded-xl border border-hairline bg-background/60 p-3 sm:p-4">
               <Image
                 src="/certificat.jpg"

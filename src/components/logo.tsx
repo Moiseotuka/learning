@@ -1,27 +1,62 @@
+import Image from "next/image";
+
 import { cn } from "@/lib/utils";
 
-/** Marque easyTech : chevron d'apprentissage + barre de progression. */
-export function Logo({ className, compact = false }: { className?: string; compact?: boolean }) {
+const HAUTEURS = { petite: 22, moyenne: 28, grande: 34 } as const;
+
+/**
+ * Marque easyTech, en vraies images PNG déposées dans `public/` : l'icône seule quand la place
+ * manque (rail d'administration), le logotype complet ailleurs. Le logotype est fourni en deux
+ * couleurs parce que le thème clair et le thème sombre ne lisent pas le même fichier ; le texte
+ * reste accessible aux lecteurs d'écran même si l'image échoue.
+ */
+export function Logo({
+  className,
+  compact = false,
+  size = "moyenne",
+}: {
+  className?: string;
+  compact?: boolean;
+  size?: keyof typeof HAUTEURS;
+}) {
+  const hauteur = HAUTEURS[size];
+
+  if (compact) {
+    return (
+      <Image
+        src="/easytech-logo-256.png"
+        alt="easyTech"
+        width={256}
+        height={256}
+        priority
+        className={cn("size-8 shrink-0 rounded-lg", className)}
+      />
+    );
+  }
+
   return (
-    <span className={cn("inline-flex items-center gap-2", className)}>
-      <span
-        aria-hidden
-        className="grid size-8 shrink-0 place-items-center rounded-lg bg-electric"
-      >
-        <svg viewBox="0 0 24 24" fill="none" className="size-5">
-          <path
-            d="M9 6.5 16.5 12 9 17.5V6.5Z"
-            fill="white"
-            fillOpacity="0.95"
-          />
-          <rect x="4" y="19" width="16" height="2" rx="1" fill="white" fillOpacity="0.55" />
-        </svg>
-      </span>
-      {!compact && (
-        <span className="text-lg font-semibold tracking-tight">
-          easy<span className="text-electric">Tech</span>
-        </span>
-      )}
+    <span
+      className={cn("inline-flex shrink-0 items-center", className)}
+      style={{ height: hauteur }}
+    >
+      <Image
+        src="/easytech-logo-texte-fonce.png"
+        alt=""
+        width={960}
+        height={256}
+        priority
+        style={{ height: hauteur, width: "auto" }}
+        className="dark:hidden"
+      />
+      <Image
+        src="/easytech-logo-texte-blanc.png"
+        alt=""
+        width={960}
+        height={256}
+        style={{ height: hauteur, width: "auto" }}
+        className="hidden dark:block"
+      />
+      <span className="sr-only">easyTech</span>
     </span>
   );
 }

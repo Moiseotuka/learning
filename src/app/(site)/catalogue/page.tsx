@@ -122,15 +122,17 @@ export default async function CataloguePage(
         </p>
       </header>
 
+      {/* Sur téléphone une rangée de puces qui défile remplace sept lignes de
+          boutons : l'apprenant voit les formations sans les faire défiler. */}
       <nav
         aria-label={t.catalogue.technologies}
-        className="mt-6 flex flex-wrap gap-2"
+        className="-mx-4 mt-6 flex snap-x gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0"
       >
         {categories.map((category) => (
           <Link
             key={category.id}
             href={`/formations/${category.slug}`}
-            className="inline-flex h-8 items-center rounded-full border border-hairline bg-card px-3 text-xs font-medium text-foreground transition-colors hover:border-electric/50 hover:text-electric"
+            className="inline-flex h-8 shrink-0 snap-start items-center rounded-full border border-hairline bg-card px-3 text-xs font-medium whitespace-nowrap text-foreground transition-colors hover:border-electric/50 hover:text-electric"
           >
             {category.name}
           </Link>

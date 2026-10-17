@@ -1,22 +1,14 @@
 import type { Metadata } from "next";
-
-import { AppHeader } from "@/components/layout/app-header";
-import { messages } from "@/i18n";
+import type { ReactNode } from "react";
 
 /** Back-office : jamais indexable, jamais crawlable. */
 export const metadata: Metadata = { robots: { index: false, follow: false } };
 
-export default function AdminRootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <>
-      <AppHeader
-        navItems={[{ label: messages.auth.mySpace, href: "/app" }]}
-      />
-      <main className="flex-1">{children}</main>
-    </>
-  );
+/**
+ * Le back-office a sa propre coquille (rail d'icônes, barre d'outils, recherche) posée par
+ * `admin/layout.tsx`. Ce groupe ne doit donc rien ajouter : l'ancien entête du site y ferait
+ * apparaître deux barres de compte superposées.
+ */
+export default function AdminRootLayout({ children }: { children: ReactNode }) {
+  return children;
 }

@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   CheckCircle2Icon,
   MaximizeIcon,
@@ -19,6 +25,34 @@ import { DEFAULT_PROFILE, readDeviceProfile } from "@/lib/learning/device-profil
 import { cn } from "cn";
 
 const t = messages.learner;
+
+/** Valeur propre au navigateur, jamais modifiée en cours de route : rien à
+ *  surveiller, l'instantané suffit. Ces deux lectures passent par
+ *  `useSyncExternalStore` et non par un effet, parce qu'un effet qui écrit un
+ *  état déclenche une seconde passe de rendu — et sur une ligne lente, cette
+ *  passe de plus retarde le premier affichage de la leçon. */
+const sansAbonnement = () => () => {};
+
+function lireProfil() {
+  return readDeviceProfile();
+}
+
+function profilServeur() {
+  return DEFAULT_PROFILE;
+}
+
+function pleinEcranPossible() {
+  const doc = document as Document & {
+    webkitFullscreenElement?: Element | null;
+  };
+  return Boolean(
+    doc.fullscreenEnabled || "webkitFullscreenElement" in document,
+  );
+}
+
+function pleinEcranImpossible() {
+  return false;
+}
 
 interface YTPlayer {
   destroy(): void;
@@ -164,8 +198,16 @@ export function YouTubePlayer({
   const startedRef = useRef(false);
   const startAtRef = useRef(startAt);
 
-  const [profile, setProfile] = useState(DEFAULT_PROFILE);
-  const [canFullscreen, setCanFullscreen] = useState(false);
+  const profile = useSyncExternalStore(
+    sansAbonnement,
+    lireProfil,
+    profilServeur,
+  );
+  const canFullscreen = useSyncExternalStore(
+    sansAbonnement,
+    pleinEcranPossible,
+    pleinEcranImpossible,
+  );
   /** Vignette tant que le learner n'a pas lancé la leçon : aucune donnée vidéo
    *  ne part sur un téléphone ancien ou une ligne 3G avant un vrai clic. */
   const [armed, setArmed] = useState(() => autoplay);
@@ -223,12 +265,6 @@ export function YouTubePlayer({
     startAtRef.current = startAt;
   }, [startAt]);
 
-  // Le profil réseau/matériel n'existe que côté téléphone : le lire pendant
-  // l'hydratation donnerait une vignette différente de celle du serveur.
-  useEffect(() => {
-    setProfile(readDeviceProfile());
-  }, []);
-
   const showBar = useCallback(() => {
     setBarVisible(true);
     window.clearTimeout(hideTimer.current);
@@ -268,11 +304,6 @@ export function YouTubePlayer({
     const doc = document as Document & {
       webkitFullscreenElement?: Element | null;
     };
-    setCanFullscreen(
-      Boolean(
-        document.fullscreenEnabled || "webkitFullscreenElement" in document,
-      ),
-    );
     const onChange = () =>
       setIsFullscreen(
         Boolean(document.fullscreenElement || doc.webkitFullscreenElement),

@@ -49,12 +49,12 @@ export async function sendCertificateEmail(input: {
 <html lang="fr">
 <body style="margin:0;background:#f5f5f4;font-family:Helvetica,Arial,sans-serif;color:#111827">
   <div style="max-width:560px;margin:0 auto;padding:32px 20px">
-    <div style="font-size:20px;font-weight:700;color:#1d4ed8">easyTech</div>
+    <div style="font-size:20px;font-weight:700;color:#15803d">easyTech</div>
     <div style="margin-top:20px;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:28px">
       <h1 style="margin:0;font-size:22px">${escapeHtml(t.heading(input.name))}</h1>
       <p style="margin:14px 0 0;font-size:15px;line-height:1.6;color:#374151">${escapeHtml(t.body(input.title, date))}</p>
-      <p style="margin:18px 0 0"><a href="${profileUrl}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600">${escapeHtml(t.cta)}</a></p>
-      <p style="margin:18px 0 0;font-size:13px;color:#6b7280">${escapeHtml(t.verify)} : <a href="${verifyUrl}" style="color:#1d4ed8">${escapeHtml(input.code)}</a></p>
+      <p style="margin:18px 0 0"><a href="${profileUrl}" style="display:inline-block;background:#15803d;color:#ffffff;text-decoration:none;border-radius:10px;padding:12px 20px;font-size:15px;font-weight:600">${escapeHtml(t.cta)}</a></p>
+      <p style="margin:18px 0 0;font-size:13px;color:#6b7280">${escapeHtml(t.verify)} : <a href="${verifyUrl}" style="color:#15803d">${escapeHtml(input.code)}</a></p>
     </div>
     <p style="margin:18px 2px 0;font-size:12px;color:#9ca3af">${escapeHtml(t.footer)}</p>
   </div>

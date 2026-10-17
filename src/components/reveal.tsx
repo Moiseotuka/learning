@@ -7,7 +7,16 @@ type RevealProps = {
   className?: string;
   delay?: number;
   as?: ElementType;
-  variant?: "up" | "scale";
+  variant?: "up" | "scale" | "left" | "right" | "zoom" | "blur";
+};
+
+const CLASSE_VARIANTE: Record<NonNullable<RevealProps["variant"]>, string> = {
+  up: "reveal",
+  scale: "reveal-scale",
+  left: "reveal-left",
+  right: "reveal-right",
+  zoom: "reveal-zoom",
+  blur: "reveal-blur",
 };
 
 /**
@@ -36,7 +45,10 @@ export function Reveal({
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
+          // `top < 0` : la section a déjà été dépassée d'un seul bond (lien d'ancre,
+          // scroll rapide, fin de page). Sans cela, son contenu resterait invisible
+          // à 0 % d'opacité — une page blanche pour celui qui a cliqué sur un titre.
+          if (entry.isIntersecting || entry.boundingClientRect.top < 0) {
             setVisible(true);
             observer.disconnect();
           }
@@ -49,7 +61,7 @@ export function Reveal({
     return () => observer.disconnect();
   }, []);
 
-  const variantClass = variant === "scale" ? "reveal-scale" : "reveal";
+  const variantClass = CLASSE_VARIANTE[variant];
 
   return (
     <Tag

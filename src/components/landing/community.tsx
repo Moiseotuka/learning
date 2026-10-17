@@ -25,7 +25,7 @@ export function Community() {
           const Icon = channelIcons[index] ?? UsersIcon;
           return (
             <Reveal key={channel.name} delay={index * 90}>
-              <div className="h-full rounded-2xl border border-hairline bg-card p-5">
+              <div className="h-full hover-lift rounded-2xl border border-hairline bg-card p-5">
                 <span
                   className="grid size-10 place-items-center rounded-lg bg-electric/12 text-electric"
                   aria-hidden
@@ -43,7 +43,7 @@ export function Community() {
       </div>
 
       <Reveal delay={140}>
-        <div className="mt-8 flex flex-col items-center justify-between gap-6 rounded-2xl border border-hairline bg-card p-6 sm:flex-row">
+        <div className="mt-8 flex flex-col items-center justify-between gap-6 hover-lift rounded-2xl border border-hairline bg-card p-6 sm:flex-row">
           <dl className="grid grid-cols-3 gap-6 text-center sm:text-start">
             {t.community.stats.map((stat) => (
               <div key={stat.label}>

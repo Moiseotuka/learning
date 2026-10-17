@@ -37,6 +37,11 @@ export function trackLink(slug: string): string {
   return `${siteUrl()}/app/parcours/${slug}`;
 }
 
+/** Renouvellement direct sur la durée déjà choisie : un seul clic à l'hôte. */
+export function renewalLink(planId: string): string {
+  return `${siteUrl()}/app/formateur/souscrire?plan=${encodeURIComponent(planId)}`;
+}
+
 export function signupLink(next: string): string {
   return `${siteUrl()}/inscription?next=${encodeURIComponent(next)}`;
 }
@@ -59,7 +64,7 @@ export function escapeHtml(value: string): string {
 }
 
 export function emailButton(label: string, href: string): string {
-  return `<a href="${href}" style="display:inline-block;background:#0f766e;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px">${escapeHtml(label)}</a>`;
+  return `<a href="${href}" style="display:inline-block;background:#15803d;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:15px">${escapeHtml(label)}</a>`;
 }
 
 /** Un ordre du jour saisi en lignes devient une liste lisible, pas un pavé. */
@@ -80,12 +85,12 @@ export function agendaLines(agenda: string): string {
  * reste lisible. La consigne vaut pour toutes les convocations, pas seulement
  * pour la salle.
  */
-export const LOW_CONNECTION_NOTE = `<p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#475569;background:#f1f5f9;border-left:3px solid #0f766e;padding:10px 12px;border-radius:6px">
+export const LOW_CONNECTION_NOTE = `<p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#475569;background:#f1f5f9;border-left:3px solid #15803d;padding:10px 12px;border-radius:6px">
 Connexion faible ? Entrez en salle et choisissez le mode <strong>voix seule</strong> : vous entendez le formateur et vous suivez son partage d'écran sans la vidéo des participants. Le cours continue même si le réseau coupe, la salle se rouvre avec le même lien.</p>`;
 
 export type EmailLayoutInput = {
   /** Nom de l'académie, affiché en tête ; à défaut, la plateforme signe. */
-  academy: string;
+  academy: string | null;
   title: string;
   /** Fragment HTML : l'expéditeur compose, l'échappement est fait en amont. */
   intro: string;
@@ -114,7 +119,7 @@ export function emailLayout(input: EmailLayoutInput): string {
     </td></tr>
     <tr><td style="padding:16px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b;line-height:1.6">
       ${input.footnote ?? ""}
-      Cours hébergé sur <a href="${siteUrl()}" style="color:#0f766e">easyTech</a> — vous n'avez rien à installer.
+      Cours hébergé sur <a href="${siteUrl()}" style="color:#15803d">easyTech</a> — vous n'avez rien à installer.
     </td></tr>
   </table>
 </td></tr></table>

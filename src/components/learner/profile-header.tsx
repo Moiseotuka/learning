@@ -103,9 +103,12 @@ export function ProfileHeader({
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {t.identity}
             </p>
-            <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-foreground">
+            {/* Le titre de la page est déjà un h1 dans l'en-tête : le nom du titulaire
+                reste un simple vedette, pour qu'un lecteur d'écran n'annonce deux titres
+                de premier niveau sur la même page. */}
+            <p className="mt-1 truncate text-2xl font-semibold tracking-tight text-foreground">
               {name}
-            </h1>
+            </p>
             <p className="mt-1 inline-flex items-center rounded-full bg-electric/12 px-2.5 py-0.5 text-xs font-medium text-electric">
               {roleLabel}
             </p>

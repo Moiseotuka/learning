@@ -92,7 +92,7 @@ export function ActionForm({
           className={cn("shrink-0", buttonClassName)}
         >
           {pending ? <Loader2Icon className="animate-spin" aria-hidden /> : null}
-          {pending ? t.paying : label}
+          {pending ? t.processing : label}
         </Button>
       </div>
 

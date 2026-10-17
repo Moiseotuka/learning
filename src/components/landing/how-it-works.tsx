@@ -16,7 +16,7 @@ export function HowItWorks() {
       <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {t.how.steps.map((step, index) => (
           <Reveal key={step.n} delay={index * 90}>
-            <li className="relative h-full rounded-2xl border border-hairline bg-card p-5">
+            <li className="relative h-full hover-lift rounded-2xl border border-hairline bg-card p-5">
               <span className="text-3xl font-semibold text-electric/35">{step.n}</span>
               <h3 className="mt-3 text-base font-semibold">{step.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

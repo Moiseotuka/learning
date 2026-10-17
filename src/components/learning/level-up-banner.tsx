@@ -91,29 +91,31 @@ export function LevelUpNotification({
       role="status"
       aria-live="polite"
       className={cn(
-        "fixed inset-x-4 bottom-4 z-[60] mx-auto w-full max-w-md transition-all duration-500 ease-out sm:inset-x-auto sm:bottom-6 sm:right-6 sm:mx-0 sm:w-96",
+        // Sur téléphone le bandeau se pose au-dessus de la barre d'onglets et
+        // reste sur deux lignes : il ne doit jamais couvrir la leçon en cours.
+        "fixed inset-x-3 bottom-[calc(3.75rem+env(safe-area-inset-bottom))] z-[60] mx-auto w-full max-w-md transition-all duration-500 ease-out sm:inset-x-4 sm:bottom-6 lg:inset-x-auto lg:right-6 lg:mx-0 lg:w-96",
         visible
           ? "translate-y-0 opacity-100"
           : "pointer-events-none translate-y-6 opacity-0",
       )}
     >
-      <div className="relative overflow-hidden rounded-2xl border border-electric/30 bg-card p-4 shadow-2xl shadow-electric/20">
+      <div className="relative overflow-hidden rounded-2xl border border-electric/30 bg-card p-3 shadow-2xl shadow-electric/20 sm:p-4">
         <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-electric via-vivid to-electric" />
         <div className="flex items-start gap-3">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-electric text-primary-foreground">
-            <TrendingUpIcon className="size-5" aria-hidden />
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-electric text-primary-foreground sm:size-10">
+            <TrendingUpIcon className="size-4 sm:size-5" aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-electric">
+            <p className="hidden text-[10px] font-semibold uppercase tracking-wider text-electric sm:block">
               {lu.eyebrow}
             </p>
             <h2 className="mt-0.5 text-sm font-semibold text-foreground">
               {title}
             </h2>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 hidden text-xs leading-relaxed text-muted-foreground sm:block">
               {lu.text}
             </p>
-            <Button asChild size="sm" className="mt-3 h-8 px-3 text-xs">
+            <Button asChild size="sm" className="mt-2 h-8 px-3 text-xs sm:mt-3">
               <Link href={ctaHref ?? links.catalogue}>
                 {ctaLabel ?? defaultCta}
                 <ArrowRightIcon className="size-3.5" aria-hidden />

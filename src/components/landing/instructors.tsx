@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
+import { OfferClosedPill } from "@/components/instructor/offer-closed-pill";
 import { Reveal } from "@/components/reveal";
 import { Section, SectionHeading } from "@/components/section";
 import { Button } from "@/components/ui/button";
@@ -43,7 +44,7 @@ export function Instructors({
           const Icon = benefitIcons[index] ?? UsersIcon;
           return (
             <Reveal key={benefit.title} delay={index * 70}>
-              <div className="h-full rounded-2xl border border-hairline bg-card p-5">
+              <div className="h-full hover-lift rounded-2xl border border-hairline bg-card p-5">
                 <span className="grid size-10 place-items-center rounded-xl bg-electric/12 text-electric">
                   <Icon className="size-5" aria-hidden />
                 </span>
@@ -108,13 +109,10 @@ export function Instructors({
                   </ul>
 
                   {closed ? (
-                    <Button
-                      disabled
-                      variant={index === 0 ? "default" : "outline"}
+                    <OfferClosedPill
+                      label={t.offer.short}
                       className="mt-5 h-9 w-full"
-                    >
-                      {t.ctaShort}
-                    </Button>
+                    />
                   ) : (
                     <Button
                       asChild

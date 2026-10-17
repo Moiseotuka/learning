@@ -1,6 +1,11 @@
 import { cache } from "react";
 
 import { site } from "@/config/site";
+import {
+  DOWNGRADE_AFTER_EXPIRY,
+  FREE_CLASS_SEATS,
+  type HostTier,
+} from "@/lib/live/policy";
 import type { InstructorPlan } from "@/lib/instructor/plans";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { createServiceSupabase } from "@/lib/supabase/service";
@@ -62,6 +67,10 @@ export type InstructorStatus = {
   subscription: InstructorSubscription | null;
   /** Abonnement encore valide à la seconde de la lecture. */
   isActive: boolean;
+  /** Palier de facturation appliqué à l'hôte : payant, ou gratuit par descente. */
+  tier: HostTier;
+  /** Ouvrable une classe ou une séance, payant ou non : le quota change, pas le droit. */
+  canHost: boolean;
   daysLeft: number;
   seatsUsed: number;
   classCount: number;
@@ -102,6 +111,8 @@ export type LiveSession = {
   startsAt: string;
   endsAt: string;
   status: string;
+  /** Budget de minutes de l'hôte ; `null` = séance payante sans quota. */
+  capMinutes: number | null;
   classId: string | null;
   className: string | null;
   /** Académie de rattachement, signataire des convocations. */
@@ -184,6 +195,8 @@ export const getInstructorStatus = cache(
     const empty: InstructorStatus = {
       subscription: null,
       isActive: false,
+      tier: "free",
+      canHost: false,
       daysLeft: 0,
       seatsUsed: 0,
       classCount: 0,
@@ -209,9 +222,19 @@ export const getInstructorStatus = cache(
       new Date(subscription.expiresAt as string).getTime() > Date.now();
 
     const asAdmin = !isActive && (await isAdministrator(userId));
-    if (!isActive && !asAdmin) {
+    // Une souscription fermée sans échéance (achat jamais soldé) n'ouvre rien :
+    // seule une échéance dépassée donne droit au palier gratuit.
+    const lapsed =
+      !isActive &&
+      !asAdmin &&
+      DOWNGRADE_AFTER_EXPIRY &&
+      subscription?.status === "active" &&
+      Boolean(subscription.expiresAt);
+    if (!isActive && !asAdmin && !lapsed) {
       return { ...empty, subscription };
     }
+
+    const paid = isActive || asAdmin;
 
     const [tracksResult, classesResult] = await Promise.all([
       asAdmin
@@ -269,9 +292,18 @@ export const getInstructorStatus = cache(
     const activeMembers = (item: { instructor_class_members: { status: string }[] | null }) =>
       (item.instructor_class_members ?? []).filter((member) => member.status === "active").length;
 
+    const record = asAdmin ? adminSubscriptionOf(tracks.length) : subscription!;
+
     return {
-      subscription: asAdmin ? adminSubscriptionOf(tracks.length) : subscription!,
-      isActive: true,
+      // Un hôte du palier gratuit lit le plafond du palier, pas celui de son
+      // ancien plan : sinon le tableau de bord promettrait 25 places que la
+      // caisse n'a plus payées.
+      subscription: paid
+        ? record
+        : { ...record, seatsLimit: FREE_CLASS_SEATS, trackLimit: 1 },
+      isActive: paid,
+      canHost: true,
+      tier: paid ? "paid" : "free",
       daysLeft: asAdmin ? ADMIN_DAYS : daysLeft(subscription!.expiresAt),
       seatsUsed: classes.reduce((total, item) => total + activeMembers(item), 0),
       classCount: classes.length,
@@ -279,12 +311,6 @@ export const getInstructorStatus = cache(
     };
   },
 );
-
-/** Le formateur doit un abonnement actif pour ouvrir l'espace d'enseignement. */
-export async function requireActiveInstructor(userId: string) {
-  const status = await getInstructorStatus(userId);
-  return status.isActive ? status : null;
-}
 
 /**
  * Places consenties à un formateur, lues avec la clé de service.
@@ -312,6 +338,11 @@ export async function activeSeatLimit(instructorId: string): Promise<number | nu
   // Classe tenue par un administrateur en test : les places ne dépendent
   // d'aucun abonnement payé, sinon personne ne pourrait jamais y entrer.
   if (await isAdministrator(instructorId)) return ADMIN_SEATS;
+
+  // Abonnement expiré : le palier gratuit conserve de quoi finir le cours,
+  // sans laisser un trimestre entier sans salle ni places.
+  if (DOWNGRADE_AFTER_EXPIRY && data) return FREE_CLASS_SEATS;
+
   return null;
 }
 
@@ -553,7 +584,7 @@ export async function getLearnerClasses(userId: string): Promise<{
 
   const { data: sessions } = await supabase
     .from("live_sessions")
-    .select("id,title,starts_at,ends_at,status,class_id,instructor_id")
+    .select("id,title,starts_at,ends_at,status,cap_minutes,class_id,instructor_id")
     .in(
       "class_id",
       classes.map((row) => row.klass.id),
@@ -566,10 +597,10 @@ export async function getLearnerClasses(userId: string): Promise<{
 
   const nextByClass = new Map<
     string,
-    { id: string; title: string; startsAt: string; endsAt: string; status: string }
+    { id: string; title: string; startsAt: string; endsAt: string; status: string; capMinutes: number | null }
   >();
   for (const row of (sessions as
-    | { id: string; title: string; starts_at: string; ends_at: string; status: string; class_id: string }[]
+    | { id: string; title: string; starts_at: string; ends_at: string; status: string; cap_minutes: number | null; class_id: string }[]
     | null) ?? []) {
     if (row.class_id && !nextByClass.has(row.class_id)) {
       nextByClass.set(row.class_id, {
@@ -578,6 +609,7 @@ export async function getLearnerClasses(userId: string): Promise<{
         startsAt: row.starts_at,
         endsAt: row.ends_at,
         status: row.status,
+        capMinutes: row.cap_minutes,
       });
     }
   }
@@ -633,7 +665,7 @@ export async function getLiveSession(
   const { data } = await supabase
     .from("live_sessions")
     .select(
-      "id,title,agenda,starts_at,ends_at,status,room_name,class_id,instructor_id,track_id,instructor_classes(title,academy)",
+      "id,title,agenda,starts_at,ends_at,status,cap_minutes,room_name,class_id,instructor_id,track_id,instructor_classes(title,academy)",
     )
     .eq("id", sessionId)
     .maybeSingle<Record<string, unknown>>();
@@ -674,6 +706,10 @@ export async function getLiveSession(
       startsAt: String(data.starts_at),
       endsAt: String(data.ends_at),
       status: String(data.status),
+      capMinutes:
+        data.cap_minutes === null || data.cap_minutes === undefined
+          ? null
+          : Number(data.cap_minutes),
       classId: (data.class_id as string | null) ?? null,
       className: klass?.title ?? null,
       academy: klass?.academy ?? null,
@@ -695,7 +731,7 @@ export async function getInstructorSessions(
 
   const { data } = await supabase
     .from("live_sessions")
-    .select("id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,track_id,instructor_classes(title,academy)")
+    .select("id,title,agenda,starts_at,ends_at,status,cap_minutes,class_id,instructor_id,track_id,instructor_classes(title,academy)")
     .eq("instructor_id", instructorId)
     .order("starts_at", { ascending: false });
 
@@ -708,6 +744,7 @@ export async function getInstructorSessions(
           starts_at: string;
           ends_at: string;
           status: string;
+          cap_minutes: number | null;
           class_id: string | null;
           instructor_id: string;
           track_id: string | null;
@@ -736,6 +773,7 @@ export async function getInstructorSessions(
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     status: row.status,
+    capMinutes: row.cap_minutes,
     classId: row.class_id,
     className: row.instructor_classes?.title ?? null,
     academy: row.instructor_classes?.academy ?? null,
@@ -777,7 +815,7 @@ export async function getUpcomingSessionsForLearner(
   const { data } = await supabase
     .from("live_sessions")
     .select(
-      "id,title,agenda,starts_at,ends_at,status,class_id,instructor_id,instructor_classes(title,academy)",
+      "id,title,agenda,starts_at,ends_at,status,cap_minutes,class_id,instructor_id,instructor_classes(title,academy)",
     )
     .in("class_id", classIds)
     .in("status", ["scheduled", "live"])
@@ -795,6 +833,7 @@ export async function getUpcomingSessionsForLearner(
           starts_at: string;
           ends_at: string;
           status: string;
+          cap_minutes: number | null;
           class_id: string | null;
           instructor_id: string;
           instructor_classes: { title: string; academy: string } | null;
@@ -813,6 +852,7 @@ export async function getUpcomingSessionsForLearner(
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     status: row.status,
+    capMinutes: row.cap_minutes,
     classId: row.class_id,
     className: row.instructor_classes?.title ?? null,
     academy: row.instructor_classes?.academy ?? null,

@@ -14,6 +14,7 @@ import {
   type LiveBandwidthMode,
 } from "@/lib/live/provider";
 import { useBandwidthMode } from "@/lib/live/bandwidth-store";
+import { cn } from "cn";
 
 const t = messages.live;
 
@@ -78,6 +79,13 @@ export type LiveRoomProps = {
   email: string | null;
   isHost: boolean;
   options: Record<string, unknown>;
+  /**
+   * Heure de coupure d'une séance à quota (palier gratuit), ou `null`.
+   * Le flux WebRTC ne passe pas par nos serveurs : cette borne ferme la page
+   * et `joinWindow` refuse toute réentrée ensuite, mais elle ne peut pas
+   * couper le média chez un élève déjà dans la salle.
+   */
+  hardClosesAt: string | null;
 };
 
 /**
@@ -95,6 +103,7 @@ export function LiveRoom({
   email,
   isHost,
   options,
+  hardClosesAt,
 }: LiveRoomProps) {
   const holderRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<JitsiApi | null>(null);
@@ -107,6 +116,7 @@ export function LiveRoom({
     "before",
   );
   const [left, setLeft] = useState(false);
+  const [cappedOut, setCappedOut] = useState(false);
 
   const stopHeartbeat = () => {
     if (beatRef.current !== null) {
@@ -165,20 +175,92 @@ export function LiveRoom({
     [sessionId],
   );
 
+  useEffect(() => {
+    if (!hardClosesAt || status !== "open") return;
+    const closesAt = new Date(hardClosesAt).getTime();
+
+    const check = () => {
+      if (Date.now() < closesAt) return;
+      if (beatRef.current !== null) {
+        window.clearInterval(beatRef.current);
+        beatRef.current = null;
+      }
+      if (apiRef.current) {
+        apiRef.current.dispose();
+        apiRef.current = null;
+      }
+      void reportLivePresence(sessionId, 0, true);
+      setCappedOut(true);
+    };
+
+    check();
+    const ticker = window.setInterval(check, 15_000);
+    return () => window.clearInterval(ticker);
+  }, [hardClosesAt, status, sessionId]);
+
+  // Le reste à vivre d'une séance à quota se lit après montage : `Date.now()` à
+  // chaque rendu figerait un chiffre différent à chaque re-render.
+  const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!hardClosesAt) return;
+    const closesAt = new Date(hardClosesAt).getTime();
+    const tick = () =>
+      setMinutesLeft(Math.max(0, Math.round((closesAt - Date.now()) / 60_000)));
+    tick();
+    const ticker = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(ticker);
+  }, [hardClosesAt]);
+
+  /**
+   * Le conteneur de la salle est monté en toutes les étapes, y compris avant le
+   * premier clic : `enter()` y accroche l'iframe au moment où il construit
+   * l'API, donc avant tout re-render. Rendu seulement visible quand la salle
+   * tourne — un cadre noir vide sur l'écran d'avant-jointure serait une promesse
+   * non tenue. Il garde la même place dans l'arbre pour que React ne le
+   * recrée pas entre « connexion » et « salle ouverte », ce qui tuerait l'iframe.
+   */
+  const shell = (
+    <div
+      ref={holderRef}
+      className={cn(
+        "overflow-hidden rounded-2xl border border-hairline bg-black",
+        status === "open" ? "aspect-video w-full min-h-[360px]" : "hidden",
+      )}
+    />
+  );
+
   if (status === "failed") {
-    return <Notice tone="error">{t.room.unsupported}</Notice>;
+    return (
+      <>
+        {shell}
+        <Notice tone="error">{t.room.unsupported}</Notice>
+      </>
+    );
+  }
+
+  if (cappedOut) {
+    return (
+      <>
+        {shell}
+        <Notice tone="info">{t.room.capClosed}</Notice>
+      </>
+    );
   }
 
   if (status === "open") {
     return (
-      <div className="overflow-hidden rounded-2xl border border-hairline bg-black">
-        <div ref={holderRef} className="aspect-video w-full min-h-[360px]" />
-      </div>
+      <>
+        {shell}
+        {left ? <Notice tone="info">{t.room.closed}</Notice> : null}
+      </>
     );
   }
 
   return (
-    <div className="rounded-2xl border border-hairline bg-card p-5 shadow-sm sm:p-6">
+    <>
+      {shell}
+      <div className="rounded-2xl border border-hairline bg-card p-5 shadow-sm sm:p-6">
       <h2 className="text-sm font-semibold text-foreground">{subject}</h2>
       {isHost ? (
         <p className="mt-1 text-[11px] font-semibold tracking-wide text-electric uppercase">
@@ -188,6 +270,11 @@ export function LiveRoom({
       <p className="mt-1.5 max-w-[70ch] text-xs leading-relaxed text-muted-foreground">
         {t.room.prejoin}
       </p>
+      {minutesLeft !== null ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-electric">
+          {fill(t.room.capLeft, { minutes: minutesLeft })}
+        </p>
+      ) : null}
 
       <label className="mt-4 block max-w-sm">
         <span className="mb-1.5 block text-xs font-medium text-muted-foreground">
@@ -261,11 +348,7 @@ export function LiveRoom({
         </p>
       </div>
 
-      {left ? (
-        <div className="mt-4">
-          <Notice tone="info">{t.room.closed}</Notice>
-        </div>
-      ) : null}
-    </div>
+      </div>
+    </>
   );
 }

@@ -11,10 +11,12 @@
  * corrigé.
  *
  * Deux horloges se partagent la file : l'action du formateur vide ce qui vient
- * de naître (`notifyNow`, pour qu'une invitation ou une annulation parte à la
- * minute), la tâche périodique du soir envoie ce qui a une heure dite — rappel
- * de la veille, rapport de présence, relance des absents.
+ * de naître (`notifyAfterResponse`, une invitation ou une annulation part donc
+ * à la minute), la tâche périodique du soir envoie ce qui a une heure dite —
+ * rappel de la veille, rapport de présence, relance des absents.
  */
+
+import { after } from "next/server";
 
 import { sendEmail, type EmailResult } from "@/lib/email/send";
 import {
@@ -25,6 +27,7 @@ import {
   emailLayout,
   escapeHtml,
   LOW_CONNECTION_NOTE,
+  renewalLink,
   sessionLink,
   siteUrl,
   trackLink,
@@ -46,6 +49,7 @@ export const NOTICE_KINDS = [
   "session_rescheduled",
   "absent_followup",
   "attendance_report",
+  "subscription_expiry",
 ] as const;
 
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
@@ -221,7 +225,8 @@ function programTable(sessions: NoticeSession[]): string {
 type NoticeRow = {
   id: string;
   kind: NoticeKind;
-  class_id: string;
+  /** `null` pour une échéance d'abonnement : elle ne tient à aucune classe. */
+  class_id: string | null;
   session_id: string | null;
   recipient: string;
   dedup_key: string;
@@ -235,11 +240,89 @@ function greeting(name: string): string {
   return `Bonjour ${escapeHtml(name)},`;
 }
 
+/**
+ * Relance de renouvellement. NYOLE ne prélève aucune carte en automatique :
+ * personne ne renouvelle l'abonnement à la place du formateur. Sans ces trois
+ * rappels puis cet avis d'expiration, une classe entière se retrouve un lundi
+ * en palier gratuit sans l'avoir jamais su.
+ */
+async function expiryDraft(
+  supabase: Reader,
+  notice: NoticeRow,
+  now: Date,
+): Promise<Draft | null> {
+  const { data: person } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .eq("email", notice.recipient)
+    .maybeSingle<{ id: string; full_name: string | null }>();
+  if (!person) return null;
+
+  const { data: sub } = await supabase
+    .from("instructor_subscriptions")
+    .select("id,plan_id,expires_at,instructor_plans(label,duration_days,price_fc)")
+    .eq("user_id", person.id)
+    .order("expires_at", { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle<Record<string, unknown>>();
+  if (!sub?.expires_at) return null;
+
+  const expiresAt = new Date(String(sub.expires_at));
+  const days = Math.ceil((expiresAt.getTime() - now.getTime()) / DAY_MS);
+  // La relance était encore à l'heure quand elle a été posée, mais
+  // l'abonnement a été renouvelé depuis : plus rien à annoncer.
+  if (days > 8) return null;
+  const plan = (sub.instructor_plans as { label: string; duration_days: number; price_fc: number } | null) ?? null;
+  const name = person.full_name?.trim() || notice.recipient.split("@")[0];
+  const renews = plan ? `Renouveler (${plan.label})` : "Renouveler mon abonnement";
+
+  if (days > 0) {
+    const subject = `Votre abonnement formateur expire dans ${days} jour(s)`;
+    return {
+      subject,
+      html: emailLayout({
+        academy: null,
+        title: subject,
+        intro: `Bonjour ${escapeHtml(name)}, votre abonnement <strong>« ${escapeHtml(plan?.label ?? "formateur")} »</strong> court jusqu'au <strong>${academyDateTimeLabel(expiresAt.toISOString())}</strong>, à l'heure de l'académie.`,
+        body: `<p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#334155">Le renouvellement n'est pas automatique : sans paiement avant cette date, vos classes et vos élèves restent en place mais vous passez au <strong>palier gratuit</strong> — quarante minutes par séance, trois séances par mois, dix élèves par classe.</p>
+${plan ? `<p style="margin:10px 0 0;font-size:14px;line-height:1.6;color:#334155">Renouveler coûte ${plan.price_fc.toLocaleString("fr-FR")} FC pour ${plan.duration_days} jours. Les jours non consommés ne sont pas perdus : la nouvelle période démarre à la date d'expiration.</p>` : ""}
+${LOW_CONNECTION_NOTE}`,
+        actions: emailButton(renews, renewalLink(String(sub.plan_id))),
+        footnote: "Rappel automatique — easyTech, formateurs.",
+      }),
+      text: `${subject}\n\nAbonnement « ${plan?.label ?? "formateur"} » jusqu'au ${academyDateTimeLabel(expiresAt.toISOString())}.\nRenouveler : ${renewalLink(String(sub.plan_id))}`,
+    };
+  }
+
+  const subject = "Abonnement expiré : vous enseignez au palier gratuit";
+  return {
+    subject,
+    html: emailLayout({
+      academy: null,
+      title: subject,
+      intro: `Bonjour ${escapeHtml(name)}, votre abonnement <strong>« ${escapeHtml(plan?.label ?? "formateur")} »</strong> a expiré le ${academyDateTimeLabel(expiresAt.toISOString())}.`,
+      body: `<p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#334155">Vos classes ne sont pas fermées et vos élèves conservent leur accès, mais les nouvelles séances sont limitées à <strong>quarante minutes</strong>, trois par mois, dix élèves par classe. Ce quota se lève dès le renouvellement.</p>
+${LOW_CONNECTION_NOTE}`,
+      actions: emailButton(renews, renewalLink(String(sub.plan_id))),
+      footnote: "Avis automatique — easyTech, formateurs.",
+    }),
+    text: `${subject}\n\nVos classes restent ouvertes, au palier gratuit (40 minutes par séance).\nRenouveler : ${renewalLink(String(sub.plan_id))}`,
+  };
+}
+
 async function draftOf(
   supabase: Reader,
   notice: NoticeRow,
   now: Date,
 ): Promise<Draft | null> {
+  // Une échéance d'abonnement ne regarde ni une classe ni une séance : elle se
+  // compose avant toute lecture de roster, qui serait vide.
+  if (notice.kind === "subscription_expiry") {
+    return expiryDraft(supabase, notice, now);
+  }
+
+  if (!notice.class_id) return null;
+
   const roster = await rosterOf(supabase, notice.class_id);
   if (!roster) return null;
 
@@ -265,7 +348,7 @@ async function draftOf(
         intro: `${greeting(name)} Vous êtes inscrit(e) dans la classe <strong>« ${escapeHtml(roster.classTitle)} »</strong> de ${sign}, autour du parcours <strong>« ${escapeHtml(roster.trackTitle)} »</strong>. Les horaires ci-dessous sont donnés à l'heure de l'académie.`,
         body: `${sessions.length > 0 ? programTable(sessions) : `<p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#334155">Votre formateur n'a pas encore publié de séance. Le calendrier complet vous sera envoyé dès la première date posée, puis rappelé la veille de chaque cours.</p>`}
 ${LOW_CONNECTION_NOTE}`,
-        actions: `${emailButton("Ouvrir ma classe", classLink(roster.classId))}${sessions.length > 0 ? ` &nbsp; <a href="${agendaLink(roster.classId)}" style="color:#0f766e;font-size:14px">Ajouter au calendrier</a>` : ""}`,
+        actions: `${emailButton("Ouvrir ma classe", classLink(roster.classId))}${sessions.length > 0 ? ` &nbsp; <a href="${agendaLink(roster.classId)}" style="color:#15803d;font-size:14px">Ajouter au calendrier</a>` : ""}`,
         footnote: footer,
       }),
       text:
@@ -329,7 +412,7 @@ ${LOW_CONNECTION_NOTE}`,
         }`,
         body: `${session.agenda ? agendaLines(session.agenda) : ""}
 <p style="margin:14px 0 0;font-size:13px;color:#64748b">Le lien de la salle ne change pas : il reste valable sur la nouvelle date.</p>`,
-        actions: `${emailButton("Voir le nouveau créneau", sessionLink(session.id))} &nbsp; <a href="${agendaLink(roster.classId)}" style="color:#0f766e;font-size:14px">Mettre à jour mon calendrier</a>`,
+        actions: `${emailButton("Voir le nouveau créneau", sessionLink(session.id))} &nbsp; <a href="${agendaLink(roster.classId)}" style="color:#15803d;font-size:14px">Mettre à jour mon calendrier</a>`,
         footnote: footer,
       }),
       text: `${subject}\n\n« ${session.title} » passe de ${before || "heure précédente"} à ${academyDateTimeLabel(session.startsAt)}.`,
@@ -346,7 +429,7 @@ ${LOW_CONNECTION_NOTE}`,
         intro: `${greeting(name)} Vous n'avez pas pu rejoindre la séance <strong>« ${escapeHtml(session.title)} »</strong> du ${academyDateTimeLabel(session.startsAt)}. Ne prenez pas de retard : le chapitre qui suit s'appuie sur ce qui y a été expliqué.`,
         body: `${session.agenda ? agendaLines(session.agenda) : ""}
 <p style="margin:16px 0 0;font-size:14px;line-height:1.6;color:#334155">Reprenez la leçon concernée dans le parcours, puis signalez-vous auprès de ${escapeHtml(roster.instructorName)} si un point reste obscur. Une question en cinq minutes par écrit évite souvent une séance de rattrapage.</p>`,
-        actions: `${roster.trackSlug ? `${emailButton("Reprendre mes leçons", trackLink(roster.trackSlug))} &nbsp; ` : ""}<a href="${classLink(roster.classId)}" style="color:#0f766e;font-size:14px">Ouvrir ma classe</a>`,
+        actions: `${roster.trackSlug ? `${emailButton("Reprendre mes leçons", trackLink(roster.trackSlug))} &nbsp; ` : ""}<a href="${classLink(roster.classId)}" style="color:#15803d;font-size:14px">Ouvrir ma classe</a>`,
         footnote: footer,
       }),
       text: `${subject}\n\nSéance du ${academyDateTimeLabel(session.startsAt)} manquée. Reprenez le parcours « ${roster.trackTitle} » : ${classLink(roster.classId)}`,
@@ -373,7 +456,7 @@ ${LOW_CONNECTION_NOTE}`,
         return `<tr style="border-bottom:1px solid #e2e8f0">
   <td style="padding:9px 10px">${escapeHtml(memberRow.fullName)}</td>
   <td style="padding:9px 10px;color:#64748b">${escapeHtml(memberRow.email)}</td>
-  <td style="padding:9px 10px;text-align:right;font-weight:600;color:${present ? "#0f766e" : "#b45309"}">${present ? `${minutes(seconds ?? 0)} min` : "absent"}</td>
+  <td style="padding:9px 10px;text-align:right;font-weight:600;color:${present ? "#15803d" : "#52685e"}">${present ? `${minutes(seconds ?? 0)} min` : "absent"}</td>
 </tr>`;
       })
       .join("");
@@ -405,7 +488,8 @@ ${LOW_CONNECTION_NOTE}`,
 
 type QueueEntry = {
   kind: NoticeKind;
-  classId: string;
+  /** `null` pour une relance d'abonnement, qui n'appartient à aucune classe. */
+  classId: string | null;
   sessionId?: string | null;
   recipients: string[];
   scheduledAt: Date;
@@ -424,7 +508,7 @@ export async function queueNotices(
     for (const raw of entry.recipients) {
       const email = raw.trim().toLowerCase();
       if (!email) continue;
-      const key = dedupKey(entry.kind, entry.sessionId ?? entry.classId, email, entry.stamp ?? "once");
+      const key = dedupKey(entry.kind, entry.sessionId ?? entry.classId ?? "abonnement", email, entry.stamp ?? "once");
       if (seen.has(key)) continue;
       seen.add(key);
       rows.push({
@@ -654,6 +738,65 @@ export type FlushReport = {
 };
 
 /**
+ * J-7, J-3, J-1 puis avis du lendemain : les quatre instants où une relance
+ * d'abonnement sert encore. Une seule caisse par formateur, donc une seule
+ * ligne par échéance — la clé de déduplication porte l'identifiant de
+ * souscription, un renouvellement change d'échéance et repart de zéro.
+ */
+const EXPIRY_OFFSET_DAYS = [7, 3, 1, -1];
+
+async function queueExpiryReminders(
+  supabase: Reader,
+  now: Date,
+): Promise<number> {
+  const { data: subs } = await supabase
+    .from("instructor_subscriptions")
+    .select("id,user_id,plan_id,expires_at")
+    .eq("status", "active")
+    .lte("expires_at", new Date(now.getTime() + 8 * DAY_MS).toISOString())
+    .gte("expires_at", new Date(now.getTime() - 3 * DAY_MS).toISOString())
+    .order("expires_at")
+    .limit(80);
+
+  const rows =
+    (subs as { id: string; user_id: string; plan_id: string; expires_at: string }[] | null) ?? [];
+  if (rows.length === 0) return 0;
+
+  const { data: people } = await supabase
+    .from("profiles")
+    .select("id,email")
+    .in("id", [...new Set(rows.map((row) => row.user_id))]);
+
+  const emailById = new Map(
+    ((people as { id: string; email: string | null }[] | null) ?? []).map((row) => [
+      row.id,
+      row.email,
+    ]),
+  );
+
+  const entries: QueueEntry[] = [];
+  for (const sub of rows) {
+    const email = emailById.get(sub.user_id);
+    if (!email) continue;
+    for (const offset of EXPIRY_OFFSET_DAYS) {
+      const at = new Date(new Date(sub.expires_at).getTime() - offset * DAY_MS);
+      // Une relance posée avec retard n'annonce plus rien : mieux vaut se taire
+      // que d'envoyer un « expire dans 7 jours » à qui a renouvelé depuis.
+      if (at.getTime() < now.getTime() - 36 * 3_600_000) continue;
+      entries.push({
+        kind: "subscription_expiry",
+        classId: null,
+        recipients: [email],
+        scheduledAt: at,
+        stamp: `${sub.id}:J${offset}`,
+      });
+    }
+  }
+
+  return queueNotices(supabase, entries);
+}
+
+/**
  * Place les lignes qui manquent : rappels des séances déjà inscrites au
  * calendrier, rapports de présence et relances des absants. Idempotent — les
  * lignes déjà posées sont ignorées par leur clé.
@@ -752,6 +895,8 @@ async function syncQueue(supabase: Reader, now: Date): Promise<number> {
     ]);
   }
 
+  enqueued += await queueExpiryReminders(supabase, now);
+
   return enqueued;
 }
 
@@ -761,8 +906,12 @@ const BATCH = 60;
 /** Envois menés de front : vingt-cinq élèves partent en quelques secondes. */
 const PARALLEL = 6;
 
-/** Budget d'un envoi déclenché par une action du formateur : pas de formulaire bloqué. */
-const INLINE_BUDGET_MS = 14_000;
+/**
+ * Budget d'une vidange déclenchée par une action du formateur. Elle court après
+ * la réponse, mais un instance serverless ne reste pas vivante indéfiniment :
+ * au-delà, le reste de la file part à la tâche du soir.
+ */
+const ACTION_BUDGET_MS = 6_000;
 
 /** Budget de la tâche de nuit : la file se vide jusqu'à la limite du serveur. */
 const CRON_BUDGET_MS = 25_000;
@@ -834,7 +983,7 @@ async function deliver(
  */
 export async function flushNotices(
   now = new Date(),
-  budgetMs = INLINE_BUDGET_MS,
+  budgetMs = ACTION_BUDGET_MS,
 ): Promise<FlushReport> {
   const supabase = createServiceSupabase();
   const report: FlushReport = { due: 0, sent: 0, failed: 0, deferred: 0, enqueued: 0 };
@@ -856,13 +1005,25 @@ export async function flushNotices(
 
   const deadline = Date.now() + budgetMs;
   for (let index = 0; index < due.length; index += PARALLEL) {
-    if (Date.now() > deadline) {
+    const left = deadline - Date.now();
+    if (left <= 0) {
       report.deferred += due.length - index;
       break;
     }
-    const outcomes = await Promise.all(
-      due.slice(index, index + PARALLEL).map((notice) => deliver(supabase, notice, now)),
-    );
+    const batch = due.slice(index, index + PARALLEL);
+    // Le budget se mesure aussi à l'intérieur d'une poignée : une API e-mail
+    // qui ne répond pas tiendrait sinon toute la file en otage, essayée après
+    // le délai accordé à la page.
+    const outcomes = await Promise.race([
+      Promise.all(batch.map((notice) => deliver(supabase, notice, now))),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), left);
+      }),
+    ]);
+    if (!outcomes) {
+      report.deferred += due.length - index;
+      break;
+    }
     for (const outcome of outcomes) {
       if (outcome === "sent") report.sent += 1;
       else if (outcome === "void") report.deferred += 1;
@@ -874,11 +1035,23 @@ export async function flushNotices(
 }
 
 /**
- * Prévenue, la classe : les annonces déclenchées par une action du formateur
- * partent tout de suite, la tâche du soir ne servant plus que de filet.
+ * Prévenue, la classe : les annonces nées d'une action du formateur partent à la
+ * minute, mais une fois la réponse rendue. Un relais SMTP lent retiendrait
+ * sinon la planification une vingtaine de secondes, et un enseignant qui voit
+ * l'écran figer croit que la plateforme casse.
+ *
+ * La file est durable : ce que l'instance n'aura pas fini avant son gel reste dû
+ * et repart à la tâche du soir.
  */
-export async function notifyNow(): Promise<FlushReport> {
-  return flushNotices(new Date(), INLINE_BUDGET_MS);
+export function notifyAfterResponse(work?: () => Promise<unknown>): void {
+  after(async () => {
+    try {
+      if (work) await work();
+      await flushNotices(new Date(), ACTION_BUDGET_MS);
+    } catch (error) {
+      console.error("[formateur] annonces différées", error);
+    }
+  });
 }
 
 /** État de la file d'une classe, pour le tableau de bord du formateur. */

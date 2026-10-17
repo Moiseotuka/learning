@@ -21,7 +21,7 @@ export default function AppleIcon() {
         viewBox="0 0 64 64"
         xmlns="http://www.w3.org/2000/svg"
       >
-        <rect width={64} height={64} rx={14} fill="#2563eb" />
+        <rect width={64} height={64} rx={14} fill="#15803d" />
         <path d="M24 16.5 44 32 24 47.5V16.5Z" fill="#ffffff" />
         <rect
           x={16}

@@ -46,7 +46,7 @@ export function Method() {
       />
 
       <Reveal>
-        <div className="overflow-hidden rounded-2xl border border-hairline bg-card">
+        <div className="overflow-hidden hover-lift rounded-2xl border border-hairline bg-card">
           <div className="grid grid-cols-[1fr_1fr_1fr] border-b border-hairline bg-muted/50 text-xs font-semibold sm:text-sm">
             <div className="px-4 py-3 text-muted-foreground">Critère</div>
             <div className="border-x border-hairline px-4 py-3 text-center text-muted-foreground">

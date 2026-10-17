@@ -16,6 +16,13 @@ export const fr = {
     theme: "Changer de thème",
     catalogue: "Catalogue",
     seeAll: "Tout voir",
+    mobile: {
+      label: "Navigation principale",
+      home: "Accueil",
+      catalogue: "Formations",
+      classe: "Classe",
+      profil: "Profil",
+    },
     items: [
       { label: "Catalogue", href: "/catalogue" },
       { label: "Parcours", href: "/#parcours" },
@@ -733,6 +740,14 @@ export const fr = {
     forgotPasswordTitle: "Réinitialiser le mot de passe",
     forgotPasswordSubtitle:
       "Indiquez votre e-mail : vous recevrez un lien valable une heure pour choisir un nouveau mot de passe.",
+    resetStep1: "Votre e-mail",
+    resetStep2: "Lien reçu",
+    resetStep3: "Nouveau mot de passe",
+    resetSpam:
+      "Rien dans votre boîte ? Vérifiez vos spams, ou connectez-vous avec Google : votre compte Google n'a pas besoin de ce lien.",
+    sortieCompte: "Se souvenir de mon mot de passe",
+    sortieCatalogue: "Parcourir les formations",
+    sortieBesoin: "Vous cherchez autre chose ?",
     resetTitle: "Nouveau mot de passe",
     resetSubtitle:
       "Choisissez un nouveau mot de passe : il remplace l'ancien pour toutes vos sessions.",
@@ -811,6 +826,45 @@ export const fr = {
     welcome: (name: string) => `Bienvenue, ${name}.`,
     intro:
       "Reprenez un chapitre, validez son quiz et débloquez le suivant. Votre progression est enregistrée à chaque tentative.",
+    rail: {
+      label: "Navigation de mon espace",
+      dashboard: "Accueil",
+      formations: "Mes formations",
+      catalogue: "Catalogue",
+      classe: "Ma classe",
+      profil: "Profil",
+      formateur: "Formateur",
+      site: "Voir le site",
+    },
+    search: {
+      label: "Retrouver une formation",
+      placeholder: "Tapez un mot : réseau, python, cyber…",
+    },
+    formations: {
+      title: "Mes formations",
+      intro:
+        "Toutes vos formations, classées de celle que vous êtes en train de faire à celle que vous avez terminée. Un bouton suffit pour reprendre exactement où vous vous êtes arrêté.",
+      none: "Aucune formation ne correspond à ce mot.",
+      noneCta: "Voir toutes mes formations",
+      empty:
+        "Vous n'avez pas encore de formation. Choisissez-en une dans le catalogue : le premier niveau est gratuit.",
+      emptyCta: "Choisir une formation",
+      continue: "Continuer",
+      start: "Commencer",
+      review: "Revoir le chapitre",
+      finished: "Formation terminée",
+      inProgress: "En cours",
+      notStarted: "À commencer",
+      examPending: (level: string) => `Il reste l'examen du niveau ${level}`,
+      nextLevel: (level: string) => `Niveau suivant à débloquer : ${level}`,
+      levelLocked: (level: string) => `Niveau ${level} non acheté`,
+      openTrack: "Ouvrir la formation",
+      whereYouAre: (chapter: string) => `Vous en êtes à : ${chapter}`,
+      nothingYet: "Aucun chapitre commencé",
+      catalogueOf: (query: string) => `Chercher « ${query} » dans le catalogue`,
+      sortHint:
+        "Les formations en cours apparaissent d'abord, puis celles qui sont terminées.",
+    },
     firstRun: {
       title: "Comment se déroule un chapitre",
       intro:
@@ -862,8 +916,20 @@ export const fr = {
     tracksEmptyCta: "Parcourir le catalogue",
     profil: {
       title: "Mon profil",
+      intro:
+        "Vos coordonnées, vos certificats et votre sécurité, au même endroit. Tout ce que vous avez validé sur easyTech est listé ici.",
       identity: "Compte",
+      kpiCertificates: "Certificats",
+      kpiCertificatesNote: "Niveaux et parcours validés",
+      kpiLevel: "Niveau atteint",
+      kpiLevelNone: "Aucun niveau validé",
+      kpiChapters: "Chapitres validés",
+      kpiChaptersNote: "Quiz réussis sur tous vos parcours",
+      kpiMember: "Inscrit le",
+      kpiMemberNote: (months: number) =>
+        months <= 0 ? "Ce mois-ci" : `Il y a ${months} mois`,
       certificatesTitle: "Mes certificats",
+      certificatesNote: "Délivrés à la fin de chaque niveau réussi",
       certificatesIntro:
         "Chaque niveau terminé et chaque parcours complet délivrent un certificat PDF, téléchargeable ici.",
       certificatesEmpty:
@@ -984,7 +1050,7 @@ export const fr = {
     summary: "Résumé",
     video: "Vidéo du chapitre",
     videoPlaybackFailed:
-      "Cette leçon vidéo refuse de se lancer sur votre poste. Réessayez, ou marquez-la comme vue pour continuer : le texte du cours ci-dessous suffit à progresser.",
+      "Cette leçon ne s'est pas lancée sur votre poste. Réessayez ci-dessous ; si rien ne démarre, votre navigateur bloque probablement le lecteur (protection anti-pistage, extension) : autorisez la lecture pour ce site, puis rechargez la page.",
     lesson: "Leçon",
     exercise: "Exercice pratique",
     exerciseEmpty:
@@ -1167,6 +1233,7 @@ export const fr = {
     tutorial: {
       title: "Tutoriel vidéo",
       playlist: "Dans ce chapitre",
+      sequential: "Regarde la vidéo précédente pour ouvrir celle-ci",
       nowPlaying: "Leçon en cours",
       empty:
         "Aucune leçon vidéo n'est encore publiée pour ce chapitre. Le document reste disponible pour apprendre.",
@@ -1180,6 +1247,8 @@ export const fr = {
       "Suivez les étapes dans l'ordre : la leçon vidéo, puis le cours écrit, l'exercice, et enfin le quiz qui valide le chapitre. Les étapes suivantes s'ouvrent dès que les vidéos sont terminées.",
     previousStep: "Étape précédente",
     nextStep: "Étape suivante",
+    videosGate: (count: number) =>
+      `Termine les ${count} leçon${count > 1 ? "s" : ""} vidéo pour ouvrir la suite`,
     previousPage: "Page précédente",
     nextPage: "Page suivante",
     stepLabels: {
@@ -1233,16 +1302,277 @@ export const fr = {
     title: "Back-office",
     subtitle:
       "Catalogue easyTech : catégories, parcours et publications, sans toucher au code.",
-    nav: {
-      dashboard: "Tableau de bord",
-      categories: "Catégories",
+    searchLabel: "Rechercher dans le back-office",
+    searchPlaceholder: "Un compte, un achat, un parcours…",
+    viewSite: "Voir le site",
+    rail: {
+      dashboard: "Aperçu",
+      visitors: "Visiteurs",
+      purchases: "Achats",
+      users: "Comptes",
+      certificates: "Certificats",
+      search: "Recherche",
+      catalog: "Catalogue",
       pricing: "Tarifs",
       instructors: "Formateurs",
-      instructorPlans: "Barème formateur",
+      instructorPlans: "Barème",
       marketing: "Relances",
     },
-    dashboardIntro:
-      "Vue d'ensemble des inscrits et du catalogue, avec les raccourcis de gestion.",
+    canaux: {
+      tiktok: "TikTok",
+      whatsapp: "WhatsApp",
+      facebook: "Facebook",
+      instagram: "Instagram",
+      youtube: "YouTube",
+      x: "X (Twitter)",
+      linkedin: "LinkedIn",
+      telegram: "Telegram",
+      google: "Google",
+      bing: "Bing",
+      duckduckgo: "DuckDuckGo",
+      "e-mail": "E-mail",
+      sms: "SMS",
+      direct: "Accès direct",
+    },
+    mediums: {
+      "reseaux sociaux": "réseaux sociaux",
+      messagerie: "messagerie",
+      recherche: "recherche web",
+      direct: "direct",
+      "navigation interne": "navigation interne",
+      "e-mail": "e-mail",
+      autre: "autre canal",
+    },
+    appareils: {
+      telephone: "Téléphone",
+      tablette: "Tablette",
+      ordinateur: "Ordinateur",
+    },
+    dashboard: {
+      title: "Aperçu de l'activité",
+      intro:
+        "Ce que le site a reçu comme visites, ce qu'il a converti en comptes et en paiements, sur la période choisie. Les chiffres viennent de votre base : rien n'est estimé, rien ne vient d'un service de mesure externe.",
+      periods: "Période analysée",
+      periodLabels: {
+        "7": "7 derniers jours",
+        "30": "30 derniers jours",
+        "90": "90 derniers jours",
+      },
+      kpis: "Indicateurs",
+      unavailable: "indisponible",
+      signups: "Comptes inscrits",
+      newOnPeriod: "nouveau(x) sur la période",
+      visitors: "Visiteurs",
+      vsPreviousWeek: "vs semaine précédente",
+      uniquePerDay: "Personnes différentes, comptées une fois par jour",
+      pageViews: "Pages vues",
+      viewsNote: "Chargements de page, robots et préchargements exclus",
+      purchases: "Achats",
+      purchasesNote: "Payés / tous les enregistrements créés",
+      revenue: "Encaissé",
+      pendingSuffix: "toujours en attente",
+      conversion: "Visites devenues comptes",
+      conversionNote: "Inscriptions rapportées aux visiteurs de la période",
+      trafficOverTime: "Fréquentation jour par jour",
+      trafficOverTimeIntro:
+        "Pages vues, visiteurs différents et nouvelles inscriptions, sur chaque journée de la période.",
+      noTraffic:
+        "Aucune visite enregistrée sur la période. Le comptage démarre dès que la nouvelle version est en ligne.",
+      purchaseStatus: "Achats par statut",
+      purchaseStatusIntro:
+        "Tous les états de la caisse, y compris les paiements lancés et jamais menés à terme.",
+      noPurchase: "Aucun achat enregistré pour le moment.",
+      seeAllPurchases: "Voir tous les achats",
+      bySource: "D'où viennent les visiteurs",
+      bySourceIntro:
+        "Un visiteur entré par un lien TikTok ou WhatsApp est rattaché à ce canal, même si le lien a perdu ses paramètres.",
+      seeAllVisitors: "Détail des visiteurs",
+      viewsShort: "vues",
+      topPages: "Pages les plus vues",
+      topPagesIntro: "Les écrans que vos visiteurs ouvrent le plus souvent.",
+      byCountry: "Pays des visiteurs",
+      byCountryIntro: "Pays tel que l'hébergeur le déduit de l'adresse IP.",
+      recentTransactions: "Dernières transactions",
+      recentTransactionsIntro:
+        "Les 200 derniers enregistrements de la caisse, payés ou non.",
+      columnClient: "Client",
+      columnItem: "Ce qui a été acheté",
+      columnAmount: "Montant",
+      columnStatus: "Statut",
+      columnDate: "Date",
+      noTransaction: "Aucune transaction enregistrée.",
+      compteSupprime: "Compte supprimé",
+      statusLabels: {
+        pending: "En attente de paiement",
+        paid: "Payé",
+        success: "Confirmé",
+        completed: "Terminé",
+        failed: "Échoué",
+        cancelled: "Annulé",
+        refunded: "Remboursé",
+        expired: "Expiré",
+        active: "Actif",
+      },
+    },
+    visiteurs: {
+      title: "Visiteurs",
+      intro:
+        "Combien de personnes sont arrivées, par quel canal, et ce qu'elles ont ouvert. Les robots, les préchargements du navigateur, vos passages sur /admin et ceux de votre espace de travail ne sont pas comptés.",
+      bySourceTitle: "Canaux d'entrée",
+      bySourceIntro:
+        "Le nombre de visiteurs est le nombre de personnes différentes ; les pages vues sont le nombre d'écrans qu'elles ont ouverts.",
+      columnSource: "Canal",
+      columnMedium: "Type de lien",
+      columnVisitors: "Visiteurs",
+      columnViews: "Pages vues",
+      byDeviceTitle: "Sur quoi ils naviguent",
+      byDeviceIntro:
+        "À garder en tête pour le poids des pages : un visiteur sur téléphone en connexion lente ne reçoit pas la même chose qu'un visiteur sur ordinateur.",
+      columnAppareil: "Appareil",
+      byCountryTitle: "Pays",
+      pagesTitle: "Écrans visités",
+      pagesIntro: "Chaque adresse du site, avec son nombre de visiteurs et de vues.",
+      columnPage: "Adresse",
+      daysTitle: "Journée par journée",
+      columnDay: "Jour",
+      columnSignups: "Inscriptions",
+      recentTitle: "Arrivées les plus récentes",
+      recentIntro:
+        "Les 50 dernières visites, telles qu'elles ont été enregistrées : le lien par lequel la personne est entrée, puis l'écran ouvert.",
+      columnHeure: "Heure",
+      columnCampagne: "Campagne",
+      columnPays: "Pays",
+      connecte: "compte connecté",
+      noData: "Aucune visite sur la période.",
+      topSource: "Premier canal",
+      phoneShare: "Part des téléphones",
+      today: "Visiteurs du jour",
+      todayNote: "Journée de Kinshasa, en cours",
+      noteVie: "Les visites sont conservées deux ans, puis supprimées. Elles ne contiennent ni nom, ni e-mail, ni adresse IP.",
+    },
+    achats: {
+      title: "Achats et revenus",
+      intro:
+        "Tout ce que la caisse a enregistré : paiements confirmés, sessions ouvertes et jamais payées, remboursements. Aucun montant n'est calculé ailleurs que dans votre base.",
+      recapTitle: "Récapitulatif",
+      recap: {
+        records: "Transactions",
+        paid: "Payées",
+        pending: "En attente",
+        other: "Autres statuts",
+        revenue: "Encaissé",
+        waiting: "En attente de paiement",
+      },
+      filterLabel: "Filtrer par statut",
+      filterAll: "Tous",
+      columnClient: "Client",
+      columnItem: "Parcours acheté",
+      columnLevel: "Niveau",
+      columnAmount: "Montant",
+      columnStatus: "Statut",
+      columnProvider: "Moyen de paiement",
+      columnCreated: "Ouverte le",
+      columnPaid: "Payée le",
+      notPaid: "—",
+      noData: "Aucune transaction à afficher.",
+      resume: (total: number) =>
+        `${total} ligne(s) affichée(s) — la liste est bornée aux 500 transactions les plus récentes.`,
+      byCategoryTitle: "Qu'est-ce qui se vend",
+      byCategoryIntro: "Niveaux payés, domaine par domaine.",
+      columnCategory: "Domaine",
+      columnPaidCount: "Payés",
+      subsTitle: "Abonnements formateurs",
+      subsIntro:
+        "Les souscriptions de l'offre formateur, avec leur statut et le montant contracté.",
+      columnTrainers: "Abonnements",
+      columnAmountFc: "Montant (FC)",
+    },
+    utilisateurs: {
+      title: "Comptes",
+      intro:
+        "Chaque personne inscrite sur easyTech, la formation où elle est arrêtée, depuis quand elle n'y est plus retournée et ce qu'elle a obtenu. Les compteurs viennent de la base en une seule passe : ils sont exacts.",
+      searchLabel: "Filtrer par nom ou e-mail",
+      searchPlaceholder: "Un début de nom, une adresse…",
+      columnAccount: "Compte",
+      columnRole: "Rôle",
+      columnJoined: "Inscrit le",
+      columnLevel: "Niveau en cours",
+      columnProgress: "Chapitres",
+      columnWatched: "Chapitres ouverts",
+      columnDone: "Chapitres réussis",
+      columnCertificates: "Certificats",
+      columnPurchases: "Achats payés",
+      columnLastSeen: "Dernière activité",
+      columnState: "État",
+      states: {
+        finished: "Parcours terminé",
+        stalled: (jours: number) => `Sans activité depuis ${jours} j`,
+        active: "En cours",
+        idle: "Jamais commencé",
+      },
+      daysAgo: (jours: number) => `il y a ${jours} j`,
+      today: "aujourd'hui",
+      nothingWatched: "rien d'ouvert",
+      roles: { learner: "Apprenant", admin: "Administrateur" },
+      none: "Aucun compte ne correspond.",
+      paying: "Comptes qui ont payé",
+      certified: "Comptes certifiés",
+      certifiedNote: "Au moins un certificat délivré à leur nom",
+      stalled: "Comptes décrochés",
+      stalledNote: "Une leçon ouverte, puis rien depuis deux semaines",
+      activeSeven: "Actifs cette semaine",
+      activeSevenNote: "Une leçon ouverte dans les 7 derniers jours",
+      count: (total: number) => `${total} compte(s) dans la base`,
+      never: "jamais",
+    },
+    certificats: {
+      title: "Certificats",
+      intro:
+        "Tout ce que easyTech a délivré : le titulaire, la formation, la portée et la date. Chaque code reste vérifiable publiquement, y compris par un employeur.",
+      columnHolder: "Titulaire",
+      columnTrack: "Formation",
+      columnScope: "Portée",
+      columnIssued: "Délivré le",
+      columnInstructor: "Signé par",
+      columnCode: "Code",
+      verify: "Vérifier",
+      none: "Aucun certificat ne correspond.",
+      empty:
+        "Aucun certificat n'a encore été délivré. Il s'obtient à la réussite de l'examen de fin de niveau.",
+      count: (total: number) => `${total} certificat(s) délivré(s)`,
+      holders: "Personnes certifiées",
+      tracks: "Formations couvertes",
+      last: "Dernier délivré",
+      lastNote: "Le plus récent des certificats en base",
+      scopes: {
+        parcours: "Parcours complet",
+        debutant: "Niveau débutant",
+        intermediaire: "Niveau intermédiaire",
+        avance: "Niveau avancé",
+      },
+      academy: "Académie",
+    },
+    recherche: {
+      title: "Recherche",
+      intro:
+        "Retrouver un compte, une transaction ou un parcours du catalogue à partir de presque n'importe quoi : un début d'e-mail, un nom, un titre de cours.",
+      placeholder: "Nom, e-mail, parcours…",
+      go: "Chercher",
+      tooShort: "Tapez au moins 2 caractères pour lancer une recherche.",
+      noQuery: "Renseignez un mot à rechercher.",
+      noResults: "Rien trouvé pour cette recherche.",
+      resultCount: (term: string, total: number) =>
+        `${total} résultat(s) pour « ${term} »`,
+      accounts: "Comptes",
+      purchases: "Transactions",
+      catalog: "Parcours du catalogue",
+      columnCategory: "Domaine",
+      columnTrack: "Parcours",
+      columnTrackLevel: "Niveau",
+      columnTrackPublished: "Publié",
+      yes: "oui",
+      no: "non",
+    },
     marketing: {
       title: "Relances automatiques",
       intro:
@@ -1492,6 +1822,16 @@ export const fr = {
     durationsCount: "{count} durées au choix",
     heroFacts: "Ce que couvre l'abonnement",
 
+    tier: {
+      paid: "Abonnement actif",
+      free: "Palier gratuit",
+      limits: "{minutes} minutes maximum par séance · {seats} élèves par classe.",
+      expiring: "Votre abonnement expire dans {days} jour(s).",
+      expiredDowngrade:
+        "Abonnement expiré : vos classes et vos élèves restent en place, vous enseignez au palier gratuit.",
+      renew: "Renouveler l'abonnement",
+    },
+
     eligibility: {
       title: "Condition pour enseigner",
       intro:
@@ -1504,6 +1844,7 @@ export const fr = {
 
     offer: {
       label: "Souscription momentanément fermée",
+      short: "Fermé temporairement",
       text:
         "Nous ouvrons l'offre formateur dès que les convocations, rapports et invitations partent vers vos élèves depuis easyTech. En attendant, vos parcours, vos examens et vos certificats restent accessibles normalement.",
       cta: "Revenir à mon profil",
@@ -1544,6 +1885,7 @@ export const fr = {
     selectedCount: "{count} sur {limit}",
     subscribeCta: "Valider mon abonnement",
     paying: "Ouverture de la caisse…",
+    processing: "Enregistrement…",
 
     dashboardTitle: "Espace formateur",
     dashboardIntro:
@@ -1555,6 +1897,7 @@ export const fr = {
     cardStudents: "Élèves suivis",
     cardSessions: "Séances à venir",
     seatsLeft: "{count} place(s) encore libre(s) sur votre abonnement.",
+    seatsLeftFree: "{count} place(s) encore libre(s) au palier gratuit.",
 
     planOf: "Formule {label}",
     expiresOn: "Valide jusqu'au {date}",
@@ -1609,6 +1952,7 @@ export const fr = {
         session_rescheduled: "Séance déplacée",
         absent_followup: "Relance des absents",
         attendance_report: "Rapport de présence",
+        subscription_expiry: "Renouvellement d'abonnement",
       },
     },
 
@@ -1723,7 +2067,7 @@ export const fr = {
     eyebrow: "Cours en direct",
     title: "Des séances en vidéo, sans quitter easyTech",
     subtitle:
-      "Le formateur ouvre une salle, partage son écran et corrige le code en direct. Les élèves arrivent à l'heure dite, lèvent la main, posent leurs questions dans le chat, et leur présence est enregistrée pour le suivi de la classe. Et la séance ne s'arrête pas toute seule : ici, l'heure n'est pas limitée.",
+      "Le formateur ouvre une salle, partage son écran et corrige le code en direct. Les élèves arrivent à l'heure dite, lèvent la main, posent leurs questions dans le chat, et leur présence est enregistrée pour le suivi de la classe. Et la séance ne s'arrête pas toute seule : l'abonnement formateur garde la salle ouverte aussi longtemps que le cours dure.",
     cta: "Planifier une séance",
 
     landing: {
@@ -1747,7 +2091,7 @@ export const fr = {
         "Aucune installation côté élève : la salle s'ouvre dans le navigateur.",
         "Le nom de la salle reste technique : les élèves voient le titre du cours.",
         "Caméra et micro ne s'allument que sur demande de l'élève.",
-        "L'heure n'est pas limitée : contrairement aux salles facturées à la minute, la séance dure le temps du cours, pas 30 ou 60 minutes.",
+        "La séance dure le temps du cours : contrairement aux salles facturées à la minute, l'abonnement ne vous coupe pas au bout de 30 ou 60 minutes.",
         "Vous verrouillez la salle et éjectez un participant à tout moment.",
       ],
     },
@@ -1764,8 +2108,10 @@ export const fr = {
       fieldTime: "Heure de début",
       fieldDuration: "Durée annoncée",
       fieldAgenda: "Ordre du jour (visible par les élèves)",
-      durationNote:
-        "L'heure n'est pas limitée : ce créneau sert à la convocation et au calendrier des élèves, il n'arrête pas la séance. Ailleurs on vous coupe au bout de 30 ou 60 minutes ; ici la salle reste ouverte jusqu'à ce que vous la clôturiez vous-même.",
+      durationNotePaid:
+        "La durée choisie est celle de la séance : au palier payant la salle reste ouverte jusqu'à ce que vous la clôturiez vous-même, le créneau sert aussi de convocation et d'entrée au calendrier des élèves.",
+      durationNoteFree:
+        "Palier gratuit : la liste ci-dessus ne propose que les durées qu'il autorise, et la salle se referme d'elle-même {minutes} minutes après le début. Planifiez une séance de {minutes} minutes pour éviter toute coupure en plein cours.",
       create: "Planifier",
       minutes: "{count} min",
       academyNote:
@@ -1819,6 +2165,9 @@ export const fr = {
         "Vous entendez le cours et lisez le chat, les images sont coupées. Idéal en connexion très faible.",
       bandwidthAuto:
         "Votre connexion semble limitée : le mode « {mode} » a été préparé pour vous.",
+      capLeft: "Palier gratuit : il reste {minutes} minutes avant la fermeture de la salle.",
+      capClosed:
+        "Le quota du palier gratuit est épuisé pour cette séance. Renouvelez l'abonnement pour animer plus longtemps, ou planifiez un second créneau.",
     },
 
     learner: {

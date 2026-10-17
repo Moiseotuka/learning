@@ -15,11 +15,15 @@ export const metadata: Metadata = {
   robots: { index: false },
 };
 
+const ETAPES = [t.resetStep1, t.resetStep2, t.resetStep3];
+
 export default function ForgotPasswordPage() {
   return (
     <AuthCard
       title={t.forgotPasswordTitle}
       subtitle={t.forgotPasswordSubtitle}
+      etapes={ETAPES}
+      etapeActive={0}
       footer={
         <span>
           {t.hasAccount}{" "}
@@ -28,8 +32,14 @@ export default function ForgotPasswordPage() {
           </Link>
         </span>
       }
+      sorties={[
+        { label: t.sortieCompte, href: links.login },
+        { label: t.sortieCatalogue, href: links.catalogue },
+        { label: t.backHome, href: links.home },
+      ]}
     >
       {isSupabaseConfigured ? <ForgotPasswordForm /> : <ConfigNotice />}
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{t.resetSpam}</p>
     </AuthCard>
   );
 }

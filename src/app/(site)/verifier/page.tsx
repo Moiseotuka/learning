@@ -183,8 +183,8 @@ export default async function VerifyPage(props: PageProps<"/verifier">) {
             </dl>
           </section>
         ) : (
-          <section className="mt-6 rounded-2xl border border-amber-500/40 bg-amber-500/[0.06] p-5 sm:p-6">
-            <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+          <section className="mt-6 rounded-2xl border border-emerald-500/40 bg-emerald-500/[0.06] p-5 sm:p-6">
+            <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">
               {t.verifyInvalid}
             </p>
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">

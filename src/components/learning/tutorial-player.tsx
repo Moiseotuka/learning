@@ -6,6 +6,7 @@ import {
   ArrowRightIcon,
   CheckCircle2Icon,
   FileTextIcon,
+  LockIcon,
   PlayCircleIcon,
 } from "lucide-react";
 
@@ -189,7 +190,7 @@ export function TutorialPlayer({
         />
 
         {notice ? (
-          <p className="mt-2 text-xs leading-relaxed text-amber-600 dark:text-amber-400">
+          <p className="mt-2 text-xs leading-relaxed text-emerald-600 dark:text-emerald-400">
             {notice}
           </p>
         ) : null}
@@ -214,61 +215,74 @@ export function TutorialPlayer({
             const isWatched = watched.has(tokens[index]);
             const isBlocked =
               index > firstUnwatched && !isWatched && index !== active;
-            return (
-              <li key={`${tokens[index]}-${index}`}>
-                <button
-                  type="button"
-                  onClick={() => selectVideo(index)}
-                  aria-current={isActive ? "true" : undefined}
-                  aria-disabled={isBlocked || undefined}
+            const row = (
+              <>
+                <span
                   className={cn(
-                    "-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors",
-                    isActive
-                      ? "bg-electric/10"
-                      : isBlocked
-                        ? "cursor-not-allowed opacity-55"
-                        : "cursor-pointer hover:bg-muted/70",
+                    "grid size-5 shrink-0 place-items-center rounded-full text-[10px] font-medium tabular-nums",
+                    isWatched
+                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                      : isActive
+                        ? "bg-electric text-primary-foreground"
+                        : "bg-muted text-muted-foreground",
                   )}
                 >
+                  {isWatched ? (
+                    <CheckCircle2Icon className="size-3.5" aria-hidden />
+                  ) : isBlocked ? (
+                    <LockIcon className="size-3" aria-hidden />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
                   <span
                     className={cn(
-                      "grid size-5 shrink-0 place-items-center rounded-full text-[10px] font-medium tabular-nums",
-                      isWatched
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                        : isActive
-                          ? "bg-electric text-primary-foreground"
-                          : "bg-muted text-muted-foreground",
+                      "block truncate text-[13px] leading-snug",
+                      isActive
+                        ? "font-medium text-electric"
+                        : "text-foreground/85",
                     )}
                   >
-                    {isWatched ? (
-                      <CheckCircle2Icon className="size-3.5" aria-hidden />
-                    ) : (
-                      index + 1
-                    )}
+                    {titles[index] ?? video.title}
                   </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block truncate text-[13px] leading-snug",
-                        isActive
-                          ? "font-medium text-electric"
-                          : "text-foreground/85",
-                      )}
-                    >
-                      {titles[index] ?? video.title}
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs tabular-nums text-muted-foreground">
-                      {t.videoLabel(chapterPosition, index + 1)}
-                    </span>
+                  <span className="mt-0.5 block truncate text-xs tabular-nums text-muted-foreground">
+                    {isBlocked
+                      ? t.tutorial.sequential
+                      : t.videoLabel(chapterPosition, index + 1)}
                   </span>
-                  <PlayCircleIcon
+                </span>
+                <PlayCircleIcon
+                  className={cn(
+                    "size-4 shrink-0",
+                    isActive ? "text-electric" : "text-muted-foreground/60",
+                  )}
+                  aria-hidden
+                />
+              </>
+            );
+            const shell =
+              "-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left";
+            return (
+              <li key={`${tokens[index]}-${index}`}>
+                {isBlocked ? (
+                  // Une ligne verrouillée n'est pas un bouton qui refuse de
+                  // répondre : elle explique ce qu'il reste à regarder.
+                  <div className={cn(shell, "opacity-70")}>{row}</div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => selectVideo(index)}
+                    aria-current={isActive ? "true" : undefined}
                     className={cn(
-                      "size-4 shrink-0",
-                      isActive ? "text-electric" : "text-muted-foreground/60",
+                      shell,
+                      "cursor-pointer transition-colors hover:bg-muted/70",
+                      isActive && "bg-electric/10",
                     )}
-                    aria-hidden
-                  />
-                </button>
+                  >
+                    {row}
+                  </button>
+                )}
               </li>
             );
           })}

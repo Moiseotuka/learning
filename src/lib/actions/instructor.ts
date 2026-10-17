@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { requireUser } from "@/lib/auth/dal";
 import { roomNameFor } from "@/lib/live/provider";
+import { clampedMinutes, sessionCapMinutes } from "@/lib/live/policy";
 import {
   settleInstructorSubscription,
   startInstructorSubscription,
@@ -23,7 +24,7 @@ import {
   announceJoin,
   announceSessionChange,
   announceSessionScheduled,
-  notifyNow,
+  notifyAfterResponse,
   type NoticeSession,
 } from "@/lib/instructor/notices";
 import { zonedInstant } from "@/lib/instructor/timezone";
@@ -78,8 +79,7 @@ async function seatsUsed(supabase: NonNullable<ReturnType<typeof createServiceSu
   return count ?? 0;
 }
 
-/** La souscription passe par le même dialogue que l'achat d'un niveau. */
-export async function subscribeAsInstructor(
+/** La souscription passe par le même dialogue que l'achat d'un niveau. */export async function subscribeAsInstructor(
   _prevState: InstructorCheckout | undefined,
   formData: FormData,
 ): Promise<InstructorCheckout> {
@@ -122,7 +122,7 @@ export async function createClass(
   try {
     const user = await requireUser("/app/profil");
     const status = await getInstructorStatus(user.id);
-    if (!status.isActive) return { status: "error", message: t.errors.notInstructor };
+    if (!status.canHost) return { status: "error", message: t.errors.notInstructor };
 
     const supabase = createServiceSupabase();
     if (!supabase) return { status: "error", message: t.errors.failed };
@@ -195,7 +195,7 @@ export async function inviteStudent(
   try {
     const user = await requireUser("/app/profil");
     const status = await getInstructorStatus(user.id);
-    if (!status.isActive) return { status: "error", message: t.errors.notInstructor };
+    if (!status.canHost) return { status: "error", message: t.errors.notInstructor };
 
     const classId = readTextValue(formData, "classId");
     const email = readTextValue(formData, "email").toLowerCase();
@@ -565,8 +565,8 @@ async function attachStudent(
       return { ok: false, reason: "failed" };
     }
     if (email) {
-      await announceJoin(classId, email);
-      await notifyNow();
+      const address = email;
+      notifyAfterResponse(() => announceJoin(classId, address));
     }
     return { ok: true };
   }
@@ -581,24 +581,10 @@ async function attachStudent(
     return { ok: false, reason: "failed" };
   }
   if (email) {
-    await announceJoin(classId, email);
-    await notifyNow();
+    const address = email;
+    notifyAfterResponse(() => announceJoin(classId, address));
   }
   return { ok: true };
-}
-
-/**
- * Durée ANNONCÉE d'une séance, en millisecondes.
- *
- * L'heure n'est pas limitée : la valeur saisie sert à la convocation et au
- * calendrier, elle ne clôt pas la salle — c'est le formateur qui la ferme.
- * Seule une borne de lisibilité est posée (24 h), pour qu'aucun créneau
- * aberrant ne soit envoyé aux élèves.
- */
-function announcedDurationMs(minutes: number): number {
-  const value = Math.round(Number(minutes));
-  const safe = Number.isFinite(value) && value > 0 ? value : 60;
-  return Math.min(safe, 1_440) * 60_000;
 }
 
 export async function createLiveSession(
@@ -608,11 +594,14 @@ export async function createLiveSession(
   try {
     const user = await requireUser("/app/formateur");
     const status = await getInstructorStatus(user.id);
-    if (!status.isActive) return { status: "error", message: t.errors.notInstructor };
+    if (!status.canHost) return { status: "error", message: t.errors.notInstructor };
 
     const supabase = createServiceSupabase();
     if (!supabase) return { status: "error", message: t.errors.failed };
 
+    // Le palier gratuit ne se paie ni en nombre de séances ni en participants,
+    // mais en minutes : chaque créneau est tronqué à 40 minutes par
+    // `clampedMinutes` ci-dessous. C'est la règle de Zoom, et une seule.
     const title = readTextValue(formData, "title");
     const classId = readTextValue(formData, "classId");
     const date = readTextValue(formData, "date");
@@ -633,9 +622,8 @@ export async function createLiveSession(
     if (startsAt.getTime() < Date.now() - 12 * 3_600_000) {
       return { status: "error", message: t.errors.pastDate, field: "time" };
     }
-    const endsAt = new Date(
-      startsAt.getTime() + announcedDurationMs(minutes),
-    );
+    const granted = clampedMinutes(minutes, status.tier);
+    const endsAt = new Date(startsAt.getTime() + granted * 60_000);
 
     let trackId: string | null = null;
     if (classId) {
@@ -660,6 +648,7 @@ export async function createLiveSession(
       agenda,
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),
+      cap_minutes: sessionCapMinutes(status.tier),
       room_name: roomNameFor(id, title),
     });
     if (error) return { status: "error", message: t.errors.failed };
@@ -675,9 +664,10 @@ export async function createLiveSession(
         previousStartsAt: null,
       };
       // Le calendrier complet repart, puis le rappel de la veille est posé.
-      await announceClassProgram(classId);
-      await announceSessionScheduled(classId, session);
-      await notifyNow();
+      notifyAfterResponse(async () => {
+        await announceClassProgram(classId);
+        await announceSessionScheduled(classId, session);
+      });
     }
 
     return { status: "success", notice: "seancePlanifiee" };
@@ -724,8 +714,11 @@ export async function updateLiveSession(
       return { status: "error", message: t.errors.badDateTime, field: "date" };
     }
 
+    // Recharger le palier à chaque déplacement : un abonnement souscrit entre
+    // temps libère la séance de son quota, un abonnement expiré le lui remet.
+    const status = await getInstructorStatus(user.id);
     const endsAt = new Date(
-      startsAt.getTime() + announcedDurationMs(minutes),
+      startsAt.getTime() + clampedMinutes(minutes, status.tier) * 60_000,
     );
 
     const { error } = await supabase
@@ -735,6 +728,7 @@ export async function updateLiveSession(
         agenda,
         starts_at: startsAt.toISOString(),
         ends_at: endsAt.toISOString(),
+        cap_minutes: sessionCapMinutes(status.tier),
         previous_starts_at: current.starts_at,
         status: "scheduled",
       })
@@ -743,9 +737,11 @@ export async function updateLiveSession(
     if (error) return { status: "error", message: t.errors.failed };
 
     if (current.class_id) {
-      await announceSessionChange(sessionId, "moved");
-      await announceClassProgram(current.class_id);
-      await notifyNow();
+      const classId = current.class_id;
+      notifyAfterResponse(async () => {
+        await announceSessionChange(sessionId, "moved");
+        await announceClassProgram(classId);
+      });
     }
 
     return { status: "success", notice: "seanceDeplacee" };
@@ -789,8 +785,7 @@ export async function setLiveSessionStatus(
     if (error) return { status: "error", message: t.errors.failed };
 
     if (next === "cancelled" && current.class_id) {
-      await announceSessionChange(sessionId, "cancelled");
-      await notifyNow();
+      notifyAfterResponse(() => announceSessionChange(sessionId, "cancelled"));
     }
 
     const notice =
@@ -823,13 +818,15 @@ export async function sendClassProgram(
       .maybeSingle<{ id: string }>();
     if (!klass) return { status: "error", message: t.errors.forbidden };
 
+    // Le comptage conditionne la réponse (« aucun élève ») : la mise en file
+    // reste ici, l'envoi part juste après.
     const queued = await announceClassProgram(
       classId,
       `manuel ${new Date().toISOString().slice(0, 16)}`,
     );
     if (queued === 0) return { status: "error", message: t.errors.noStudents };
 
-    await notifyNow();
+    notifyAfterResponse();
     return { status: "success", notice: "programmeEnvoye" };
   } catch (error) {
     console.error("[formateur] envoi du programme", error);

@@ -58,13 +58,17 @@ export function TrackCarousel({ tracks, primaryTrackId }: TrackCarouselProps) {
   if (tracks.length === 0) return null;
 
   return (
-    <div className="relative">
+    // `min-w-0 max-w-full` : dans une carte, un défilant horizontal prend sinon la
+    // largeur de son contenu, et c'est toute la page qui se met à déborder sur
+    // téléphone. Borné ici, il rogne ses propres cartes au lieu de pousser la mise
+    // en page.
+    <div className="relative min-w-0 max-w-full">
       <div
         ref={containerRef}
         role="region"
         aria-roledescription="carousel"
         aria-label={t.tracksTitle}
-        className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1 [scrollbar-width:none] touch-pan-x [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-1 [scrollbar-width:none] touch-pan-x [&::-webkit-scrollbar]:hidden"
       >
         {tracks.map((track, index) => {
           const resumeChapter = track.chapters.find(

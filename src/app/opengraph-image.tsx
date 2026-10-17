@@ -32,7 +32,7 @@ export default function OGImage() {
               width: 54,
               height: 54,
               borderRadius: 14,
-              background: "#f7b32b",
+              background: "#86efac",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -75,8 +75,8 @@ export default function OGImage() {
                   style={{
                     padding: "10px 20px",
                     borderRadius: 999,
-                    border: "2px solid rgba(247,179,43,0.55)",
-                    color: "#f7b32b",
+                    border: "2px solid rgba(134, 239, 172,0.55)",
+                    color: "#86efac",
                   }}
                 >
                   {item}

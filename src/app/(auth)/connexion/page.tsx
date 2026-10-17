@@ -50,6 +50,10 @@ export default async function LoginPage(props: PageProps<"/connexion">) {
           </Link>
         </span>
       }
+      sorties={[
+        { label: t.sortieCatalogue, href: links.catalogue },
+        { label: t.backHome, href: links.home },
+      ]}
     >
       {isSupabaseConfigured ? (
         <LoginForm next={next} notice={notice} />

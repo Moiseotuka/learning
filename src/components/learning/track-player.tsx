@@ -75,8 +75,11 @@ export function TrackPlayer({
   return (
     <ResourceViewerProvider>
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <div className="flex h-fullscreen flex-col bg-background">
-          <header className="flex h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4 sm:px-5">
+        <div className="flex h-fullscreen flex-col bg-background pb-14 lg:pb-0">
+          {/* Sur téléphone les deux barres d'outils ne tiennent pas : la grande
+              est réservée aux écrans larges, ses actions passent dans la barre
+              de lecture. */}
+          <header className="hidden h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card px-4 sm:px-5 lg:flex">
             <Link
               href="/"
               aria-label={messages.meta.title}
@@ -158,10 +161,33 @@ export function TrackPlayer({
                 </p>
 
                 <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="icon-sm"
+                    className="lg:hidden"
+                    aria-label={t.player.backToOverview}
+                  >
+                    <Link href={`/app/parcours/${track.slug}`}>
+                      <BookOpenIcon aria-hidden />
+                    </Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="ghost"
+                    size="icon-sm"
+                    className="lg:hidden"
+                    aria-label={t.player.quit}
+                  >
+                    <Link href="/app">
+                      <XIcon aria-hidden />
+                    </Link>
+                  </Button>
                   <ThemeToggle />
                   <Button
                     variant="ghost"
                     size="icon-sm"
+                    className="hidden sm:inline-flex"
                     aria-label={
                       isFullscreen
                         ? t.player.shellFullscreenExit

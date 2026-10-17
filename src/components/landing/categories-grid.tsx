@@ -86,7 +86,7 @@ export function CategoriesGrid({ categories }: CategoriesGridProps) {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((category, index) => (
             <Reveal key={category.id} delay={(index % 3) * 70}>
-              <article className="group flex h-full flex-col rounded-2xl border border-hairline bg-card p-5 transition-all duration-300 hover:-translate-y-1 hover:border-electric/50 hover:shadow-md">
+              <article className="group flex h-full flex-col hover-lift rounded-2xl border border-hairline bg-card p-5 transition-all duration-300 hover:-translate-y-1 hover:border-electric/50 hover:shadow-md">
                 <div className="flex items-start gap-4">
                   <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-electric/12 text-electric transition-colors group-hover:bg-electric group-hover:text-primary-foreground">
                     <CategoryIcon name={category.icon} className="size-5" />

@@ -43,16 +43,13 @@ export function ChapterStepNav({
             <Link
               href={step.href}
               aria-current={step.current ? "step" : undefined}
-              aria-disabled={step.locked || undefined}
               className={cn(
                 "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors",
                 step.current
                   ? "border-electric bg-electric text-primary-foreground"
-                  : step.locked
-                    ? "border-hairline bg-card/60 text-muted-foreground"
-                    : step.done
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
-                      : "border-hairline bg-card text-foreground/80 hover:border-electric/50",
+                  : step.done
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400"
+                    : "border-hairline bg-card text-foreground/80 hover:border-electric/50",
               )}
             >
               <span
