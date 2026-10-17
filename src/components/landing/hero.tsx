@@ -119,8 +119,8 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
 
         <Reveal variant="scale" delay={150} className="relative flex justify-center lg:justify-end">
           {/* Découpe PNG (fond transparent, scripts/cutout-hero.mjs) posée sur
-              le bord bas de la bande : la coupe au niveau de la taille est
-              portée par la fin de la section, comme sur la maquette. */}
+              le bord bas de la bande ; le dégradé fond la fin du pull dans le
+              vert de la bande au lieu de couper net. */}
           <Image
             src="/hero-apprenante.png"
             alt="Apprenante souriante, un ordinateur portable à la main, prête à commencer un parcours"
@@ -129,6 +129,10 @@ export function Hero({ numbers }: { numbers: CatalogNumbers }) {
             priority
             sizes="(min-width: 1024px) 44vw, 88vw"
             className="-mb-12 w-full max-w-[440px] self-end sm:max-w-[500px] lg:-mb-14 lg:max-w-[540px]"
+            style={{
+              maskImage: "linear-gradient(to bottom, black 70%, transparent 97%)",
+              WebkitMaskImage: "linear-gradient(to bottom, black 70%, transparent 97%)",
+            }}
           />
         </Reveal>
       </div>
